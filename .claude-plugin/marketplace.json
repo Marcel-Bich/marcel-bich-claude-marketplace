@@ -1,0 +1,19 @@
+{
+  "name": "cc-marketplace",
+  "owner": {
+    "name": "Marcel Bich",
+    "email": "Marcel-Bich@users.noreply.github.com"
+  },
+  "metadata": {
+    "description": "Collection of productivity plugins for Claude Code",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "signal",
+      "source": "./plugins/signal",
+      "description": "Desktop notifications showing what Claude Code is working on - stay informed even when the terminal is not in focus.",
+      "version": "1.0.0"
+    }
+  ]
+}
