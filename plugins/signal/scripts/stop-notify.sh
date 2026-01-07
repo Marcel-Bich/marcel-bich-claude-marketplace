@@ -92,7 +92,7 @@ SUMMARY=""
 # Option 1: Haiku summary (if enabled and has context)
 if [ "$HAIKU_ENABLED" = "true" ] && [ -n "$RAW" ] && [ ${#RAW} -gt 50 ]; then
     if command -v claude &> /dev/null; then
-        SUMMARY=$(timeout 15 claude -p --model haiku \
+        SUMMARY=$(timeout 15 claude -p --model haiku --no-session-persistence \
             "Summarize in ONE sentence (max 120 chars) what is being worked on. Use the SAME LANGUAGE as the conversation below.
 
 RULES:
