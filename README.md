@@ -1,4 +1,4 @@
-# cc-marketplace
+# marcel-bich-claude-marketplace
 
 A collection of productivity plugins for Claude Code.
 
@@ -7,7 +7,7 @@ A collection of productivity plugins for Claude Code.
 Add this marketplace to Claude Code:
 
 ```bash
-claude plugin marketplace add Marcel-Bich/cc-marketplace
+claude plugin marketplace add Marcel-Bich/marcel-bich-claude-marketplace
 ```
 
 ## Available Plugins
@@ -18,7 +18,7 @@ Desktop notifications showing what Claude Code is working on - stay informed eve
 
 **Install:**
 ```bash
-claude plugin install signal@cc-marketplace
+claude plugin install signal@marcel-bich-claude-marketplace
 ```
 
 **Features:**
