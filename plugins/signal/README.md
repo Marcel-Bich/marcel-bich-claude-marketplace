@@ -25,8 +25,8 @@ Works great with `claude --dangerously-skip-permissions` for autonomous workflow
 ## Installation
 
 ```bash
-claude plugin marketplace add Marcel-Bich/cc-marketplace
-claude plugin install signal@cc-marketplace
+claude plugin marketplace add Marcel-Bich/marcel-bich-claude-marketplace
+claude plugin install signal@marcel-bich-claude-marketplace
 ```
 
 ## Configuration
