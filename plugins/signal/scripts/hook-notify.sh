@@ -98,7 +98,15 @@ esac
 # Send notification
 "$PLUGIN_ROOT/scripts/notify-replace.sh" "$NOTIFY_ID" "$TITLE" "$MESSAGE" "$ICON" "$URGENCY"
 
-# Play attention sound (cross-platform)
-play_sound "attention" "$SOUND_VOLUME"
+# Play attention sound
+if is_wsl; then
+    # WSL: Use Windows system sound
+    windows_sound "attention"
+elif command -v paplay &> /dev/null && [ "$(echo "$SOUND_VOLUME > 0" | bc 2>/dev/null)" = "1" ]; then
+    # Linux: Original paplay code
+    CURRENT_VOL=$(pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | grep -oP '\d+(?=%)' | head -1)
+    PLAY_VOL=$(echo "${CURRENT_VOL:-50} * $SOUND_VOLUME * 655.36" | bc 2>/dev/null | cut -d. -f1)
+    [ -n "$PLAY_VOL" ] && paplay --volume="$PLAY_VOL" /usr/share/sounds/freedesktop/stereo/message.oga 2>/dev/null &
+fi
 
 exit 0
