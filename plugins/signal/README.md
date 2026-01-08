@@ -13,14 +13,21 @@ Works great with `claude --dangerously-skip-permissions` for autonomous workflow
 - **Sound Alerts** - Configurable volume, separate for completion and attention sounds
 - **AI Summaries** - Optional Haiku-powered summaries of completed work (disabled by default)
 - **Smart Filtering** - No spam from subagents, debounced notifications
+- **Cross-Platform** - Works on Linux and WSL2 (Windows 10/11)
 
 ## Requirements
 
-- Linux with desktop notifications (GNOME, KDE, etc.)
+### Linux
+- Desktop notifications (GNOME, KDE, etc.)
 - `jq` - JSON processor
 - `gdbus` or `notify-send` - For desktop notifications
 - `paplay` and `pactl` - For sound alerts (optional, part of PulseAudio)
 - `bc` - For volume calculations (optional)
+
+### WSL2 (Windows 10/11)
+- `jq` - JSON processor
+- `powershell.exe` - For Windows toast notifications and sounds (available by default in WSL)
+- Optional: [BurntToast](https://github.com/Windos/BurntToast) PowerShell module for better notifications
 
 ## Installation
 
@@ -98,6 +105,16 @@ When enabled (`CLAUDE_NOTIFY_HAIKU=true`), the plugin uses Haiku to generate a b
 ### Notifications stacking
 - The plugin uses gdbus for notification replacement
 - If falling back to notify-send, stacking may occur
+
+### WSL: No notifications appearing
+- Verify `powershell.exe` is accessible from WSL: `which powershell.exe`
+- Install BurntToast for better notifications: `powershell.exe -c "Install-Module -Name BurntToast -Scope CurrentUser"`
+- Check Windows notification settings (Settings > System > Notifications)
+
+### WSL: No sound
+- Windows sounds are played via PowerShell's SystemSounds API
+- Check if Windows sounds are enabled in your system settings
+- Volume settings in the plugin config are ignored on WSL (uses Windows defaults)
 
 ## Disclaimer
 
