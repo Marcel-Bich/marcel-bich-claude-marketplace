@@ -94,7 +94,7 @@ else
     echo -e "  Backup: ${SETTINGS_FILE}.backup"
 
     # Update statusLine in existing settings
-    local tmp_file=$(mktemp)
+    tmp_file=$(mktemp)
     jq --arg cmd "$WRAPPER_SCRIPT" '.statusLine = {"type": "command", "command": $cmd}' "$SETTINGS_FILE" > "$tmp_file"
     mv "$tmp_file" "$SETTINGS_FILE"
     echo -e "  Updated statusLine configuration"
