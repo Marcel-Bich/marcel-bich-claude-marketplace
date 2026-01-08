@@ -83,6 +83,41 @@ See [plugins/limit/README.md](plugins/limit/README.md) for full documentation.
 
 ---
 
+## Troubleshooting
+
+### Plugin not found after adding marketplace
+
+If `claude plugin install` says "Plugin not found":
+
+```bash
+# 1. Manually update the marketplace clone
+cd ~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace
+git pull origin main
+
+# 2. Try installing again
+claude plugin install <plugin>@marcel-bich-claude-marketplace
+```
+
+### Plugin updates not working
+
+If the normal update process via `/plugin` doesn't work:
+
+```bash
+# 1. Manually update the marketplace clone
+cd ~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace
+git pull origin main
+
+# 2. Reinstall the plugin
+claude plugin uninstall <plugin>@marcel-bich-claude-marketplace
+claude plugin install <plugin>@marcel-bich-claude-marketplace
+
+# 3. Restart Claude Code
+```
+
+Replace `<plugin>` with `signal` or `limit`.
+
+This is a known limitation of the Claude CLI plugin system where the local marketplace clone is not always automatically synced.
+
 ## License
 
 MIT - See [LICENSE](LICENSE) file for full terms.

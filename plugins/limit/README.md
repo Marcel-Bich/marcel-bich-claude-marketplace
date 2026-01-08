@@ -73,6 +73,17 @@ After installation, add the statusline configuration to `~/.claude/settings.json
 
 **Note:** Restart Claude Code after changing settings.json.
 
+## Updating
+
+To update the plugin when a new version is available:
+
+1. Run `/plugin` in Claude Code
+2. Go to the **Marketplaces** tab
+3. Select "Update marketplace" (or enable "Enable auto-update" for automatic updates)
+4. Go to the **Installed** tab
+5. Select the limit plugin and choose "Update"
+6. Restart Claude Code
+
 ## Configuration
 
 Configure via environment variables in `~/.claude/settings.json`:
@@ -159,6 +170,24 @@ Some accounts may see this error. Workaround:
 ### macOS date parsing issues
 
 The script supports both GNU date (Linux) and BSD date (macOS). If you encounter issues on macOS, ensure you have a recent version of the system tools.
+
+### Plugin not found or updates not working
+
+If the normal update process via `/plugin` doesn't work:
+
+```bash
+# 1. Manually update the marketplace clone
+cd ~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace
+git pull origin main
+
+# 2. Reinstall the plugin
+claude plugin uninstall limit@marcel-bich-claude-marketplace
+claude plugin install limit@marcel-bich-claude-marketplace
+
+# 3. Restart Claude Code
+```
+
+This is a known limitation of the Claude CLI plugin system where the local marketplace clone is not always automatically synced.
 
 ## Security
 
