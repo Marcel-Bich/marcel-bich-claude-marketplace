@@ -20,21 +20,31 @@ is_wsl() {
 }
 
 # Send Windows toast notification via PowerShell
-# Usage: windows_notify "Title" "Message"
+# Usage: windows_notify "Title" "Message" "Tag" "Urgency"
+# - Tag: Used for notification replacement (same tag = replace old notification)
+# - Urgency: 1=normal (5s), 2=critical (persistent)
 # Uses scenario="incomingCall" to bypass Focus Assist and show banner
 windows_notify() {
     local title="${1:-Notification}"
     local message="${2:-}"
+    local tag="${3:-claude-default}"
+    local urgency="${4:-1}"
 
     # Escape special characters for PowerShell
     title=$(echo "$title" | sed "s/'/\`'/g" | sed 's/"/\\"/g')
     message=$(echo "$message" | sed "s/'/\`'/g" | sed 's/"/\\"/g')
+    # Sanitize tag for Windows (alphanumeric and dash only)
+    tag=$(echo "$tag" | sed 's/[^a-zA-Z0-9-]/-/g')
+
+    # Duration: short (5s) for normal, long (25s) for critical
+    local duration="short"
+    [ "$urgency" = "2" ] && duration="long"
 
     powershell.exe -NoProfile -NonInteractive -Command "
         [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
         [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
         \$template = @'
-<toast scenario=\"incomingCall\">
+<toast scenario=\"incomingCall\" duration=\"$duration\">
     <visual>
         <binding template=\"ToastText02\">
             <text id=\"1\">$title</text>
@@ -47,6 +57,8 @@ windows_notify() {
         \$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
         \$xml.LoadXml(\$template)
         \$toast = [Windows.UI.Notifications.ToastNotification]::new(\$xml)
+        \$toast.Tag = '$tag'
+        \$toast.Group = 'ClaudeCode'
         [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show(\$toast)
     " 2>/dev/null &
 }
@@ -59,23 +71,28 @@ windows_sound() {
     local sound_type="${1:-complete}"
     local linux_volume="${2:-0.4}"
 
-    # Convert Linux volume to Windows volume (Linux 0.4 = Windows 0.05)
-    local win_volume=$(echo "$linux_volume * 0.125" | bc -l 2>/dev/null | head -c 6)
-    [ -z "$win_volume" ] && win_volume="0.05"
-
-    # Select sound file based on type
+    # Select sound file and volume factor based on type
+    # Speech On.wav is quieter by nature, needs higher volume factor
     local sound_file
+    local volume_factor="0.125"
     case "$sound_type" in
         complete|done)
-            sound_file='C:\Windows\Media\Windows Notify System Generic.wav'
+            sound_file='C:\Windows\Media\Windows Notify Email.wav'
+            volume_factor="0.125"  # Linux 0.4 -> Windows 0.05
             ;;
         attention|message|alert)
-            sound_file='C:\Windows\Media\Windows Notify Email.wav'
+            sound_file='C:\Windows\Media\Speech On.wav'
+            volume_factor="0.35"   # Linux 0.25 -> Windows ~0.09 (louder for quiet sound)
             ;;
         *)
-            sound_file='C:\Windows\Media\Windows Notify System Generic.wav'
+            sound_file='C:\Windows\Media\Windows Notify Email.wav'
+            volume_factor="0.125"
             ;;
     esac
+
+    # Convert Linux volume to Windows volume
+    local win_volume=$(echo "$linux_volume * $volume_factor" | bc -l 2>/dev/null | head -c 6)
+    [ -z "$win_volume" ] && win_volume="0.05"
 
     powershell.exe -NoProfile -NonInteractive -Command "
         Add-Type -AssemblyName PresentationCore

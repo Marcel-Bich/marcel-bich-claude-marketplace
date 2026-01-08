@@ -30,9 +30,10 @@ case "$URGENCY" in
     *)          TIMEOUT=5000 ;;
 esac
 
-# WSL: Use Windows toast notifications
+# WSL: Use Windows toast notifications with replacement support
 if is_wsl; then
-    windows_notify "$TITLE" "$BODY"
+    # SESSION_ID is used as Tag for notification replacement
+    windows_notify "$TITLE" "$BODY" "$SESSION_ID" "$URGENCY"
 # Linux: Try gdbus first (supports replacement)
 elif command -v gdbus &> /dev/null; then
     RESULT=$(gdbus call --session \
