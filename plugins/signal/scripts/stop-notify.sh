@@ -12,6 +12,9 @@ SOUND_VOLUME="${CLAUDE_NOTIFY_SOUND_COMPLETE:-0.4}"
 # Get plugin root directory
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Load WSL utilities
+source "$PLUGIN_ROOT/scripts/wsl-utils.sh"
+
 # Read JSON input
 INPUT=$(cat)
 
@@ -117,12 +120,7 @@ fi
 # Send notification
 "$PLUGIN_ROOT/scripts/notify-replace.sh" "project-${PROJECT}-stop" "✨ Done [$PROJECT]" "$SUMMARY" "dialog-information" 1
 
-# Play completion sound (if enabled and paplay available)
-if command -v paplay &> /dev/null && [ "$(echo "$SOUND_VOLUME > 0" | bc 2>/dev/null)" = "1" ]; then
-    CURRENT_VOL=$(pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | grep -oP '\d+(?=%)' | head -1)
-    # Calculate play volume: current% * sound_volume * 655.36
-    PLAY_VOL=$(echo "${CURRENT_VOL:-50} * $SOUND_VOLUME * 655.36" | bc 2>/dev/null | cut -d. -f1)
-    [ -n "$PLAY_VOL" ] && paplay --volume="$PLAY_VOL" /usr/share/sounds/freedesktop/stereo/complete.oga 2>/dev/null &
-fi
+# Play completion sound (cross-platform)
+play_sound "complete" "$SOUND_VOLUME"
 
 exit 0

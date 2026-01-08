@@ -4,6 +4,11 @@
 #
 # Uses gdbus for notification replacement (prevents stacking)
 # Falls back to notify-send if gdbus fails
+# On WSL: Uses Windows toast notifications via PowerShell
+
+# Load WSL utilities
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/wsl-utils.sh"
 
 SESSION_ID="${1:-default}"
 TITLE="${2:-Claude Code}"
@@ -25,8 +30,11 @@ case "$URGENCY" in
     *)          TIMEOUT=5000 ;;
 esac
 
-# Try gdbus first (supports replacement)
-if command -v gdbus &> /dev/null; then
+# WSL: Use Windows toast notifications
+if is_wsl; then
+    windows_notify "$TITLE" "$BODY"
+# Linux: Try gdbus first (supports replacement)
+elif command -v gdbus &> /dev/null; then
     RESULT=$(gdbus call --session \
         -d org.freedesktop.Notifications \
         -o /org/freedesktop/Notifications \
