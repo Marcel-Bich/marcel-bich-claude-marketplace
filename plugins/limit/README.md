@@ -91,8 +91,8 @@ Configure via environment variables in `~/.claude/settings.json`:
 ```json
 {
   "env": {
-    "CLAUDE_LIMIT_SHOW_ERRORS": "false",
-    "CLAUDE_LIMIT_DEBUG": "false"
+    "CLAUDE_MB_LIMIT_SHOW_ERRORS": "false",
+    "CLAUDE_MB_LIMIT_DEBUG": "false"
   },
   "statusLine": {
     "type": "command",
@@ -105,16 +105,16 @@ Configure via environment variables in `~/.claude/settings.json`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLAUDE_LIMIT_5H` | `true` | Show 5-hour limit |
-| `CLAUDE_LIMIT_7D` | `true` | Show 7-day limit |
-| `CLAUDE_LIMIT_OPUS` | `true` | Show Opus limit (if available) |
-| `CLAUDE_LIMIT_SONNET` | `true` | Show Sonnet limit (if available) |
-| `CLAUDE_LIMIT_EXTRA` | `true` | Show extra credits (if used) |
-| `CLAUDE_LIMIT_COLORS` | `true` | Enable colored output |
-| `CLAUDE_LIMIT_PROGRESS` | `true` | Show progress bars |
-| `CLAUDE_LIMIT_RESET` | `true` | Show reset times |
-| `CLAUDE_LIMIT_SHOW_ERRORS` | `false` | Show "limit: error" on failures |
-| `CLAUDE_LIMIT_DEBUG` | `false` | Show raw API response for debugging |
+| `CLAUDE_MB_LIMIT_5H` | `true` | Show 5-hour limit |
+| `CLAUDE_MB_LIMIT_7D` | `true` | Show 7-day limit |
+| `CLAUDE_MB_LIMIT_OPUS` | `true` | Show Opus limit (if available) |
+| `CLAUDE_MB_LIMIT_SONNET` | `true` | Show Sonnet limit (if available) |
+| `CLAUDE_MB_LIMIT_EXTRA` | `true` | Show extra credits (if used) |
+| `CLAUDE_MB_LIMIT_COLORS` | `true` | Enable colored output |
+| `CLAUDE_MB_LIMIT_PROGRESS` | `true` | Show progress bars |
+| `CLAUDE_MB_LIMIT_RESET` | `true` | Show reset times |
+| `CLAUDE_MB_LIMIT_SHOW_ERRORS` | `false` | Show "limit: error" on failures |
+| `CLAUDE_MB_LIMIT_DEBUG` | `false` | Show raw API response for debugging |
 
 ### Example: Minimal Output
 
@@ -123,10 +123,10 @@ To show only the 5-hour percentage without colors or progress bars:
 ```json
 {
   "env": {
-    "CLAUDE_LIMIT_7D": "false",
-    "CLAUDE_LIMIT_COLORS": "false",
-    "CLAUDE_LIMIT_PROGRESS": "false",
-    "CLAUDE_LIMIT_RESET": "false"
+    "CLAUDE_MB_LIMIT_7D": "false",
+    "CLAUDE_MB_LIMIT_COLORS": "false",
+    "CLAUDE_MB_LIMIT_PROGRESS": "false",
+    "CLAUDE_MB_LIMIT_RESET": "false"
   }
 }
 ```
@@ -147,13 +147,13 @@ Output: `5h  14%`
 - Verify you're logged in: `claude /login`
 - Check if credentials exist: `ls ~/.claude/.credentials.json`
 - Test manually: Run the script directly in your terminal
-- Enable error display: `CLAUDE_LIMIT_SHOW_ERRORS=true ./path/to/script.sh`
+- Enable error display: `CLAUDE_MB_LIMIT_SHOW_ERRORS=true ./path/to/script.sh`
 
 ### Debug mode
 
 To see the raw API response:
 ```bash
-CLAUDE_LIMIT_DEBUG=true ~/.claude/plugins/limit@marcel-bich-claude-marketplace/scripts/usage-statusline.sh
+CLAUDE_MB_LIMIT_DEBUG=true ~/.claude/plugins/limit@marcel-bich-claude-marketplace/scripts/usage-statusline.sh
 ```
 
 ### "OAuth token missing user:profile scope"

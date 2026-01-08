@@ -3,9 +3,9 @@
 # Part of desktop-notifier plugin for Claude Code
 
 # === CONFIGURATION (via environment variables) ===
-# CLAUDE_NOTIFY_SOUND_ATTENTION: volume 0.0-1.0 (default: 0.25), 0 to disable
+# CLAUDE_MB_NOTIFY_SOUND_ATTENTION: volume 0.0-1.0 (default: 0.25), 0 to disable
 
-SOUND_VOLUME="${CLAUDE_NOTIFY_SOUND_ATTENTION:-0.25}"
+SOUND_VOLUME="${CLAUDE_MB_NOTIFY_SOUND_ATTENTION:-0.25}"
 
 # Get plugin root and hook type
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"

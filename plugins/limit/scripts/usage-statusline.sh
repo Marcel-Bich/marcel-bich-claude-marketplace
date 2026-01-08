@@ -10,17 +10,17 @@ API_URL="https://api.anthropic.com/api/oauth/usage"
 TIMEOUT=5
 
 # Debug mode - shows raw API response
-DEBUG="${CLAUDE_LIMIT_DEBUG:-false}"
+DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-false}"
 
 # Feature toggles (all default to true)
-SHOW_5H="${CLAUDE_LIMIT_5H:-true}"
-SHOW_7D="${CLAUDE_LIMIT_7D:-true}"
-SHOW_OPUS="${CLAUDE_LIMIT_OPUS:-true}"
-SHOW_SONNET="${CLAUDE_LIMIT_SONNET:-true}"
-SHOW_EXTRA="${CLAUDE_LIMIT_EXTRA:-true}"
-SHOW_COLORS="${CLAUDE_LIMIT_COLORS:-true}"
-SHOW_PROGRESS="${CLAUDE_LIMIT_PROGRESS:-true}"
-SHOW_RESET="${CLAUDE_LIMIT_RESET:-true}"
+SHOW_5H="${CLAUDE_MB_LIMIT_5H:-true}"
+SHOW_7D="${CLAUDE_MB_LIMIT_7D:-true}"
+SHOW_OPUS="${CLAUDE_MB_LIMIT_OPUS:-true}"
+SHOW_SONNET="${CLAUDE_MB_LIMIT_SONNET:-true}"
+SHOW_EXTRA="${CLAUDE_MB_LIMIT_EXTRA:-true}"
+SHOW_COLORS="${CLAUDE_MB_LIMIT_COLORS:-true}"
+SHOW_PROGRESS="${CLAUDE_MB_LIMIT_PROGRESS:-true}"
+SHOW_RESET="${CLAUDE_MB_LIMIT_RESET:-true}"
 
 # ANSI color codes
 COLOR_RESET='\033[0m'
@@ -37,7 +37,7 @@ BAR_WIDTH=10
 
 # Silent error exit for statusline
 error_exit() {
-    if [[ "${CLAUDE_LIMIT_SHOW_ERRORS:-false}" == "true" ]]; then
+    if [[ "${CLAUDE_MB_LIMIT_SHOW_ERRORS:-false}" == "true" ]]; then
         echo "limit: error"
     fi
     exit 0
