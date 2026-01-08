@@ -18,14 +18,15 @@ Unlike tools that estimate usage from local logs, this plugin fetches the real u
 ## Output Example
 
 ```
-5h [==--------]  14% reset: 2026-01-08 22:00
-7d [----------]   3% reset: 2026-01-09 20:00
+5h all [==--------]  14% reset: 2026-01-08 22:00
+7d all [----------]   3% reset: 2026-01-09 20:00
+7d Opus [=====-----]  52% reset: 2026-01-09 20:00
 ```
 
 With high utilization (colored in terminal):
 ```
-5h [=========-]  85% reset: 2026-01-08 22:00
-7d [===-------]  35% reset: 2026-01-09 20:00
+5h all [=========-]  85% reset: 2026-01-08 22:00
+7d all [===-------]  35% reset: 2026-01-09 20:00
 ```
 
 ## Color Coding
@@ -40,12 +41,12 @@ With high utilization (colored in terminal):
 
 ## Displayed Limits
 
-| Limit | Description | When Shown |
+| Label | Description | When Shown |
 |-------|-------------|------------|
-| 5h | 5-hour rolling window | Always |
-| 7d | 7-day rolling window (all models) | Always (if available) |
-| Opus | 7-day Opus-specific limit | Only if you have Opus usage |
-| Sonnet | 7-day Sonnet-specific limit | Only if utilization > 0 |
+| 5h all | 5-hour rolling window (all models) | Always |
+| 7d all | 7-day rolling window (all models) | Always (if available) |
+| 7d Opus | 7-day Opus-specific limit | Only if you have Opus usage |
+| 7d Sonnet | 7-day Sonnet-specific limit | Only if utilization > 0 |
 | Extra | Extra usage credits | Only if enabled AND used > $0 |
 
 ## Requirements
@@ -196,7 +197,7 @@ To show only the 5-hour percentage without colors or progress bars:
 }
 ```
 
-Output: `5h  14%`
+Output: `5h all  14%`
 
 ## How It Works
 
