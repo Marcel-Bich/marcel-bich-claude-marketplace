@@ -118,6 +118,17 @@ Replace `<plugin>` with `signal` or `limit`.
 
 This is a known limitation of the Claude CLI plugin system where the local marketplace clone is not always automatically synced.
 
+### Using limit plugin with ccstatusline
+
+The limit plugin uses Claude Code's statusLine feature. Since only one statusLine can be active, you need a wrapper script to combine it with [ccstatusline](https://www.npmjs.com/package/ccstatusline).
+
+**Quick setup:**
+```bash
+curl -sL https://raw.githubusercontent.com/Marcel-Bich/marcel-bich-claude-marketplace/main/plugins/limit/scripts/setup-combined-statusline.sh | bash
+```
+
+See [plugins/limit/README.md](plugins/limit/README.md#combining-with-ccstatusline) for manual setup instructions.
+
 ## License
 
 MIT - See [LICENSE](LICENSE) file for full terms.
