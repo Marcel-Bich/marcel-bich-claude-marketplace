@@ -54,9 +54,9 @@ Configure via environment variables in `~/.claude/settings.json`:
 ```json
 {
   "env": {
-    "CLAUDE_NOTIFY_HAIKU": "false",
-    "CLAUDE_NOTIFY_SOUND_COMPLETE": "0.4",
-    "CLAUDE_NOTIFY_SOUND_ATTENTION": "0.25"
+    "CLAUDE_MB_NOTIFY_HAIKU": "false",
+    "CLAUDE_MB_NOTIFY_SOUND_COMPLETE": "0.4",
+    "CLAUDE_MB_NOTIFY_SOUND_ATTENTION": "0.25"
   }
 }
 ```
@@ -65,9 +65,9 @@ Configure via environment variables in `~/.claude/settings.json`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLAUDE_NOTIFY_HAIKU` | `false` | Enable AI summaries on task completion |
-| `CLAUDE_NOTIFY_SOUND_COMPLETE` | `0.4` | Completion sound volume (0-1, 0 = off) |
-| `CLAUDE_NOTIFY_SOUND_ATTENTION` | `0.25` | Attention sound volume (0-1, 0 = off) |
+| `CLAUDE_MB_NOTIFY_HAIKU` | `false` | Enable AI summaries on task completion |
+| `CLAUDE_MB_NOTIFY_SOUND_COMPLETE` | `0.4` | Completion sound volume (0-1, 0 = off) |
+| `CLAUDE_MB_NOTIFY_SOUND_ATTENTION` | `0.25` | Attention sound volume (0-1, 0 = off) |
 
 ### Sound Volume
 
@@ -80,7 +80,7 @@ Sound volume is relative to your system volume:
 
 > **Cost Warning:** Enabling this feature will use your Anthropic API credits. Each notification triggers a Haiku API call which costs real money. You are responsible for monitoring your own API usage and costs.
 
-When enabled (`CLAUDE_NOTIFY_HAIKU=true`), the plugin uses Haiku to generate a brief summary of the work completed. This:
+When enabled (`CLAUDE_MB_NOTIFY_HAIKU=true`), the plugin uses Haiku to generate a brief summary of the work completed. This:
 - **Costs API credits** (~0.001-0.01 USD per notification, depending on context size)
 - Requires the `claude` CLI to be available and authenticated
 - Shows a one-sentence summary in the notification
