@@ -10,6 +10,11 @@ Add this marketplace to Claude Code:
 claude plugin marketplace add Marcel-Bich/marcel-bich-claude-marketplace
 ```
 
+Or within a Claude session:
+```
+/plugin marketplace add Marcel-Bich/marcel-bich-claude-marketplace
+```
+
 ## Available Plugins
 
 ### signal
@@ -20,6 +25,13 @@ Desktop notifications showing what Claude Code is working on - stay informed eve
 ```bash
 claude plugin install signal@marcel-bich-claude-marketplace
 ```
+
+Or within a Claude session:
+```
+/plugin install signal@marcel-bich-claude-marketplace
+```
+
+When using those `/plugin` commands within a Claude session, restart Claude afterwards for changes to take effect.
 
 **Features:**
 - Live status updates via desktop notifications
