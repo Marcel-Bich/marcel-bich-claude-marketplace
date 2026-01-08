@@ -299,24 +299,24 @@ format_output() {
     # Build output lines
     local lines=()
 
-    # 5-hour limit (if enabled)
+    # 5-hour limit (if enabled) - all models
     if [[ "$SHOW_5H" == "true" ]]; then
-        lines+=("$(format_limit_line "5h" "$five_pct" "$five_hour_reset")")
+        lines+=("$(format_limit_line "5h all" "$five_pct" "$five_hour_reset")")
     fi
 
-    # 7-day limit (if enabled and available)
+    # 7-day limit (if enabled and available) - all models
     if [[ "$SHOW_7D" == "true" ]] && [[ -n "$seven_pct" ]]; then
-        lines+=("$(format_limit_line "7d" "$seven_pct" "$seven_day_reset")")
+        lines+=("$(format_limit_line "7d all" "$seven_pct" "$seven_day_reset")")
     fi
 
-    # Opus limit (if enabled and has data)
+    # 7-day Opus limit (if enabled and has data)
     if [[ "$SHOW_OPUS" == "true" ]] && [[ -n "$opus_pct" ]]; then
-        lines+=("$(format_limit_line "Opus" "$opus_pct" "$opus_reset")")
+        lines+=("$(format_limit_line "7d Opus" "$opus_pct" "$opus_reset")")
     fi
 
-    # Sonnet limit (if enabled and has utilization > 0 or reset time)
+    # 7-day Sonnet limit (if enabled and has utilization > 0 or reset time)
     if [[ "$SHOW_SONNET" == "true" ]] && [[ -n "$sonnet_pct" ]] && { [[ "$sonnet_pct" -gt 0 ]] || [[ -n "$sonnet_reset" && "$sonnet_reset" != "null" ]]; }; then
-        lines+=("$(format_limit_line "Sonnet" "$sonnet_pct" "$sonnet_reset")")
+        lines+=("$(format_limit_line "7d Sonnet" "$sonnet_pct" "$sonnet_reset")")
     fi
 
     # Extra usage (if enabled AND used_credits > 0)
