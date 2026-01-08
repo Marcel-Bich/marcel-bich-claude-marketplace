@@ -18,12 +18,14 @@ Unlike tools that estimate usage from local logs, this plugin fetches the real u
 ## Output Example
 
 ```
-5h [==--------]  14% reset 2026-01-08 22:00 | 7d [----------]   3% reset 2026-01-09 20:00
+5h [==--------]  14% reset: 2026-01-08 22:00
+7d [----------]   3% reset: 2026-01-09 20:00
 ```
 
 With high utilization (colored in terminal):
 ```
-5h [=========-]  85% reset 2026-01-08 22:00 | 7d [===-------]  35% reset 2026-01-09 20:00
+5h [=========-]  85% reset: 2026-01-08 22:00
+7d [===-------]  35% reset: 2026-01-09 20:00
 ```
 
 ## Color Coding
@@ -73,6 +75,68 @@ After installation, add the statusline configuration to `~/.claude/settings.json
 
 **Note:** Restart Claude Code after changing settings.json.
 
+### Combining with ccstatusline
+
+If you want to use this plugin together with [ccstatusline](https://www.npmjs.com/package/ccstatusline), you have two options:
+
+#### Option A: Automatic Setup (Recommended)
+
+Run the setup script that creates the wrapper and updates your settings:
+
+**Online (via curl):**
+```bash
+curl -sL https://raw.githubusercontent.com/Marcel-Bich/marcel-bich-claude-marketplace/main/plugins/limit/scripts/setup-combined-statusline.sh | bash
+```
+
+**Local (if plugin already installed):**
+```bash
+~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/setup-combined-statusline.sh
+```
+
+Then restart Claude Code.
+
+#### Option B: Manual Setup
+
+**1. Create `~/.claude/statusline-combined.sh`:**
+
+```bash
+#!/bin/bash
+# Combined statusline: ccstatusline + limit plugin
+
+# Get ccstatusline output (all lines)
+CCSTATUS=$(npx -y ccstatusline@latest 2>/dev/null)
+
+# Get limit plugin output
+LIMIT=$(~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/usage-statusline.sh 2>/dev/null)
+
+# Combine with newline
+if [[ -n "$CCSTATUS" ]] && [[ -n "$LIMIT" ]]; then
+    echo -e "$CCSTATUS"
+    echo -e "$LIMIT"
+elif [[ -n "$LIMIT" ]]; then
+    echo -e "$LIMIT"
+elif [[ -n "$CCSTATUS" ]]; then
+    echo -e "$CCSTATUS"
+fi
+```
+
+**2. Make it executable:**
+
+```bash
+chmod +x ~/.claude/statusline-combined.sh
+```
+
+**3. Update `~/.claude/settings.json`:**
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline-combined.sh"
+  }
+}
+```
+
 ## Updating
 
 To update the plugin when a new version is available:
@@ -115,6 +179,7 @@ Configure via environment variables in `~/.claude/settings.json`:
 | `CLAUDE_MB_LIMIT_RESET` | `true` | Show reset times |
 | `CLAUDE_MB_LIMIT_SHOW_ERRORS` | `false` | Show "limit: error" on failures |
 | `CLAUDE_MB_LIMIT_DEBUG` | `false` | Show raw API response for debugging |
+| `CLAUDE_MB_LIMIT_CACHE_AGE` | `120` | Cache duration in seconds (rate limiting) |
 
 ### Example: Minimal Output
 
@@ -136,9 +201,16 @@ Output: `5h  14%`
 ## How It Works
 
 1. Reads your OAuth token from `~/.claude/.credentials.json`
-2. Fetches usage data from Anthropic's OAuth API
-3. Formats each limit with colored progress bar, percentage, and reset time
-4. Updates automatically with each Claude response (statusline refresh)
+2. Checks if cached data exists and is fresh (default: 2 minutes)
+3. If cache expired, fetches fresh usage data from Anthropic's OAuth API
+4. Formats each limit with colored progress bar, percentage, and reset time
+5. Updates automatically with each Claude response (statusline refresh)
+
+### Rate Limiting
+
+To avoid excessive API calls, responses are cached for 2 minutes by default. The cache is stored in `/tmp/claude-limit-cache.json`. You can adjust the cache duration via `CLAUDE_MB_LIMIT_CACHE_AGE` (in seconds).
+
+**Warning:** Do not set the cache duration lower than the default. Anthropic may rate-limit or block your account if you make too many API requests. The 2-minute default is a safe value.
 
 ## Troubleshooting
 

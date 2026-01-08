@@ -9,6 +9,10 @@ CREDENTIALS_FILE="${HOME}/.claude/.credentials.json"
 API_URL="https://api.anthropic.com/api/oauth/usage"
 TIMEOUT=5
 
+# Cache configuration (rate limiting)
+CACHE_FILE="/tmp/claude-limit-cache.json"
+CACHE_MAX_AGE="${CLAUDE_MB_LIMIT_CACHE_AGE:-120}"  # 2 minutes default
+
 # Debug mode - shows raw API response
 DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-false}"
 
@@ -65,10 +69,53 @@ get_token() {
     echo "$token"
 }
 
-# Fetch usage data from API
+# Check if cache is valid (not expired)
+is_cache_valid() {
+    if [[ ! -f "$CACHE_FILE" ]]; then
+        return 1
+    fi
+
+    local cache_time
+    cache_time=$(stat -c %Y "$CACHE_FILE" 2>/dev/null || stat -f %m "$CACHE_FILE" 2>/dev/null) || return 1
+    local current_time
+    current_time=$(date +%s)
+    local age=$((current_time - cache_time))
+
+    if [[ "$age" -lt "$CACHE_MAX_AGE" ]]; then
+        return 0
+    fi
+    return 1
+}
+
+# Read cached response
+read_cache() {
+    cat "$CACHE_FILE" 2>/dev/null
+}
+
+# Write response to cache
+write_cache() {
+    local response="$1"
+    echo "$response" > "$CACHE_FILE" 2>/dev/null || true
+}
+
+# Fetch usage data from API (with caching)
 fetch_usage() {
     local token="$1"
 
+    # Check cache first
+    if is_cache_valid; then
+        local cached
+        cached=$(read_cache)
+        if [[ -n "$cached" ]]; then
+            if [[ "$DEBUG" == "true" ]]; then
+                echo "DEBUG: Using cached response (age < ${CACHE_MAX_AGE}s)" >&2
+            fi
+            echo "$cached"
+            return
+        fi
+    fi
+
+    # Fetch fresh data from API
     local response
     response=$(curl -s -f --max-time "$TIMEOUT" \
         -X GET "$API_URL" \
@@ -77,6 +124,13 @@ fetch_usage() {
         -H "anthropic-beta: oauth-2025-04-20" \
         -H "User-Agent: claude-code-limit-plugin/1.0.0" \
         2>/dev/null) || error_exit
+
+    # Cache the response
+    write_cache "$response"
+
+    if [[ "$DEBUG" == "true" ]]; then
+        echo "DEBUG: Fresh API response fetched" >&2
+    fi
 
     echo "$response"
 }
@@ -183,7 +237,7 @@ format_limit_line() {
 
     local reset_str=""
     if [[ "$SHOW_RESET" == "true" ]]; then
-        reset_str=" reset $(format_reset_datetime "$reset_at")"
+        reset_str=" reset: $(format_reset_datetime "$reset_at")"
     fi
 
     # Output varies based on toggles, e.g.: "Label [====------] 14% reset 2026-01-08 22:00"
