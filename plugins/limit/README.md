@@ -229,6 +229,15 @@ To see the raw API response:
 CLAUDE_MB_LIMIT_DEBUG=true ~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/usage-statusline.sh
 ```
 
+### Test progress bar colors
+
+To visually test the color transitions without real API data, run the debug script:
+```bash
+~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/debug-progress.sh
+```
+
+This simulates progress from 0% to 100% (5% per second) so you can verify all color thresholds are displayed correctly in your terminal.
+
 ### "OAuth token missing user:profile scope"
 
 Some accounts may see this error. Workaround:
