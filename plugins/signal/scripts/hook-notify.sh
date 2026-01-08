@@ -22,13 +22,13 @@ INPUT=""
 # Use PROJECT + HOOK_TYPE as replacement ID
 NOTIFY_ID="project-${PROJECT}-${HOOK_TYPE}"
 
-# Ignore stale PreToolUse events on /resume
-# Stop marker exists = session was stopped but not freshly started = /resume
-# First event after /resume is stale, ignore it and clear marker
+# Ignore first PreToolUse event after session start
+# - New session: User is at terminal anyway, no notification needed
+# - /resume: First event is stale from old session
 if [ "$HOOK_TYPE" = "PreToolUse" ] || [ "$HOOK_TYPE" = "pretooluse" ]; then
-    STOP_MARKER="/tmp/claude-mb-stopped-${PROJECT}"
-    if [ -f "$STOP_MARKER" ]; then
-        rm -f "$STOP_MARKER"
+    FIRST_EVENT_MARKER="/tmp/claude-mb-first-event-pending-${PROJECT}"
+    if [ -f "$FIRST_EVENT_MARKER" ]; then
+        rm -f "$FIRST_EVENT_MARKER"
         exit 0
     fi
 fi
