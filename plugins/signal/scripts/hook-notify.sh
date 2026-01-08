@@ -45,7 +45,11 @@ case "$HOOK_TYPE" in
                     MESSAGE="Question waiting for answer"
                     ;;
                 *)
-                    MESSAGE="Notification: $NOTIF_TYPE"
+                    if [ -n "$NOTIF_TYPE" ]; then
+                        MESSAGE="Notification: $NOTIF_TYPE"
+                    else
+                        MESSAGE="Waiting for input"
+                    fi
                     ;;
             esac
         else
