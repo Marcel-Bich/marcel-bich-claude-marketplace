@@ -19,13 +19,13 @@ Works great with `claude --dangerously-skip-permissions` for autonomous workflow
 
 ### Linux
 - Desktop notifications (GNOME, KDE, etc.)
-- `jq` - JSON processor
+- `jq` - JSON processor (install: `sudo apt install jq`)
 - `gdbus` or `notify-send` - For desktop notifications
 - `paplay` and `pactl` - For sound alerts (optional, part of PulseAudio)
 - `bc` - For volume calculations (optional)
 
 ### WSL2 (Windows 10/11)
-- `jq` - JSON processor
+- `jq` - JSON processor (install: `sudo apt install jq`)
 - `powershell.exe` - For Windows toast notifications and sounds (available by default in WSL)
 - Optional: [BurntToast](https://github.com/Windos/BurntToast) PowerShell module for better notifications
 
