@@ -24,6 +24,9 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
 STOP_HOOK_ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // "null"')
 
+# Fallback to PWD if CWD is empty
+[ -z "$CWD" ] && CWD="$PWD"
+
 # Skip for subagents
 if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
     exit 0
