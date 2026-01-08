@@ -22,6 +22,19 @@ INPUT=""
 # Use PROJECT + HOOK_TYPE as replacement ID
 NOTIFY_ID="project-${PROJECT}-${HOOK_TYPE}"
 
+# Ignore stale PreToolUse events in first 10 seconds after session start
+# (Claude Code may replay last event on session resume)
+if [ "$HOOK_TYPE" = "PreToolUse" ] || [ "$HOOK_TYPE" = "pretooluse" ]; then
+    SESSION_START_FILE="/tmp/claude-mb-session-start-${PROJECT}"
+    if [ -f "$SESSION_START_FILE" ]; then
+        SESSION_START=$(cat "$SESSION_START_FILE" 2>/dev/null || echo "0")
+        NOW=$(date +%s)
+        if [ $((NOW - SESSION_START)) -lt 10 ]; then
+            exit 0
+        fi
+    fi
+fi
+
 # Build notification based on hook type
 case "$HOOK_TYPE" in
     stop|Stop)
