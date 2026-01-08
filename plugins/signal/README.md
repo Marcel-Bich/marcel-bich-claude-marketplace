@@ -112,9 +112,29 @@ When enabled (`CLAUDE_NOTIFY_HAIKU=true`), the plugin uses Haiku to generate a b
 - Check Windows notification settings (Settings > System > Notifications)
 
 ### WSL: No sound
-- Windows sounds are played via PowerShell's SystemSounds API
+- Windows sounds are played via PowerShell's MediaPlayer API
 - Check if Windows sounds are enabled in your system settings
-- Volume settings in the plugin config are ignored on WSL (uses Windows defaults)
+- Volume is converted from Linux scale (0.4 Linux = 0.05 Windows)
+
+### Plugin updates not working
+If `/plugin` shows no updates available but you know there's a new version:
+
+```bash
+# 1. Manually update the marketplace clone
+cd ~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace
+git pull origin main
+
+# 2. Clear the plugin cache
+rm -rf ~/.claude/plugins/cache/marcel-bich-claude-marketplace/signal
+
+# 3. Reinstall the plugin
+claude plugin uninstall signal@marcel-bich-claude-marketplace
+claude plugin install signal@marcel-bich-claude-marketplace
+
+# 4. Restart Claude Code
+```
+
+This is a known limitation of the Claude CLI plugin system where the local marketplace clone is not automatically synced.
 
 ## Disclaimer
 
