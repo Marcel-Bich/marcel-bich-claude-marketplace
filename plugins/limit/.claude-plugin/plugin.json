@@ -1,6 +1,6 @@
 {
   "name": "limit",
-  "version": "2.0.0",
+  "version": "1.1.0",
   "description": "Live API usage display in Claude Code statusline - shows utilization with colored progress bars and reset times. Supports 5-hour, 7-day, Opus, Sonnet, and Extra Credits limits.",
   "keywords": ["usage", "statusline", "api", "quota", "limits", "utilization"],
   "license": "MIT"
