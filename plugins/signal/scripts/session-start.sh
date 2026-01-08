@@ -7,8 +7,8 @@ source "$SCRIPT_DIR/wsl-utils.sh"
 
 PROJECT=$(basename "$PWD" 2>/dev/null || echo "claude")
 
-# Mark session start time (used by hook-notify.sh to ignore stale events)
-echo "$(date +%s)" > "/tmp/claude-mb-session-start-${PROJECT}"
+# Clear stop marker (new session, not resume)
+rm -f "/tmp/claude-mb-stopped-${PROJECT}" 2>/dev/null
 
 if is_wsl; then
     # Windows: Clear only ClaudeCode group notifications from Action Center

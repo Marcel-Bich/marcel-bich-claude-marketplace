@@ -22,27 +22,15 @@ INPUT=""
 # Use PROJECT + HOOK_TYPE as replacement ID
 NOTIFY_ID="project-${PROJECT}-${HOOK_TYPE}"
 
-# Ignore stale/duplicate PreToolUse events after session resume
-# If same input comes after >30s pause, it's likely a replayed stale event
+# Ignore stale PreToolUse events on /resume
+# Stop marker exists = session was stopped but not freshly started = /resume
+# First event after /resume is stale, ignore it and clear marker
 if [ "$HOOK_TYPE" = "PreToolUse" ] || [ "$HOOK_TYPE" = "pretooluse" ]; then
-    LAST_EVENT_FILE="/tmp/claude-mb-last-pretooluse-${PROJECT}"
-    NOW=$(date +%s)
-    # Create hash of current input for duplicate detection
-    CURRENT_HASH=$(echo "$INPUT" | md5sum | cut -d' ' -f1)
-
-    if [ -f "$LAST_EVENT_FILE" ]; then
-        LAST_DATA=$(cat "$LAST_EVENT_FILE" 2>/dev/null)
-        LAST_TIME=$(echo "$LAST_DATA" | head -1)
-        LAST_HASH=$(echo "$LAST_DATA" | tail -1)
-        PAUSE_DURATION=$((NOW - LAST_TIME))
-
-        # If same input after >30s pause, it's a stale replay - ignore
-        if [ "$PAUSE_DURATION" -gt 30 ] && [ "$CURRENT_HASH" = "$LAST_HASH" ]; then
-            printf "%s\n%s" "$NOW" "$CURRENT_HASH" > "$LAST_EVENT_FILE"
-            exit 0
-        fi
+    STOP_MARKER="/tmp/claude-mb-stopped-${PROJECT}"
+    if [ -f "$STOP_MARKER" ]; then
+        rm -f "$STOP_MARKER"
+        exit 0
     fi
-    printf "%s\n%s" "$NOW" "$CURRENT_HASH" > "$LAST_EVENT_FILE"
 fi
 
 # Build notification based on hook type

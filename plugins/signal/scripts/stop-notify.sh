@@ -123,6 +123,9 @@ fi
 # Send notification
 "$PLUGIN_ROOT/scripts/notify-replace.sh" "project-${PROJECT}-stop" "✨ Done [$PROJECT]" "$SUMMARY" "dialog-information" 1
 
+# Mark session as stopped (used to detect stale events on /resume)
+echo "$(date +%s)" > "/tmp/claude-mb-stopped-${PROJECT}"
+
 # Play completion sound
 if is_wsl; then
     # WSL: Use Windows system sound with volume
