@@ -7,8 +7,9 @@ source "$SCRIPT_DIR/wsl-utils.sh"
 
 PROJECT=$(basename "$PWD" 2>/dev/null || echo "claude")
 
-# Clear stop marker (new session, not resume)
-rm -f "/tmp/claude-mb-stopped-${PROJECT}" 2>/dev/null
+# Mark that first PreToolUse event should be ignored
+# (Either stale from /resume, or user is at terminal anyway for new session)
+touch "/tmp/claude-mb-first-event-pending-${PROJECT}"
 
 if is_wsl; then
     # Windows: Clear only ClaudeCode group notifications from Action Center
