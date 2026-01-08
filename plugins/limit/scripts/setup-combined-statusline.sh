@@ -15,7 +15,7 @@ NC='\033[0m' # No Color
 # Paths
 CLAUDE_DIR="${HOME}/.claude"
 SETTINGS_FILE="${CLAUDE_DIR}/settings.json"
-WRAPPER_SCRIPT="${CLAUDE_DIR}/statusline-combined.sh"
+WRAPPER_SCRIPT="${CLAUDE_DIR}/statusline-mb-combined.sh"
 LIMIT_SCRIPT="${CLAUDE_DIR}/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/usage-statusline.sh"
 
 echo "====================================="
@@ -90,8 +90,8 @@ EOF
     echo -e "  Created new settings.json"
 else
     # Backup existing settings
-    cp "$SETTINGS_FILE" "${SETTINGS_FILE}.backup"
-    echo -e "  Backup: ${SETTINGS_FILE}.backup"
+    cp "$SETTINGS_FILE" "${SETTINGS_FILE}.mb-backup"
+    echo -e "  Backup: ${SETTINGS_FILE}.mb-backup"
 
     # Update statusLine in existing settings
     tmp_file=$(mktemp)

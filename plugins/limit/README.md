@@ -98,7 +98,7 @@ Then restart Claude Code.
 
 #### Option B: Manual Setup
 
-**1. Create `~/.claude/statusline-combined.sh`:**
+**1. Create `~/.claude/statusline-mb-combined.sh`:**
 
 ```bash
 #!/bin/bash
@@ -124,7 +124,7 @@ fi
 **2. Make it executable:**
 
 ```bash
-chmod +x ~/.claude/statusline-combined.sh
+chmod +x ~/.claude/statusline-mb-combined.sh
 ```
 
 **3. Update `~/.claude/settings.json`:**
@@ -133,7 +133,7 @@ chmod +x ~/.claude/statusline-combined.sh
 {
   "statusLine": {
     "type": "command",
-    "command": "~/.claude/statusline-combined.sh"
+    "command": "~/.claude/statusline-mb-combined.sh"
   }
 }
 ```
@@ -209,7 +209,7 @@ Output: `5h all  14%`
 
 ### Rate Limiting
 
-To avoid excessive API calls, responses are cached for 2 minutes by default. The cache is stored in `/tmp/claude-limit-cache.json`. You can adjust the cache duration via `CLAUDE_MB_LIMIT_CACHE_AGE` (in seconds).
+To avoid excessive API calls, responses are cached for 2 minutes by default. The cache is stored in `/tmp/claude-mb-limit-cache.json`. You can adjust the cache duration via `CLAUDE_MB_LIMIT_CACHE_AGE` (in seconds).
 
 **Warning:** Do not set the cache duration lower than the default. Anthropic may rate-limit or block your account if you make too many API requests. The 2-minute default is a safe value.
 

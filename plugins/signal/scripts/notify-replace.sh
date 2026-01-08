@@ -17,7 +17,7 @@ ICON="${4:-dialog-information}"
 URGENCY="${5:-1}"
 
 # Store notification IDs in temp files for replacement
-ID_FILE="/tmp/claude-notify-id-${SESSION_ID}"
+ID_FILE="/tmp/claude-mb-notify-id-${SESSION_ID}"
 PREV_ID=0
 if [ -f "$ID_FILE" ]; then
     PREV_ID=$(cat "$ID_FILE" 2>/dev/null || echo "0")

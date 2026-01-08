@@ -10,7 +10,7 @@ API_URL="https://api.anthropic.com/api/oauth/usage"
 TIMEOUT=5
 
 # Cache configuration (rate limiting)
-CACHE_FILE="/tmp/claude-limit-cache.json"
+CACHE_FILE="/tmp/claude-mb-limit-cache.json"
 CACHE_MAX_AGE="${CLAUDE_MB_LIMIT_CACHE_AGE:-120}"  # 2 minutes default
 
 # Debug mode - shows raw API response
