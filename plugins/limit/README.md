@@ -66,7 +66,7 @@ After installation, add the statusline configuration to `~/.claude/settings.json
 {
   "statusLine": {
     "type": "command",
-    "command": "~/.claude/plugins/limit@marcel-bich-claude-marketplace/scripts/usage-statusline.sh"
+    "command": "~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/usage-statusline.sh"
   }
 }
 ```
@@ -96,7 +96,7 @@ Configure via environment variables in `~/.claude/settings.json`:
   },
   "statusLine": {
     "type": "command",
-    "command": "~/.claude/plugins/limit@marcel-bich-claude-marketplace/scripts/usage-statusline.sh"
+    "command": "~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/usage-statusline.sh"
   }
 }
 ```
@@ -153,7 +153,7 @@ Output: `5h  14%`
 
 To see the raw API response:
 ```bash
-CLAUDE_MB_LIMIT_DEBUG=true ~/.claude/plugins/limit@marcel-bich-claude-marketplace/scripts/usage-statusline.sh
+CLAUDE_MB_LIMIT_DEBUG=true ~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/usage-statusline.sh
 ```
 
 ### "OAuth token missing user:profile scope"
