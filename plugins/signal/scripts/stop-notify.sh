@@ -45,7 +45,7 @@ fi
 
 # Global debounce: Only 1 notification per 10 seconds per project
 PROJECT=$(basename "$CWD" 2>/dev/null || echo "claude")
-DEBOUNCE_FILE="/tmp/claude-notify-${PROJECT}"
+DEBOUNCE_FILE="/tmp/claude-mb-notify-${PROJECT}"
 NOW=$(date +%s)
 if [ -f "$DEBOUNCE_FILE" ]; then
     LAST_TIME=$(cat "$DEBOUNCE_FILE" 2>/dev/null || echo "0")
