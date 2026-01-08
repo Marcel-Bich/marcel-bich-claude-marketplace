@@ -21,6 +21,7 @@ is_wsl() {
 
 # Send Windows toast notification via PowerShell
 # Usage: windows_notify "Title" "Message"
+# Uses scenario="incomingCall" to bypass Focus Assist and show banner
 windows_notify() {
     local title="${1:-Notification}"
     local message="${2:-}"
@@ -29,55 +30,60 @@ windows_notify() {
     title=$(echo "$title" | sed "s/'/\`'/g" | sed 's/"/\\"/g')
     message=$(echo "$message" | sed "s/'/\`'/g" | sed 's/"/\\"/g')
 
-    # Use BurntToast if available, otherwise fall back to basic toast
     powershell.exe -NoProfile -NonInteractive -Command "
-        if (Get-Module -ListAvailable -Name BurntToast -ErrorAction SilentlyContinue) {
-            Import-Module BurntToast
-            New-BurntToastNotification -Text '$title', '$message' -UniqueIdentifier 'ClaudeCode'
-        } else {
-            [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
-            [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
-            \$template = @'
-<toast>
+        [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+        [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+        \$template = @'
+<toast scenario=\"incomingCall\">
     <visual>
         <binding template=\"ToastText02\">
             <text id=\"1\">$title</text>
             <text id=\"2\">$message</text>
         </binding>
     </visual>
+    <audio silent=\"true\"/>
 </toast>
 '@
-            \$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
-            \$xml.LoadXml(\$template)
-            \$toast = [Windows.UI.Notifications.ToastNotification]::new(\$xml)
-            [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Claude Code').Show(\$toast)
-        }
+        \$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+        \$xml.LoadXml(\$template)
+        \$toast = [Windows.UI.Notifications.ToastNotification]::new(\$xml)
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show(\$toast)
     " 2>/dev/null &
 }
 
-# Play sound on Windows via PowerShell
-# Usage: windows_sound "complete" or windows_sound "attention"
+# Play sound on Windows via PowerShell with volume control
+# Usage: windows_sound "complete" 0.4
+# Arguments: type (complete|attention), linux_volume (0.0-1.0)
+# Volume is converted: Windows_Volume = Linux_Volume * 0.125 (so 0.4 -> 0.05)
 windows_sound() {
     local sound_type="${1:-complete}"
+    local linux_volume="${2:-0.4}"
 
+    # Convert Linux volume to Windows volume (Linux 0.4 = Windows 0.05)
+    local win_volume=$(echo "$linux_volume * 0.125" | bc -l 2>/dev/null | head -c 6)
+    [ -z "$win_volume" ] && win_volume="0.05"
+
+    # Select sound file based on type
+    local sound_file
     case "$sound_type" in
         complete|done)
-            # Windows default notification sound
-            powershell.exe -NoProfile -NonInteractive -Command "
-                [System.Media.SystemSounds]::Exclamation.Play()
-            " 2>/dev/null &
+            sound_file='C:\Windows\Media\Windows Notify System Generic.wav'
             ;;
         attention|message|alert)
-            # Windows asterisk/info sound
-            powershell.exe -NoProfile -NonInteractive -Command "
-                [System.Media.SystemSounds]::Asterisk.Play()
-            " 2>/dev/null &
+            sound_file='C:\Windows\Media\Windows Notify Email.wav'
             ;;
         *)
-            # Default beep
-            powershell.exe -NoProfile -NonInteractive -Command "
-                [System.Media.SystemSounds]::Beep.Play()
-            " 2>/dev/null &
+            sound_file='C:\Windows\Media\Windows Notify System Generic.wav'
             ;;
     esac
+
+    powershell.exe -NoProfile -NonInteractive -Command "
+        Add-Type -AssemblyName PresentationCore
+        \$player = New-Object System.Windows.Media.MediaPlayer
+        \$player.Volume = $win_volume
+        \$player.Open([Uri]'$sound_file')
+        \$player.Play()
+        Start-Sleep -Milliseconds 1500
+        \$player.Close()
+    " 2>/dev/null &
 }
