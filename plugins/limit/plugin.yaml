@@ -3,6 +3,3 @@ description: Live API usage display in Claude Code statusline - shows utilizatio
 version: 1.0.0
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
-
-# StatusLine plugin - no hooks required, configure statusLine in settings.json
-hooks: {}
