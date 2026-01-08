@@ -100,8 +100,8 @@ esac
 
 # Play attention sound
 if is_wsl; then
-    # WSL: Use Windows system sound
-    windows_sound "attention"
+    # WSL: Use Windows system sound with volume
+    windows_sound "attention" "$SOUND_VOLUME"
 elif command -v paplay &> /dev/null && [ "$(echo "$SOUND_VOLUME > 0" | bc 2>/dev/null)" = "1" ]; then
     # Linux: Original paplay code
     CURRENT_VOL=$(pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | grep -oP '\d+(?=%)' | head -1)
