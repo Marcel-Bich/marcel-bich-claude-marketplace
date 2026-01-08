@@ -22,17 +22,27 @@ INPUT=""
 # Use PROJECT + HOOK_TYPE as replacement ID
 NOTIFY_ID="project-${PROJECT}-${HOOK_TYPE}"
 
-# Ignore stale PreToolUse events in first 10 seconds after session start
-# (Claude Code may replay last event on session resume)
+# Ignore stale/duplicate PreToolUse events after session resume
+# If same input comes after >30s pause, it's likely a replayed stale event
 if [ "$HOOK_TYPE" = "PreToolUse" ] || [ "$HOOK_TYPE" = "pretooluse" ]; then
-    SESSION_START_FILE="/tmp/claude-mb-session-start-${PROJECT}"
-    if [ -f "$SESSION_START_FILE" ]; then
-        SESSION_START=$(cat "$SESSION_START_FILE" 2>/dev/null || echo "0")
-        NOW=$(date +%s)
-        if [ $((NOW - SESSION_START)) -lt 10 ]; then
+    LAST_EVENT_FILE="/tmp/claude-mb-last-pretooluse-${PROJECT}"
+    NOW=$(date +%s)
+    # Create hash of current input for duplicate detection
+    CURRENT_HASH=$(echo "$INPUT" | md5sum | cut -d' ' -f1)
+
+    if [ -f "$LAST_EVENT_FILE" ]; then
+        LAST_DATA=$(cat "$LAST_EVENT_FILE" 2>/dev/null)
+        LAST_TIME=$(echo "$LAST_DATA" | head -1)
+        LAST_HASH=$(echo "$LAST_DATA" | tail -1)
+        PAUSE_DURATION=$((NOW - LAST_TIME))
+
+        # If same input after >30s pause, it's a stale replay - ignore
+        if [ "$PAUSE_DURATION" -gt 30 ] && [ "$CURRENT_HASH" = "$LAST_HASH" ]; then
+            printf "%s\n%s" "$NOW" "$CURRENT_HASH" > "$LAST_EVENT_FILE"
             exit 0
         fi
     fi
+    printf "%s\n%s" "$NOW" "$CURRENT_HASH" > "$LAST_EVENT_FILE"
 fi
 
 # Build notification based on hook type
