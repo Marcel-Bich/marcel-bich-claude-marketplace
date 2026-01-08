@@ -3,11 +3,11 @@
 # Part of desktop-notifier plugin for Claude Code
 
 # === CONFIGURATION (via environment variables) ===
-# CLAUDE_NOTIFY_HAIKU: "true" to enable AI summaries (default: false)
-# CLAUDE_NOTIFY_SOUND_COMPLETE: volume 0.0-1.0 (default: 0.4), 0 to disable
+# CLAUDE_MB_NOTIFY_HAIKU: "true" to enable AI summaries (default: false)
+# CLAUDE_MB_NOTIFY_SOUND_COMPLETE: volume 0.0-1.0 (default: 0.4), 0 to disable
 
-HAIKU_ENABLED="${CLAUDE_NOTIFY_HAIKU:-false}"
-SOUND_VOLUME="${CLAUDE_NOTIFY_SOUND_COMPLETE:-0.4}"
+HAIKU_ENABLED="${CLAUDE_MB_NOTIFY_HAIKU:-false}"
+SOUND_VOLUME="${CLAUDE_MB_NOTIFY_SOUND_COMPLETE:-0.4}"
 
 # Get plugin root directory
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
