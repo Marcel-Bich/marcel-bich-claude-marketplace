@@ -36,6 +36,17 @@ claude plugin marketplace add Marcel-Bich/marcel-bich-claude-marketplace
 claude plugin install signal@marcel-bich-claude-marketplace
 ```
 
+## Updating
+
+To update the plugin when a new version is available:
+
+1. Run `/plugin` in Claude Code
+2. Go to the **Marketplaces** tab
+3. Select "Update marketplace" (or enable "Enable auto-update" for automatic updates)
+4. Go to the **Installed** tab
+5. Select the signal plugin and choose "Update"
+6. Restart Claude Code
+
 ## Configuration
 
 Configure via environment variables in `~/.claude/settings.json`:
@@ -116,8 +127,8 @@ When enabled (`CLAUDE_NOTIFY_HAIKU=true`), the plugin uses Haiku to generate a b
 - Check if Windows sounds are enabled in your system settings
 - Volume is converted from Linux scale (0.4 Linux = 0.05 Windows)
 
-### Plugin updates not working
-If `/plugin` shows no updates available but you know there's a new version:
+### Plugin updates not working (fallback)
+If the normal update process via `/plugin` doesn't work:
 
 ```bash
 # 1. Manually update the marketplace clone
