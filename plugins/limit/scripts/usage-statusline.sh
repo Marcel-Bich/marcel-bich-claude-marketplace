@@ -285,14 +285,14 @@ format_output() {
         lines+=("$extra_line")
     fi
 
-    # Join lines with " | " separator
+    # Join lines with newline separator (multiline output)
     local first=true
     for line in "${lines[@]}"; do
         if [[ "$first" == "true" ]]; then
             output="$line"
             first=false
         else
-            output="$output | $line"
+            output="$output"$'\n'"$line"
         fi
     done
 
