@@ -77,27 +77,42 @@ get_token() {
 get_current_model() {
     local model=""
     local model_name="Unknown"
+    local full_model_id=""
+    local stats_file="${HOME}/.claude/stats-cache.json"
 
+    # Try to get model from settings.json first
     if [[ -f "$CLAUDE_SETTINGS_FILE" ]]; then
         model=$(jq -r '.model // empty' "$CLAUDE_SETTINGS_FILE" 2>/dev/null)
-        if [[ -n "$model" ]] && [[ "$model" != "null" ]]; then
-            # Capitalize first letter (opus -> Opus, sonnet -> Sonnet)
-            model_name="${model^}"
+    fi
+
+    # Fallback: detect model from stats-cache.json (most used by output tokens)
+    if [[ -z "$model" || "$model" == "null" ]] && [[ -f "$stats_file" ]]; then
+        # Get the model with highest output tokens (most used = likely current)
+        full_model_id=$(jq -r '.modelUsage | to_entries | sort_by(.value.outputTokens) | last | .key // empty' "$stats_file" 2>/dev/null)
+        if [[ -n "$full_model_id" ]]; then
+            # Extract short name from ID: claude-opus-4-5-20251101 -> opus
+            model=$(echo "$full_model_id" | sed -E 's/claude-([a-z]+)-.*/\1/')
         fi
     fi
 
-    # Try to get version from stats-cache.json (only if model was found)
-    local stats_file="${HOME}/.claude/stats-cache.json"
+    # Set display name
+    if [[ -n "$model" ]] && [[ "$model" != "null" ]]; then
+        # Capitalize first letter (opus -> Opus, sonnet -> Sonnet)
+        model_name="${model^}"
+    fi
+
+    # Try to get version from stats-cache.json
     local version=""
-    if [[ -n "$model" ]] && [[ -f "$stats_file" ]]; then
+    if [[ -n "$model" ]] && [[ "$model" != "null" ]] && [[ -f "$stats_file" ]]; then
         # Find full model ID matching the short name (e.g., "opus" -> "claude-opus-4-5-...")
-        local full_id
-        full_id=$(jq -r --arg m "$model" '.modelUsage | keys[] | select(contains($m))' "$stats_file" 2>/dev/null | head -1)
-        if [[ -n "$full_id" ]]; then
+        if [[ -z "$full_model_id" ]]; then
+            full_model_id=$(jq -r --arg m "$model" '.modelUsage | keys[] | select(contains($m))' "$stats_file" 2>/dev/null | head -1)
+        fi
+        if [[ -n "$full_model_id" ]]; then
             # Extract version from ID: claude-opus-4-5-20251101 -> 4.5
             # Format: claude-{name}-{major}-{minor}-{date}
             local ver_part
-            ver_part=$(echo "$full_id" | sed -E 's/claude-[a-z]+-([0-9]+)-([0-9]+)-.*/\1.\2/')
+            ver_part=$(echo "$full_model_id" | sed -E 's/claude-[a-z]+-([0-9]+)-([0-9]+)-.*/\1.\2/')
             if [[ "$ver_part" =~ ^[0-9]+\.[0-9]+$ ]]; then
                 version=" $ver_part"
             fi
