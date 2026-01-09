@@ -421,7 +421,7 @@ format_output() {
                 model_color="$COLOR_GRAY"
                 model_color_reset="$COLOR_RESET"
             fi
-            lines+=("${model_color}Model: ${current_model}${model_color_reset}")
+            lines+=("${model_color}Active Model: ${current_model}${model_color_reset}")
         fi
     fi
 
