@@ -73,23 +73,38 @@ get_token() {
     echo "$token"
 }
 
-# Get current model from Claude settings
+# Get current model from Claude settings (with version from stats-cache)
 get_current_model() {
-    if [[ ! -f "$CLAUDE_SETTINGS_FILE" ]]; then
-        echo ""
-        return
+    local model=""
+    local model_name="Unknown"
+
+    if [[ -f "$CLAUDE_SETTINGS_FILE" ]]; then
+        model=$(jq -r '.model // empty' "$CLAUDE_SETTINGS_FILE" 2>/dev/null)
+        if [[ -n "$model" ]] && [[ "$model" != "null" ]]; then
+            # Capitalize first letter (opus -> Opus, sonnet -> Sonnet)
+            model_name="${model^}"
+        fi
     fi
 
-    local model
-    model=$(jq -r '.model // empty' "$CLAUDE_SETTINGS_FILE" 2>/dev/null)
-
-    if [[ -z "$model" ]] || [[ "$model" == "null" ]]; then
-        echo ""
-        return
+    # Try to get version from stats-cache.json (only if model was found)
+    local stats_file="${HOME}/.claude/stats-cache.json"
+    local version=""
+    if [[ -n "$model" ]] && [[ -f "$stats_file" ]]; then
+        # Find full model ID matching the short name (e.g., "opus" -> "claude-opus-4-5-...")
+        local full_id
+        full_id=$(jq -r --arg m "$model" '.modelUsage | keys[] | select(contains($m))' "$stats_file" 2>/dev/null | head -1)
+        if [[ -n "$full_id" ]]; then
+            # Extract version from ID: claude-opus-4-5-20251101 -> 4.5
+            # Format: claude-{name}-{major}-{minor}-{date}
+            local ver_part
+            ver_part=$(echo "$full_id" | sed -E 's/claude-[a-z]+-([0-9]+)-([0-9]+)-.*/\1.\2/')
+            if [[ "$ver_part" =~ ^[0-9]+\.[0-9]+$ ]]; then
+                version=" $ver_part"
+            fi
+        fi
     fi
 
-    # Capitalize first letter (opus -> Opus, sonnet -> Sonnet)
-    echo "${model^}"
+    echo "${model_name}${version}"
 }
 
 # Check if cache is valid (not expired)
