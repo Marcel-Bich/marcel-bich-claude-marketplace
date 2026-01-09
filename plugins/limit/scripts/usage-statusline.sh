@@ -388,11 +388,12 @@ format_output() {
 
     # Extra usage (if enabled AND used_credits > 0)
     # Note: extra_limit and extra_used are dollar amounts and may contain decimals
-    if [[ "$SHOW_EXTRA" == "true" ]] && [[ "$extra_enabled" == "true" ]] && [[ -n "$extra_used" ]] && [[ "$extra_used" != "0" ]] && [[ "$extra_used" != "null" ]]; then
+    # Extra usage: check if used_credits > 0 (handles "0", "0.0", "0.00" etc.)
+    local extra_used_int="${extra_used%%.*}"
+    if [[ "$SHOW_EXTRA" == "true" ]] && [[ "$extra_enabled" == "true" ]] && [[ -n "$extra_used" ]] && [[ "$extra_used" != "null" ]] && [[ -n "$extra_used_int" ]] && [[ "$extra_used_int" != "0" ]]; then
         local extra_pct=0
-        # Convert to integers for arithmetic (remove decimal part)
+        # Convert limit to integer for arithmetic (remove decimal part)
         local extra_limit_int="${extra_limit%%.*}"
-        local extra_used_int="${extra_used%%.*}"
         if [[ -n "$extra_limit_int" ]] && [[ "$extra_limit_int" =~ ^[0-9]+$ ]] && [[ "$extra_limit_int" -gt 0 ]]; then
             extra_pct=$((extra_used_int * 100 / extra_limit_int))
         fi
