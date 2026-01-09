@@ -73,44 +73,58 @@ get_token() {
     echo "$token"
 }
 
-# Get current model from Claude settings (with version from stats-cache)
-get_current_model() {
-    local model=""
-    local model_name="Unknown"
-    local full_model_id=""
-    local stats_file="${HOME}/.claude/stats-cache.json"
+# Read stdin data from Claude Code (JSON with model info, etc.)
+# Called once at startup, cached in STDIN_DATA
+STDIN_DATA=""
+read_stdin_data() {
+    if [[ -t 0 ]]; then
+        # No stdin (running manually in terminal)
+        STDIN_DATA=""
+    else
+        # Read stdin from Claude Code (single line JSON)
+        read -r -t 0.5 STDIN_DATA 2>/dev/null || STDIN_DATA=""
+    fi
+}
 
-    # Try to get model from settings.json first
+# Get current model from stdin data (primary) or settings.json (fallback)
+get_current_model() {
+    local display_name=""
+
+    # Primary: Get model from stdin data (sent by Claude Code)
+    if [[ -n "$STDIN_DATA" ]]; then
+        display_name=$(echo "$STDIN_DATA" | jq -r '.model.display_name // empty' 2>/dev/null)
+    fi
+
+    # Return display_name if found (e.g., "Claude Opus 4.5")
+    if [[ -n "$display_name" ]] && [[ "$display_name" != "null" ]]; then
+        # Remove "Claude " prefix if present for cleaner output
+        display_name="${display_name#Claude }"
+        echo "$display_name"
+        return
+    fi
+
+    # Fallback: Get model from settings.json
+    local model=""
     if [[ -f "$CLAUDE_SETTINGS_FILE" ]]; then
         model=$(jq -r '.model // empty' "$CLAUDE_SETTINGS_FILE" 2>/dev/null)
     fi
 
-    # Fallback: detect model from stats-cache.json (most used by output tokens)
-    if [[ -z "$model" || "$model" == "null" ]] && [[ -f "$stats_file" ]]; then
-        # Get the model with highest output tokens (most used = likely current)
-        full_model_id=$(jq -r '.modelUsage | to_entries | sort_by(.value.outputTokens) | last | .key // empty' "$stats_file" 2>/dev/null)
-        if [[ -n "$full_model_id" ]]; then
-            # Extract short name from ID: claude-opus-4-5-20251101 -> opus
-            model=$(echo "$full_model_id" | sed -E 's/claude-([a-z]+)-.*/\1/')
-        fi
+    if [[ -z "$model" ]] || [[ "$model" == "null" ]]; then
+        echo ""
+        return
     fi
 
-    # Set display name
-    if [[ -n "$model" ]] && [[ "$model" != "null" ]]; then
-        # Capitalize first letter (opus -> Opus, sonnet -> Sonnet)
-        model_name="${model^}"
-    fi
+    # Capitalize first letter (opus -> Opus, sonnet -> Sonnet)
+    local model_name="${model^}"
 
     # Try to get version from stats-cache.json
+    local stats_file="${HOME}/.claude/stats-cache.json"
     local version=""
-    if [[ -n "$model" ]] && [[ "$model" != "null" ]] && [[ -f "$stats_file" ]]; then
-        # Find full model ID matching the short name (e.g., "opus" -> "claude-opus-4-5-...")
-        if [[ -z "$full_model_id" ]]; then
-            full_model_id=$(jq -r --arg m "$model" '.modelUsage | keys[] | select(contains($m))' "$stats_file" 2>/dev/null | head -1)
-        fi
+    if [[ -f "$stats_file" ]]; then
+        local full_model_id
+        full_model_id=$(jq -r --arg m "$model" '.modelUsage | keys[] | select(contains($m))' "$stats_file" 2>/dev/null | head -1)
         if [[ -n "$full_model_id" ]]; then
             # Extract version from ID: claude-opus-4-5-20251101 -> 4.5
-            # Format: claude-{name}-{major}-{minor}-{date}
             local ver_part
             ver_part=$(echo "$full_model_id" | sed -E 's/claude-[a-z]+-([0-9]+)-([0-9]+)-.*/\1.\2/')
             if [[ "$ver_part" =~ ^[0-9]+\.[0-9]+$ ]]; then
@@ -427,6 +441,9 @@ format_output() {
 
 # Main execution
 main() {
+    # Read stdin data from Claude Code first (contains model info)
+    read_stdin_data
+
     check_dependencies
 
     local token
