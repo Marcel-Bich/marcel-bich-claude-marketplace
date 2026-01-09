@@ -81,8 +81,9 @@ read_stdin_data() {
         # No stdin (running manually in terminal)
         STDIN_DATA=""
     else
-        # Read stdin from Claude Code (single line JSON)
-        read -r -t 0.5 STDIN_DATA 2>/dev/null || STDIN_DATA=""
+        # Read first line from stdin with timeout (Claude Code sends single-line JSON)
+        # Timeout prevents hanging if stdin has no data
+        STDIN_DATA=$(timeout 0.5 head -n 1 2>/dev/null) || STDIN_DATA=""
     fi
 }
 
