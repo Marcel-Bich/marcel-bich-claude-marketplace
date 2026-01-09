@@ -17,6 +17,7 @@ CACHE_MAX_AGE="${CLAUDE_MB_LIMIT_CACHE_AGE:-120}"  # 2 minutes default
 DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-false}"
 
 # Feature toggles (all default to true)
+SHOW_MODEL="${CLAUDE_MB_LIMIT_MODEL:-true}"
 SHOW_5H="${CLAUDE_MB_LIMIT_5H:-true}"
 SHOW_7D="${CLAUDE_MB_LIMIT_7D:-true}"
 SHOW_OPUS="${CLAUDE_MB_LIMIT_OPUS:-true}"
@@ -25,6 +26,9 @@ SHOW_EXTRA="${CLAUDE_MB_LIMIT_EXTRA:-true}"
 SHOW_COLORS="${CLAUDE_MB_LIMIT_COLORS:-true}"
 SHOW_PROGRESS="${CLAUDE_MB_LIMIT_PROGRESS:-true}"
 SHOW_RESET="${CLAUDE_MB_LIMIT_RESET:-true}"
+
+# Claude settings file (for model info)
+CLAUDE_SETTINGS_FILE="${HOME}/.claude/settings.json"
 
 # ANSI color codes
 COLOR_RESET='\033[0m'
@@ -67,6 +71,25 @@ get_token() {
     fi
 
     echo "$token"
+}
+
+# Get current model from Claude settings
+get_current_model() {
+    if [[ ! -f "$CLAUDE_SETTINGS_FILE" ]]; then
+        echo ""
+        return
+    fi
+
+    local model
+    model=$(jq -r '.model // empty' "$CLAUDE_SETTINGS_FILE" 2>/dev/null)
+
+    if [[ -z "$model" ]] || [[ "$model" == "null" ]]; then
+        echo ""
+        return
+    fi
+
+    # Capitalize first letter (opus -> Opus, sonnet -> Sonnet)
+    echo "${model^}"
 }
 
 # Check if cache is valid (not expired)
@@ -320,10 +343,14 @@ format_output() {
     fi
 
     # Extra usage (if enabled AND used_credits > 0)
+    # Note: extra_limit and extra_used are dollar amounts and may contain decimals
     if [[ "$SHOW_EXTRA" == "true" ]] && [[ "$extra_enabled" == "true" ]] && [[ -n "$extra_used" ]] && [[ "$extra_used" != "0" ]] && [[ "$extra_used" != "null" ]]; then
         local extra_pct=0
-        if [[ -n "$extra_limit" ]] && [[ "$extra_limit" -gt 0 ]]; then
-            extra_pct=$((extra_used * 100 / extra_limit))
+        # Convert to integers for arithmetic (remove decimal part)
+        local extra_limit_int="${extra_limit%%.*}"
+        local extra_used_int="${extra_used%%.*}"
+        if [[ -n "$extra_limit_int" ]] && [[ "$extra_limit_int" =~ ^[0-9]+$ ]] && [[ "$extra_limit_int" -gt 0 ]]; then
+            extra_pct=$((extra_used_int * 100 / extra_limit_int))
         fi
         local extra_color=""
         local extra_color_reset=""
@@ -337,6 +364,21 @@ format_output() {
         fi
         printf -v extra_line "${extra_color}Extra%s \$%s/\$%s${extra_color_reset}" "$extra_bar" "$extra_used" "$extra_limit"
         lines+=("$extra_line")
+    fi
+
+    # Current model (if enabled) - always gray, at the bottom
+    if [[ "$SHOW_MODEL" == "true" ]]; then
+        local current_model
+        current_model=$(get_current_model)
+        if [[ -n "$current_model" ]]; then
+            local model_color=""
+            local model_color_reset=""
+            if [[ "$SHOW_COLORS" == "true" ]]; then
+                model_color="$COLOR_GRAY"
+                model_color_reset="$COLOR_RESET"
+            fi
+            lines+=("${model_color}Model: ${current_model}${model_color_reset}")
+        fi
     fi
 
     # Join lines with newline separator (multiline output)
