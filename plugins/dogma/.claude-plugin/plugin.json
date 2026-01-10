@@ -1,7 +1,7 @@
 {
   "name": "dogma",
-  "version": "1.6.0",
-  "description": "Intelligent sync of Claude instructions (CLAUDE.md, .claude/) with interactive review and merge - no blind overwrites.",
+  "version": "1.7.0",
+  "description": "Intelligent sync of Claude instructions with enforcement hooks for security and consistency.",
   "keywords": ["sync", "claude", "instructions", "dotfiles", "consistency"],
   "license": "MIT"
 }

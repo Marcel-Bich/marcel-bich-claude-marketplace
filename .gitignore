@@ -1,3 +1,882 @@
-.claude/
-*.log
-.DS_Store
+# =============================================================================
+# Universal .gitignore - Dogma Source of Truth
+# =============================================================================
+# This repo uses this .gitignore itself (self-fulfilling repo).
+# Force-add exceptions with: git add -f <file>
+# =============================================================================
+
+# Live-Hack for less versioning headaches:
+# Everything prefixed with "**/" to catch subdirectories too.
+
+### ------------------------- Flutter.gitignore ------------------------ ###
+
+# Miscellaneous
+**/*.class
+#**/*.lock
+**/*.log
+**/*.pyc
+**/*.swp
+**/.DS_Store
+**/.atom/
+**/.buildlog/
+**/.history
+**/.svn/
+
+# IntelliJ related
+**/*.iml
+**/*.ipr
+**/*.iws
+**/.idea/
+
+# Visual Studio Code related
+**/.classpath
+**/.project
+**/.settings/
+**/.vscode/
+
+# Flutter repo-specific
+**/bin/cache/
+**/bin/internal/bootstrap.bat
+**/bin/internal/bootstrap.sh
+**/bin/mingit/
+**/dev/benchmarks/mega_gallery/
+**/dev/bots/.recipe_deps
+**/dev/bots/android_tools/
+**/dev/devicelab/ABresults*.json
+**/dev/docs/doc/
+**/dev/docs/flutter.docs.zip
+**/dev/docs/lib/
+**/dev/docs/pubspec.yaml
+**/dev/integration_tests/**/xcuserdata
+**/dev/integration_tests/**/Pods
+**/packages/flutter/coverage/
+**/analysis_benchmark.json
+
+# packages file containing multi-root paths
+**/.packages.generated
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/generated_plugin_registrant.dart
+**/.packages
+**/.pub-cache/
+**/.pub/
+**/build/
+**/flutter_*.png
+**/linked_*.ds
+**/unlinked.ds
+**/unlinked_spec.ds
+
+# Android related
+**/android/**/gradle-wrapper.jar
+**/.gradle/
+**/android/captures/
+**/android/gradlew
+**/android/gradlew.bat
+**/android/local.properties
+**/android/**/GeneratedPluginRegistrant.java
+**/android/key.properties
+
+# iOS/XCode related
+**/ios/**/*.mode1v3
+**/ios/**/*.mode2v3
+**/ios/**/*.moved-aside
+**/ios/**/*.pbxuser
+**/ios/**/*.perspectivev3
+**/ios/**/*sync/
+**/ios/**/.sconsign.dblite
+**/ios/**/.tags*
+**/ios/**/.vagrant/
+**/ios/**/DerivedData/
+**/ios/**/Icon?
+**/ios/**/Pods/
+**/ios/**/.symlinks/
+**/ios/**/profile
+**/ios/**/xcuserdata
+**/ios/.generated/
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/App.framework
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/ephemeral
+**/ios/Flutter/app.flx
+**/ios/Flutter/app.zip
+**/ios/Flutter/flutter_assets/
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/ServiceDefinitions.json
+**/ios/Runner/GeneratedPluginRegistrant.*
+
+# macOS
+**/macos/Flutter/GeneratedPluginRegistrant.swift
+
+# Coverage
+**/coverage/
+
+# Symbols
+**/app.*.symbols
+
+# Exceptions to above rules
+!**/ios/**/default.mode1v3
+!**/ios/**/default.mode2v3
+!**/ios/**/default.pbxuser
+!**/ios/**/default.perspectivev3
+!**/packages/flutter_tools/test/data/dart_dependencies_test/**/.packages
+!**/dev/ci/**/Gemfile.lock
+
+## Related .gitignores ##
+
+# Firebase / Google Services
+**/ios/Runner/GoogleService-Info.plist
+**/android/app/google-services.json
+**/google_maps_api.xml
+
+# Web related
+**/generated_plugin*
+
+# Obfuscation related
+**/app.*.map.json
+
+
+### --------------------------- Dart.gitignore ------------------------- ###
+
+# dotenv environment variables file
+**/.env
+**/.env.*
+!**/.env.example
+
+# Avoid committing generated Javascript files
+**/*.dart.js
+**/*.info.json
+**/*.js_
+**/*.js.deps
+**/*.js.map
+
+
+### -------------------------- Swift.gitignore  ------------------------ ###
+
+## Obj-C/Swift specific
+**/*.hmap
+
+## App packaging
+**/*.ipa
+**/*.dSYM.zip
+**/*.dSYM
+
+## Playgrounds
+**/timeline.xctimeline
+**/playground.xcworkspace
+
+# Swift Package Manager
+**/Packages/
+**/Package.pins
+**/Package.resolved
+**/.xcodeproj
+**/.swiftpm
+**/.build/
+
+# Carthage
+**/Carthage/Build/
+
+# Accio dependency management
+**/Dependencies/
+**/.accio/
+
+# fastlane
+**/fastlane/report.xml
+**/fastlane/Preview.html
+**/fastlane/screenshots/**/*.png
+**/fastlane/test_output
+
+# Code Injection
+**/iOSInjectionProject/
+
+
+### -------------------------- Java.gitignore -------------------------- ###
+
+# BlueJ files
+**/*.ctxt
+
+# Mobile Tools for Java (J2ME)
+**/.mtj.tmp/
+
+# Package Files
+**/*.war
+**/*.nar
+**/*.ear
+**/*.tar.gz
+
+# virtual machine crash logs
+**/hs_err_pid*
+**/replay_pid*
+
+
+### -------------------------- Kotlin.gitignore ------------------------ ###
+
+**/.idea/shelf
+**/confluence/target
+**/dependencies/repo
+**/android.tests.dependencies
+**/dependencies/android.tests.dependencies
+**/dist
+**/local
+**/gh-pages
+**/ideaSDK
+**/clionSDK
+**/android-studio/sdk
+**/tmp
+**/intellij
+**/workspace.xml
+**/*.versionsBackup
+**/.idea/remote-targets.xml
+**/.idea/libraries/Gradle*.xml
+**/.idea/libraries/Maven*.xml
+**/.idea/artifacts/PILL_*.xml
+**/.idea/artifacts/KotlinPlugin.xml
+**/.idea/runConfigurations/JPS_*.xml
+**/.idea/runConfigurations/PILL_*.xml
+**/.idea/runConfigurations/_FP_*.xml
+**/.idea/runConfigurations/_MT_*.xml
+**/.idea/inspectionProfiles/profiles_settings.xml
+**/.idea/.name
+**/.idea/artifacts/dist_auto_*
+**/.idea/artifacts/dist.xml
+**/.idea/artifacts/ideaPlugin.xml
+**/.idea/artifacts/kotlinc.xml
+**/.idea/csv-plugin.xml
+**/.idea/libraries-with-intellij-classes.xml
+**/.idea/misc.xml
+**/.rpt2_cache/
+**/libraries/tools/kotlin-test-js-runner/lib/
+**/buildSrcTmp/
+**/distTmp/
+**/outTmp/
+**/test.output
+**/kotlin-native/dist
+**/kotlin-ide/
+
+
+### ------------------------- Android.gitignore ------------------------ ###
+
+# Built application files
+**/*.apk
+**/*.ap_
+
+# Files for the ART/Dalvik VM
+**/*.dex
+
+# Generated files
+**/bin/
+**/gen/
+**/out/
+
+# Local configuration file (sdk path, etc)
+**/local.properties
+
+# Proguard folder generated by Eclipse
+**/proguard/
+
+# Android Studio Navigation editor temp files
+**/.navigation/
+
+# Android Studio captures folder
+**/captures/
+
+# IntelliJ
+**/.idea/workspace.xml
+**/.idea/tasks.xml
+**/.idea/gradle.xml
+**/.idea/assetWizardSettings.xml
+**/.idea/dictionaries
+**/.idea/libraries
+**/.idea/caches
+
+# External native build folder
+**/.externalNativeBuild
+
+# Freeline
+**/freeline.py
+**/freeline/
+**/freeline_project_description.json
+
+# fastlane
+**/fastlane/screenshots
+**/fastlane/readme.md
+
+# Keystore files
+**/*.jks
+**/*.keystore
+
+
+### ------------------------- Gradle.gitignore ------------------------- ###
+
+**/.gradle
+!**/src/**/build/
+
+# Ignore Gradle GUI config
+**/gradle-app.setting
+
+# Avoid ignoring Gradle wrapper jar file
+!**/gradle-wrapper.jar
+
+# Cache of project
+**/.gradletasknamecache
+
+
+### ------------------------- Maven.gitignore -------------------------- ###
+
+**/target/
+**/pom.xml.tag
+**/pom.xml.releaseBackup
+**/pom.xml.versionsBackup
+**/pom.xml.next
+**/release.properties
+**/dependency-reduced-pom.xml
+**/buildNumber.properties
+**/.mvn/timing.properties
+**/.mvn/wrapper/maven-wrapper.jar
+
+
+### ------------------------ JetBrains.gitignore ----------------------- ###
+
+# User-specific stuff
+**/.idea/**/workspace.xml
+**/.idea/**/tasks.xml
+**/.idea/**/usage.statistics.xml
+**/.idea/**/dictionaries
+**/.idea/**/shelf
+
+# AWS User-specific
+**/.idea/**/aws.xml
+
+# Generated files
+**/.idea/**/contentModel.xml
+
+# Sensitive or high-churn files
+**/.idea/**/dataSources/
+**/.idea/**/dataSources.ids
+**/.idea/**/dataSources.local.xml
+**/.idea/**/sqlDataSources.xml
+**/.idea/**/dynamic.xml
+**/.idea/**/uiDesigner.xml
+**/.idea/**/dbnavigator.xml
+
+# Gradle
+**/.idea/**/gradle.xml
+**/.idea/**/libraries
+
+# Gradle and Maven with auto-import
+**/.idea/artifacts
+**/.idea/compiler.xml
+**/.idea/jarRepositories.xml
+**/.idea/modules.xml
+**/.idea/*.iml
+**/.idea/modules
+
+# CMake
+**/cmake-build-*/
+
+# Mongo Explorer plugin
+**/.idea/**/mongoSettings.xml
+
+# mpeltonen/sbt-idea plugin
+**/.idea_modules/
+
+# JIRA plugin
+**/atlassian-ide-plugin.xml
+
+# Cursive Clojure plugin
+**/.idea/replstate.xml
+
+# SonarLint plugin
+**/.idea/sonarlint/
+
+# Crashlytics plugin
+**/com_crashlytics_export_strings.xml
+**/crashlytics.properties
+**/crashlytics-build.properties
+**/fabric.properties
+
+# Editor-based Rest Client
+**/.idea/httpRequests
+
+# Android studio 3.1+ serialized cache file
+**/.idea/caches/build_file_checksums.ser
+
+
+### ------------------------- Xcode.gitignore -------------------------- ###
+
+## User settings
+**/xcuserdata/
+
+## compatibility with Xcode 8 and earlier
+**/*.xcscmblueprint
+**/*.xccheckout
+
+## compatibility with Xcode 3 and earlier
+**/DerivedData/
+**/*.moved-aside
+**/*.pbxuser
+!**/default.pbxuser
+**/*.mode1v3
+!**/default.mode1v3
+**/*.mode2v3
+!**/default.mode2v3
+**/*.perspectivev3
+!**/default.perspectivev3
+
+## Gcc Patch
+**/*.gcno
+
+
+### -------------------- VisualStudioCode.gitignore  ------------------- ###
+
+**/.vscode/*
+!**/.vscode/settings.json
+!**/.vscode/tasks.json
+!**/.vscode/launch.json
+!**/.vscode/extensions.json
+!**/.vscode/*.code-snippets
+
+# Local History for Visual Studio Code
+**/.history/
+
+# Built Visual Studio Code Extensions
+**/*.vsix
+
+
+### ----------------------- SublimeText.gitignore ---------------------- ###
+
+# Cache files for Sublime Text
+**/*.tmlanguage.cache
+**/*.tmPreferences.cache
+**/*.stTheme.cache
+
+# Workspace files are user-specific
+**/*.sublime-workspace
+
+# SFTP configuration file
+**/sftp-config.json
+**/sftp-config-alt*.json
+
+# Package control specific files
+**/Package Control.last-run
+**/Package Control.ca-list
+**/Package Control.ca-bundle
+**/Package Control.system-ca-bundle
+**/Package Control.cache/
+**/Package Control.ca-certs/
+**/Package Control.merged-ca-bundle
+**/Package Control.user-ca-bundle
+**/oscrypto-ca-bundle.crt
+**/bh_unicode_properties.cache
+
+# Sublime-github package
+**/GitHub.sublime-settings
+
+
+### -------------------------- Emacs.gitignore ------------------------- ###
+
+**/#*~
+**/\#*\#
+**/.emacs.desktop
+**/.emacs.desktop.lock
+**/*.elc
+**/auto-save-list
+**/tramp
+**/.\#*
+
+# Org-mode
+**/.org-id-locations
+**/*_archive
+
+# flymake-mode
+**/*_flymake.*
+
+# eshell files
+**/eshell/history
+**/eshell/lastdir
+
+# elpa packages
+**/elpa/
+
+# reftex files
+**/*.rel
+
+# AUCTeX auto folder
+**/auto/
+
+# cask packages
+**/.cask/
+
+# Flycheck
+**/flycheck_*.el
+
+# server auth directory
+**/server/
+
+# projectiles files
+**/.projectile
+
+# directory configuration
+**/.dir-locals.el
+
+# network security
+**/network-security.data
+
+
+### -------------------------- Vim.gitignore  -------------------------- ###
+
+# Swap
+**/[._]*.s[a-v][a-z]
+!**/*.svg
+**/[._]*.sw[a-p]
+**/[._]s[a-rt-v][a-z]
+**/[._]ss[a-gi-z]
+**/[._]sw[a-p]
+
+# Session
+**/Session.vim
+**/Sessionx.vim
+
+# Temporary
+**/.netrwhist
+
+# Auto-generated tag files
+**/tags
+
+# Persistent undo
+**/[._]*.un~
+
+
+### ------------------------ Windows.gitignore  ------------------------ ###
+
+# Windows thumbnail cache files
+**/Thumbs.db
+**/Thumbs.db:encryptable
+**/ehthumbs.db
+**/ehthumbs_vista.db
+
+# Dump file
+**/*.stackdump
+
+# Folder config file
+**/[Dd]esktop.ini
+
+# Recycle Bin used on file shares
+**/$RECYCLE.BIN/
+
+# Windows Installer files
+**/*.cab
+**/*.msi
+**/*.msix
+**/*.msm
+**/*.msp
+
+# Windows shortcuts
+**/*.lnk
+
+
+### ------------------------- macOS.gitignore -------------------------- ###
+
+# General
+**/.DS_Store
+**/.AppleDouble
+**/.LSOverride
+
+# Icon must end with two \r
+**/Icon
+
+# Thumbnails
+**/._*
+
+# Files that might appear in the root of a volume
+**/.DocumentRevisions-V100
+**/.fseventsd
+**/.Spotlight-V100
+**/.TemporaryItems
+**/.Trashes
+**/.VolumeIcon.icns
+**/.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+**/.AppleDB
+**/.AppleDesktop
+**/Network Trash Folder
+**/Temporary Items
+**/.apdisk
+
+
+### -------------------------- Linux.gitignore ------------------------- ###
+
+**/*~
+
+# temporary files
+**/.fuse_hidden*
+
+# KDE directory preferences
+**/.directory
+
+# Linux trash folder
+**/.Trash-*
+
+# .nfs files
+**/.nfs*
+
+
+### ------------------------ Archives.gitignore ------------------------ ###
+
+# It's better to unpack these files and commit the raw source
+**/*.7z
+**/*.jar
+**/*.rar
+**/*.zip
+**/*.gz
+**/*.gzip
+**/*.tgz
+**/*.bzip
+**/*.bzip2
+**/*.bz2
+**/*.xz
+**/*.lzma
+**/*.xar
+
+# Packing-only formats
+**/*.iso
+**/*.tar
+
+# Package management formats
+**/*.dmg
+**/*.xpi
+**/*.gem
+**/*.egg
+**/*.deb
+**/*.rpm
+**/*.txz
+
+
+### ------------------------- Backup.gitignore ------------------------- ###
+
+**/*.bak
+**/*.gho
+**/*.ori
+**/*.orig
+**/*.tmp
+
+
+### -------------------------- JEnv.gitignore -------------------------- ###
+
+# JEnv local Java version configuration file
+**/.java-version
+**/.jenv-version
+
+
+### ===================== Node.js / JavaScript ======================== ###
+
+**/node_modules/
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+**/.pnpm-debug.log*
+
+# Build outputs
+**/dist/
+**/*.tsbuildinfo
+
+# Vite
+**/.vite/
+
+# Playwright
+**/playwright-report/
+**/test-results/
+**/.playwright/
+**/.playwright-mcp/
+
+# Local env files (but keep .env.example)
+**/*.local
+
+
+### ======================= Python ===================================== ###
+
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/*.so
+**/.Python
+**/develop-eggs/
+**/downloads/
+**/eggs/
+**/.eggs/
+**/lib/
+**/lib64/
+**/parts/
+**/sdist/
+**/var/
+**/wheels/
+**/pip-wheel-metadata/
+**/share/python-wheels/
+**/*.egg-info/
+**/.installed.cfg
+**/*.egg
+**/MANIFEST
+
+# Virtual environments
+**/.venv/
+**/venv/
+**/ENV/
+**/env.bak/
+**/venv.bak/
+
+# PyInstaller
+**/*.manifest
+**/*.spec
+
+# Installer logs
+**/pip-log.txt
+**/pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+**/htmlcov/
+**/.tox/
+**/.nox/
+**/.coverage
+**/.coverage.*
+**/.cache
+**/nosetests.xml
+**/coverage.xml
+**/*.cover
+**/*.py,cover
+**/.hypothesis/
+**/.pytest_cache/
+
+# Translations
+**/*.mo
+**/*.pot
+
+# Sphinx documentation
+**/docs/_build/
+
+# PyBuilder
+**/.pybuilder/
+**/target/
+
+# Jupyter Notebook
+**/.ipynb_checkpoints
+
+# IPython
+**/profile_default/
+**/ipython_config.py
+
+# pyenv
+**/.python-version
+
+# pipenv
+**/Pipfile.lock
+
+# PEP 582
+**/__pypackages__/
+
+# Celery stuff
+**/celerybeat-schedule
+**/celerybeat.pid
+
+# SageMath parsed files
+**/*.sage.py
+
+# Spyder project settings
+**/.spyderproject
+**/.spyproject
+
+# Rope project settings
+**/.ropeproject
+
+# mkdocs documentation
+**/site/
+
+# mypy
+**/.mypy_cache/
+**/.dmypy.json
+**/dmypy.json
+
+# Pyre type checker
+**/.pyre/
+
+
+### ====================== Phoenix / Elixir ============================ ###
+
+# Build artifacts
+**/_build/
+**/deps/
+**/doc/
+**/cover/
+**/.fetch
+**/*.ez
+**/*.beam
+**/erl_crash.dump
+
+# Package tarballs (built via mix hex.build)
+**/*-*.tar
+
+# IDE / tooling
+**/.elixir_ls/
+
+# Secrets
+**/*.secret.exs
+
+# Phoenix Assets
+**/priv/static/assets/
+**/priv/static/
+
+# Installer-related
+**/installer/_build/
+**/installer/tmp/
+**/installer/doc/
+**/installer/deps/
+
+# Test / Reports
+**/test-*.xml
+**/*.coverdata
+
+
+### ========================= Database ================================= ###
+
+# SQLite
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.sqlite
+**/*.sqlite3
+**/*.sqlite3*
+
+
+### ========================= Uploads ================================== ###
+
+# Runtime Uploads (local only)
+**/uploads/
+
+
+### ======================== References ================================ ###
+
+# Flutter          - https://github.com/flutter/flutter/blob/master/.gitignore
+# Dart             - https://github.com/github/gitignore/blob/main/Dart.gitignore
+# Swift            - https://github.com/github/gitignore/blob/main/Swift.gitignore
+# Java             - https://github.com/github/gitignore/blob/main/Java.gitignore
+# Kotlin           - https://github.com/JetBrains/kotlin/blob/master/.gitignore
+# Android          - https://github.com/github/gitignore/blob/main/Android.gitignore
+# Gradle           - https://github.com/github/gitignore/blob/main/Gradle.gitignore
+# Maven            - https://github.com/github/gitignore/blob/main/Maven.gitignore
+# JetBrains        - https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
+# Xcode            - https://github.com/github/gitignore/blob/main/Global/Xcode.gitignore
+# VisualStudioCode - https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
+# SublimeText      - https://github.com/github/gitignore/blob/main/Global/SublimeText.gitignore
+# Emacs            - https://github.com/github/gitignore/blob/main/Global/Emacs.gitignore
+# Vim              - https://github.com/github/gitignore/blob/main/Global/Vim.gitignore
+# Windows          - https://github.com/github/gitignore/blob/main/Global/Windows.gitignore
+# macOS            - https://github.com/github/gitignore/blob/main/Global/macOS.gitignore
+# Linux            - https://github.com/github/gitignore/blob/main/Global/Linux.gitignore
+# Node.js          - https://github.com/github/gitignore/blob/main/Node.gitignore
+# Python           - https://github.com/github/gitignore/blob/main/Python.gitignore
+# Elixir           - https://github.com/github/gitignore/blob/main/Elixir.gitignore
