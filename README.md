@@ -34,9 +34,9 @@ To receive plugin updates:
 
 ## Available Plugins
 
-### dogma (install first)
+### dogma
 
-Intelligent sync of Claude instructions with enforcement hooks for security and consistency. **Install this first** - it includes setup for other plugins via `/dogma:sync`.
+Intelligent sync of Claude instructions with enforcement hooks for security and consistency.
 
 **Install:**
 ```bash
@@ -49,7 +49,7 @@ Or within a Claude session:
 ```
 
 **Features:**
-- `/dogma:sync` - Sync CLAUDE.md, CLAUDE/*.md, .claude/ from a central source with interactive review and plugin setup
+- `/dogma:sync` - Sync CLAUDE.md, CLAUDE/*.md, .claude/ from a central source with interactive review
 - `/dogma:cleanup` - Find and fix AI-typical patterns in code
 - Enforcement hooks for git permissions, secrets, dependencies, file protection
 - All hooks toggleable via environment variables

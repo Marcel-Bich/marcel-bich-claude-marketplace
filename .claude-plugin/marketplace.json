@@ -12,7 +12,7 @@
     {
       "name": "dogma",
       "source": "./plugins/dogma",
-      "description": "Intelligent sync of Claude instructions with enforcement hooks for security and consistency. Install first - includes setup for other plugins.",
+      "description": "Intelligent sync of Claude instructions with enforcement hooks for security and consistency.",
       "version": "1.9.5"
     },
     {
