@@ -34,6 +34,32 @@ To receive plugin updates:
 
 ## Available Plugins
 
+### dogma (install first)
+
+Intelligent sync of Claude instructions with enforcement hooks for security and consistency. **Install this first** - it includes setup for other plugins via `/dogma:sync`.
+
+**Install:**
+```bash
+claude plugin install dogma@marcel-bich-claude-marketplace
+```
+
+Or within a Claude session:
+```
+/plugin install dogma@marcel-bich-claude-marketplace
+```
+
+**Features:**
+- `/dogma:sync` - Sync CLAUDE.md, CLAUDE/*.md, .claude/ from a central source with interactive review and plugin setup
+- `/dogma:cleanup` - Find and fix AI-typical patterns in code
+- Enforcement hooks for git permissions, secrets, dependencies, file protection
+- All hooks toggleable via environment variables
+
+**Usage Warning:** The enforcement hooks run on every prompt and tool use, increasing token consumption significantly. Recommended for Claude Max 20x (or minimum Max 5x). For sync-only usage without hooks, any plan works.
+
+See [plugins/dogma/README.md](plugins/dogma/README.md) for full documentation.
+
+---
+
 ### signal
 
 Desktop notifications showing what Claude Code is working on - stay informed even when the terminal is not in focus.
@@ -80,32 +106,6 @@ Or within a Claude session:
 - All features toggleable via environment variables
 
 See [plugins/limit/README.md](plugins/limit/README.md) for full documentation.
-
----
-
-### dogma
-
-Intelligent sync of Claude instructions with enforcement hooks for security and consistency.
-
-**Install:**
-```bash
-claude plugin install dogma@marcel-bich-claude-marketplace
-```
-
-Or within a Claude session:
-```
-/plugin install dogma@marcel-bich-claude-marketplace
-```
-
-**Features:**
-- `/dogma:sync` - Sync CLAUDE.md, CLAUDE/*.md, .claude/ from a central source with interactive review
-- `/dogma:cleanup` - Find and fix AI-typical patterns in code
-- Enforcement hooks for git permissions, secrets, dependencies, file protection
-- All hooks toggleable via environment variables
-
-**Usage Warning:** The enforcement hooks run on every prompt and tool use, increasing token consumption significantly. Recommended for Claude Max 20x (or minimum Max 5x). For sync-only usage without hooks, any plan works.
-
-See [plugins/dogma/README.md](plugins/dogma/README.md) for full documentation.
 
 ---
 
