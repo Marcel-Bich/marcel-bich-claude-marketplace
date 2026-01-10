@@ -18,6 +18,7 @@ The plugin includes hooks that enforce rules at the technical level:
 | Hook | Trigger | Action | Toggleable |
 |------|---------|--------|------------|
 | User Prompt Reminder | Every prompt | Reminds of non-enforceable rules | `DOGMA_PROMPT_REMINDER` |
+| Checklist Tracking | Every prompt | Scans for open checklists, reminds to ask before checking off | `DOGMA_CHECKLIST_TRACKING` |
 | Git Add Protection | `git add` | Blocks adding AI files and secrets | `DOGMA_GIT_ADD_PROTECTION` |
 | Git Permissions | `git commit/push` | Checks permissions in CLAUDE.git.md | `DOGMA_GIT_PERMISSIONS` |
 | File Protection | `rm`, `rmdir` | Blocks destructive file operations | `DOGMA_FILE_PROTECTION` |
@@ -77,6 +78,18 @@ Runs at the START of every prompt. Reminds Claude of:
 - Language rules (@CLAUDE/CLAUDE.language.md)
 - Security rules (@CLAUDE/CLAUDE.security.md)
 - Non-enforceable rules (Honesty, Planning, Philosophy)
+
+### Checklist Tracking
+
+Scans for open checklists (`- [ ]`) in:
+- PLAN.md, TODO.md, ROADMAP.md, README.md, TO-DOS.md
+- docs/**/*.md
+- .claude/*.md
+
+When open tasks are found, reminds Claude to:
+1. Ask user before marking tasks as done
+2. Never silently check off tasks
+3. Wait for explicit confirmation
 
 ### Git Add Protection
 
@@ -149,6 +162,7 @@ All hooks can be disabled via environment variables. Default is `true` (enabled)
 ```bash
 # Disable specific hooks
 export DOGMA_PROMPT_REMINDER=false
+export DOGMA_CHECKLIST_TRACKING=false
 export DOGMA_GIT_ADD_PROTECTION=false
 export DOGMA_GIT_PERMISSIONS=false
 export DOGMA_FILE_PROTECTION=false
