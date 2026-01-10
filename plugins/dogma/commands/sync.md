@@ -110,10 +110,10 @@ Look for files that contain **Claude/AI instructions, guidelines, or configurati
 - `.claude/` directory - Claude Code configuration
 - Files referenced via `@filename` syntax in any CLAUDE file
 
-**Recommendations (show to user, don't sync as files):**
-- `RECOMMENDATIONS.md`, `recommendations/` - Tips and suggestions for the user
-- `TIPS.md`, `tips/` - Best practices and hints
-- These are NOT synced as files, but presented to the user during sync
+**Recommendations (check & install, don't sync as files):**
+- `RECOMMENDATIONS.md` - Plugins and MCPs to check and optionally install (see 4.4)
+- These are NOT synced as files
+- Instead: Check if installed, offer to install missing ones
 
 **Medium priority (analyze content):**
 - `GUIDES/`, `guides/` - Often contain development guidelines
@@ -351,38 +351,310 @@ Create <directory>/ and review each file?
 - For large directories, group similar files and ask about groups
 - Respect the project structure - suggest appropriate locations
 
-### 4.4 Recommendations (informational, not synced)
+### 4.4 Recommendations (check installation status, offer to install)
 
-If the source contains `RECOMMENDATIONS.md`, `TIPS.md`, or similar files:
+If the source contains `RECOMMENDATIONS.md`:
 
-**These are NOT copied to the project.** Instead, present them to the user:
+**These are NOT copied as files.** Instead, check what's installed and offer to install missing items.
+
+#### Step 4.4.1: Parse RECOMMENDATIONS.md
+
+Extract each recommendation with:
+- **Name** (e.g., "Safety Net", "context7")
+- **Type** ("plugin" or "mcp") - determined by section heading (## Plugins vs ## MCP Servers)
+- **Description** (the blockquote text starting with >)
+- **URL** (from **Repo:** or **Docs:** line)
+- **Install commands** (from ```bash code blocks, or text instructions if no code block)
+- **Check method** (how to verify if installed)
+
+#### Step 4.4.2: Check installation status
+
+**For Plugins:**
+```bash
+# List installed plugins
+claude plugin list 2>/dev/null | grep -i "<plugin-name>"
+```
+
+**For MCP Servers:**
+```bash
+# Check ~/.claude.json for mcpServers
+cat ~/.claude.json 2>/dev/null | grep -o '"<mcp-name>"'
+```
+
+#### Step 4.4.3: Present missing recommendations
+
+For each NOT installed item, show:
 
 ```
-The source includes recommendations for you:
+RECOMMENDATION: Safety Net (Plugin)
 
----
-## Recommended Tools
+> Blocks dangerous commands before execution - even in skip permission mode!
+> Reduces risk when running automated tasks.
 
-- Consider using ESLint for code quality
-- Prettier helps with consistent formatting
+Status: NOT INSTALLED
 
-## Best Practices
+Would you like to install it?
+1. Yes, install now
+2. No, skip
+3. Show me the repo first
+```
 
-- Run tests before every commit
-- Use meaningful commit messages
----
+#### Step 4.4.4: Install if user agrees
 
-These are suggestions only - no files will be created.
-Would you like me to help implement any of these?
-1. Yes, let's discuss
-2. No, continue with sync
+If user chooses "Yes, install now":
+
+1. Extract the install commands from RECOMMENDATIONS.md
+2. Show the commands that will be run:
+   ```
+   Will run:
+   claude plugin marketplace add Marcel-Bich/marcel-bich-claude-marketplace
+   claude plugin install signal@marcel-bich-claude-marketplace
+
+   Proceed?
+   1. Yes
+   2. No, I'll do it manually
+   ```
+3. Execute the commands
+4. Report success or failure
+
+**If installation fails or user declines:**
+```
+You can install manually:
+
+Repo: https://github.com/kenryu42/claude-code-safety-net
+
+Follow the instructions in the repo README.
+```
+
+#### Step 4.4.5: Handle MCP installations
+
+MCP servers require special handling:
+
+```
+RECOMMENDATION: context7 (MCP Server)
+
+> Enables searching current technical documentation on the web.
+> Helps avoid outdated suggestions and hallucinations.
+
+Status: NOT INSTALLED
+
+This MCP server will be added to ~/.claude.json
+
+Would you like to install it?
+1. Yes, install now
+2. No, skip
+3. Show install command first
+```
+
+If yes, run the install command from RECOMMENDATIONS.md:
+```bash
+# The one-liner from RECOMMENDATIONS.md
+MCP_NAME="context7" MCP_CMD="npx" MCP_ARGS='["-y","@upstash/context7-mcp"]' node -e "..."
+```
+
+After MCP installation:
+```
+context7 MCP installed successfully.
+
+NOTE: Restart Claude Code for the MCP server to become available.
+```
+
+#### Step 4.4.6: Skip already installed
+
+For items that ARE installed:
+```
+RECOMMENDATION: Signal (Plugin)
+Status: ALREADY INSTALLED - skipping
+```
+
+#### Step 4.4.7: Summary
+
+At the end, show what was done:
+```
+Recommendations processed:
+
+INSTALLED:
++ Safety Net (plugin)
++ context7 (mcp)
+
+ALREADY INSTALLED:
+= Signal (plugin)
+= Limit (plugin)
+
+SKIPPED:
+- Playwright (mcp) - user declined
+- taches-cc-resources (plugin) - user declined
+
+NOTE: Restart Claude Code if any MCP servers were installed.
 ```
 
 **Key points:**
-- Recommendations are informational only
-- They don't create files in the project
-- User can optionally act on them
-- Present at the end of the sync, after all file operations
+- NEVER copy RECOMMENDATIONS.md as a file
+- Check installation status before offering
+- User confirms each installation
+- Run install commands from the source file
+- Provide manual install link if automated install fails
+- Remind to restart if MCPs were installed
+
+## Step 4.5: Update .git/info/exclude
+
+**CRITICAL: This step ensures AI-related files remain hidden from git.**
+
+After syncing files, update `.git/info/exclude` to protect all AI-files from accidental commits.
+
+### 4.5.1 Check if git repository
+
+```bash
+if [ ! -d ".git" ]; then
+    echo "Not a git repository - skipping .git/info/exclude update"
+    # Skip this step, continue with cleanup
+fi
+```
+
+### 4.5.2 Read existing exclude file
+
+```bash
+EXCLUDE_FILE=".git/info/exclude"
+mkdir -p .git/info
+touch "$EXCLUDE_FILE"
+EXISTING_EXCLUDES=$(cat "$EXCLUDE_FILE")
+```
+
+### 4.5.3 Build comprehensive AI-file patterns list
+
+Add ALL known AI-file patterns. This protects files even if they don't exist yet.
+
+```
+# ======================================
+# AI/Agent Files (managed by dogma:sync)
+# ======================================
+
+# --- Synced by Dogma ---
+<list all files that were just copied during this sync>
+
+# --- Dogma-specific ---
+GUIDES/
+whats-next.md
+
+# --- Unified Standard (2025) ---
+AGENTS.md
+AGENT.md
+
+# --- Claude ---
+CLAUDE.md
+CLAUDE/
+CLAUDE.*.md
+
+# --- Cursor ---
+.cursor/
+.cursorrules
+cursor.rules
+
+# --- Windsurf ---
+.windsurfrules
+.windsurf/
+
+# --- GitHub Copilot ---
+.github/copilot-instructions.md
+copilot-*
+
+# --- Google ---
+JULES.md
+GEMINI.md
+gemini.md
+
+# --- Cline / Roo Code / Kilo Code ---
+.clinerules
+.cline/
+.roo/
+.kilocode/
+
+# --- Aider ---
+.aider/
+.aider.conf.json
+aider.conf.json
+.aiderignore
+
+# --- Continue ---
+.continue/
+.continuerules
+
+# --- Amazon Q / CodeWhisperer ---
+.amazonq/
+.aws/codewhisperer/
+
+# --- Other AI Tools ---
+.codeium/
+.tabnine/
+.sourcery/
+.codex/
+.opencode/
+.openhands/
+.augment/
+.firebender/
+.junie/
+.kiro/
+.trae/
+.goose/
+```
+
+### 4.5.4 Merge with existing excludes
+
+**Important:** Don't overwrite user's existing excludes, merge intelligently:
+
+1. Read existing `.git/info/exclude`
+2. Check if our AI-section header already exists
+3. If exists: Replace the AI-section with updated content
+4. If not exists: Append the AI-section at the end
+
+**Detection of existing AI-section:**
+```bash
+grep -q "# AI/Agent Files (managed by dogma:sync)" "$EXCLUDE_FILE"
+```
+
+**If section exists:** Remove everything from `# ======` to the next `# ======` or end of file, then add fresh section.
+
+**If section doesn't exist:** Append to file with a blank line separator.
+
+### 4.5.5 Write updated exclude file
+
+```bash
+# Show user what we're doing
+echo "Updating .git/info/exclude with AI-file patterns..."
+
+# Write the file
+# (merge logic happens here)
+
+echo "Added X patterns to .git/info/exclude"
+```
+
+### 4.5.6 Report added synced files
+
+List specifically which synced files were added:
+
+```
+Updated .git/info/exclude:
+
+Synced files protected:
+- CLAUDE.md
+- CLAUDE/CLAUDE.git.md
+- CLAUDE/CLAUDE.language.md
+- GUIDES/philosophy.md
+- ... (list all synced files)
+
+Standard AI-patterns added (45 patterns)
+
+These files are now hidden from git but remain on disk.
+To force-add a file: git add -f <filename>
+```
+
+**Key points:**
+- NEVER modify .gitignore (would be visible in commits)
+- .git/info/exclude is local-only, not versioned
+- Protects synced files AND all common AI-tool files
+- Existing exclude entries are preserved
+- User can override with `git add -f` if needed
+- Already-tracked files are NOT affected (git respects tracked status)
 
 ## Step 5: Cleanup
 
@@ -393,7 +665,159 @@ if [ -n "$TEMP_DIR" ]; then
 fi
 ```
 
-## Step 6: Summary Report
+## Step 6: Interactive Setup-Tour
+
+**After sync, help the user set up their project according to the synced rules.**
+
+The Setup-Tour checks which tools/configs are referenced in the synced CLAUDE files and offers to install missing ones.
+
+### 6.1 Announce Setup-Tour
+
+```
+dogma:sync complete. Starting Setup-Tour...
+
+The Setup-Tour checks your project against the synced rules
+and helps install any missing tools or configurations.
+```
+
+### 6.2 Detection Matrix
+
+For each synced CLAUDE file, check if the referenced tools exist:
+
+| CLAUDE File | Checks For | Detection Method |
+|-------------|------------|------------------|
+| CLAUDE.security.md | socket.dev CLI | `which socket` or `socket --version` |
+| CLAUDE.security.md | snyk CLI | `which snyk` or `snyk --version` |
+| CLAUDE.linting.md | ESLint config | `ls .eslintrc* eslint.config.*` or package.json eslintConfig |
+| CLAUDE.formatting.md | Prettier config | `ls .prettierrc* prettier.config.*` or package.json prettier |
+| CLAUDE.build.md | Vite | package.json devDependencies.vite |
+| CLAUDE.build.md | Vitest | package.json devDependencies.vitest |
+| CLAUDE.testing.md | Test framework | package.json scripts.test, jest.config.*, vitest.config.* |
+| CLAUDE.planning.md | taches-cc-resources | `claude plugin list \| grep taches` |
+
+### 6.3 Run Detection
+
+For each synced CLAUDE file:
+
+```bash
+# Example: Check for CLAUDE.security.md requirements
+if [ -f "CLAUDE/CLAUDE.security.md" ] || [ -f "CLAUDE.security.md" ]; then
+    # Check socket.dev CLI
+    if ! command -v socket &> /dev/null; then
+        MISSING_SOCKET=true
+    fi
+    # Check snyk CLI
+    if ! command -v snyk &> /dev/null; then
+        MISSING_SNYK=true
+    fi
+fi
+```
+
+### 6.4 Present Missing Items
+
+For each missing item, show:
+
+```
+[CLAUDE.security.md]
+
+Missing: socket.dev CLI
+Purpose: Dependency security scanning (typosquatting, vulnerabilities)
+Install: npm install -g @socketsecurity/cli
+
+Would you like to install it?
+1. Yes, install now
+2. No, skip
+3. Show more info
+```
+
+**Important:**
+- Only show items that are MISSING
+- Explain WHY each tool is recommended
+- Show the exact install command
+- User confirms each installation
+
+### 6.5 Installation Actions
+
+**For CLI tools (socket, snyk):**
+```bash
+npm install -g @socketsecurity/cli
+# or
+npm install -g snyk
+```
+
+**For project configs (ESLint, Prettier):**
+```bash
+# ESLint
+npm install -D eslint
+npx eslint --init
+# or create basic config
+
+# Prettier
+npm install -D prettier
+echo '{}' > .prettierrc
+```
+
+**For Plugins (taches-cc-resources):**
+```bash
+claude plugin marketplace add Marcel-Bich/marcel-bich-claude-marketplace
+claude plugin install taches-cc-resources@marcel-bich-claude-marketplace
+```
+
+### 6.6 Handle Non-Node Projects
+
+If package.json doesn't exist:
+- Skip npm-based recommendations
+- Only offer global CLI tools (socket, snyk)
+- Don't offer ESLint/Prettier setup
+
+```
+Note: No package.json found - skipping Node.js-specific recommendations.
+Global CLI tools are still available.
+```
+
+### 6.7 Setup-Tour Summary
+
+```
+Setup-Tour Complete
+
+INSTALLED:
++ socket.dev CLI (npm install -g @socketsecurity/cli)
++ taches-cc-resources plugin
+
+ALREADY PRESENT:
+= ESLint (found .eslintrc.js)
+= Prettier (found in package.json)
+
+SKIPPED:
+- snyk CLI (user declined)
+- Vitest (user declined)
+
+NOT APPLICABLE:
+- Vite (no package.json)
+```
+
+### 6.8 Skip Option
+
+Allow user to skip the entire Setup-Tour:
+
+```
+dogma:sync complete. Would you like to run the Setup-Tour?
+
+The Setup-Tour checks your project for missing tools referenced in the synced rules.
+
+1. Yes, run Setup-Tour
+2. No, skip and finish
+```
+
+**Key principles:**
+- Setup-Tour is optional but recommended
+- Each installation requires user confirmation
+- Already-present items are skipped
+- Non-applicable items (wrong project type) are noted
+- User can decline individual items
+- Summary shows what was done
+
+## Step 7: Summary Report
 
 After all decisions are made, provide a summary:
 
@@ -416,7 +840,7 @@ Note: Files are untracked. Run 'git status' to see them.
 
 1. **Never auto-overwrite** - Always ask the user
 2. **Never git add** - Files stay untracked
-3. **Never modify .gitignore** - User decides tracking
+3. **Never modify .gitignore** - Use .git/info/exclude instead (local-only, not versioned)
 4. **Be helpful** - Explain differences clearly, suggest what makes sense
 5. **Respect user decisions** - If they say skip, skip without arguing
 6. **Granular is mandatory** - Never merge files wholesale, always rule-by-rule
@@ -425,6 +849,8 @@ Note: Files are untracked. Run 'git status' to see them.
 9. **Preserve project rules** - Project-only rules stay unless user removes them
 10. **Explain conflicts clearly** - User must understand what each choice means
 11. **Follow user instructions** - If additional instructions were provided, follow them throughout
+12. **Setup-Tour is optional** - User can skip, but recommend running it
+13. **Protect AI files** - Always update .git/info/exclude with comprehensive AI-file patterns
 
 ## Error Handling
 
