@@ -105,12 +105,43 @@ For each CLAUDE.md or similar file found:
 3. Add referenced files to the sync list
 4. Understand the purpose of each file
 
-### 3.4 Build Sync Proposal
+### 3.4 Detect Structure Conflicts
+
+Compare the structure of source and project to find **semantic duplicates** with different paths/names:
+
+**Examples of structure conflicts:**
+- Project: `CLAUDE.versioning.md` vs Source: `CLAUDE/CLAUDE.version.md`
+- Project: `CLAUDE.git.md` vs Source: `.claude/git-rules.md`
+- Project: `GUIDES/coding.md` vs Source: `docs/coding-standards.md`
+
+**Detection strategy:**
+1. Parse filenames and extract semantic meaning (versioning, git, coding, etc.)
+2. Compare content similarity (same rules, different file?)
+3. Flag potential duplicates for user decision
+
+**When a structure conflict is detected, ask:**
+```
+Structure conflict detected:
+
+Project has: CLAUDE.versioning.md
+Source has:  CLAUDE/CLAUDE.version.md
+
+These files appear to cover the same topic (version management).
+
+How would you like to handle this?
+1. Merge both into project location (CLAUDE.versioning.md)
+2. Merge both into source location (CLAUDE/CLAUDE.version.md)
+3. Keep both files separate
+4. Show me both files first
+```
+
+### 3.5 Build Sync Proposal
 
 Create a list of files/directories to potentially sync, categorized by:
 - **Direct instructions**: CLAUDE.md, .claude/ config
 - **Guidelines/Standards**: GUIDES/, rules, conventions
 - **Supporting files**: Referenced documentation
+- **Structure conflicts**: Files that need location/merge decisions
 
 Present this analysis to the user before proceeding.
 
@@ -166,37 +197,108 @@ git config --local user.email "marcel@example.com"
 # etc.
 ```
 
-### 4.2 File EXISTS in Project - Compare Contents
+### 4.2 File EXISTS in Project - Granular Rule-by-Rule Merge
 
-Read both files and compare:
+**CRITICAL: Never merge entire files at once. Always go rule-by-rule.**
+
+Read both files and parse them into **sections/rules**:
+- Markdown headers (##, ###) define sections
+- List items (-) within sections are individual rules
+- Code blocks are single units
+- References (@filename) are tracked separately
 
 **If identical:** Report "Identical: <filename> - no changes needed" and continue.
 
-**If different:** Show the differences to the user:
+**If different:** Perform **granular comparison**:
 
+#### Step 4.2.1: Identify all rules in both files
+
+Parse each file into discrete rules/sections:
 ```
-File differs: <filename>
+Project CLAUDE.md:
+  [Section: Language]
+    - Rule 1: "Always respond in German"
+  [Section: Git Rules]
+    - Rule 2: "Never commit CLAUDE.md files"
+    - Rule 3: "No emojis in code"
 
-=== Current project version ===
-<content or summary>
+Source CLAUDE.md:
+  [Section: Language]
+    - Rule 1: "Always respond in English"
+  [Section: Git Rules]
+    - Rule 2: "Never commit CLAUDE.md files"
+  [Section: Code Style]
+    - Rule 4: "Use 2-space indentation"
+```
 
-=== Source version ===
-<content or summary>
+#### Step 4.2.2: Categorize differences
 
-=== Key differences ===
-<describe what's different in plain language>
+- **Identical rules**: Same in both (Rule 2)
+- **Conflicting rules**: Same topic, different content (Rule 1: German vs English)
+- **Project-only rules**: Only in project (Rule 3)
+- **Source-only rules**: Only in source (Rule 4)
+
+#### Step 4.2.3: Interactive rule-by-rule review
+
+**For each conflicting rule, ask:**
+```
+CONFLICT in [Language] section:
+
+Project rule: "Always respond in German"
+Source rule:  "Always respond in English"
 
 What would you like to do?
-- Keep current (no changes)
-- Replace with source version
-- Merge manually (I'll help you combine them)
-- Show detailed diff
+1. Keep project version (German)
+2. Use source version (English)
+3. Skip this rule entirely
 ```
 
-**Important:** Be intelligent about the comparison:
-- Don't just show raw diff - explain what's different
-- Highlight additions, removals, and changes
-- For large files, summarize sections
+**For each source-only rule (new rule), ask:**
+```
+NEW RULE from source:
+
+Section: [Code Style]
+Rule: "Use 2-space indentation"
+
+Add this rule to your project?
+1. Yes, add it
+2. No, skip it
+```
+
+**For project-only rules:** Keep them (they are not in source, user added them intentionally).
+
+#### Step 4.2.4: Show preview before applying
+
+After all decisions, show a **preview** of the merged result:
+
+```
+PREVIEW: CLAUDE.md after merge
+
+---
+# Claude Guidelines
+
+## Language
+- Always respond in German    <-- kept project version
+
+## Git Rules
+- Never commit CLAUDE.md files    <-- unchanged
+- No emojis in code    <-- kept (project-only)
+
+## Code Style
+- Use 2-space indentation    <-- NEW from source
+---
+
+Apply these changes?
+1. Yes, apply
+2. No, discard all changes
+3. Go back and change decisions
+```
+
+**Important principles:**
+- EVERY rule change requires explicit user confirmation
+- Show exactly what will change before applying
+- User can always go back and revise decisions
+- Never silently add, remove, or modify rules
 
 ### 4.3 Directories (e.g., .claude/, GUIDES/)
 
@@ -256,6 +358,11 @@ Note: Files are untracked. Run 'git status' to see them.
 3. **Never modify .gitignore** - User decides tracking
 4. **Be helpful** - Explain differences clearly, suggest what makes sense
 5. **Respect user decisions** - If they say skip, skip without arguing
+6. **Granular is mandatory** - Never merge files wholesale, always rule-by-rule
+7. **Preview before apply** - Always show the final result before writing
+8. **Structure-aware** - Detect semantic duplicates across different paths
+9. **Preserve project rules** - Project-only rules stay unless user removes them
+10. **Explain conflicts clearly** - User must understand what each choice means
 
 ## Error Handling
 
@@ -273,60 +380,147 @@ Claude: Fetching source from ./my-standards...
 
 Analyzing source project structure...
 
-Found the following relevant files:
+**Structure conflict detected:**
+  Project: CLAUDE.versioning.md
+  Source:  CLAUDE/version-rules.md
+  These appear to cover the same topic. Will ask how to handle.
 
-**Direct Instructions (High Priority):**
-- CLAUDE.md (references @CLAUDE.git.md, @GUIDES/coding.md)
-- CLAUDE.git.md
-- .claude/settings.json
+**Files to review:**
 
-**Guidelines (Medium Priority):**
-- GUIDES/coding.md - Coding standards and best practices
-- GUIDES/testing.md - Testing guidelines
-- CONTRIBUTING.md - Contains AI assistance section
+Highest Priority:
+- .gitconfig (git user, email settings)
 
-Shall I proceed with reviewing these files?
+High Priority:
+- CLAUDE.md (exists in both - will merge rule-by-rule)
+- CLAUDE.git.md (new file)
+- CLAUDE/version-rules.md (structure conflict with CLAUDE.versioning.md)
+
+Medium Priority:
+- GUIDES/coding.md
+- GUIDES/testing.md
+
+Proceed with review?
 
 User: Yes
 
 ---
-File: CLAUDE.md
+## Git Configuration
 
-This file exists in both locations. Let me compare them...
+Found: .gitconfig
 
-Your current version has 3 rules.
-Source version has 5 rules and references 2 additional files.
+Settings:
+- user.name = "Marcel Bich"
+- user.email = "marcel@work.com"
 
-Key differences:
-- Source adds: "Never commit secrets"
-- Source adds: "Always run tests before commit"
-- Source references GUIDES/coding.md (you don't have this)
-
-What would you like to do?
-1. Keep current (no changes)
-2. Replace with source version
-3. Merge intelligently
-
-User: 3
-
-Claude: I'll merge the new rules into your CLAUDE.md and add the @GUIDES reference.
-
----
-Directory: GUIDES/
-
-This directory doesn't exist in your project.
-Source contains 2 guideline files:
-- coding.md - Code style, naming conventions, error handling
-- testing.md - Test structure, coverage requirements
-
-These are referenced from CLAUDE.md. Add this directory?
-1. Yes, review each file
+Apply to this project?
+1. Yes, apply locally
 2. No, skip
 
 User: 1
 
-[Reviews each file...]
+Applied git config locally.
 
 ---
-Sync complete. Files are untracked (not added to git).
+## Structure Conflict
+
+Project has: CLAUDE.versioning.md
+Source has:  CLAUDE/version-rules.md
+
+Both files contain version management rules.
+
+How to handle?
+1. Merge into project location (CLAUDE.versioning.md)
+2. Merge into source location (CLAUDE/version-rules.md)
+3. Keep both separate
+4. Show both files
+
+User: 1
+
+Will merge rules into CLAUDE.versioning.md...
+
+---
+## CLAUDE.md - Rule-by-Rule Merge
+
+Parsing rules...
+
+Project has 4 rules, Source has 6 rules.
+- 2 identical (no action needed)
+- 1 conflict
+- 2 new rules from source
+
+### CONFLICT 1/1:
+
+Project: "Always respond in German"
+Source:  "Always respond in English"
+
+1. Keep German
+2. Use English
+3. Remove rule entirely
+
+User: 1
+
+Keeping German.
+
+### NEW RULE 1/2:
+
+Section: [Security]
+Rule: "Never commit secrets or API keys"
+
+Add this rule?
+1. Yes
+2. No
+
+User: 1
+
+### NEW RULE 2/2:
+
+Section: [Testing]
+Rule: "Run tests before every commit"
+
+Add this rule?
+1. Yes
+2. No
+
+User: 1
+
+---
+## PREVIEW: CLAUDE.md
+
+# Claude Guidelines
+
+## Language
+- Always respond in German    <-- kept
+
+## Git Rules
+- Never commit CLAUDE.md    <-- unchanged
+- No emojis in code    <-- unchanged
+
+## Security
+- Never commit secrets or API keys    <-- NEW
+
+## Testing
+- Run tests before every commit    <-- NEW
+
+Apply these changes?
+1. Yes, apply
+2. No, discard
+3. Go back
+
+User: 1
+
+CLAUDE.md updated.
+
+---
+## Summary
+
+Source: ./my-standards
+
++ Applied: .gitconfig (user.name, user.email)
+~ Merged: CLAUDE.md (2 new rules added)
+~ Merged: CLAUDE.versioning.md (combined with source rules)
++ Added: CLAUDE.git.md
++ Added: GUIDES/coding.md
++ Added: GUIDES/testing.md
+
+Files are untracked. Run 'git status' to review.
 ```
