@@ -110,6 +110,11 @@ Look for files that contain **Claude/AI instructions, guidelines, or configurati
 - `.claude/` directory - Claude Code configuration
 - Files referenced via `@filename` syntax in any CLAUDE file
 
+**Recommendations (show to user, don't sync as files):**
+- `RECOMMENDATIONS.md`, `recommendations/` - Tips and suggestions for the user
+- `TIPS.md`, `tips/` - Best practices and hints
+- These are NOT synced as files, but presented to the user during sync
+
 **Medium priority (analyze content):**
 - `GUIDES/`, `guides/` - Often contain development guidelines
 - `RULES.md`, `STANDARDS.md`, `CONVENTIONS.md`
@@ -345,6 +350,39 @@ Create <directory>/ and review each file?
 - Explain what the directory contains and why it might be useful
 - For large directories, group similar files and ask about groups
 - Respect the project structure - suggest appropriate locations
+
+### 4.4 Recommendations (informational, not synced)
+
+If the source contains `RECOMMENDATIONS.md`, `TIPS.md`, or similar files:
+
+**These are NOT copied to the project.** Instead, present them to the user:
+
+```
+The source includes recommendations for you:
+
+---
+## Recommended Tools
+
+- Consider using ESLint for code quality
+- Prettier helps with consistent formatting
+
+## Best Practices
+
+- Run tests before every commit
+- Use meaningful commit messages
+---
+
+These are suggestions only - no files will be created.
+Would you like me to help implement any of these?
+1. Yes, let's discuss
+2. No, continue with sync
+```
+
+**Key points:**
+- Recommendations are informational only
+- They don't create files in the project
+- User can optionally act on them
+- Present at the end of the sync, after all file operations
 
 ## Step 5: Cleanup
 
