@@ -1,8 +1,8 @@
 ---
 description: Intelligently sync Claude instructions from a source to the current project with interactive review
 arguments:
-  - name: source
-    description: "Source: repo URL (https://...) or local path (./path, ../path, ~/path, /absolute/path)"
+  - name: args
+    description: "Source and/or instructions in any order. Source: URL or path. Instructions: text in quotes."
     required: false
 allowed-tools:
   - Bash
@@ -22,14 +22,37 @@ You are executing the `/claude-dogma` command. Your task is to **intelligently m
 DEFAULT_SOURCE="https://github.com/Marcel-Bich/marcel-bich-claude-dogma"
 ```
 
-## Step 1: Parse Source Argument
+## Step 1: Parse Arguments
 
 The user provided: `$ARGUMENTS`
 
-**Source detection:**
-- Starts with `http` = Remote Git repo
-- Starts with `./`, `../`, `/`, `~` = Local path
-- Empty = Use DEFAULT_SOURCE
+**Parse into SOURCE and INSTRUCTIONS (order does not matter, quotes optional):**
+
+**Source detection (recognizable patterns):**
+- Starts with `http://` or `https://` = Remote Git repo
+- Starts with `~/`, `./`, `../`, `/` = Local path
+
+**Instructions detection:**
+- Everything else that is NOT a recognizable source pattern
+- Quotes `"..."` are optional but recommended for clarity
+
+**Valid combinations:**
+```
+/dogma:sync                                         -> DEFAULT_SOURCE, no instructions
+/dogma:sync ~/source                                -> ~/source, no instructions
+/dogma:sync focus on git rules                      -> DEFAULT_SOURCE, instructions
+/dogma:sync "focus on git rules"                    -> DEFAULT_SOURCE, instructions
+/dogma:sync ~/source focus on git rules             -> ~/source, instructions
+/dogma:sync ~/source "focus on git rules"           -> ~/source, instructions
+/dogma:sync "focus on git rules" ~/source           -> ~/source, instructions
+/dogma:sync focus on git rules ~/source             -> ~/source, instructions
+```
+
+**If user provided instructions, display them and follow throughout:**
+```
+User instructions: "<instructions>"
+Will follow these throughout the sync process.
+```
 
 **If DEFAULT_SOURCE is "TODO_CONFIGURE_DEFAULT_SOURCE" and no source provided:**
 Stop and tell the user: "Default source not configured. Please provide a source URL or path."
@@ -363,6 +386,7 @@ Note: Files are untracked. Run 'git status' to see them.
 8. **Structure-aware** - Detect semantic duplicates across different paths
 9. **Preserve project rules** - Project-only rules stay unless user removes them
 10. **Explain conflicts clearly** - User must understand what each choice means
+11. **Follow user instructions** - If additional instructions were provided, follow them throughout
 
 ## Error Handling
 
@@ -523,4 +547,30 @@ Source: ./my-standards
 + Added: GUIDES/testing.md
 
 Files are untracked. Run 'git status' to review.
+```
+
+## Example with User Instructions
+
+```
+User: /dogma:sync ~/my-config nur git config und CLAUDE.md, ignoriere GUIDES
+
+Claude: Fetching source from ~/my-config...
+
+**User instructions:** nur git config und CLAUDE.md, ignoriere GUIDES
+Will focus on git config and CLAUDE.md, skipping GUIDES directory.
+
+Analyzing source...
+
+Found:
+- .gitconfig (will review)
+- CLAUDE.md (will review)
+- CLAUDE.git.md (will review)
+- GUIDES/coding.md (skipping per user instruction)
+- GUIDES/testing.md (skipping per user instruction)
+
+Proceed?
+
+User: Yes
+
+[Reviews only git config and CLAUDE files...]
 ```
