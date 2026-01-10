@@ -19,9 +19,7 @@ You are executing the `/claude-dogma` command. Your task is to **intelligently m
 ## Configuration
 
 ```
-DEFAULT_SOURCE="https://github.com/Marcel-Bich/marcel-bich-claude-marketplace"
-TARGET_FILES="CLAUDE.md CLAUDE.*.md"
-TARGET_DIRS=".claude/"
+DEFAULT_SOURCE="https://github.com/Marcel-Bich/marcel-bich-claude-dogma"
 ```
 
 ## Step 1: Parse Source Argument
@@ -59,19 +57,58 @@ SOURCE_DIR="$SOURCE_PATH"
 TEMP_DIR=""  # No cleanup needed
 ```
 
-## Step 3: Discover Source Files
+## Step 3: Intelligent Source Analysis
 
-Find all Claude instruction files in the source:
+**Your task is to intelligently analyze the source project** - not just look for fixed filenames.
 
+### 3.1 Scan the Source Project
+
+Explore the source directory structure:
 ```bash
 cd "$SOURCE_DIR"
-# Find CLAUDE.md and CLAUDE.*.md files
-ls CLAUDE.md CLAUDE.*.md 2>/dev/null
+# Get overview of project structure
+ls -la
+# Find all markdown files
+find . -name "*.md" -type f | head -50
 # Check for .claude/ directory
-ls -d .claude/ 2>/dev/null
+ls -la .claude/ 2>/dev/null
 ```
 
-Build a list of all files to potentially sync. For `.claude/` directory, list all files recursively.
+### 3.2 Identify Relevant Files
+
+Look for files that contain **Claude/AI instructions, guidelines, or configuration**:
+
+**High priority (always check):**
+- `CLAUDE.md`, `CLAUDE.*.md` - Direct Claude instructions
+- `.claude/` directory - Claude Code configuration
+- Files referenced via `@filename` syntax in any CLAUDE file
+
+**Medium priority (analyze content):**
+- `GUIDES/`, `guides/` - Often contain development guidelines
+- `RULES.md`, `STANDARDS.md`, `CONVENTIONS.md`
+- `CONTRIBUTING.md` - May contain relevant coding standards
+- Any markdown file with keywords like "guidelines", "rules", "instructions", "standards"
+
+**Contextual (check if referenced):**
+- Files linked or referenced from high-priority files
+- README sections about coding standards or AI assistance
+
+### 3.3 Read and Understand References
+
+For each CLAUDE.md or similar file found:
+1. Read the content
+2. Look for `@filename` references (these indicate linked files)
+3. Add referenced files to the sync list
+4. Understand the purpose of each file
+
+### 3.4 Build Sync Proposal
+
+Create a list of files/directories to potentially sync, categorized by:
+- **Direct instructions**: CLAUDE.md, .claude/ config
+- **Guidelines/Standards**: GUIDES/, rules, conventions
+- **Supporting files**: Referenced documentation
+
+Present this analysis to the user before proceeding.
 
 ## Step 4: Interactive Merge Process
 
@@ -130,21 +167,28 @@ What would you like to do?
 - Highlight additions, removals, and changes
 - For large files, summarize sections
 
-### 4.3 Directory: .claude/
+### 4.3 Directories (e.g., .claude/, GUIDES/)
 
-For the `.claude/` directory, process **each file individually** using the same logic above.
+For directories, process **each file individually** using the same logic above.
 
-If `.claude/` doesn't exist in project but exists in source, ask:
+If a directory doesn't exist in project but exists in source, ask:
 ```
-The source has a .claude/ directory with these files:
-- commands/...
-- settings.json
+The source has a <directory>/ directory with these files:
+- file1.md
+- file2.md
 - ...
 
-Create .claude/ directory and review each file?
+<Brief explanation of what this directory contains>
+
+Create <directory>/ and review each file?
 - Yes, let's review each file
 - No, skip entire directory
 ```
+
+**Be intelligent about directories:**
+- Explain what the directory contains and why it might be useful
+- For large directories, group similar files and ask about groups
+- Respect the project structure - suggest appropriate locations
 
 ## Step 5: Cleanup
 
@@ -192,12 +236,27 @@ Note: Files are untracked. Run 'git status' to see them.
 ## Example Interaction Flow
 
 ```
-User: /claude-dogma ./my-standards
+User: /dogma:sync ./my-standards
 
 Claude: Fetching source from ./my-standards...
-Found 2 files to review:
-- CLAUDE.md
+
+Analyzing source project structure...
+
+Found the following relevant files:
+
+**Direct Instructions (High Priority):**
+- CLAUDE.md (references @CLAUDE.git.md, @GUIDES/coding.md)
 - CLAUDE.git.md
+- .claude/settings.json
+
+**Guidelines (Medium Priority):**
+- GUIDES/coding.md - Coding standards and best practices
+- GUIDES/testing.md - Testing guidelines
+- CONTRIBUTING.md - Contains AI assistance section
+
+Shall I proceed with reviewing these files?
+
+User: Yes
 
 ---
 File: CLAUDE.md
@@ -205,31 +264,37 @@ File: CLAUDE.md
 This file exists in both locations. Let me compare them...
 
 Your current version has 3 rules.
-Source version has 4 rules (adds: "Never commit secrets").
+Source version has 5 rules and references 2 additional files.
+
+Key differences:
+- Source adds: "Never commit secrets"
+- Source adds: "Always run tests before commit"
+- Source references GUIDES/coding.md (you don't have this)
 
 What would you like to do?
 1. Keep current (no changes)
 2. Replace with source version
-3. Merge (add the new rule)
+3. Merge intelligently
 
 User: 3
 
-Claude: Added the new rule to your CLAUDE.md.
+Claude: I'll merge the new rules into your CLAUDE.md and add the @GUIDES reference.
 
 ---
-File: CLAUDE.git.md
+Directory: GUIDES/
 
-This file doesn't exist in your project yet.
+This directory doesn't exist in your project.
+Source contains 2 guideline files:
+- coding.md - Code style, naming conventions, error handling
+- testing.md - Test structure, coverage requirements
 
-[Shows preview of file content]
-
-Add this file?
-1. Yes
-2. No
+These are referenced from CLAUDE.md. Add this directory?
+1. Yes, review each file
+2. No, skip
 
 User: 1
 
-Claude: Added CLAUDE.git.md to your project.
+[Reviews each file...]
 
 ---
 Sync complete. Files are untracked (not added to git).
