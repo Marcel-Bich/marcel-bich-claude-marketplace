@@ -78,6 +78,10 @@ ls -la .claude/ 2>/dev/null
 
 Look for files that contain **Claude/AI instructions, guidelines, or configuration**:
 
+**Highest priority (personal/project config):**
+- `.gitconfig`, `gitconfig` - Git user, email, aliases (apply with `git config`)
+- `.editorconfig` - Editor settings for consistent formatting
+
 **High priority (always check):**
 - `CLAUDE.md`, `CLAUDE.*.md` - Direct Claude instructions
 - `.claude/` directory - Claude Code configuration
@@ -134,6 +138,33 @@ Add this file to the project?
 If "Yes": Copy file to project (do NOT git add).
 If "No": Skip and continue.
 If "Show full": Display full content, then ask again.
+
+### 4.1.1 Special: Git Configuration (.gitconfig)
+
+Git config files require special handling - they should be **applied**, not just copied:
+
+```
+Found: .gitconfig
+
+Source contains:
+- user.name = "Marcel Bich"
+- user.email = "marcel@example.com"
+- core.autocrlf = input
+- ...
+
+Apply these settings to this project?
+- Yes, apply to local project (.git/config)
+- Yes, apply globally (~/.gitconfig)
+- No, skip
+- Show full config
+```
+
+If applying, use `git config` commands:
+```bash
+git config --local user.name "Marcel Bich"
+git config --local user.email "marcel@example.com"
+# etc.
+```
 
 ### 4.2 File EXISTS in Project - Compare Contents
 
