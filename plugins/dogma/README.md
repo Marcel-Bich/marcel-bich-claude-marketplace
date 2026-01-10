@@ -182,7 +182,21 @@ export DOGMA_SECRETS_DETECTION=false
 export DOGMA_WRITE_EDIT_REMINDER=false
 export DOGMA_POST_WRITE_VALIDATE=false
 export DOGMA_PROMPT_INJECTION=false
+
+# Enable debug logging to /tmp/dogma-hooks.log
+export DOGMA_DEBUG=true
 ```
+
+### Debug Mode
+
+When hooks cause errors, enable debug logging:
+
+```bash
+DOGMA_DEBUG=true claude
+```
+
+All hook executions are logged to `/tmp/dogma-hooks.log` with full bash trace (`set -x`).
+View logs: `tail -f /tmp/dogma-hooks.log`
 
 ### Default Sync Source
 

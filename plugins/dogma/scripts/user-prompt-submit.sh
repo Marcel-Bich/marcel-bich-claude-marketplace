@@ -14,6 +14,16 @@
 # Trap all errors and exit cleanly
 trap 'exit 0' ERR
 
+# === DEBUG MODE ===
+# ENV: DOGMA_DEBUG=true to enable logging to /tmp/dogma-hooks.log
+DEBUG="${DOGMA_DEBUG:-false}"
+if [ "$DEBUG" = "true" ]; then
+    exec 2>>/tmp/dogma-hooks.log
+    set -x
+    echo "=== user-prompt-submit.sh START $(date) ===" >&2
+    echo "PWD: $(pwd)" >&2
+fi
+
 # === CONFIGURATION ===
 ENABLED="${DOGMA_PROMPT_REMINDER:-true}"
 if [ "$ENABLED" != "true" ]; then
@@ -196,4 +206,8 @@ if [ "$CHECKLIST_ENABLED" = "true" ]; then
     fi
 fi
 
+# Debug end marker
+if [ "$DEBUG" = "true" ]; then
+    echo "=== user-prompt-submit.sh END ===" >&2
+fi
 exit 0

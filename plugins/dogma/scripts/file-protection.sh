@@ -11,6 +11,15 @@
 # Trap all errors and exit cleanly
 trap 'exit 0' ERR
 
+# === DEBUG MODE ===
+DEBUG="${DOGMA_DEBUG:-false}"
+if [ "$DEBUG" = "true" ]; then
+    exec 2>>/tmp/dogma-hooks.log
+    set -x
+    echo "=== file-protection.sh START $(date) ===" >&2
+    echo "PWD: $(pwd)" >&2
+fi
+
 # === CONFIGURATION ===
 ENABLED="${DOGMA_FILE_PROTECTION:-true}"
 if [ "$ENABLED" != "true" ]; then
