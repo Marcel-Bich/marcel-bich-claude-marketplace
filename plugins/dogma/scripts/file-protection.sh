@@ -95,20 +95,16 @@ if [ -n "$BLOCKED" ]; then
     esac
 
     echo ""
-    echo "DOGMA WARNING: file deletion detected"
+    echo "BLOCKED by dogma: file deletion requires confirmation"
     echo ""
     echo "Command: $BLOCKED"
-    echo "Reason: $REASON"
-    if [ -n "$TARGET" ]; then
-        echo "Target: $TARGET"
-    fi
+    echo "Target: ${TARGET:-unknown}"
     echo ""
-    echo "Make sure the user has explicitly requested this deletion."
-    echo "If unsure, ask for confirmation first."
+    echo "Options:"
+    echo "1. User runs it manually: $TOOL_INPUT"
+    echo "2. Bypass: DOGMA_FILE_PROTECTION=false claude ..."
     echo ""
-    # Exit 0 = warn only, don't block
-    # User has final control - if they requested deletion, proceed
-    exit 0
+    exit 1
 fi
 
 exit 0
