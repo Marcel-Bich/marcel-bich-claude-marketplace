@@ -77,7 +77,9 @@ if [ ! -d ".git" ]; then
 fi
 
 # Extract file paths from git add command
-FILES=$(echo "$TOOL_INPUT" | sed 's/^git\s\+add\s\+//' | tr ' ' '\n' | grep -v '^-')
+# Stop at && ; | to handle chained commands like "git add file && git commit"
+GIT_ADD_PART=$(echo "$TOOL_INPUT" | sed 's/\s*&&.*//; s/\s*;.*//; s/\s*|.*//')
+FILES=$(echo "$GIT_ADD_PART" | sed 's/^git\s\+add\s\+//' | tr ' ' '\n' | grep -v '^-')
 
 BLOCKED_AI_FILES=""
 BLOCKED_SECRET_FILES=""
