@@ -12,11 +12,12 @@
 trap 'exit 0' ERR
 
 # === JSON OUTPUT FOR BLOCKING ===
-# Claude Code expects JSON with permissionDecision for proper blocking
-output_deny() {
+# Claude Code expects JSON with permissionDecision
+# Using "ask" allows user to confirm and proceed if they really want to
+output_block() {
     local reason="$1"
     cat <<EOF
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"$reason"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"$reason"}}
 EOF
     exit 0
 }
@@ -118,7 +119,7 @@ if [ -n "$BLOCKED" ]; then
     # Build reason message (escape quotes for JSON)
     REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} - $REASON. User can run manually or bypass with DOGMA_FILE_PROTECTION=false"
     REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
-    output_deny "$REASON_MSG"
+    output_block "$REASON_MSG"
 fi
 
 exit 0

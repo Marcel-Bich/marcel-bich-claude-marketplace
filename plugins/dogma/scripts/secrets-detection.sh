@@ -11,11 +11,12 @@
 trap 'exit 0' ERR
 
 # === JSON OUTPUT FOR BLOCKING ===
-# Claude Code expects JSON with permissionDecision for proper blocking
-output_deny() {
+# Claude Code expects JSON with permissionDecision
+# Using "ask" allows user to confirm and proceed if they really want to
+output_block() {
     local reason="$1"
     cat <<EOF
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"$reason"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"$reason"}}
 EOF
     exit 0
 }
@@ -131,7 +132,7 @@ fi
 if [ -n "$FOUND_SECRETS" ]; then
     FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.path // "unknown"')
     SECRETS_LIST=$(echo -e "$FOUND_SECRETS" | tr '\n' ' ' | sed 's/  */ /g' | sed 's/"/\\"/g')
-    output_deny "BLOCKED by dogma: Secrets detected in $FILE_PATH ($SECRETS_LIST). NEVER write real secrets! Use env vars or placeholders."
+    output_block "BLOCKED by dogma: Secrets detected in $FILE_PATH ($SECRETS_LIST). NEVER write real secrets! Use env vars or placeholders."
 fi
 
 exit 0
