@@ -12,6 +12,16 @@
 # Trap all errors and exit cleanly
 trap 'exit 0' ERR
 
+# === JSON OUTPUT FOR BLOCKING ===
+# Claude Code expects JSON with permissionDecision for proper blocking
+output_deny() {
+    local reason="$1"
+    cat <<EOF
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"$reason"}}
+EOF
+    exit 0
+}
+
 # === DEBUG MODE ===
 DEBUG="${DOGMA_DEBUG:-false}"
 if [ "$DEBUG" = "true" ]; then
@@ -48,20 +58,7 @@ if ! echo "$TOOL_INPUT" | grep -qE '^git\s+add\s'; then
         # Check if .env exists and is modified
         if [ -f ".env" ]; then
             if git status --porcelain .env 2>/dev/null | grep -q '^.M\|^M'; then
-                echo ""
-                echo "BLOCKED by dogma: secret file protection"
-                echo ""
-                echo "git commit -a wuerde .env mit committen!"
-                echo ""
-                echo ".env enthaelt moeglicherweise Secrets und sollte NIEMALS committet werden."
-                echo ""
-                echo "Stattdessen:"
-                echo "1. git add <specific-files>  (ohne .env)"
-                echo "2. git commit -m \"message\""
-                echo ""
-                echo "Oder der User kann selbst: git commit -a"
-                echo ""
-                exit 1
+                output_deny "BLOCKED by dogma: git commit -a wuerde .env mit committen! .env enthaelt moeglicherweise Secrets. Nutze git add <specific-files> ohne .env, dann git commit."
             fi
         fi
     fi
@@ -199,40 +196,14 @@ done
 
 # Block secret files first (higher priority)
 if [ -n "$BLOCKED_SECRET_FILES" ]; then
-    echo ""
-    echo "BLOCKED by dogma: secret file protection"
-    echo ""
-    echo "Die folgenden Dateien enthalten moeglicherweise Secrets:"
-    for F in $BLOCKED_SECRET_FILES; do
-        echo "  - $F"
-    done
-    echo ""
-    echo "NIEMALS Secrets committen! Stattdessen:"
-    echo "- Umgebungsvariablen verwenden"
-    echo "- .env zu .gitignore hinzufuegen"
-    echo "- Secrets aus dem Repo entfernen"
-    echo ""
-    echo "Falls der User es WIRKLICH will: git add -f <file>"
-    echo "Aber Claude fuehrt das NICHT aus."
-    echo ""
-    exit 1
+    FILES_LIST=$(echo $BLOCKED_SECRET_FILES | tr ' ' ', ')
+    output_deny "BLOCKED by dogma: Secret files detected ($FILES_LIST). NIEMALS Secrets committen! User kann git add -f nutzen falls wirklich gewollt."
 fi
 
 # Block AI files
 if [ -n "$BLOCKED_AI_FILES" ]; then
-    echo ""
-    echo "BLOCKED by dogma: AI file protection"
-    echo ""
-    echo "Die folgenden Dateien sind in .git/info/exclude und sollten untracked bleiben:"
-    for F in $BLOCKED_AI_FILES; do
-        echo "  - $F"
-    done
-    echo ""
-    echo "Diese Dateien verraten AI/Agent-Nutzung."
-    echo ""
-    echo "Falls gewuenscht: git add -f <file>"
-    echo ""
-    exit 1
+    FILES_LIST=$(echo $BLOCKED_AI_FILES | tr ' ' ', ')
+    output_deny "BLOCKED by dogma: AI files in .git/info/exclude ($FILES_LIST). Diese Dateien verraten AI-Nutzung. User kann git add -f nutzen falls gewuenscht."
 fi
 
 exit 0

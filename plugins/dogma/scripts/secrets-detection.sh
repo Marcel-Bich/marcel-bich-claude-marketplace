@@ -10,6 +10,16 @@
 # Trap all errors and exit cleanly
 trap 'exit 0' ERR
 
+# === JSON OUTPUT FOR BLOCKING ===
+# Claude Code expects JSON with permissionDecision for proper blocking
+output_deny() {
+    local reason="$1"
+    cat <<EOF
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"$reason"}}
+EOF
+    exit 0
+}
+
 # === DEBUG MODE ===
 DEBUG="${DOGMA_DEBUG:-false}"
 if [ "$DEBUG" = "true" ]; then
@@ -120,24 +130,8 @@ fi
 # If secrets found, block the operation
 if [ -n "$FOUND_SECRETS" ]; then
     FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.path // "unknown"')
-
-    echo ""
-    echo "BLOCKED by dogma: secrets detection"
-    echo ""
-    echo "Potential secrets detected in content for: $FILE_PATH"
-    echo ""
-    echo "Found:"
-    echo -e "$FOUND_SECRETS"
-    echo ""
-    echo "NEVER write real secrets to files in the repository."
-    echo ""
-    echo "Instead:"
-    echo "- Use environment variables: process.env.API_KEY"
-    echo "- Use .env files (which are gitignored)"
-    echo "- Use placeholder values: 'your-api-key-here'"
-    echo "- Ask the user to add secrets manually"
-    echo ""
-    exit 1
+    SECRETS_LIST=$(echo -e "$FOUND_SECRETS" | tr '\n' ' ' | sed 's/  */ /g' | sed 's/"/\\"/g')
+    output_deny "BLOCKED by dogma: Secrets detected in $FILE_PATH ($SECRETS_LIST). NEVER write real secrets! Use env vars or placeholders."
 fi
 
 exit 0

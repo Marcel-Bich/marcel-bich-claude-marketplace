@@ -13,6 +13,16 @@
 # Trap all errors and exit cleanly
 trap 'exit 0' ERR
 
+# === JSON OUTPUT FOR BLOCKING ===
+# Claude Code expects JSON with permissionDecision for proper blocking
+output_deny() {
+    local reason="$1"
+    cat <<EOF
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"$reason"}}
+EOF
+    exit 0
+}
+
 # === DEBUG MODE ===
 DEBUG="${DOGMA_DEBUG:-false}"
 if [ "$DEBUG" = "true" ]; then
@@ -82,65 +92,24 @@ fi
 # ============================================
 # BLOCK and require verification
 # ============================================
-echo ""
-echo "BLOCKED by dogma: dependency verification required"
-echo ""
-echo "Package Manager: $PACKAGE_MANAGER"
-echo "Pakete: $(echo "$PACKAGES" | tr '\n' ' ')"
-echo ""
-echo "============================================"
-echo "PFLICHT: Pakete VOR Installation pruefen!"
-echo "============================================"
-echo ""
-echo "Bevor du installierst, MUSST du:"
-echo ""
+PKG_LIST=$(echo "$PACKAGES" | tr '\n' ' ' | sed 's/  */ /g')
 
+# Build verification URLs based on package manager
+VERIFY_URLS=""
 for PKG in $PACKAGES; do
-    # Skip scoped packages display differently
     CLEAN_PKG=$(echo "$PKG" | sed 's/@.*//' | sed 's/\^.*//' | sed 's/~.*//')
-
     case "$PACKAGE_MANAGER" in
         npm|yarn|pnpm)
-            echo "1. WebFetch: https://socket.dev/npm/package/$CLEAN_PKG"
-            echo "   -> Pruefe auf Typosquatting, Malware, Vulnerabilities"
-            echo ""
-            echo "2. Oder WebFetch: https://snyk.io/advisor/npm-package/$CLEAN_PKG"
-            echo "   -> Pruefe Security Score und bekannte Schwachstellen"
-            echo ""
-            echo "3. Oder WebFetch: https://www.npmjs.com/package/$CLEAN_PKG"
-            echo "   -> Pruefe Downloads, Maintainer, Last Update"
+            VERIFY_URLS="$VERIFY_URLS socket.dev/npm/package/$CLEAN_PKG"
             ;;
         pip)
-            echo "1. WebFetch: https://snyk.io/advisor/python/$CLEAN_PKG"
-            echo "   -> Pruefe Security Score und bekannte Schwachstellen"
-            echo ""
-            echo "2. Oder WebFetch: https://pypi.org/project/$CLEAN_PKG/"
-            echo "   -> Pruefe Downloads, Maintainer, Last Update"
+            VERIFY_URLS="$VERIFY_URLS snyk.io/advisor/python/$CLEAN_PKG"
             ;;
         cargo)
-            echo "1. WebFetch: https://crates.io/crates/$CLEAN_PKG"
-            echo "   -> Pruefe Downloads, Maintainer, Last Update"
+            VERIFY_URLS="$VERIFY_URLS crates.io/crates/$CLEAN_PKG"
             ;;
     esac
 done
+VERIFY_URLS=$(echo "$VERIFY_URLS" | tr ' ' ', ')
 
-echo ""
-echo "============================================"
-echo "Worauf achten:"
-echo "============================================"
-echo "- Typosquatting: Ist der Name korrekt geschrieben?"
-echo "- Downloads: Wenige Downloads = verdaechtig"
-echo "- Alter: Sehr neues Paket = vorsichtig sein"
-echo "- Maintainer: Bekannter/vertrauenswuerdiger Autor?"
-echo "- Vulnerabilities: Bekannte Sicherheitsprobleme?"
-echo ""
-echo "============================================"
-echo "Nach der Pruefung:"
-echo "============================================"
-echo "Wenn das Paket sicher erscheint, fuehre den Install erneut aus."
-echo "Claude wird dann fragen ob du geprueft hast."
-echo ""
-echo "Siehe: @CLAUDE/CLAUDE.security.md"
-echo ""
-
-exit 1
+output_deny "BLOCKED by dogma: Dependency verification required. Packages: $PKG_LIST ($PACKAGE_MANAGER). FIRST use WebFetch to verify: $VERIFY_URLS - Check for typosquatting, malware, vulnerabilities before installing."

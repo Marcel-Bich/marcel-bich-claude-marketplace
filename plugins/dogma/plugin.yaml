@@ -1,6 +1,6 @@
 name: dogma
 description: Intelligent sync of Claude instructions with enforcement hooks for security and consistency
-version: 1.9.5
+version: 1.10.0
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
