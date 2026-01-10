@@ -1,0 +1,127 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/user-prompt-submit.sh",
+            "timeout": 5,
+            "description": "Remind of rules at every prompt (Honesty, Planning, Philosophy, Language)"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/git-add-protection.sh",
+            "timeout": 5,
+            "description": "Block git add for AI files and secret files"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/git-permissions.sh",
+            "timeout": 5,
+            "description": "Enforce git permissions from CLAUDE.git.md"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/file-protection.sh",
+            "timeout": 5,
+            "description": "Block destructive file operations (rm, del, git clean)"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/dependency-verification.sh",
+            "timeout": 10,
+            "description": "Block package installations until verified via socket.dev/snyk"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/secrets-detection.sh",
+            "timeout": 5,
+            "description": "Block writing secrets (API keys, tokens, passwords) to files"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/write-edit-reminder.sh",
+            "timeout": 5,
+            "description": "Remind of language and AI-traces rules with @-references"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/secrets-detection.sh",
+            "timeout": 5,
+            "description": "Block writing secrets (API keys, tokens, passwords) to files"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/write-edit-reminder.sh",
+            "timeout": 5,
+            "description": "Remind of language and AI-traces rules with @-references"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/post-write-validate.sh",
+            "timeout": 5,
+            "description": "Validate written content for AI traces (curly quotes, em-dashes, etc.)"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/post-write-validate.sh",
+            "timeout": 5,
+            "description": "Validate written content for AI traces (curly quotes, em-dashes, etc.)"
+          }
+        ]
+      },
+      {
+        "matcher": "WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/prompt-injection.sh",
+            "timeout": 10,
+            "description": "Detect prompt injection in fetched content"
+          }
+        ]
+      },
+      {
+        "matcher": "WebSearch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/prompt-injection.sh",
+            "timeout": 10,
+            "description": "Detect prompt injection in search results"
+          }
+        ]
+      }
+    ]
+  }
+}

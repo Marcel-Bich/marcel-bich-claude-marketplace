@@ -1,0 +1,227 @@
+#!/bin/bash
+# Dogma: Git Add Protection Hook
+# Blocks git add for:
+# 1. Files in .git/info/exclude (AI/agent files)
+# 2. Secret files (.env, *.pem, *credentials*)
+#
+# IDEA.md Zeile 164-182 (AI files) und 391-403 (Secret files)
+#
+# ENV: DOGMA_GIT_ADD_PROTECTION=true (default) | false
+
+set -e
+
+# === CONFIGURATION ===
+ENABLED="${DOGMA_GIT_ADD_PROTECTION:-true}"
+if [ "$ENABLED" != "true" ]; then
+    exit 0
+fi
+
+# Read JSON input from stdin
+INPUT=$(cat)
+
+# Extract the command being run
+TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
+TOOL_INPUT=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+
+# Only process Bash tool calls
+if [ "$TOOL_NAME" != "Bash" ]; then
+    exit 0
+fi
+
+# ============================================
+# Part 1: Check for git add commands
+# ============================================
+if ! echo "$TOOL_INPUT" | grep -qE '^git\s+add\s'; then
+    # Also check for git commit -a (adds all modified files including secrets)
+    if echo "$TOOL_INPUT" | grep -qE '^git\s+commit\s.*-a'; then
+        # Check if .env exists and is modified
+        if [ -f ".env" ]; then
+            if git status --porcelain .env 2>/dev/null | grep -q '^.M\|^M'; then
+                echo ""
+                echo "BLOCKED by dogma: secret file protection"
+                echo ""
+                echo "git commit -a wuerde .env mit committen!"
+                echo ""
+                echo ".env enthaelt moeglicherweise Secrets und sollte NIEMALS committet werden."
+                echo ""
+                echo "Stattdessen:"
+                echo "1. git add <specific-files>  (ohne .env)"
+                echo "2. git commit -m \"message\""
+                echo ""
+                echo "Oder der User kann selbst: git commit -a"
+                echo ""
+                exit 1
+            fi
+        fi
+    fi
+    exit 0
+fi
+
+# If force flag is used, allow it (user knows what they're doing)
+if echo "$TOOL_INPUT" | grep -qE '\s-f\s|\s--force\s'; then
+    exit 0
+fi
+
+# Check if we're in a git repository
+if [ ! -d ".git" ]; then
+    exit 0
+fi
+
+# Extract file paths from git add command
+FILES=$(echo "$TOOL_INPUT" | sed 's/^git\s\+add\s\+//' | tr ' ' '\n' | grep -v '^-')
+
+BLOCKED_AI_FILES=""
+BLOCKED_SECRET_FILES=""
+
+# ============================================
+# Part 2: Secret File Patterns (IDEA.md 391-403)
+# ============================================
+SECRET_PATTERNS=(
+    ".env"
+    ".env.local"
+    ".env.production"
+    ".env.development"
+    "*.pem"
+    "*.key"
+    "*.p12"
+    "*.pfx"
+    "*credentials*"
+    "*secret*"
+    "*.secrets"
+    "id_rsa"
+    "id_ed25519"
+    "id_ecdsa"
+)
+
+is_secret_file() {
+    local FILE="$1"
+    local BASENAME=$(basename "$FILE")
+
+    for PATTERN in "${SECRET_PATTERNS[@]}"; do
+        # Convert glob to regex
+        local REGEX=$(echo "$PATTERN" | sed 's/\./\\./g' | sed 's/\*/.*/g')
+        if echo "$BASENAME" | grep -qiE "^${REGEX}$"; then
+            return 0
+        fi
+        # Also check full path for patterns like .env
+        if echo "$FILE" | grep -qiE "(^|/)${REGEX}$"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# ============================================
+# Part 3: Check each file
+# ============================================
+EXCLUDE_FILE=".git/info/exclude"
+
+for FILE in $FILES; do
+    # Handle git add . or git add -A
+    if [ "$FILE" = "." ] || [ "$FILE" = "-A" ] || [ "$FILE" = "--all" ]; then
+        # Check all untracked and modified files
+        ALL_FILES=$(git status --porcelain 2>/dev/null | awk '{print $2}')
+        for AF in $ALL_FILES; do
+            # Check for secret files
+            if is_secret_file "$AF"; then
+                BLOCKED_SECRET_FILES="$BLOCKED_SECRET_FILES $AF"
+            fi
+            # Check for AI files in exclude
+            if [ -f "$EXCLUDE_FILE" ]; then
+                if git check-ignore -q "$AF" 2>/dev/null; then
+                    if grep -qF "$AF" "$EXCLUDE_FILE" 2>/dev/null; then
+                        BLOCKED_AI_FILES="$BLOCKED_AI_FILES $AF"
+                    fi
+                fi
+            fi
+        done
+        continue
+    fi
+
+    # Skip if file doesn't exist
+    if [ ! -e "$FILE" ]; then
+        continue
+    fi
+
+    # Check for secret files (always block, even if tracked)
+    if is_secret_file "$FILE"; then
+        BLOCKED_SECRET_FILES="$BLOCKED_SECRET_FILES $FILE"
+        continue
+    fi
+
+    # Check for AI files (only if untracked and in exclude)
+    if [ -f "$EXCLUDE_FILE" ]; then
+        # Check if file is already tracked
+        if ! git ls-files --error-unmatch "$FILE" &>/dev/null; then
+            # File is untracked - check if it's in .git/info/exclude
+            if grep -qxF "$FILE" "$EXCLUDE_FILE" 2>/dev/null; then
+                BLOCKED_AI_FILES="$BLOCKED_AI_FILES $FILE"
+                continue
+            fi
+
+            # Check directory match
+            DIR=$(dirname "$FILE")
+            if [ "$DIR" != "." ]; then
+                if grep -qE "^${DIR}/?$" "$EXCLUDE_FILE" 2>/dev/null; then
+                    BLOCKED_AI_FILES="$BLOCKED_AI_FILES $FILE"
+                    continue
+                fi
+            fi
+
+            # Check glob patterns
+            BASENAME=$(basename "$FILE")
+            while IFS= read -r PATTERN; do
+                [[ "$PATTERN" =~ ^#.*$ || -z "$PATTERN" ]] && continue
+                REGEX=$(echo "$PATTERN" | sed 's/\./\\./g' | sed 's/\*/[^\/]*/g')
+                if echo "$BASENAME" | grep -qE "^${REGEX}$" 2>/dev/null; then
+                    BLOCKED_AI_FILES="$BLOCKED_AI_FILES $FILE"
+                    break
+                fi
+            done < "$EXCLUDE_FILE"
+        fi
+    fi
+done
+
+# ============================================
+# Part 4: Output blocking messages
+# ============================================
+
+# Block secret files first (higher priority)
+if [ -n "$BLOCKED_SECRET_FILES" ]; then
+    echo ""
+    echo "BLOCKED by dogma: secret file protection"
+    echo ""
+    echo "Die folgenden Dateien enthalten moeglicherweise Secrets:"
+    for F in $BLOCKED_SECRET_FILES; do
+        echo "  - $F"
+    done
+    echo ""
+    echo "NIEMALS Secrets committen! Stattdessen:"
+    echo "- Umgebungsvariablen verwenden"
+    echo "- .env zu .gitignore hinzufuegen"
+    echo "- Secrets aus dem Repo entfernen"
+    echo ""
+    echo "Falls der User es WIRKLICH will: git add -f <file>"
+    echo "Aber Claude fuehrt das NICHT aus."
+    echo ""
+    exit 1
+fi
+
+# Block AI files
+if [ -n "$BLOCKED_AI_FILES" ]; then
+    echo ""
+    echo "BLOCKED by dogma: AI file protection"
+    echo ""
+    echo "Die folgenden Dateien sind in .git/info/exclude und sollten untracked bleiben:"
+    for F in $BLOCKED_AI_FILES; do
+        echo "  - $F"
+    done
+    echo ""
+    echo "Diese Dateien verraten AI/Agent-Nutzung."
+    echo ""
+    echo "Falls gewuenscht: git add -f <file>"
+    echo ""
+    exit 1
+fi
+
+exit 0
