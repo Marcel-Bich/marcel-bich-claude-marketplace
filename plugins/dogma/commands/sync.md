@@ -443,8 +443,8 @@ Extract each recommendation with:
 
 **For Plugins:**
 ```bash
-# List installed plugins
-claude plugin list 2>/dev/null | grep -i "<plugin-name>"
+# Check installed_plugins.json for plugin
+cat ~/.claude/plugins/installed_plugins.json 2>/dev/null | grep -i "<plugin-name>"
 ```
 
 **For MCP Servers:**
@@ -765,7 +765,7 @@ For each synced CLAUDE file, check if the referenced tools exist:
 | CLAUDE.build.md | Vite | package.json devDependencies.vite |
 | CLAUDE.build.md | Vitest | package.json devDependencies.vitest |
 | CLAUDE.testing.md | Test framework | package.json scripts.test, jest.config.*, vitest.config.* |
-| CLAUDE.planning.md | taches-cc-resources | `claude plugin list \| grep taches` |
+| CLAUDE.planning.md | taches-cc-resources | `cat ~/.claude/plugins/installed_plugins.json \| grep -i taches` |
 
 ### 6.3 Run Detection
 
