@@ -28,6 +28,17 @@ The plugin includes hooks that enforce rules at the technical level:
 | Post-Write Validation | After Write/Edit | Warns about AI traces in content | `DOGMA_POST_WRITE_VALIDATE` |
 | Prompt Injection | WebFetch/WebSearch | Warns about injection attempts | `DOGMA_PROMPT_INJECTION` |
 
+### Usage Warning
+
+The enforcement hooks run on every prompt and tool use, which increases token consumption significantly.
+
+| Usage Mode | Recommended Plan |
+|------------|------------------|
+| Full hooks enabled | Claude Max 20x (recommended) or Max 5x (minimum) |
+| Only `/dogma:sync` (hooks disabled) | Any plan |
+
+To use only sync without hooks, disable all hooks via environment variables or uninstall after syncing.
+
 ## Sync Command
 
 Fetches Claude instructions from a source and merges them interactively.
