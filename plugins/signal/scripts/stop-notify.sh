@@ -87,7 +87,8 @@ fi
 
 # Skip generic greetings
 if [ -n "$RAW" ]; then
-    if echo "$RAW" | grep -qiE "^(ich bin bereit|wie kann ich|was kann ich|hallo|hi,|guten tag)"; then
+    # Skip generic greetings (German and English)
+    if echo "$RAW" | grep -qiE "^(ich bin bereit|wie kann ich|was kann ich|hallo|hi,|guten tag|i'm ready|how can i help|what can i help|how may i|hello|hi there)"; then
         exit 0
     fi
 fi

@@ -2,10 +2,10 @@
 # Dogma: Checklist Tracking Hook (UserPromptSubmit)
 # Scans MD files for open checklists and reminds Claude
 #
-# IDEA.md Zeile 301-335:
-# - Scan MD-Dateien nach offenen Checklisten
-# - Reminder injizieren: "Offene Checklisten: PLAN.md (3 Tasks)"
-# - Agent fragt interaktiv ob abhaken
+# IDEA.md line 301-335:
+# - Scan MD files for open checklists
+# - Inject reminder: "Open checklists: PLAN.md (3 Tasks)"
+# - Agent asks interactively whether to check off
 #
 # Scan-Locations:
 # - PLAN.md, TODO.md, ROADMAP.md, README.md
