@@ -171,6 +171,9 @@ After WebFetch/WebSearch, warns about:
 All hooks can be disabled via environment variables. Default is `true` (enabled).
 
 ```bash
+# Master switch - disable ALL dogma hooks at once
+export DOGMA_ENABLED=false
+
 # Disable specific hooks
 export DOGMA_PROMPT_REMINDER=false
 export DOGMA_CHECKLIST_TRACKING=false

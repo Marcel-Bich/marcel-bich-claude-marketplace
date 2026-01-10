@@ -6,6 +6,7 @@
 #
 # IDEA.md line 164-182 (AI files) and 391-403 (Secret files)
 #
+# ENV: DOGMA_ENABLED=true (default) | false - master switch for all hooks
 # ENV: DOGMA_GIT_ADD_PROTECTION=true (default) | false
 
 # NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
@@ -30,6 +31,12 @@ if [ "$DEBUG" = "true" ]; then
     set -x
     echo "=== git-add-protection.sh START $(date) ===" >&2
     echo "PWD: $(pwd)" >&2
+fi
+
+# === MASTER SWITCH ===
+# DOGMA_ENABLED=false disables ALL dogma hooks at once
+if [ "${DOGMA_ENABLED:-true}" != "true" ]; then
+    exit 0
 fi
 
 # === CONFIGURATION ===
@@ -106,6 +113,14 @@ SECRET_PATTERNS=(
 is_secret_file() {
     local FILE="$1"
     local BASENAME=$(basename "$FILE")
+    local EXT="${BASENAME##*.}"
+
+    # Skip script files - they contain code, not secrets
+    case "$EXT" in
+        sh|bash|py|js|ts|rb|go|rs|java|php|pl)
+            return 1
+            ;;
+    esac
 
     for PATTERN in "${SECRET_PATTERNS[@]}"; do
         # Convert glob to regex

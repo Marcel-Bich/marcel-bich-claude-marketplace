@@ -10,6 +10,7 @@
 #
 # Principle: Only reference relevant files
 #
+# ENV: DOGMA_ENABLED=true (default) | false - master switch for all hooks
 # ENV: DOGMA_WRITE_EDIT_REMINDER=true (default) | false
 
 # NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
@@ -23,6 +24,11 @@ if [ "$DEBUG" = "true" ]; then
     set -x
     echo "=== write-edit-reminder.sh START $(date) ===" >&2
     echo "PWD: $(pwd)" >&2
+fi
+
+# === MASTER SWITCH ===
+if [ "${DOGMA_ENABLED:-true}" != "true" ]; then
+    exit 0
 fi
 
 # === CONFIGURATION ===

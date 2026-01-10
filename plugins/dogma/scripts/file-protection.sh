@@ -5,6 +5,7 @@
 # Blocked: rm, del, unlink, git clean, rmdir
 # Allowed: git rm --cached, git reset (safe operations)
 #
+# ENV: DOGMA_ENABLED=true (default) | false - master switch for all hooks
 # ENV: DOGMA_FILE_PROTECTION=true (default) | false
 
 # NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
@@ -29,6 +30,12 @@ if [ "$DEBUG" = "true" ]; then
     set -x
     echo "=== file-protection.sh START $(date) ===" >&2
     echo "PWD: $(pwd)" >&2
+fi
+
+# === MASTER SWITCH ===
+# DOGMA_ENABLED=false disables ALL dogma hooks at once
+if [ "${DOGMA_ENABLED:-true}" != "true" ]; then
+    exit 0
 fi
 
 # === CONFIGURATION ===
