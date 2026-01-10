@@ -1,0 +1,10 @@
+name: dogma
+description: Intelligent sync of Claude instructions with interactive review and merge
+version: 1.0.0
+author: Marcel Bich
+repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
+
+commands:
+  dogma:
+    description: Sync Claude instructions from a GitHub repo
+    source: commands/dogma.md
