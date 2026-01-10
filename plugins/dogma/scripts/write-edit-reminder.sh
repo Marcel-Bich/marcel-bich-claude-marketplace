@@ -94,8 +94,8 @@ LANG_NOTE=""
 if [ -f "$FILE_PATH" ]; then
     FIRST_CONTENT=$(head -50 "$FILE_PATH" 2>/dev/null | tr -d '\n')
 
-    # Simple German detection
-    if echo "$FIRST_CONTENT" | grep -qiE 'der|die|das|und|ist|nicht|eine|wird|kann|haben|werden|auch|bei|aus|nach|wie|nur|oder|durch|noch|als|bis|dieser|keine|muss|sind|aber|wenn|denn|fuer|ueber|hier|heute|jetzt|schon|immer|viel'; then
+    # Simple German detection (ASCII and proper umlauts)
+    if echo "$FIRST_CONTENT" | grep -qiE 'der|die|das|und|ist|nicht|eine|wird|kann|haben|werden|auch|bei|aus|nach|wie|nur|oder|durch|noch|als|bis|dieser|keine|muss|sind|aber|wenn|denn|fuer|für|ueber|über|koennen|können|muessen|müssen|groesse|Größe|aehnlich|ähnlich|hier|heute|jetzt|schon|immer|viel'; then
         LANG_NOTE="NOTE: File is in German. Keep it in German!"
     fi
 
