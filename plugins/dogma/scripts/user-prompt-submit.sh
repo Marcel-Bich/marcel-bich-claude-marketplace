@@ -134,7 +134,21 @@ if [ -n "$PHILOSOPHY_FILE" ]; then
 fi
 
 # ============================================
-# 7. File Protection (wichtige Erinnerung)
+# 7. Versioning Rules (NICHT enforceable - NUR hier!)
+# ============================================
+VERSIONING_FILE=""
+if [ -f "$CLAUDE_DIR/CLAUDE.versioning.md" ]; then
+    VERSIONING_FILE="$CLAUDE_DIR/CLAUDE.versioning.md"
+elif [ -f "CLAUDE.versioning.md" ]; then
+    VERSIONING_FILE="CLAUDE.versioning.md"
+fi
+
+if [ -n "$VERSIONING_FILE" ]; then
+    REMINDER="${REMINDER}Versioning: Bei Aenderungen Version bumpen, Commit-Prefix vX.Y.Z: nutzen (siehe @${VERSIONING_FILE})\n\n"
+fi
+
+# ============================================
+# 8. File Protection (wichtige Erinnerung)
 # ============================================
 if [ -n "$GIT_FILE" ]; then
     HAS_PROTECTION=$(grep -cE '<file_protection>|NEVER delete' "$GIT_FILE" 2>/dev/null | head -1 || echo "0")
@@ -156,7 +170,7 @@ if [ -n "$REMINDER" ]; then
 fi
 
 # ============================================
-# 8. Checklist Tracking (IDEA.md Zeile 301-335)
+# 9. Checklist Tracking (IDEA.md Zeile 301-335)
 # ============================================
 # ENV: DOGMA_CHECKLIST_TRACKING=true (default) | false
 
