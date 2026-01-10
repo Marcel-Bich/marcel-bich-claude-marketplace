@@ -11,6 +11,16 @@
 # Trap all errors and exit cleanly
 trap 'exit 0' ERR
 
+# === JSON OUTPUT FOR BLOCKING ===
+# Claude Code expects JSON with permissionDecision for proper blocking
+output_deny() {
+    local reason="$1"
+    cat <<EOF
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"$reason"}}
+EOF
+    exit 0
+}
+
 # === DEBUG MODE ===
 DEBUG="${DOGMA_DEBUG:-false}"
 if [ "$DEBUG" = "true" ]; then
@@ -83,7 +93,7 @@ if echo "$TOOL_INPUT" | grep -qE '^git\s+clean'; then
     REASON="Deletes untracked files permanently"
 fi
 
-# If blocked, output error
+# If blocked, output JSON deny
 if [ -n "$BLOCKED" ]; then
     # Extract what would be deleted
     TARGET=""
@@ -105,17 +115,10 @@ if [ -n "$BLOCKED" ]; then
             ;;
     esac
 
-    echo ""
-    echo "BLOCKED by dogma: file deletion requires confirmation"
-    echo ""
-    echo "Command: $BLOCKED"
-    echo "Target: ${TARGET:-unknown}"
-    echo ""
-    echo "Options:"
-    echo "1. User runs it manually: $TOOL_INPUT"
-    echo "2. Bypass: DOGMA_FILE_PROTECTION=false claude ..."
-    echo ""
-    exit 1
+    # Build reason message (escape quotes for JSON)
+    REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} - $REASON. User can run manually or bypass with DOGMA_FILE_PROTECTION=false"
+    REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
+    output_deny "$REASON_MSG"
 fi
 
 exit 0

@@ -12,6 +12,16 @@
 # Trap all errors and exit cleanly
 trap 'exit 0' ERR
 
+# === JSON OUTPUT FOR BLOCKING ===
+# Claude Code expects JSON with permissionDecision for proper blocking
+output_deny() {
+    local reason="$1"
+    cat <<EOF
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"$reason"}}
+EOF
+    exit 0
+}
+
 # === DEBUG MODE ===
 DEBUG="${DOGMA_DEBUG:-false}"
 if [ "$DEBUG" = "true" ]; then
@@ -81,54 +91,21 @@ check_permission() {
 # Check git add
 if echo "$TOOL_INPUT" | grep -qE '^git\s+add(\s|$)'; then
     if ! check_permission "git add" "git add"; then
-        echo ""
-        echo "BLOCKED by dogma: git permissions"
-        echo ""
-        echo "Permission for 'git add' is not granted in $CLAUDE_GIT"
-        echo ""
-        echo "Current permissions:"
-        echo "$PERMS_SECTION" | grep -E '^\s*-\s*\[' | head -5
-        echo ""
-        echo "To allow: Change [ ] to [x] for git add in $CLAUDE_GIT"
-        echo "Or: The user can run this command manually in their terminal."
-        echo ""
-        exit 1
+        output_deny "BLOCKED by dogma: git add not permitted. Change [ ] to [x] for git add in $CLAUDE_GIT or run manually."
     fi
 fi
 
 # Check git commit
 if echo "$TOOL_INPUT" | grep -qE '^git\s+commit(\s|$)'; then
     if ! check_permission "git commit" "git commit"; then
-        echo ""
-        echo "BLOCKED by dogma: git permissions"
-        echo ""
-        echo "Permission for 'git commit' is not granted in $CLAUDE_GIT"
-        echo ""
-        echo "Current permissions:"
-        echo "$PERMS_SECTION" | grep -E '^\s*-\s*\[' | head -5
-        echo ""
-        echo "To allow: Change [ ] to [x] for git commit in $CLAUDE_GIT"
-        echo "Or: Ask the user to make the commit."
-        echo ""
-        exit 1
+        output_deny "BLOCKED by dogma: git commit not permitted. Change [ ] to [x] for git commit in $CLAUDE_GIT or ask user."
     fi
 fi
 
 # Check git push
 if echo "$TOOL_INPUT" | grep -qE '^git\s+push(\s|$)'; then
     if ! check_permission "git push" "git push"; then
-        echo ""
-        echo "BLOCKED by dogma: git permissions"
-        echo ""
-        echo "Permission for 'git push' is not granted in $CLAUDE_GIT"
-        echo ""
-        echo "Current permissions:"
-        echo "$PERMS_SECTION" | grep -E '^\s*-\s*\[' | head -5
-        echo ""
-        echo "To allow: Change [ ] to [x] for git push in $CLAUDE_GIT"
-        echo "Or: Ask the user to push manually."
-        echo ""
-        exit 1
+        output_deny "BLOCKED by dogma: git push not permitted. Change [ ] to [x] for git push in $CLAUDE_GIT or push manually."
     fi
 fi
 
