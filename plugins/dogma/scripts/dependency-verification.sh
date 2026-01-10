@@ -14,11 +14,12 @@
 trap 'exit 0' ERR
 
 # === JSON OUTPUT FOR BLOCKING ===
-# Claude Code expects JSON with permissionDecision for proper blocking
-output_deny() {
+# Claude Code expects JSON with permissionDecision
+# Using "ask" allows user to confirm and proceed if they really want to
+output_block() {
     local reason="$1"
     cat <<EOF
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"$reason"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"$reason"}}
 EOF
     exit 0
 }
@@ -112,4 +113,4 @@ for PKG in $PACKAGES; do
 done
 VERIFY_URLS=$(echo "$VERIFY_URLS" | tr ' ' ', ')
 
-output_deny "BLOCKED by dogma: Dependency verification required. Packages: $PKG_LIST ($PACKAGE_MANAGER). FIRST use WebFetch to verify: $VERIFY_URLS - Check for typosquatting, malware, vulnerabilities before installing."
+output_block "BLOCKED by dogma: Dependency verification required. Packages: $PKG_LIST ($PACKAGE_MANAGER). FIRST use WebFetch to verify: $VERIFY_URLS - Check for typosquatting, malware, vulnerabilities before installing."

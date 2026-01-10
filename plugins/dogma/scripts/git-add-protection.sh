@@ -13,11 +13,12 @@
 trap 'exit 0' ERR
 
 # === JSON OUTPUT FOR BLOCKING ===
-# Claude Code expects JSON with permissionDecision for proper blocking
-output_deny() {
+# Claude Code expects JSON with permissionDecision
+# Using "ask" allows user to confirm and proceed if they really want to
+output_block() {
     local reason="$1"
     cat <<EOF
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"$reason"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"$reason"}}
 EOF
     exit 0
 }
@@ -58,7 +59,7 @@ if ! echo "$TOOL_INPUT" | grep -qE '^git\s+add\s'; then
         # Check if .env exists and is modified
         if [ -f ".env" ]; then
             if git status --porcelain .env 2>/dev/null | grep -q '^.M\|^M'; then
-                output_deny "BLOCKED by dogma: git commit -a wuerde .env mit committen! .env enthaelt moeglicherweise Secrets. Nutze git add <specific-files> ohne .env, dann git commit."
+                output_block "BLOCKED by dogma: git commit -a wuerde .env mit committen! .env enthaelt moeglicherweise Secrets. Nutze git add <specific-files> ohne .env, dann git commit."
             fi
         fi
     fi
@@ -197,13 +198,13 @@ done
 # Block secret files first (higher priority)
 if [ -n "$BLOCKED_SECRET_FILES" ]; then
     FILES_LIST=$(echo $BLOCKED_SECRET_FILES | tr ' ' ', ')
-    output_deny "BLOCKED by dogma: Secret files detected ($FILES_LIST). NIEMALS Secrets committen! User kann git add -f nutzen falls wirklich gewollt."
+    output_block "BLOCKED by dogma: Secret files detected ($FILES_LIST). NIEMALS Secrets committen! User kann git add -f nutzen falls wirklich gewollt."
 fi
 
 # Block AI files
 if [ -n "$BLOCKED_AI_FILES" ]; then
     FILES_LIST=$(echo $BLOCKED_AI_FILES | tr ' ' ', ')
-    output_deny "BLOCKED by dogma: AI files in .git/info/exclude ($FILES_LIST). Diese Dateien verraten AI-Nutzung. User kann git add -f nutzen falls gewuenscht."
+    output_block "BLOCKED by dogma: AI files in .git/info/exclude ($FILES_LIST). Diese Dateien verraten AI-Nutzung. User kann git add -f nutzen falls gewuenscht."
 fi
 
 exit 0
