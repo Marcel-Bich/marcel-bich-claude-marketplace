@@ -66,10 +66,9 @@ if ! echo "$TOOL_INPUT" | grep -qE '^git\s+add\s'; then
     exit 0
 fi
 
-# If force flag is used, allow it (user knows what they're doing)
-if echo "$TOOL_INPUT" | grep -qE '\s-f\s|\s--force\s'; then
-    exit 0
-fi
+# Note: -f flag is NOT a bypass for Claude
+# Both AI files and secret files can NEVER be added by Claude
+# User must always run git add manually for these files
 
 # Check if we're in a git repository
 if [ ! -d ".git" ]; then
@@ -197,16 +196,16 @@ done
 # Part 4: Output blocking messages
 # ============================================
 
-# Block secret files first (higher priority)
-if [ -n "$BLOCKED_SECRET_FILES" ]; then
-    FILES_LIST=$(echo $BLOCKED_SECRET_FILES | tr ' ' ', ')
-    output_block "BLOCKED by dogma: Secret files detected ($FILES_LIST). NEVER commit secrets! User can use git add -f if really intended."
-fi
-
-# Block AI files
+# Block AI files - Claude can NEVER add these
 if [ -n "$BLOCKED_AI_FILES" ]; then
     FILES_LIST=$(echo $BLOCKED_AI_FILES | tr ' ' ', ')
-    output_block "BLOCKED by dogma: AI files in .git/info/exclude ($FILES_LIST). These files reveal AI usage. User can use git add -f if desired."
+    output_block "BLOCKED by dogma: AI files in .git/info/exclude ($FILES_LIST). These files reveal AI usage. Claude cannot add these - user must run git add manually."
+fi
+
+# Block secret files - Claude can NEVER add these
+if [ -n "$BLOCKED_SECRET_FILES" ]; then
+    FILES_LIST=$(echo $BLOCKED_SECRET_FILES | tr ' ' ', ')
+    output_block "BLOCKED by dogma: Secret files detected ($FILES_LIST). Claude cannot add secrets - user must run git add manually if really intended."
 fi
 
 exit 0
