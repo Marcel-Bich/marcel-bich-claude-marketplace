@@ -7,6 +7,7 @@
 # - PFLICHT: WebFetch zu socket.dev/snyk fuer Vulnerabilities
 # - Kein Install ohne vorherige Pruefung - das ist das Wichtigste!
 #
+# ENV: DOGMA_ENABLED=true (default) | false - master switch for all hooks
 # ENV: DOGMA_DEPENDENCY_VERIFICATION=true (default) | false
 
 # NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
@@ -31,6 +32,11 @@ if [ "$DEBUG" = "true" ]; then
     set -x
     echo "=== dependency-verification.sh START $(date) ===" >&2
     echo "PWD: $(pwd)" >&2
+fi
+
+# === MASTER SWITCH ===
+if [ "${DOGMA_ENABLED:-true}" != "true" ]; then
+    exit 0
 fi
 
 # === CONFIGURATION ===

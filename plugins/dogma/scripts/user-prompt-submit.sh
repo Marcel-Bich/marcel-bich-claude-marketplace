@@ -8,6 +8,7 @@
 # - Partially enforceable (Language, AI Traces) -> Remind here + PreToolUse
 # - Not enforceable (Honesty, Planning, Philosophy) -> ONLY remind here!
 #
+# ENV: DOGMA_ENABLED=true (default) | false - master switch for all hooks
 # ENV: DOGMA_PROMPT_REMINDER=true (default) | false
 
 # NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
@@ -22,6 +23,11 @@ if [ "$DEBUG" = "true" ]; then
     set -x
     echo "=== user-prompt-submit.sh START $(date) ===" >&2
     echo "PWD: $(pwd)" >&2
+fi
+
+# === MASTER SWITCH ===
+if [ "${DOGMA_ENABLED:-true}" != "true" ]; then
+    exit 0
 fi
 
 # === CONFIGURATION ===

@@ -6,6 +6,7 @@
 # - [ ] = not allowed (blocked)
 # - [x] = allowed (proceed)
 #
+# ENV: DOGMA_ENABLED=true (default) | false - master switch for all hooks
 # ENV: DOGMA_GIT_PERMISSIONS=true (default) | false
 
 # NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
@@ -30,6 +31,12 @@ if [ "$DEBUG" = "true" ]; then
     set -x
     echo "=== git-permissions.sh START $(date) ===" >&2
     echo "PWD: $(pwd)" >&2
+fi
+
+# === MASTER SWITCH ===
+# DOGMA_ENABLED=false disables ALL dogma hooks at once
+if [ "${DOGMA_ENABLED:-true}" != "true" ]; then
+    exit 0
 fi
 
 # === CONFIGURATION ===
