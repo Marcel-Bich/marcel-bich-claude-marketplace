@@ -20,6 +20,12 @@
       "source": "./plugins/limit",
       "description": "Live API usage display in Claude Code statusline - shows utilization with colored progress bars and reset times.",
       "version": "1.2.6"
+    },
+    {
+      "name": "dogma",
+      "source": "./plugins/dogma",
+      "description": "Intelligent sync of Claude instructions (CLAUDE.md, .claude/) with interactive review and merge - no blind overwrites.",
+      "version": "1.0.0"
     }
   ]
 }
