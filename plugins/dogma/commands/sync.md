@@ -121,6 +121,9 @@ Look for files that contain **Claude/AI instructions, guidelines, or configurati
 - `CONTRIBUTING.md` - May contain relevant coding standards
 - Any markdown file with keywords like "guidelines", "rules", "instructions", "standards"
 
+**Special handling (legal implications):**
+- `LICENSE`, `LICENSE.md`, `LICENSE.txt` - Requires extra careful handling (see 4.1.2)
+
 **Contextual (check if referenced):**
 - Files linked or referenced from high-priority files
 - README sections about coding standards or AI assistance
@@ -224,6 +227,75 @@ git config --local user.name "Marcel Bich"
 git config --local user.email "marcel@example.com"
 # etc.
 ```
+
+### 4.1.2 Special: LICENSE Files (Critical - Legal Implications)
+
+LICENSE files require **extra careful handling** because changing a project's license has serious legal implications.
+
+**Key principles:**
+- **NO MERGE** - Licenses cannot be merged, only replaced entirely
+- **EXPLICIT WARNING** - User must understand legal consequences
+- **CONFIRMATION REQUIRED** - Double-confirm before any change
+
+**When LICENSE is found in source:**
+
+```
+CRITICAL: LICENSE file found in source
+
+Source license: MIT License
+Project license: [None / Apache 2.0 / GPL-3.0 / ...]
+
+WARNING: Changing a project's license has legal implications!
+
+- If you have contributors, you may need their consent
+- If your project uses dependencies, check license compatibility
+- Existing users may have rights under the current license
+- This cannot be "merged" - it's all-or-nothing
+
+What does this mean for your project?
+- MIT: Very permissive, allows commercial use, requires attribution
+- [Explain the source license briefly]
+
+Options:
+1. Skip - Keep current license (recommended if unsure)
+2. Replace - Use source license (only if you understand implications)
+3. Show both licenses side-by-side
+```
+
+**If user chooses "Replace":**
+
+```
+Are you absolutely sure?
+
+You are about to change from [current license] to [source license].
+
+Please confirm you understand:
+- [ ] I am the sole copyright holder, OR I have consent from all contributors
+- [ ] I have checked dependency license compatibility
+- [ ] I understand the legal differences between these licenses
+
+Type "I UNDERSTAND" to proceed, or anything else to cancel:
+```
+
+**Only proceed if user types exactly "I UNDERSTAND".**
+
+**If project has NO LICENSE:**
+
+```
+LICENSE file found in source: MIT License
+
+Your project currently has NO LICENSE file.
+
+Note: Without a license, your code is "all rights reserved" by default.
+Adding a license makes it clear how others can use your code.
+
+Would you like to add this license?
+1. Yes, add MIT License
+2. No, skip (I'll handle licensing separately)
+3. Show license content first
+```
+
+This is less critical than changing an existing license, but still ask for confirmation.
 
 ### 4.2 File EXISTS in Project - Granular Rule-by-Rule Merge
 
