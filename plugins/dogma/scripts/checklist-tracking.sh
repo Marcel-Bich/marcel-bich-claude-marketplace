@@ -48,7 +48,7 @@ TOTAL_OPEN=0
 for FILE in "${SCAN_FILES[@]}"; do
     if [ -f "$FILE" ]; then
         # Count open checkboxes: - [ ] or * [ ]
-        COUNT=$(grep -cE '^\s*[-*]\s*\[ \]' "$FILE" 2>/dev/null || echo "0")
+        COUNT=$(grep -cE '^\s*[-*]\s*\[ \]' "$FILE" 2>/dev/null | head -1 || echo "0")
         if [ "$COUNT" -gt 0 ]; then
             OPEN_CHECKLISTS="${OPEN_CHECKLISTS}\n- $FILE ($COUNT open)"
             TOTAL_OPEN=$((TOTAL_OPEN + COUNT))
@@ -62,7 +62,7 @@ for DIR in "${SCAN_DIRS[@]}"; do
         # Find all .md files in directory
         while IFS= read -r FILE; do
             if [ -f "$FILE" ]; then
-                COUNT=$(grep -cE '^\s*[-*]\s*\[ \]' "$FILE" 2>/dev/null || echo "0")
+                COUNT=$(grep -cE '^\s*[-*]\s*\[ \]' "$FILE" 2>/dev/null | head -1 || echo "0")
                 if [ "$COUNT" -gt 0 ]; then
                     OPEN_CHECKLISTS="${OPEN_CHECKLISTS}\n- $FILE ($COUNT open)"
                     TOTAL_OPEN=$((TOTAL_OPEN + COUNT))
