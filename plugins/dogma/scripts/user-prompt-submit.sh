@@ -3,10 +3,10 @@
 # Runs at the START of EVERY user prompt
 # Reminds Claude of rules that cannot be technically enforced
 #
-# IDEA.md Zeile 284-314:
-# - Technisch enforceable (git, secrets) -> Nur PreToolUse (blockiert eh)
-# - Teilweise enforceable (Language, AI Traces) -> Hier erinnern + PreToolUse
-# - Nicht enforceable (Honesty, Planning, Philosophy) -> NUR hier erinnern!
+# IDEA.md line 284-314:
+# - Technically enforceable (git, secrets) -> PreToolUse only (blocks anyway)
+# - Partially enforceable (Language, AI Traces) -> Remind here + PreToolUse
+# - Not enforceable (Honesty, Planning, Philosophy) -> ONLY remind here!
 #
 # ENV: DOGMA_PROMPT_REMINDER=true (default) | false
 
@@ -63,12 +63,12 @@ if [ -n "$GIT_FILE" ]; then
     # Extract permissions section
     PERMS=$(sed -n '/<permissions>/,/<\/permissions>/p' "$GIT_FILE" 2>/dev/null | grep -E '^\s*-\s*\[' | head -5)
     if [ -n "$PERMS" ]; then
-        REMINDER="${REMINDER}Git Permissions (siehe @${GIT_FILE}):\n${PERMS}\n\n"
+        REMINDER="${REMINDER}Git Permissions (see @${GIT_FILE}):\n${PERMS}\n\n"
     fi
 fi
 
 # ============================================
-# 2. Language Rules (teilweise enforceable)
+# 2. Language Rules (partially enforceable)
 # ============================================
 LANG_FILE=""
 if [ -f "$CLAUDE_DIR/CLAUDE.language.md" ]; then
@@ -78,21 +78,21 @@ elif [ -f "CLAUDE.language.md" ]; then
 fi
 
 if [ -n "$LANG_FILE" ]; then
-    REMINDER="${REMINDER}Language: Bestehende Sprache beibehalten, deutsche Umlaute nutzen (siehe @${LANG_FILE})\n\n"
+    REMINDER="${REMINDER}Language: Maintain existing language, use German umlauts (see @${LANG_FILE})\n\n"
 fi
 
 # ============================================
-# 3. AI Traces (teilweise enforceable)
+# 3. AI Traces (partially enforceable)
 # ============================================
 if [ -n "$GIT_FILE" ]; then
     HAS_AI_TRACES=$(grep -c '<ai_traces>' "$GIT_FILE" 2>/dev/null | head -1 || echo "0")
     if [ "$HAS_AI_TRACES" -gt 0 ]; then
-        REMINDER="${REMINDER}AI Traces: Keine curly quotes, em-dashes, Emojis im Code, AI-Phrasen (siehe @${GIT_FILE} ai_traces)\n\n"
+        REMINDER="${REMINDER}AI Traces: No curly quotes, em-dashes, emojis in code, AI phrases (see @${GIT_FILE} ai_traces)\n\n"
     fi
 fi
 
 # ============================================
-# 4. Honesty Rules (NICHT enforceable - NUR hier!)
+# 4. Honesty Rules (NOT enforceable - ONLY here!)
 # ============================================
 HONESTY_FILE=""
 if [ -f "$CLAUDE_DIR/CLAUDE.honesty.md" ]; then
@@ -102,11 +102,11 @@ elif [ -f "CLAUDE.honesty.md" ]; then
 fi
 
 if [ -n "$HONESTY_FILE" ]; then
-    REMINDER="${REMINDER}Honesty: Bei Unsicherheit zugeben, nicht raten oder erfinden (siehe @${HONESTY_FILE})\n\n"
+    REMINDER="${REMINDER}Honesty: Admit uncertainty, don't guess or fabricate (see @${HONESTY_FILE})\n\n"
 fi
 
 # ============================================
-# 5. Planning Rules (NICHT enforceable - NUR hier!)
+# 5. Planning Rules (NOT enforceable - ONLY here!)
 # ============================================
 PLANNING_FILE=""
 if [ -f "$CLAUDE_DIR/CLAUDE.planning.md" ]; then
@@ -116,11 +116,11 @@ elif [ -f "CLAUDE.planning.md" ]; then
 fi
 
 if [ -n "$PLANNING_FILE" ]; then
-    REMINDER="${REMINDER}Planning: Bei komplexen Tasks erst planen, /create-plan vorschlagen (siehe @${PLANNING_FILE})\n\n"
+    REMINDER="${REMINDER}Planning: Plan complex tasks first, suggest /create-plan (see @${PLANNING_FILE})\n\n"
 fi
 
 # ============================================
-# 6. Philosophy Rules (NICHT enforceable - NUR hier!)
+# 6. Philosophy Rules (NOT enforceable - ONLY here!)
 # ============================================
 PHILOSOPHY_FILE=""
 if [ -f "$CLAUDE_DIR/CLAUDE.philosophy.md" ]; then
@@ -130,11 +130,11 @@ elif [ -f "CLAUDE.philosophy.md" ]; then
 fi
 
 if [ -n "$PHILOSOPHY_FILE" ]; then
-    REMINDER="${REMINDER}Philosophy: YAGNI, KISS, keine Over-Engineering (siehe @${PHILOSOPHY_FILE})\n\n"
+    REMINDER="${REMINDER}Philosophy: YAGNI, KISS, no over-engineering (see @${PHILOSOPHY_FILE})\n\n"
 fi
 
 # ============================================
-# 7. Versioning Rules (NICHT enforceable - NUR hier!)
+# 7. Versioning Rules (NOT enforceable - ONLY here!)
 # ============================================
 VERSIONING_FILE=""
 if [ -f "$CLAUDE_DIR/CLAUDE.versioning.md" ]; then
@@ -144,16 +144,16 @@ elif [ -f "CLAUDE.versioning.md" ]; then
 fi
 
 if [ -n "$VERSIONING_FILE" ]; then
-    REMINDER="${REMINDER}Versioning: Bei Aenderungen Version bumpen, Commit-Prefix vX.Y.Z: nutzen (siehe @${VERSIONING_FILE})\n\n"
+    REMINDER="${REMINDER}Versioning: Bump version on changes, use commit prefix vX.Y.Z: (see @${VERSIONING_FILE})\n\n"
 fi
 
 # ============================================
-# 8. File Protection (wichtige Erinnerung)
+# 8. File Protection (important reminder)
 # ============================================
 if [ -n "$GIT_FILE" ]; then
     HAS_PROTECTION=$(grep -cE '<file_protection>|NEVER delete' "$GIT_FILE" 2>/dev/null | head -1 || echo "0")
     if [ "$HAS_PROTECTION" -gt 0 ]; then
-        REMINDER="${REMINDER}File Protection: NIEMALS lokale Dateien loeschen ohne explizite User-Bestaetigung\n\n"
+        REMINDER="${REMINDER}File Protection: NEVER delete local files without explicit user confirmation\n\n"
     fi
 fi
 
@@ -163,7 +163,7 @@ fi
 if [ -n "$REMINDER" ]; then
     echo ""
     echo "<dogma-reminder>"
-    echo "Bevor du antwortest, beachte diese Regeln:"
+    echo "Before responding, follow these rules:"
     echo ""
     echo -e "$REMINDER"
     echo "</dogma-reminder>"
