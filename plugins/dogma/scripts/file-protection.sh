@@ -95,7 +95,7 @@ if [ -n "$BLOCKED" ]; then
     esac
 
     echo ""
-    echo "BLOCKED by dogma: file protection"
+    echo "DOGMA WARNING: file deletion detected"
     echo ""
     echo "Command: $BLOCKED"
     echo "Reason: $REASON"
@@ -103,14 +103,12 @@ if [ -n "$BLOCKED" ]; then
         echo "Target: $TARGET"
     fi
     echo ""
-    echo "Claude should NEVER delete local files without explicit user confirmation."
+    echo "Make sure the user has explicitly requested this deletion."
+    echo "If unsure, ask for confirmation first."
     echo ""
-    echo "What you can do instead:"
-    echo "- Ask the user to confirm deletion"
-    echo "- Tell the user how to delete it themselves: $TOOL_INPUT"
-    echo "- Use 'git rm --cached <file>' to untrack without deleting"
-    echo ""
-    exit 1
+    # Exit 0 = warn only, don't block
+    # User has final control - if they requested deletion, proceed
+    exit 0
 fi
 
 exit 0
