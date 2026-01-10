@@ -12,11 +12,11 @@ trap 'exit 0' ERR
 
 # === JSON OUTPUT FOR BLOCKING ===
 # Claude Code expects JSON with permissionDecision
-# Using "ask" allows user to confirm and proceed if they really want to
+# Using "deny" - secrets must NEVER be written to files
 output_block() {
     local reason="$1"
     cat <<EOF
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"$reason"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"$reason"}}
 EOF
     exit 0
 }
