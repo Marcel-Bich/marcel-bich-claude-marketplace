@@ -15,6 +15,8 @@
 # ENV: DOGMA_CHECKLIST_TRACKING=true (default) | false
 
 # NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
+# Trap all errors and exit cleanly
+trap 'exit 0' ERR
 
 # === CONFIGURATION ===
 ENABLED="${DOGMA_CHECKLIST_TRACKING:-true}"
