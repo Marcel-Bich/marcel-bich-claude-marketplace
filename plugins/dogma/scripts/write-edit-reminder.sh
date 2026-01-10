@@ -3,12 +3,12 @@
 # Reminds Claude of relevant rules BEFORE writing
 # Uses @-references to force Claude to READ the files
 #
-# IDEA.md Zeile 316-335:
-# "Bevor du schreibst, beachte UNBEDINGT:
+# IDEA.md line 316-335:
+# "Before writing, ALWAYS check:
 #  @CLAUDE/CLAUDE.language.md
-#  @CLAUDE/CLAUDE.git.md (ai_traces Sektion)"
+#  @CLAUDE/CLAUDE.git.md (ai_traces section)"
 #
-# Prinzip: Immer nur die relevanten Dateien referenzieren
+# Principle: Only reference relevant files
 #
 # ENV: DOGMA_WRITE_EDIT_REMINDER=true (default) | false
 
@@ -82,7 +82,7 @@ fi
 if [ -f "$CLAUDE_DIR/CLAUDE.git.md" ]; then
     case "$EXT" in
         js|ts|jsx|tsx|py|rb|go|java|php|c|cpp|h|rs|swift|kt|sh|bash|md|txt)
-            REFS="$REFS@$CLAUDE_DIR/CLAUDE.git.md (ai_traces Sektion)\n"
+            REFS="$REFS@$CLAUDE_DIR/CLAUDE.git.md (ai_traces section)\n"
             ;;
     esac
 fi
@@ -96,7 +96,7 @@ if [ -f "$FILE_PATH" ]; then
 
     # Simple German detection
     if echo "$FIRST_CONTENT" | grep -qiE 'der|die|das|und|ist|nicht|eine|wird|kann|haben|werden|auch|bei|aus|nach|wie|nur|oder|durch|noch|als|bis|dieser|keine|muss|sind|aber|wenn|denn|fuer|ueber|hier|heute|jetzt|schon|immer|viel'; then
-        LANG_NOTE="ACHTUNG: Datei ist auf Deutsch. Behalte Deutsch bei!"
+        LANG_NOTE="NOTE: File is in German. Keep it in German!"
     fi
 
     # Simple English detection
@@ -111,7 +111,7 @@ fi
 if [ -n "$REFS" ]; then
     echo ""
     echo "<dogma-reminder>"
-    echo "Bevor du schreibst, beachte UNBEDINGT:"
+    echo "Before writing, ALWAYS check:"
     echo ""
     echo -e "$REFS"
     if [ -n "$LANG_NOTE" ]; then

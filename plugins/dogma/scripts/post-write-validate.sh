@@ -3,10 +3,10 @@
 # Validates content AFTER it was written
 # Checks for AI traces that slipped through
 #
-# IDEA.md Zeile 350-360:
-# - PostToolUse Write/Edit: Validiert geschriebenen Content
-# - AI Traces (Typografie): 100% - Pattern-Match
-# - AI Traces (Phrasen): ~90% - Heuristik
+# IDEA.md line 350-360:
+# - PostToolUse Write/Edit: Validates written content
+# - AI Traces (Typography): 100% - Pattern-Match
+# - AI Traces (Phrases): ~90% - Heuristic
 #
 # ENV: DOGMA_POST_WRITE_VALIDATE=true (default) | false
 
@@ -66,22 +66,22 @@ VIOLATIONS=""
 
 # Curly quotes (should be straight quotes)
 if echo "$CONTENT" | grep -qP '[""]'; then
-    VIOLATIONS="${VIOLATIONS}\n- Curly quotes gefunden (\"\") - sollten gerade Quotes sein (\"\")"
+    VIOLATIONS="${VIOLATIONS}\n- Curly quotes found (\"\") - should be straight quotes (\"\")"
 fi
 
 # Em-dash (should be normal dash)
 if echo "$CONTENT" | grep -qP '[—–]'; then
-    VIOLATIONS="${VIOLATIONS}\n- Em-dash gefunden (—) - sollte normaler Dash sein (-)"
+    VIOLATIONS="${VIOLATIONS}\n- Em-dash found (--) - should be normal dash (-)"
 fi
 
 # Ellipsis character (should be three dots)
 if echo "$CONTENT" | grep -qP '[…]'; then
-    VIOLATIONS="${VIOLATIONS}\n- Ellipsis-Zeichen gefunden (...) - sollten drei Punkte sein (...)"
+    VIOLATIONS="${VIOLATIONS}\n- Ellipsis character found (...) - should be three dots (...)"
 fi
 
 # Smart apostrophes
 if echo "$CONTENT" | grep -qP "[''‚]"; then
-    VIOLATIONS="${VIOLATIONS}\n- Smart Apostrophe gefunden - sollte gerader Apostroph sein (')"
+    VIOLATIONS="${VIOLATIONS}\n- Smart apostrophe found - should be straight apostrophe (')"
 fi
 
 # ============================================
@@ -91,7 +91,7 @@ case "$EXT" in
     js|ts|jsx|tsx|py|rb|go|java|php|c|cpp|h|rs|swift|kt|sh|bash)
         # Check for emojis in code files
         if echo "$CONTENT" | grep -qP '[\x{1F300}-\x{1F9FF}]|[\x{2600}-\x{26FF}]|[\x{2700}-\x{27BF}]'; then
-            VIOLATIONS="${VIOLATIONS}\n- Emoji in Code-Datei gefunden - Emojis gehoeren nicht in Code"
+            VIOLATIONS="${VIOLATIONS}\n- Emoji found in code file - emojis don't belong in code"
         fi
         ;;
 esac
@@ -104,7 +104,7 @@ esac
 
 # Common AI phrases in comments
 if echo "$CONTENT" | grep -qiE '(//|#|/\*|\*)\s*(Let me|I'"'"'ll|Sure!|Certainly!|Great question|I'"'"'d be happy)'; then
-    VIOLATIONS="${VIOLATIONS}\n- AI-typische Phrase in Kommentar gefunden (Let me/I'll/Sure!/Certainly!)"
+    VIOLATIONS="${VIOLATIONS}\n- AI-typical phrase found in comment (Let me/I'll/Sure!/Certainly!)"
 fi
 
 # ============================================
@@ -114,7 +114,7 @@ case "$EXT" in
     md|txt|rst)
         # Check for ASCII replacements that should be umlauts
         if echo "$CONTENT" | grep -qE '\b(fuer|koennen|groesse|aehnlich|ueberpruefung|moeglich|wuerde|muessen)\b'; then
-            VIOLATIONS="${VIOLATIONS}\n- ASCII statt Umlaute gefunden (fuer->fuer, oe->oe) - bitte echte Umlaute verwenden"
+            VIOLATIONS="${VIOLATIONS}\n- ASCII instead of umlauts found (fuer->fuer, oe->oe) - use proper German umlauts"
         fi
         ;;
 esac
@@ -125,18 +125,18 @@ esac
 if [ -n "$VIOLATIONS" ]; then
     echo ""
     echo "<dogma-validation>"
-    echo "WARNUNG: AI-Traces in geschriebenem Content erkannt!"
+    echo "WARNING: AI traces detected in written content!"
     echo ""
-    echo "Datei: $FILE_PATH"
+    echo "File: $FILE_PATH"
     echo ""
-    echo "Gefundene Probleme:"
+    echo "Issues found:"
     echo -e "$VIOLATIONS"
     echo ""
-    echo "Diese Muster verraten AI-Nutzung. Bitte korrigieren:"
-    echo "- /dogma:cleanup ausfuehren"
-    echo "- Oder manuell die Zeichen ersetzen"
+    echo "These patterns reveal AI usage. Please fix:"
+    echo "- Run /dogma:cleanup"
+    echo "- Or manually replace the characters"
     echo ""
-    echo "Siehe: @CLAUDE/CLAUDE.git.md (ai_traces Sektion)"
+    echo "See: @CLAUDE/CLAUDE.git.md (ai_traces section)"
     echo "</dogma-validation>"
 fi
 

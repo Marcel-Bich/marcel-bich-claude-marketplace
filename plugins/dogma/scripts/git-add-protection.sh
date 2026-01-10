@@ -4,7 +4,7 @@
 # 1. Files in .git/info/exclude (AI/agent files)
 # 2. Secret files (.env, *.pem, *credentials*)
 #
-# IDEA.md Zeile 164-182 (AI files) und 391-403 (Secret files)
+# IDEA.md line 164-182 (AI files) and 391-403 (Secret files)
 #
 # ENV: DOGMA_GIT_ADD_PROTECTION=true (default) | false
 
@@ -59,7 +59,7 @@ if ! echo "$TOOL_INPUT" | grep -qE '^git\s+add\s'; then
         # Check if .env exists and is modified
         if [ -f ".env" ]; then
             if git status --porcelain .env 2>/dev/null | grep -q '^.M\|^M'; then
-                output_block "BLOCKED by dogma: git commit -a wuerde .env mit committen! .env enthaelt moeglicherweise Secrets. Nutze git add <specific-files> ohne .env, dann git commit."
+                output_block "BLOCKED by dogma: git commit -a would include .env! .env may contain secrets. Use git add <specific-files> without .env, then git commit."
             fi
         fi
     fi
@@ -198,13 +198,13 @@ done
 # Block secret files first (higher priority)
 if [ -n "$BLOCKED_SECRET_FILES" ]; then
     FILES_LIST=$(echo $BLOCKED_SECRET_FILES | tr ' ' ', ')
-    output_block "BLOCKED by dogma: Secret files detected ($FILES_LIST). NIEMALS Secrets committen! User kann git add -f nutzen falls wirklich gewollt."
+    output_block "BLOCKED by dogma: Secret files detected ($FILES_LIST). NEVER commit secrets! User can use git add -f if really intended."
 fi
 
 # Block AI files
 if [ -n "$BLOCKED_AI_FILES" ]; then
     FILES_LIST=$(echo $BLOCKED_AI_FILES | tr ' ' ', ')
-    output_block "BLOCKED by dogma: AI files in .git/info/exclude ($FILES_LIST). Diese Dateien verraten AI-Nutzung. User kann git add -f nutzen falls gewuenscht."
+    output_block "BLOCKED by dogma: AI files in .git/info/exclude ($FILES_LIST). These files reveal AI usage. User can use git add -f if desired."
 fi
 
 exit 0
