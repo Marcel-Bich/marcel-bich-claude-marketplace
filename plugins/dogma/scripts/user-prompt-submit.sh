@@ -73,7 +73,7 @@ fi
 # 3. AI Traces (teilweise enforceable)
 # ============================================
 if [ -n "$GIT_FILE" ]; then
-    HAS_AI_TRACES=$(grep -c '<ai_traces>' "$GIT_FILE" 2>/dev/null || echo "0")
+    HAS_AI_TRACES=$(grep -c '<ai_traces>' "$GIT_FILE" 2>/dev/null | head -1 || echo "0")
     if [ "$HAS_AI_TRACES" -gt 0 ]; then
         REMINDER="${REMINDER}AI Traces: Keine curly quotes, em-dashes, Emojis im Code, AI-Phrasen (siehe @${GIT_FILE} ai_traces)\n\n"
     fi
@@ -125,7 +125,7 @@ fi
 # 7. File Protection (wichtige Erinnerung)
 # ============================================
 if [ -n "$GIT_FILE" ]; then
-    HAS_PROTECTION=$(grep -c '<file_protection>\|NEVER delete' "$GIT_FILE" 2>/dev/null || echo "0")
+    HAS_PROTECTION=$(grep -cE '<file_protection>|NEVER delete' "$GIT_FILE" 2>/dev/null | head -1 || echo "0")
     if [ "$HAS_PROTECTION" -gt 0 ]; then
         REMINDER="${REMINDER}File Protection: NIEMALS lokale Dateien loeschen ohne explizite User-Bestaetigung\n\n"
     fi
@@ -160,7 +160,7 @@ if [ "$CHECKLIST_ENABLED" = "true" ]; then
     # Scan specific files
     for FILE in "${SCAN_FILES[@]}"; do
         if [ -f "$FILE" ]; then
-            COUNT=$(grep -cE '^\s*[-*]\s*\[ \]' "$FILE" 2>/dev/null || echo "0")
+            COUNT=$(grep -cE '^\s*[-*]\s*\[ \]' "$FILE" 2>/dev/null | head -1 || echo "0")
             if [ "$COUNT" -gt 0 ]; then
                 OPEN_CHECKLISTS="${OPEN_CHECKLISTS}\n- $FILE ($COUNT open)"
                 TOTAL_OPEN=$((TOTAL_OPEN + COUNT))
@@ -173,7 +173,7 @@ if [ "$CHECKLIST_ENABLED" = "true" ]; then
         if [ -d "$DIR" ]; then
             while IFS= read -r FILE; do
                 if [ -f "$FILE" ]; then
-                    COUNT=$(grep -cE '^\s*[-*]\s*\[ \]' "$FILE" 2>/dev/null || echo "0")
+                    COUNT=$(grep -cE '^\s*[-*]\s*\[ \]' "$FILE" 2>/dev/null | head -1 || echo "0")
                     if [ "$COUNT" -gt 0 ]; then
                         OPEN_CHECKLISTS="${OPEN_CHECKLISTS}\n- $FILE ($COUNT open)"
                         TOTAL_OPEN=$((TOTAL_OPEN + COUNT))
