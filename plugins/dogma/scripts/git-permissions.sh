@@ -8,7 +8,7 @@
 #
 # ENV: DOGMA_GIT_PERMISSIONS=true (default) | false
 
-set -e
+# NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
 
 # === CONFIGURATION ===
 ENABLED="${DOGMA_GIT_PERMISSIONS:-true}"
@@ -17,7 +17,7 @@ if [ "$ENABLED" != "true" ]; then
 fi
 
 # Read JSON input from stdin
-INPUT=$(cat)
+INPUT=$(cat 2>/dev/null || true)
 
 # Extract the command being run
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')

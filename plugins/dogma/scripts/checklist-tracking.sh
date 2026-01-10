@@ -14,28 +14,13 @@
 #
 # ENV: DOGMA_CHECKLIST_TRACKING=true (default) | false
 
-set -e
+# NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
 
 # === CONFIGURATION ===
 ENABLED="${DOGMA_CHECKLIST_TRACKING:-true}"
 if [ "$ENABLED" != "true" ]; then
     exit 0
 fi
-
-# Files to scan for checklists
-SCAN_FILES=(
-    "PLAN.md"
-    "TODO.md"
-    "ROADMAP.md"
-    "README.md"
-    "TO-DOS.md"
-)
-
-# Directories to scan (if they exist)
-SCAN_DIRS=(
-    "docs"
-    ".claude"
-)
 
 # ============================================
 # Scan for open checklist items
@@ -44,31 +29,30 @@ SCAN_DIRS=(
 OPEN_CHECKLISTS=""
 TOTAL_OPEN=0
 
-# Scan specific files
-for FILE in "${SCAN_FILES[@]}"; do
+# Scan specific files (no arrays for compatibility)
+for FILE in PLAN.md TODO.md ROADMAP.md README.md TO-DOS.md; do
     if [ -f "$FILE" ]; then
         # Count open checkboxes: - [ ] or * [ ]
         COUNT=$(grep -cE '^\s*[-*]\s*\[ \]' "$FILE" 2>/dev/null | head -1 || echo "0")
-        if [ "$COUNT" -gt 0 ]; then
+        if [ "$COUNT" -gt 0 ] 2>/dev/null; then
             OPEN_CHECKLISTS="${OPEN_CHECKLISTS}\n- $FILE ($COUNT open)"
             TOTAL_OPEN=$((TOTAL_OPEN + COUNT))
         fi
     fi
 done
 
-# Scan directories
-for DIR in "${SCAN_DIRS[@]}"; do
+# Scan directories (simplified, no process substitution)
+for DIR in docs .claude; do
     if [ -d "$DIR" ]; then
-        # Find all .md files in directory
-        while IFS= read -r FILE; do
+        for FILE in "$DIR"/*.md; do
             if [ -f "$FILE" ]; then
                 COUNT=$(grep -cE '^\s*[-*]\s*\[ \]' "$FILE" 2>/dev/null | head -1 || echo "0")
-                if [ "$COUNT" -gt 0 ]; then
+                if [ "$COUNT" -gt 0 ] 2>/dev/null; then
                     OPEN_CHECKLISTS="${OPEN_CHECKLISTS}\n- $FILE ($COUNT open)"
                     TOTAL_OPEN=$((TOTAL_OPEN + COUNT))
                 fi
             fi
-        done < <(find "$DIR" -name "*.md" -type f 2>/dev/null)
+        done
     fi
 done
 
@@ -76,7 +60,7 @@ done
 # Output reminder if open checklists found
 # ============================================
 
-if [ "$TOTAL_OPEN" -gt 0 ]; then
+if [ "$TOTAL_OPEN" -gt 0 ] 2>/dev/null; then
     echo ""
     echo "<dogma-checklist-tracking>"
     echo "Open checklists found ($TOTAL_OPEN tasks):"
