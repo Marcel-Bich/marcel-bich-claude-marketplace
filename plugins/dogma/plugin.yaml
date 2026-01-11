@@ -1,6 +1,6 @@
 name: dogma
 description: Intelligent sync of Claude instructions with enforcement hooks for security and consistency
-version: 1.16.2
+version: 1.16.3
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
@@ -26,6 +26,10 @@ hooks:
       args:
         - -c
         - "cat | {{pluginPath}}/scripts/prompt-intervention-reminder.sh"
+    - command: bash
+      args:
+        - -c
+        - "cat | {{pluginPath}}/scripts/checklist-tracking.sh"
 
   # ============================================
   # PreToolUse Hooks - Run BEFORE tool execution
