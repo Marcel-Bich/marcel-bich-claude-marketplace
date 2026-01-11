@@ -1,6 +1,6 @@
 name: dogma
 description: Intelligent sync of Claude instructions with enforcement hooks for security and consistency
-version: 1.15.1
+version: 1.16.0
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
@@ -18,10 +18,14 @@ hooks:
   # Reminds of rules that cannot be technically enforced
   # ============================================
   user_prompt_submit:
-    command: bash
-    args:
-      - -c
-      - "cat | {{pluginPath}}/scripts/user-prompt-submit.sh"
+    - command: bash
+      args:
+        - -c
+        - "cat | {{pluginPath}}/scripts/user-prompt-submit.sh"
+    - command: bash
+      args:
+        - -c
+        - "cat | {{pluginPath}}/scripts/prompt-intervention-reminder.sh"
 
   # ============================================
   # PreToolUse Hooks - Run BEFORE tool execution
@@ -102,3 +106,13 @@ hooks:
       args:
         - -c
         - "cat | {{pluginPath}}/scripts/prompt-injection.sh"
+
+  # ============================================
+  # Stop Hook - Runs at END of Claude's response
+  # Final checks before completing
+  # ============================================
+  stop:
+    command: bash
+    args:
+      - -c
+      - "cat | {{pluginPath}}/scripts/version-sync-check.sh"
