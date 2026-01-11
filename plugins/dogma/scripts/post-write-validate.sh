@@ -142,7 +142,7 @@ if [ -n "$VIOLATIONS" ]; then
     echo "- Run /dogma:cleanup"
     echo "- Or manually replace the characters"
     echo ""
-    echo "See: @CLAUDE/CLAUDE.git.md (ai_traces section)"
+    echo "See: @GUIDES/ai-traces.md"
     echo "</dogma-validation>"
 fi
 

@@ -22,14 +22,16 @@ You are executing the `/dogma:cleanup` command. Your task is to **find and fix A
 ### Check for Dogma Rules First
 
 Look for AI trace rules in this order:
-1. `CLAUDE/CLAUDE.git.md` - Check for `<ai_traces>` section
-2. `CLAUDE.git.md` - Check for `<ai_traces>` section
-3. `.claude/CLAUDE.git.md` - Check for `<ai_traces>` section
+1. `GUIDES/ai-traces.md` - Dedicated AI traces documentation
+2. `CLAUDE/CLAUDE.git.md` - Check for `<ai_traces>` section
+3. `CLAUDE.git.md` - Check for `<ai_traces>` section
+4. `.claude/CLAUDE.git.md` - Check for `<ai_traces>` section
 
-If found, extract the rules from `<ai_traces>`:
+If found, extract the rules:
 ```
-Found AI trace rules in CLAUDE/CLAUDE.git.md:
-- Typography: Use straight quotes, normal dashes, three dots
+Found AI trace rules in GUIDES/ai-traces.md:
+- Typography: Use straight quotes " (U+0022), normal dashes - (U+002D), three dots (...)
+- Avoid: Curly quotes (U+201C/U+201D), em-dashes (U+2014), smart apostrophes (U+2018/U+2019), ellipsis (U+2026)
 - Phrases: Avoid "Let me...", "Sure!", etc.
 - Emojis: Never in code comments or logs
 ```
