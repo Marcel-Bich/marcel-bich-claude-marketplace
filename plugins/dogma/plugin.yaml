@@ -1,6 +1,6 @@
 name: dogma
 description: Intelligent sync of Claude instructions with enforcement hooks for security and consistency
-version: 1.18.3
+version: 1.18.4
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
@@ -11,9 +11,6 @@ commands:
   cleanup:
     description: Find and fix AI-typical patterns in code (reactive cleanup)
     source: commands/cleanup.md
-  lint:setup:
-    description: Interactive setup for linting/formatting with Prettier
-    source: commands/lint-setup.md
   lint:
     description: Run prettier check on project
     source: commands/lint.md
