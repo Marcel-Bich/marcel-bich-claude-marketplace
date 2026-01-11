@@ -23,7 +23,7 @@ Intelligent sync of Claude instructions with enforcement hooks for security and 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CLAUDE_MB_DOGMA_ENABLED` | `true` | Master switch for all hooks |
-| `CLAUDE_MB_DOGMA_LINT_ON_STOP` | `false` | Run lint check when task completes |
+| `CLAUDE_MB_DOGMA_LINT_ON_STOP` | `true` | Run lint check when task completes (only changed files) |
 | `CLAUDE_MB_DOGMA_AUTO_FORMAT` | `false` | Allow automatic formatting |
 
 ### Usage Warning
