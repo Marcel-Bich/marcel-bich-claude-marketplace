@@ -889,7 +889,37 @@ The Setup-Tour checks your project for missing tools referenced in the synced ru
 - User can decline individual items
 - Summary shows what was done
 
-## Step 7: Summary Report
+## Step 7: Lint Setup Suggestion
+
+After successful sync, check if linting is already set up:
+
+### 7.1 Check for existing Prettier configuration
+
+```bash
+# Check for .prettierrc or similar
+ls -la .prettierrc* prettier.config.* 2>/dev/null
+
+# Check package.json for prettier
+grep -q '"prettier"' package.json 2>/dev/null && echo "found"
+```
+
+### 7.2 Suggest lint setup if missing
+
+**If BOTH checks fail (no Prettier configured):**
+
+```
+Linting/Formatting is not configured in this project.
+
+Would you like to set it up?
+1. Yes, run /dogma:lint:setup
+2. No, skip for now
+```
+
+**If Prettier IS configured:** Skip silently (no message).
+
+**Key principle:** Only suggest if truly missing. Don't nag users who already have Prettier.
+
+## Step 8: Summary Report
 
 After all decisions are made, provide a summary:
 
