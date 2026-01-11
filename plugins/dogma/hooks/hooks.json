@@ -39,6 +39,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/dependency-verification.sh",
             "timeout": 10,
             "description": "Block package installations until verified via socket.dev/snyk"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/pre-commit-lint.sh",
+            "timeout": 5,
+            "description": "Block git commit until /dogma:lint has been run (ENV: CLAUDE_MB_DOGMA_PRE_COMMIT_LINT=true)"
           }
         ]
       },
