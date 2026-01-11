@@ -47,7 +47,7 @@ OPEN_CHECKLISTS=""
 TOTAL_OPEN=0
 
 # Scan specific files in root (no arrays for compatibility)
-for FILE in PLAN.md TODO.md ROADMAP.md README.md TO-DOS.md BRIEF.md MILESTONES.md whats-next.md; do
+for FILE in PLAN.md TODO.md ROADMAP.md README.md TO-DOS.md BRIEF.md MILESTONES.md whats-next.md TO-DELETE.md; do
     if [ -f "$FILE" ]; then
         # Count open checkboxes: - [ ] or * [ ]
         COUNT=$(grep -cE '^\s*[-*]\s*\[ \]' "$FILE" 2>/dev/null | head -1 || echo "0")

@@ -180,14 +180,13 @@ if [ -n "$BLOCKED" ]; then
 # Files to Delete
 
 These files were blocked from deletion by dogma. Delete them manually if needed.
+Check off items after manual deletion.
 
-| Timestamp | Command | Target | Reason |
-|-----------|---------|--------|--------|
 HEADER
         fi
 
-        # Append entry
-        echo "| $TIMESTAMP | \`$BLOCKED\` | \`${TARGET:-unknown}\` | $REASON |" >> "$TO_DELETE_FILE"
+        # Append as checklist item (so checklist-tracking picks it up)
+        echo "- [ ] \`$BLOCKED ${TARGET:-unknown}\` - $REASON ($TIMESTAMP)" >> "$TO_DELETE_FILE"
 
         # Deny with info message
         REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} logged to TO-DELETE.md. Agent continues without deleting."
