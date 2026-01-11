@@ -752,123 +752,219 @@ The Setup-Tour checks your project against the synced rules
 and helps install any missing tools or configurations.
 ```
 
-### 6.2 Detection Matrix
+### 6.2 Project Compatibility Check
 
-For each synced CLAUDE file, check if the referenced tools exist:
-
-| CLAUDE File | Checks For | Detection Method |
-|-------------|------------|------------------|
-| CLAUDE.security.md | socket.dev CLI | `which socket` or `socket --version` |
-| CLAUDE.security.md | snyk CLI | `which snyk` or `snyk --version` |
-| CLAUDE.linting.md | ESLint config | `ls .eslintrc* eslint.config.*` or package.json eslintConfig |
-| CLAUDE.formatting.md | Prettier config | `ls .prettierrc* prettier.config.*` or package.json prettier |
-| CLAUDE.build.md | Vite | package.json devDependencies.vite |
-| CLAUDE.build.md | Vitest | package.json devDependencies.vitest |
-| CLAUDE.testing.md | Test framework | package.json scripts.test, jest.config.*, vitest.config.* |
-| CLAUDE.planning.md | taches-cc-resources | `cat ~/.claude/plugins/installed_plugins.json \| grep -i taches` |
-
-### 6.3 Run Detection
-
-For each synced CLAUDE file:
+**BEFORE suggesting any tool, check if it's compatible with the project:**
 
 ```bash
-# Example: Check for CLAUDE.security.md requirements
-if [ -f "CLAUDE/CLAUDE.security.md" ] || [ -f "CLAUDE.security.md" ]; then
-    # Check socket.dev CLI
-    if ! command -v socket &> /dev/null; then
-        MISSING_SOCKET=true
-    fi
-    # Check snyk CLI
-    if ! command -v snyk &> /dev/null; then
-        MISSING_SNYK=true
-    fi
+# Detect project type
+HAS_PACKAGE_JSON=$([ -f "package.json" ] && echo "true" || echo "false")
+HAS_PYPROJECT=$([ -f "pyproject.toml" ] && echo "true" || echo "false")
+HAS_CARGO=$([ -f "Cargo.toml" ] && echo "true" || echo "false")
+HAS_GO_MOD=$([ -f "go.mod" ] && echo "true" || echo "false")
+HAS_COMPOSER=$([ -f "composer.json" ] && echo "true" || echo "false")
+
+# Check if project has external dependencies (not just dev tools)
+if [ "$HAS_PACKAGE_JSON" = "true" ]; then
+    HAS_DEPENDENCIES=$(grep -q '"dependencies"' package.json && echo "true" || echo "false")
 fi
 ```
 
-### 6.4 Present Missing Items
+| Tool | Compatible When |
+|------|-----------------|
+| socket.dev CLI | Node.js project with external dependencies |
+| snyk CLI | Any project with external dependencies (npm, pip, cargo, etc.) |
+| Prettier | Node.js project (any) |
+| ESLint | Node.js project (any) |
+| Vitest/Jest | Node.js project (any) |
 
-For each missing item, show:
+**Skip tools that don't make sense:**
+- No external dependencies -> Don't suggest security scanners
+- Non-Node project -> Don't suggest Prettier/ESLint (suggest alternatives)
+- Plugin/Marketplace repo -> Security scanners usually not needed
 
-```
-[CLAUDE.security.md]
+### 6.3 Detection Matrix (Global vs Local)
 
-Missing: socket.dev CLI
-Purpose: Dependency security scanning (typosquatting, vulnerabilities)
-Install: npm install -g @socketsecurity/cli
+For each tool, check **BOTH global AND local** installation:
 
-Would you like to install it?
-1. Yes, install now
-2. No, skip
-3. Show more info
-```
+| Tool | Global Detection | Local Detection | Scope |
+|------|------------------|-----------------|-------|
+| socket.dev CLI | `command -v socket` | package.json devDeps | Global recommended |
+| snyk CLI | `command -v snyk` | package.json devDeps | Global recommended |
+| Prettier | (not recommended) | package.json + config | Local only |
+| ESLint | (not recommended) | package.json + config | Local only |
 
-**Important:**
-- Only show items that are MISSING
-- Explain WHY each tool is recommended
-- Show the exact install command
-- User confirms each installation
+### 6.4 Run Detection with Version Info
 
-### 6.5 Installation Actions
-
-**For CLI tools (socket, snyk):**
 ```bash
+# Global CLI tools - check with version
+check_global_cli() {
+    local cmd=$1
+    if command -v "$cmd" &> /dev/null; then
+        VERSION=$("$cmd" --version 2>/dev/null | head -1)
+        echo "GLOBAL_INSTALLED:$VERSION"
+    else
+        echo "NOT_FOUND"
+    fi
+}
+
+SOCKET_STATUS=$(check_global_cli "socket")
+SNYK_STATUS=$(check_global_cli "snyk")
+
+# Local tools - check package.json
+check_local_dep() {
+    local dep=$1
+    if [ -f "package.json" ]; then
+        if grep -q "\"$dep\"" package.json; then
+            echo "LOCAL_INSTALLED"
+        else
+            echo "NOT_FOUND"
+        fi
+    else
+        echo "NO_PACKAGE_JSON"
+    fi
+}
+
+PRETTIER_STATUS=$(check_local_dep "prettier")
+ESLINT_STATUS=$(check_local_dep "eslint")
+```
+
+### 6.5 Present Items with Intelligent Status
+
+**For Global CLI tools (socket, snyk):**
+
+```
+[CLAUDE.security.md] socket.dev CLI
+
+Status: GLOBAL v1.2.3 installed
+No action needed.
+```
+
+OR if not installed:
+
+```
+[CLAUDE.security.md] socket.dev CLI
+
+Status: NOT INSTALLED
+
+Purpose: Dependency security scanning before npm install
+- Detects typosquatting attacks
+- Identifies known vulnerabilities
+- Checks package reputation
+
+Installation options:
+1. Install globally (recommended) - Available in all projects
+   npm install -g @socketsecurity/cli
+
+2. Install locally - Only this project, versioned in package.json
+   npm install -D @socketsecurity/cli
+
+3. Skip - Don't install
+
+Which option?
+```
+
+**For Local-only tools (Prettier, ESLint):**
+
+```
+[CLAUDE.formatting.md] Prettier
+
+Status: NOT CONFIGURED
+
+Note: Prettier should be installed locally per project (not globally)
+to ensure consistent versions across team members.
+
+Install?
+1. Yes, run /dogma:lint:setup (recommended - full setup)
+2. Yes, quick install (npm install -D prettier)
+3. Skip
+```
+
+### 6.6 Handle Incompatible Projects
+
+**If project type doesn't match tool:**
+
+```
+[CLAUDE.formatting.md] Prettier
+
+Status: NOT APPLICABLE
+
+This is a [Python/Rust/Go] project. Prettier is for JavaScript/TypeScript.
+
+Would you like me to suggest an alternative?
+1. Yes, find best formatter for [Python/Rust/Go]
+2. No, skip
+```
+
+**Alternatives by language:**
+| Language | Prettier Alternative |
+|----------|---------------------|
+| Python | black, ruff format |
+| Rust | rustfmt |
+| Go | gofmt (built-in) |
+| PHP | php-cs-fixer, pint |
+
+If user chooses "Yes, find alternative":
+- Use WebSearch to find current best practice
+- Suggest installation
+- Offer to set up config
+
+### 6.7 Installation Actions
+
+**Global CLI tools:**
+```bash
+# socket.dev - always global
 npm install -g @socketsecurity/cli
-# or
+
+# snyk - always global
 npm install -g snyk
 ```
 
-**For project configs (ESLint, Prettier):**
+**Local project tools:**
 ```bash
-# ESLint
+# Prettier - always local
+npm install -D prettier
+# Then suggest /dogma:lint:setup for full config
+
+# ESLint - always local
 npm install -D eslint
 npx eslint --init
-# or create basic config
-
-# Prettier
-npm install -D prettier
-echo '{}' > .prettierrc
 ```
 
-**For Plugins (taches-cc-resources):**
-```bash
-claude plugin marketplace add Marcel-Bich/marcel-bich-claude-marketplace
-claude plugin install taches-cc-resources@marcel-bich-claude-marketplace
-```
+### 6.8 Skip Irrelevant Tools
 
-### 6.6 Handle Non-Node Projects
-
-If package.json doesn't exist:
-- Skip npm-based recommendations
-- Only offer global CLI tools (socket, snyk)
-- Don't offer ESLint/Prettier setup
+**Automatically skip (don't even ask) when:**
+- Security scanners for repos without external dependencies
+- Node.js tools for non-Node projects
+- Tools already installed (just report status)
 
 ```
-Note: No package.json found - skipping Node.js-specific recommendations.
-Global CLI tools are still available.
+Skipping security scanners: No external dependencies to scan.
 ```
 
-### 6.7 Setup-Tour Summary
+### 6.9 Setup-Tour Summary
 
 ```
 Setup-Tour Complete
 
+ALREADY INSTALLED (GLOBAL):
+= socket.dev CLI v1.2.3
+= snyk CLI v2.1.0
+
+ALREADY INSTALLED (LOCAL):
+= Prettier v3.2.5 (in package.json)
+
 INSTALLED:
-+ socket.dev CLI (npm install -g @socketsecurity/cli)
 + taches-cc-resources plugin
 
-ALREADY PRESENT:
-= ESLint (found .eslintrc.js)
-= Prettier (found in package.json)
-
 SKIPPED:
-- snyk CLI (user declined)
-- Vitest (user declined)
+- ESLint (user declined)
 
 NOT APPLICABLE:
-- Vite (no package.json)
+- Security scanners (no external dependencies)
 ```
 
-### 6.8 Skip Option
+### 6.10 Skip Option
 
 Allow user to skip the entire Setup-Tour:
 
@@ -883,10 +979,12 @@ The Setup-Tour checks your project for missing tools referenced in the synced ru
 
 **Key principles:**
 - Setup-Tour is optional but recommended
+- Check global installation FIRST before suggesting install
+- Show version when globally installed
+- Distinguish global vs local recommendations clearly
+- Skip tools that don't make sense for the project
+- Offer alternatives for incompatible project types
 - Each installation requires user confirmation
-- Already-present items are skipped
-- Non-applicable items (wrong project type) are noted
-- User can decline individual items
 - Summary shows what was done
 
 ## Step 7: Lint Setup Suggestion
