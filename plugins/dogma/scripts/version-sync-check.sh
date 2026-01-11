@@ -6,13 +6,13 @@
 # Mode 2: If not, scan for common version files and help generically
 # Mode 3: If no version files found at all, skip silently
 #
-# ENV: DOGMA_ENABLED=true (default) | false - master switch
-# ENV: DOGMA_VERSION_SYNC=true (default) | false
+# ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch
+# ENV: CLAUDE_MB_DOGMA_VERSION_SYNC=true (default) | false
 
 trap 'exit 0' ERR
 
 # === DEBUG MODE ===
-DEBUG="${DOGMA_DEBUG:-false}"
+DEBUG="${CLAUDE_MB_DOGMA_DEBUG:-false}"
 if [ "$DEBUG" = "true" ]; then
     exec 2>>/tmp/dogma-hooks.log
     set -x
@@ -20,12 +20,12 @@ if [ "$DEBUG" = "true" ]; then
 fi
 
 # === MASTER SWITCH ===
-if [ "${DOGMA_ENABLED:-true}" != "true" ]; then
+if [ "${CLAUDE_MB_DOGMA_ENABLED:-true}" != "true" ]; then
     exit 0
 fi
 
 # === CONFIGURATION ===
-ENABLED="${DOGMA_VERSION_SYNC:-true}"
+ENABLED="${CLAUDE_MB_DOGMA_VERSION_SYNC:-true}"
 if [ "$ENABLED" != "true" ]; then
     exit 0
 fi

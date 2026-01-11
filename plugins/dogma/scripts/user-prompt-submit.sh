@@ -8,16 +8,16 @@
 # - Partially enforceable (Language, AI Traces) -> Remind here + PreToolUse
 # - Not enforceable (Honesty, Planning, Philosophy) -> ONLY remind here!
 #
-# ENV: DOGMA_ENABLED=true (default) | false - master switch for all hooks
-# ENV: DOGMA_PROMPT_REMINDER=true (default) | false
+# ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch for all hooks
+# ENV: CLAUDE_MB_DOGMA_PROMPT_REMINDER=true (default) | false
 
 # NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
 # Trap all errors and exit cleanly
 trap 'exit 0' ERR
 
 # === DEBUG MODE ===
-# ENV: DOGMA_DEBUG=true to enable logging to /tmp/dogma-hooks.log
-DEBUG="${DOGMA_DEBUG:-false}"
+# ENV: CLAUDE_MB_DOGMA_DEBUG=true to enable logging to /tmp/dogma-hooks.log
+DEBUG="${CLAUDE_MB_DOGMA_DEBUG:-false}"
 if [ "$DEBUG" = "true" ]; then
     exec 2>>/tmp/dogma-hooks.log
     set -x
@@ -26,12 +26,12 @@ if [ "$DEBUG" = "true" ]; then
 fi
 
 # === MASTER SWITCH ===
-if [ "${DOGMA_ENABLED:-true}" != "true" ]; then
+if [ "${CLAUDE_MB_DOGMA_ENABLED:-true}" != "true" ]; then
     exit 0
 fi
 
 # === CONFIGURATION ===
-ENABLED="${DOGMA_PROMPT_REMINDER:-true}"
+ENABLED="${CLAUDE_MB_DOGMA_PROMPT_REMINDER:-true}"
 if [ "$ENABLED" != "true" ]; then
     exit 0
 fi
