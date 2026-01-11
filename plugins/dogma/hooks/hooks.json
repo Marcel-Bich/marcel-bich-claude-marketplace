@@ -122,6 +122,18 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/lint-on-stop.sh",
+            "timeout": 30,
+            "description": "Run prettier check at session end (ENV: CLAUDE_MB_DOGMA_LINT_ON_STOP=true)"
+          }
+        ]
+      }
     ]
   }
 }
