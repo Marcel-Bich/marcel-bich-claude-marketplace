@@ -9,7 +9,7 @@ Intelligent sync of Claude instructions with enforcement hooks for security and 
 - `/dogma:sync` - Sync Claude instructions from any source with interactive review
 - `/dogma:cleanup` - Find and fix AI-typical patterns in code
 - `/dogma:lint:setup` - Interactive setup for linting/formatting with Prettier
-- `/dogma:lint` - Run prettier check (skips if not installed)
+- `/dogma:lint` - Run prettier and eslint check (skips if not installed)
 
 ### Enforcement Hooks
 
@@ -23,7 +23,7 @@ Intelligent sync of Claude instructions with enforcement hooks for security and 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CLAUDE_MB_DOGMA_ENABLED` | `true` | Master switch for all hooks |
-| `CLAUDE_MB_DOGMA_LINT_ON_STOP` | `true` | Run lint check when task completes (only changed files) |
+| `CLAUDE_MB_DOGMA_LINT_ON_STOP` | `true` | Run eslint + prettier when task completes (only changed files) |
 | `CLAUDE_MB_DOGMA_AUTO_FORMAT` | `false` | Allow automatic formatting |
 
 ### Usage Warning
