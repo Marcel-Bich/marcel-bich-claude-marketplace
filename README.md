@@ -2,94 +2,27 @@
 
 A collection of productivity plugins for Claude Code.
 
-## Requirements
+## Available Plugins
 
-All plugins require:
-- `jq` - JSON processor (install: `sudo apt install jq`)
+| Plugin | Description |
+|--------|-------------|
+| **dogma** | Rules enforcement and instruction sync |
+| **signal** | Desktop notifications for Claude Code |
+| **limit** | Live API usage display in statusline |
 
-## Installation
-
-Add this marketplace to Claude Code:
+## Quick Start
 
 ```bash
 claude plugin marketplace add Marcel-Bich/marcel-bich-claude-marketplace
-```
-
-Or within a Claude session:
-```
-/plugin marketplace add Marcel-Bich/marcel-bich-claude-marketplace
-```
-
-When using `/plugin` commands within a Claude session, restart Claude afterwards for changes to take effect.
-
-## Updating
-
-To receive plugin updates:
-
-1. Run `/plugin` in Claude Code
-2. Go to the **Marketplaces** tab
-3. Enable **"Enable auto-update"** for automatic updates, or select **"Update marketplace"** manually
-4. Go to the **Installed** tab and update individual plugins as needed
-5. Restart Claude Code after updating
-
-## Available Plugins
-
-| Plugin | Description | Wiki |
-|--------|-------------|------|
-| **dogma** | Rules enforcement and instruction sync | [Documentation](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Dogma-Plugin) |
-| **signal** | Desktop notifications for Claude Code | [Documentation](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Signal-Plugin) |
-| **limit** | Live API usage display in statusline | [Documentation](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Limit-Plugin) |
-
-### Quick Install
-
-```bash
 claude plugin install dogma@marcel-bich-claude-marketplace
-claude plugin install signal@marcel-bich-claude-marketplace
-claude plugin install limit@marcel-bich-claude-marketplace
 ```
 
-Or within a Claude session:
-```
-/plugin install dogma@marcel-bich-claude-marketplace
-/plugin install signal@marcel-bich-claude-marketplace
-/plugin install limit@marcel-bich-claude-marketplace
-```
+## Documentation
 
-## Troubleshooting
+Full documentation, installation, configuration, and troubleshooting:
 
-### Plugin not found after adding marketplace
-
-If `claude plugin install` says "Plugin not found":
-
-```bash
-# 1. Manually update the marketplace clone
-cd ~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace
-git pull origin main
-
-# 2. Try installing again
-claude plugin install <plugin>@marcel-bich-claude-marketplace
-```
-
-### Plugin updates not working
-
-If the normal update process via `/plugin` doesn't work:
-
-```bash
-# 1. Manually update the marketplace clone
-cd ~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace
-git pull origin main
-
-# 2. Reinstall the plugin
-claude plugin uninstall <plugin>@marcel-bich-claude-marketplace
-claude plugin install <plugin>@marcel-bich-claude-marketplace
-
-# 3. Restart Claude Code
-```
-
-Replace `<plugin>` with `signal`, `limit`, or `dogma`.
-
-This is a known limitation of the Claude CLI plugin system where the local marketplace clone is not always automatically synced.
+**[View Documentation on Wiki](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki)**
 
 ## License
 
-MIT - See [LICENSE](LICENSE) file for full terms.
+MIT
