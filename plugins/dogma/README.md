@@ -8,8 +8,9 @@ Intelligent sync of Claude instructions with enforcement hooks for security and 
 
 - `/dogma:sync` - Sync Claude instructions from any source with interactive review
 - `/dogma:cleanup` - Find and fix AI-typical patterns in code
-- `/dogma:lint:setup` - Interactive setup for linting/formatting with Prettier
-- `/dogma:lint` - Run prettier and eslint check (skips if not installed)
+- `/dogma:lint` - Project-agnostic linting and formatting on staged files (non-interactive)
+- `/dogma:lint:setup` - Interactive setup for linting/formatting tools
+- `/dogma:versioning` - Check and sync version numbers across all config files
 
 ### Enforcement Hooks
 
@@ -23,8 +24,10 @@ Intelligent sync of Claude instructions with enforcement hooks for security and 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CLAUDE_MB_DOGMA_ENABLED` | `true` | Master switch for all hooks |
-| `CLAUDE_MB_DOGMA_LINT_ON_STOP` | `true` | Run eslint + prettier when task completes (only changed files) |
-| `CLAUDE_MB_DOGMA_AUTO_FORMAT` | `false` | Allow automatic formatting |
+| `CLAUDE_MB_DOGMA_PRE_COMMIT_LINT` | `true` | Block git commit until /dogma:lint is run |
+| `CLAUDE_MB_DOGMA_SKIP_LINT_CHECK` | `false` | Skip pre-commit lint check (set by Claude after lint) |
+| `CLAUDE_MB_DOGMA_AUTO_FORMAT` | `true` | Allow automatic formatting of staged files |
+| `CLAUDE_MB_DOGMA_LINT_ON_STOP` | `true` | Run lint check when task completes (fallback) |
 
 ### Usage Warning
 
