@@ -1,0 +1,12 @@
+{
+    "name": "marcel-bich-claude-marketplace",
+    "private": true,
+    "scripts": {
+        "format": "prettier --write .",
+        "format:check": "prettier --check .",
+        "lint:sh": "find . -name '*.sh' -not -path './node_modules/*' -exec shellcheck {} +"
+    },
+    "devDependencies": {
+        "prettier": "^3.2.5"
+    }
+}
