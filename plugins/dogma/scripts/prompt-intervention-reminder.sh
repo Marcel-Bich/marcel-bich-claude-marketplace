@@ -5,13 +5,13 @@
 # Shows a compact reminder at every prompt to suggest relevant skills
 # before diving into work. References CLAUDE.prompt-intervention.md.
 #
-# ENV: DOGMA_ENABLED=true (default) | false - master switch
-# ENV: DOGMA_PROMPT_INTERVENTION=true (default) | false
+# ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch
+# ENV: CLAUDE_MB_DOGMA_PROMPT_INTERVENTION=true (default) | false
 
 trap 'exit 0' ERR
 
 # === DEBUG MODE ===
-DEBUG="${DOGMA_DEBUG:-false}"
+DEBUG="${CLAUDE_MB_DOGMA_DEBUG:-false}"
 if [ "$DEBUG" = "true" ]; then
     exec 2>>/tmp/dogma-hooks.log
     set -x
@@ -19,12 +19,12 @@ if [ "$DEBUG" = "true" ]; then
 fi
 
 # === MASTER SWITCH ===
-if [ "${DOGMA_ENABLED:-true}" != "true" ]; then
+if [ "${CLAUDE_MB_DOGMA_ENABLED:-true}" != "true" ]; then
     exit 0
 fi
 
 # === CONFIGURATION ===
-ENABLED="${DOGMA_PROMPT_INTERVENTION:-true}"
+ENABLED="${CLAUDE_MB_DOGMA_PROMPT_INTERVENTION:-true}"
 if [ "$ENABLED" != "true" ]; then
     exit 0
 fi

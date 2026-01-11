@@ -10,8 +10,8 @@
 # - [ ] May delete (default) -> block + log to TO-DELETE.md (non-blocking)
 # - [ ] May delete + [x] Ask before deleting -> ask user for confirmation
 #
-# ENV: DOGMA_ENABLED=true (default) | false - master switch for all hooks
-# ENV: DOGMA_FILE_PROTECTION=true (default) | false
+# ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch for all hooks
+# ENV: CLAUDE_MB_DOGMA_FILE_PROTECTION=true (default) | false
 
 # NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
 # Trap all errors and exit cleanly
@@ -36,7 +36,7 @@ EOF
 }
 
 # === DEBUG MODE ===
-DEBUG="${DOGMA_DEBUG:-false}"
+DEBUG="${CLAUDE_MB_DOGMA_DEBUG:-false}"
 if [ "$DEBUG" = "true" ]; then
     exec 2>>/tmp/dogma-hooks.log
     set -x
@@ -45,13 +45,13 @@ if [ "$DEBUG" = "true" ]; then
 fi
 
 # === MASTER SWITCH ===
-# DOGMA_ENABLED=false disables ALL dogma hooks at once
-if [ "${DOGMA_ENABLED:-true}" != "true" ]; then
+# CLAUDE_MB_DOGMA_ENABLED=false disables ALL dogma hooks at once
+if [ "${CLAUDE_MB_DOGMA_ENABLED:-true}" != "true" ]; then
     exit 0
 fi
 
 # === CONFIGURATION ===
-ENABLED="${DOGMA_FILE_PROTECTION:-true}"
+ENABLED="${CLAUDE_MB_DOGMA_FILE_PROTECTION:-true}"
 if [ "$ENABLED" != "true" ]; then
     exit 0
 fi
@@ -194,7 +194,7 @@ HEADER
         output_deny "$REASON_MSG"
     else
         # Ask mode: Prompt user for confirmation
-        REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} - $REASON. User can run manually or bypass with DOGMA_FILE_PROTECTION=false"
+        REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} - $REASON. User can run manually or bypass with CLAUDE_MB_DOGMA_FILE_PROTECTION=false"
         REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
         output_ask "$REASON_MSG"
     fi
