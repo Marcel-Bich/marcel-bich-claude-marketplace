@@ -1,5 +1,4 @@
 ---
-name: lint
 description: Run prettier check on project or specific path
 arguments:
   - name: path
