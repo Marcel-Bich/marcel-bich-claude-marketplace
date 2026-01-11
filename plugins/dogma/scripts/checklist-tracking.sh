@@ -8,9 +8,9 @@
 # - Agent asks interactively whether to check off
 #
 # Scan-Locations:
-# - PLAN.md, TODO.md, ROADMAP.md, README.md
-# - docs/**/*.md
-# - .claude/*.md
+# - Root: PLAN.md, TODO.md, ROADMAP.md, README.md, TO-DOS.md, BRIEF.md, MILESTONES.md, whats-next.md
+# - docs/*.md, .claude/*.md, .planning/*.md
+# - .planning/phases/*/*.md (for taches-cc-resources create-plans)
 #
 # ENV: DOGMA_ENABLED=true (default) | false - master switch for all hooks
 # ENV: DOGMA_CHECKLIST_TRACKING=true (default) | false
@@ -46,8 +46,8 @@ fi
 OPEN_CHECKLISTS=""
 TOTAL_OPEN=0
 
-# Scan specific files (no arrays for compatibility)
-for FILE in PLAN.md TODO.md ROADMAP.md README.md TO-DOS.md; do
+# Scan specific files in root (no arrays for compatibility)
+for FILE in PLAN.md TODO.md ROADMAP.md README.md TO-DOS.md BRIEF.md MILESTONES.md whats-next.md; do
     if [ -f "$FILE" ]; then
         # Count open checkboxes: - [ ] or * [ ]
         COUNT=$(grep -cE '^\s*[-*]\s*\[ \]' "$FILE" 2>/dev/null | head -1 || echo "0")
@@ -58,8 +58,8 @@ for FILE in PLAN.md TODO.md ROADMAP.md README.md TO-DOS.md; do
     fi
 done
 
-# Scan directories (simplified, no process substitution)
-for DIR in docs .claude; do
+# Scan directories (first level)
+for DIR in docs .claude .planning; do
     if [ -d "$DIR" ]; then
         for FILE in "$DIR"/*.md; do
             if [ -f "$FILE" ]; then
@@ -72,6 +72,23 @@ for DIR in docs .claude; do
         done
     fi
 done
+
+# Scan .planning/phases/ subdirectories (for create-plans skill)
+if [ -d ".planning/phases" ]; then
+    for PHASE_DIR in .planning/phases/*/; do
+        if [ -d "$PHASE_DIR" ]; then
+            for FILE in "$PHASE_DIR"*.md; do
+                if [ -f "$FILE" ]; then
+                    COUNT=$(grep -cE '^\s*[-*]\s*\[ \]' "$FILE" 2>/dev/null | head -1 || echo "0")
+                    if [ "$COUNT" -gt 0 ] 2>/dev/null; then
+                        OPEN_CHECKLISTS="${OPEN_CHECKLISTS}\n- $FILE ($COUNT open)"
+                        TOTAL_OPEN=$((TOTAL_OPEN + COUNT))
+                    fi
+                fi
+            done
+        fi
+    done
+fi
 
 # ============================================
 # Output reminder if open checklists found
