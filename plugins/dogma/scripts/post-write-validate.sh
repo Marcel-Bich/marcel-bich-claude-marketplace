@@ -131,7 +131,7 @@ esac
 if [ -n "$VIOLATIONS" ]; then
     echo ""
     echo "<dogma-validation>"
-    echo "WARNING: AI traces detected in written content!"
+    echo "[dogma] WARNING: AI traces detected in written content!"
     echo ""
     echo "File: $FILE_PATH"
     echo ""

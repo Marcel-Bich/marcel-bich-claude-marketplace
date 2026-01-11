@@ -96,7 +96,7 @@ fi
 # If injections found, warn (but don't block - content already fetched)
 if [ -n "$INJECTIONS_FOUND" ]; then
     echo ""
-    echo "DOGMA WARNING: Potential prompt injection detected"
+    echo "[dogma] WARNING: Potential prompt injection detected"
     echo ""
     echo "The fetched content may contain manipulation attempts:"
     echo -e "$INJECTIONS_FOUND"
