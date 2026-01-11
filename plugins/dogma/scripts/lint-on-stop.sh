@@ -1,8 +1,8 @@
 #!/bin/bash
 # Dogma: Stop Hook - Lint Check
-# Runs prettier check when task completes
+# Runs prettier check when task completes (only on changed files)
 #
-# ENV: CLAUDE_MB_DOGMA_LINT_ON_STOP=true | false (default)
+# ENV: CLAUDE_MB_DOGMA_LINT_ON_STOP=true (default) | false
 
 trap 'exit 0' ERR
 
@@ -19,8 +19,8 @@ if [ "${CLAUDE_MB_DOGMA_ENABLED:-true}" != "true" ]; then
     exit 0
 fi
 
-# === FEATURE TOGGLE (default: off) ===
-if [ "${CLAUDE_MB_DOGMA_LINT_ON_STOP:-false}" != "true" ]; then
+# === FEATURE TOGGLE (default: on) ===
+if [ "${CLAUDE_MB_DOGMA_LINT_ON_STOP:-true}" != "true" ]; then
     exit 0
 fi
 
@@ -36,8 +36,24 @@ if ! grep -q '"prettier"' package.json 2>/dev/null; then
     exit 0
 fi
 
-# Check if node_modules/prettier exists
 if [ ! -d "node_modules/prettier" ]; then
+    exit 0
+fi
+
+# === GET CHANGED FILES ===
+# Only check files that were modified (staged + unstaged + untracked)
+CHANGED_FILES=$(git diff --name-only HEAD 2>/dev/null || true)
+STAGED_FILES=$(git diff --cached --name-only 2>/dev/null || true)
+UNTRACKED_FILES=$(git ls-files --others --exclude-standard 2>/dev/null || true)
+
+# Combine all changed files
+ALL_CHANGED=$(echo -e "${CHANGED_FILES}\n${STAGED_FILES}\n${UNTRACKED_FILES}" | sort -u | grep -v '^$' || true)
+
+# Filter to only prettier-supported files
+PRETTIER_FILES=$(echo "$ALL_CHANGED" | grep -E '\.(js|ts|jsx|tsx|json|md|css|scss|vue|php|html|yaml|yml|graphql|twig)$' 2>/dev/null || true)
+
+if [ -z "$PRETTIER_FILES" ]; then
+    # No relevant files changed
     exit 0
 fi
 
@@ -45,11 +61,12 @@ fi
 echo ""
 echo "<dogma-lint-check>"
 
-if npx prettier --check . 2>/dev/null; then
-    echo "[dogma] All files are formatted correctly."
+# Check only changed files
+if echo "$PRETTIER_FILES" | xargs npx prettier --check 2>/dev/null; then
+    echo "[dogma] All changed files are formatted correctly."
 else
-    echo "[dogma] Formatting issues found."
-    echo "Run 'npm run format' to fix."
+    echo "[dogma] Formatting issues found in changed files."
+    echo "Run 'npm run format:staged' or 'npx prettier --write <file>' to fix."
 fi
 
 echo "</dogma-lint-check>"

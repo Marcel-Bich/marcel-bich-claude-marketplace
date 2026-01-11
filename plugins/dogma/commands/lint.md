@@ -1,6 +1,10 @@
 ---
 name: lint
-description: Run prettier check on project
+description: Run prettier check on project or specific path
+arguments:
+  - name: path
+    description: "Optional path to check (default: current directory)"
+    required: false
 allowed-tools:
   - Bash
   - Read
@@ -9,7 +13,11 @@ allowed-tools:
 
 # Claude-Dogma: Lint Check
 
-You are executing the `/dogma:lint` command. Your task is to **run Prettier formatting checks** on the current project.
+You are executing the `/dogma:lint` command. Your task is to **run Prettier formatting checks** on the specified path or current directory.
+
+## Arguments
+
+- `$ARGUMENTS` - Optional path to check. If empty, checks only changed files (git diff)
 
 ## Step 1: Check Prettier Installation
 
@@ -43,13 +51,42 @@ If this fails, report the error and stop.
 
 ## Step 2: Run Lint Check
 
-### 2.1 Execute Prettier check
+### 2.1 Determine files to check
+
+**IF path argument provided:**
+
+Use the provided path directly.
+
+**ELSE (no argument - check changed files only):**
+
+Get changed files via git:
 
 ```bash
-npx prettier --check . 2>&1
+# Get all changed files (staged + unstaged + untracked)
+CHANGED_FILES=$(git diff --name-only HEAD 2>/dev/null || true)
+STAGED_FILES=$(git diff --cached --name-only 2>/dev/null || true)
+UNTRACKED_FILES=$(git ls-files --others --exclude-standard 2>/dev/null || true)
+
+# Combine and filter to prettier-supported files
+ALL_CHANGED=$(echo -e "${CHANGED_FILES}\n${STAGED_FILES}\n${UNTRACKED_FILES}" | sort -u | grep -v '^$')
+PRETTIER_FILES=$(echo "$ALL_CHANGED" | grep -E '\.(js|ts|jsx|tsx|json|md|css|scss|vue|php|html|yaml|yml|graphql|twig)$' || true)
 ```
 
-### 2.2 Interpret results
+If no changed files found, report "No changed files to check" and exit.
+
+### 2.2 Execute Prettier check
+
+**With path argument:**
+```bash
+npx prettier --check "$ARGUMENTS" 2>&1
+```
+
+**Without path argument (changed files):**
+```bash
+echo "$PRETTIER_FILES" | xargs npx prettier --check 2>&1
+```
+
+### 2.3 Interpret results
 
 **If exit code 0 (all files formatted):**
 
@@ -83,8 +120,14 @@ echo "${CLAUDE_MB_DOGMA_AUTO_FORMAT:-false}"
 
 **IF ENV CLAUDE_MB_DOGMA_AUTO_FORMAT=true:**
 
+**With path argument:**
 ```bash
-npx prettier --write .
+npx prettier --write "$ARGUMENTS"
+```
+
+**Without path argument (changed files):**
+```bash
+echo "$PRETTIER_FILES" | xargs npx prettier --write
 ```
 
 Report:
@@ -98,7 +141,7 @@ Auto-format enabled. Formatted X files:
 ```
 To fix formatting:
 - Run: npm run format
-- Or manually: npx prettier --write .
+- Or manually: npx prettier --write <file>
 
 Auto-format is disabled to protect legacy code from unexpected changes.
 Enable with: CLAUDE_MB_DOGMA_AUTO_FORMAT=true
