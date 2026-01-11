@@ -71,7 +71,7 @@ VIOLATIONS=""
 # ============================================
 
 # Curly quotes (should be straight quotes)
-if echo "$CONTENT" | grep -qP '[""]'; then
+if echo "$CONTENT" | grep -qP '[“”]'; then
     VIOLATIONS="${VIOLATIONS}\n- Curly quotes found (\"\") - should be straight quotes (\"\")"
 fi
 
@@ -86,7 +86,7 @@ if echo "$CONTENT" | grep -qP '[…]'; then
 fi
 
 # Smart apostrophes
-if echo "$CONTENT" | grep -qP "[''‚]"; then
+if echo "$CONTENT" | grep -qP "[‘’‚]"; then
     VIOLATIONS="${VIOLATIONS}\n- Smart apostrophe found - should be straight apostrophe (')"
 fi
 

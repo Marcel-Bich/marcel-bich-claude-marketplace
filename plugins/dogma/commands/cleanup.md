@@ -42,10 +42,10 @@ If no Dogma rules found, use these defaults:
 DEFAULT_RULES:
 
 Typography:
-- Curly quotes ("") -> straight quotes ("")
-- Em-dash (---) -> normal dash (-) or (--)
-- Ellipsis character (...) -> three dots (...)
-- Smart apostrophes -> straight apostrophes
+- Curly quotes: " (U+201C) and " (U+201D) -> straight quotes " (U+0022)
+- Em-dash: -- (U+2014) and en-dash -- (U+2013) -> normal dash - (U+002D)
+- Ellipsis: ... (U+2026) -> three dots ...
+- Smart apostrophes: ' (U+2018), ' (U+2019), ‚ (U+201A) -> straight ' (U+0027)
 
 Emojis in Code:
 - Remove emojis from: comments, variable names, log messages
@@ -94,17 +94,17 @@ For each file, check for:
 ### 4.1 Typography Issues
 
 ```bash
-# Curly quotes
-grep -P '[""]' <file>
+# Curly quotes: " (U+201C) and " (U+201D)
+grep -P '[\x{201C}\x{201D}]' <file>
 
-# Em-dashes
-grep -P '[—–]' <file>
+# Em-dash (U+2014) and en-dash (U+2013)
+grep -P '[\x{2014}\x{2013}]' <file>
 
-# Ellipsis character
-grep -P '[…]' <file>
+# Ellipsis character (U+2026)
+grep -P '[\x{2026}]' <file>
 
-# Smart apostrophes
-grep -P '[''‚]' <file>
+# Smart apostrophes: ' (U+2018), ' (U+2019), ‚ (U+201A)
+grep -P '[\x{2018}\x{2019}\x{201A}]' <file>
 ```
 
 ### 4.2 Emojis in Code
