@@ -787,12 +787,41 @@ fi
 
 For each tool, check **BOTH global AND local** installation:
 
+**Security Tools:**
 | Tool | Global Detection | Local Detection | Scope |
 |------|------------------|-----------------|-------|
 | socket.dev CLI | `command -v socket` | package.json devDeps | Global recommended |
 | snyk CLI | `command -v snyk` | package.json devDeps | Global recommended |
+
+**JavaScript/TypeScript:**
+| Tool | Global Detection | Local Detection | Scope |
+|------|------------------|-----------------|-------|
 | Prettier | (not recommended) | package.json + config | Local only |
 | ESLint | (not recommended) | package.json + config | Local only |
+
+**Python:**
+| Tool | Global Detection | Local Detection | Scope |
+|------|------------------|-----------------|-------|
+| ruff | `command -v ruff` | pyproject.toml/requirements | Global or Local |
+| black | `command -v black` | pyproject.toml/requirements | Global or Local |
+
+**PHP:**
+| Tool | Global Detection | Local Detection | Scope |
+|------|------------------|-----------------|-------|
+| php-cs-fixer | `command -v php-cs-fixer` | composer.json | Global or Local |
+| PHPStan | `command -v phpstan` | composer.json | Global or Local |
+
+**Rust (built-in with rustup):**
+| Tool | Detection | Notes |
+|------|-----------|-------|
+| rustfmt | `rustfmt --version` | Included with Rust |
+| clippy | `cargo clippy --version` | Included with Rust |
+
+**Go (built-in or external):**
+| Tool | Detection | Notes |
+|------|-----------|-------|
+| gofmt | `gofmt -h` | Included with Go |
+| golangci-lint | `command -v golangci-lint` | External, global recommended |
 
 ### 6.4 Run Detection with Version Info
 
@@ -808,10 +837,35 @@ check_global_cli() {
     fi
 }
 
+# Security tools
 SOCKET_STATUS=$(check_global_cli "socket")
 SNYK_STATUS=$(check_global_cli "snyk")
 
-# Local tools - check package.json
+# Python tools
+RUFF_STATUS=$(check_global_cli "ruff")
+BLACK_STATUS=$(check_global_cli "black")
+
+# PHP tools
+PHP_CS_FIXER_STATUS=$(check_global_cli "php-cs-fixer")
+PHPSTAN_STATUS=$(check_global_cli "phpstan")
+
+# Go tools
+GOLANGCI_LINT_STATUS=$(check_global_cli "golangci-lint")
+
+# Rust tools (check via cargo)
+check_rust_tool() {
+    local tool=$1
+    if command -v "$tool" &> /dev/null; then
+        VERSION=$("$tool" --version 2>/dev/null | head -1)
+        echo "INSTALLED:$VERSION"
+    else
+        echo "NOT_FOUND"
+    fi
+}
+RUSTFMT_STATUS=$(check_rust_tool "rustfmt")
+CLIPPY_STATUS=$(cargo clippy --version 2>/dev/null && echo "INSTALLED" || echo "NOT_FOUND")
+
+# Local tools - check package.json (Node.js)
 check_local_dep() {
     local dep=$1
     if [ -f "package.json" ]; then
@@ -827,6 +881,34 @@ check_local_dep() {
 
 PRETTIER_STATUS=$(check_local_dep "prettier")
 ESLINT_STATUS=$(check_local_dep "eslint")
+
+# Local tools - check pyproject.toml (Python)
+check_pyproject_dep() {
+    local dep=$1
+    if [ -f "pyproject.toml" ]; then
+        if grep -q "$dep" pyproject.toml; then
+            echo "LOCAL_INSTALLED"
+        else
+            echo "NOT_FOUND"
+        fi
+    else
+        echo "NO_PYPROJECT"
+    fi
+}
+
+# Local tools - check composer.json (PHP)
+check_composer_dep() {
+    local dep=$1
+    if [ -f "composer.json" ]; then
+        if grep -q "$dep" composer.json; then
+            echo "LOCAL_INSTALLED"
+        else
+            echo "NOT_FOUND"
+        fi
+    else
+        echo "NO_COMPOSER"
+    fi
+}
 ```
 
 ### 6.5 Present Items with Intelligent Status
@@ -897,12 +979,14 @@ Would you like me to suggest an alternative?
 ```
 
 **Alternatives by language:**
-| Language | Prettier Alternative |
-|----------|---------------------|
-| Python | black, ruff format |
-| Rust | rustfmt |
-| Go | gofmt (built-in) |
-| PHP | php-cs-fixer, pint |
+
+| Language | Formatter | Linter |
+|----------|-----------|--------|
+| JavaScript/TypeScript | Prettier | ESLint |
+| Python | black, ruff format | ruff, pylint |
+| Rust | rustfmt (built-in) | clippy (built-in) |
+| Go | gofmt (built-in) | golangci-lint |
+| PHP | php-cs-fixer, pint | PHPStan, Psalm |
 
 If user chooses "Yes, find alternative":
 - Use WebSearch to find current best practice
