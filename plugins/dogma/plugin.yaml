@@ -1,6 +1,6 @@
 name: dogma
 description: Intelligent sync of Claude instructions with enforcement hooks for security and consistency
-version: 1.18.0
+version: 1.18.1
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
@@ -118,7 +118,7 @@ hooks:
         - "cat | {{pluginPath}}/scripts/prompt-injection.sh"
 
   # ============================================
-  # Stop Hook - Runs at END of Claude's response
+  # Stop Hook - Runs when task completes
   # Final checks before completing
   # ============================================
   stop:
