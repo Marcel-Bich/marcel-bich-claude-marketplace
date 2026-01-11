@@ -1,7 +1,13 @@
 {
   "name": "dogma",
-  "version": "1.12.8",
+  "version": "1.13.0",
   "description": "Intelligent sync of Claude instructions with enforcement hooks for security and consistency.",
-  "keywords": ["sync", "claude", "instructions", "dotfiles", "consistency"],
+  "keywords": [
+    "sync",
+    "claude",
+    "instructions",
+    "dotfiles",
+    "consistency"
+  ],
   "license": "MIT"
 }
