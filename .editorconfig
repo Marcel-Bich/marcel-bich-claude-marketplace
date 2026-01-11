@@ -1,0 +1,24 @@
+# EditorConfig - team-wide configuration for IDEs
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_size = 4
+indent_style = space
+insert_final_newline = true
+max_line_length = 120
+tab_width = 4
+trim_trailing_whitespace = true
+ij_formatter_off_tag = @formatter:off
+ij_formatter_on_tag = @formatter:on
+
+[{*.markdown,*.md}]
+trim_trailing_whitespace = false
+
+[*.json]
+indent_size = 4
+
+[*.yaml,*.yml]
+indent_size = 2

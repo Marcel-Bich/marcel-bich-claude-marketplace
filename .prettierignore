@@ -1,0 +1,24 @@
+# IDE
+.vscode/*
+.git/*
+.idea/*
+.husky/*
+**/.git
+**/.svn
+
+# Generated/artifacts
+node_modules/*
+dist/*
+build/*
+coverage/*
+
+# Lock files and binaries
+package-lock.json
+**/*.lock
+**/*.svg
+**/*.sql
+**/*.map
+**/*.log
+
+# Planning files (may have intentional formatting)
+.planning/*

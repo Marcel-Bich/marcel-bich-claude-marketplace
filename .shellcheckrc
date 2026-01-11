@@ -1,0 +1,11 @@
+# ShellCheck configuration
+# https://www.shellcheck.net/wiki/
+
+# Default shell dialect
+shell=bash
+
+# Disable specific checks if needed:
+# disable=SC2034  # Unused variables (sometimes intentional in sourced files)
+
+# Enable optional checks
+enable=all

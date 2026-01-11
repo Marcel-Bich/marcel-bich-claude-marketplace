@@ -1,0 +1,30 @@
+{
+    "arrowParens": "always",
+    "printWidth": 120,
+    "semi": false,
+    "singleQuote": true,
+    "trailingComma": "es5",
+    "tabWidth": 4,
+    "overrides": [
+        {
+            "files": ["*.json"],
+            "options": {
+                "parser": "json"
+            }
+        },
+        {
+            "files": ["*.yaml", "*.yml"],
+            "options": {
+                "parser": "yaml",
+                "tabWidth": 2
+            }
+        },
+        {
+            "files": ["*.md", "*.markdown"],
+            "options": {
+                "parser": "markdown",
+                "proseWrap": "preserve"
+            }
+        }
+    ]
+}
