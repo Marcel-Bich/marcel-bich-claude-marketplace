@@ -159,10 +159,28 @@ Would you like to create one?
 2. No, skip (Prettier setup requires package.json)
 ```
 
-If yes:
-```bash
-npm init -y
+If yes, create with this base structure:
+
+```json
+{
+    "scripts": {
+        "format": "prettier --write .",
+        "format:check": "prettier --check ."
+    },
+    "devDependencies": {
+        "@prettier/plugin-php": "^0.22.2",
+        "@shopify/prettier-plugin-liquid": "^1.4.1",
+        "prettier": "^3.2.5"
+    }
+}
 ```
+
+Then run:
+```bash
+npm install
+```
+
+**Note:** Adapt devDependencies based on detected file types (Step 2). Remove plugins for languages not used in the project.
 
 ### 3.2 Determine required packages
 
@@ -224,11 +242,30 @@ Installing @prettier/plugin-php@0.22.2... OK
 
 ### 4.1 Create .editorconfig
 
-<templates>
-Use this as base template for .editorconfig:
+Use this template for .editorconfig:
 
-@editorconfig.txt
-</templates>
+```ini
+# this is the global editor configuration which should always be chosen to set group/team-wide configuration for the IDE
+
+root = true
+
+# global config (maybe get's overridden below)
+[*]
+charset = utf-8
+end_of_line = lf
+indent_size = 4
+indent_style = space
+insert_final_newline = true
+max_line_length = 120
+tab_width = 4
+trim_trailing_whitespace = true
+ij_formatter_off_tag = @formatter:off
+ij_formatter_on_tag = @formatter:on
+
+# Markdown
+[{*.markdown,*.md}]
+trim_trailing_whitespace = false
+```
 
 Ask user:
 ```
@@ -247,11 +284,94 @@ Preview:
 
 ### 4.2 Create .prettierrc
 
-<templates>
-Use this as base template, adapt to detected languages:
+Use this as base template (full-stack with PHP/Twig support):
 
-@prettierrc.txt
-</templates>
+```json
+{
+    "arrowParens": "always",
+    "printWidth": 120,
+    "semi": false,
+    "singleQuote": true,
+    "trailingComma": "es5",
+    "htmlWhitespaceSensitivity": "ignore",
+    "vueIndentScriptAndStyle": true,
+    "singleAttributePerLine": true,
+    "plugins": [
+        "@prettier/plugin-php",
+        "@shopify/prettier-plugin-liquid"
+    ],
+    "phpVersion": "8.2",
+    "overrides": [
+        {
+            "files": [
+                "*.js"
+            ],
+            "options": {
+                "parser": "babel"
+            }
+        },
+        {
+            "files": [
+                "*.html"
+            ],
+            "options": {
+                "parser": "html"
+            }
+        },
+        {
+            "files": "*.php",
+            "options": {
+                "parser": "php"
+            }
+        },
+        {
+            "files": [
+                "*.vue"
+            ],
+            "options": {
+                "parser": "vue"
+            }
+        },
+        {
+            "files": [
+                "*.scss"
+            ],
+            "options": {
+                "parser": "scss"
+            }
+        },
+        {
+            "files": [
+                "*.twig"
+            ],
+            "options": {
+                "parser": "liquid-html"
+            }
+        },
+        {
+            "files": [
+                "*.json"
+            ],
+            "options": {
+                "parser": "json"
+            }
+        },
+        {
+            "files": [
+                "*.graphql"
+            ],
+            "options": {
+                "parser": "graphql"
+            }
+        }
+    ]
+}
+```
+
+**Adapt to detected file types:**
+- Remove plugins/overrides for languages NOT detected in project
+- Keep only relevant parsers
+- Ask user before removing anything
 
 Build config based on detected file types:
 - Include only plugins for detected languages
@@ -276,11 +396,49 @@ Settings:
 
 ### 4.3 Create .prettierignore
 
-<templates>
-Use this as base template:
+Use this template for .prettierignore:
 
-@prettierignore.txt
-</templates>
+```
+# Prettier is automatically considering .gitignore paths by manually running `npm run prettier-path`,
+# see also $npm_package_config_prettier in package.json.
+#
+# In this ignore file there are explicit prettier ignores to prevent prettier on save hook and in all other circumstances
+
+# IDE
+.vscode/*
+.git/*
+.svn/*
+.hg/*
+.husky/*
+.idea/*
+.run/*
+**/.git
+**/.svn
+**/.hg
+
+# generated/artifacts
+node_modules/*
+vendor/*
+dist/*
+build
+coverage
+
+# resources
+material/*
+
+# other
+deploy.php
+package-lock.json
+.prettierrc
+**/*.svg
+**/*.lock
+**/*.sql
+**/*.map
+**/*.legacy
+**/*.meta
+**/*.log
+**/*.example
+```
 
 Ask user:
 ```
@@ -434,3 +592,177 @@ Next steps:
 - Write permission denied: Report and suggest manual creation
 - Package install fails: Show error, suggest alternatives
 - Config parsing fails: Report which file and why
+
+---
+
+# Reference: Detailed Setup Instructions
+
+This section contains detailed instructions for manual reference. Use these when users need more context or troubleshooting help.
+
+## Why Prettier
+
+> https://prettier.io/docs/en/why-prettier
+>
+> Der bei weitem wichtigste Grund fuer die Einfuehrung von Prettier ist das Beenden der staendigen Debatten ueber Coding Styles. Es ist allgemein anerkannt, dass ein gemeinsamer Styleguide fuer ein Projekt und ein Team wertvoll ist, aber der Weg dorthin ist ein sehr schmerzhafter und wenig lohnender Prozess. Die Leute werden sehr emotional, wenn es um bestimmte Arten, Code zu schreiben, geht, und niemand verbringt gerne Zeit mit dem Schreiben und dem Empfang von Kritikpunkten.
+
+## Quick Start (Full Stack with PHP)
+
+```bash
+npm install --save-dev prettier @prettier/plugin-php @shopify/prettier-plugin-liquid prettier-plugin-multiline-arrays
+```
+
+**Plugins explained:**
+- `prettier` - Core formatter
+- `@prettier/plugin-php` - PHP support
+- `@shopify/prettier-plugin-liquid` - Twig support (uses liquid-html parser)
+- `prettier-plugin-multiline-arrays` - Multiline array support in TS, JS, JSON (not PHP yet)
+
+**PHP multiline array workaround:**
+```php
+$foo = [
+  "bar" //
+]
+```
+
+## PhpStorm/WebStorm Configuration (Detailed)
+
+### Prettier Settings
+
+File | Settings | Languages & Frameworks | JavaScript | Prettier
+
+- Manual Prettier configuration
+    - Prettier package: Path to `node_modules/prettier` in project
+    - ON: Run on 'Reformat Code' action
+- Run for files (glob pattern):
+
+```
+**/*.{js,jsx,ts,tsx,html,twig,php,vue,css,scss,sass,less,json,yaml,yml,md,markdown,mdx,cjs,cts,mjs,mts,vue,astro}
+```
+
+### Code Style Settings (Global)
+
+File | Settings | Editor | Code Style
+
+**Scheme: Default** (not Project!)
+
+- General:
+    - Line separator: System-Dependent
+    - Hard wrap at: 120 | OFF: Wrap on typing
+    - ON: Detect and use existing file indents for editing
+    - ON: Enable EditorConfig support
+- Formatter:
+    - Do not format: `**/*.{svg,lock,sql,map,legacy,meta,log,example};/*/**/var/**/*`
+    - ON: Turn formatter on/off with markers in code comments
+        - Off: @formatter:off
+        - On: @formatter:on
+
+### Commit Checks (Disable Initially)
+
+File | Settings | Version Control | Commit
+
+- OFF: Reformat code
+- OFF: Rearrange code
+- OFF: Optimize imports
+
+> Enable only after entire project is formatted with Prettier.
+
+### Usage Shortcuts
+
+- `Ctrl+Shift+L` - Reformat with Prettier
+- `Ctrl+Shift+Alt+P` - Prettier action
+- Right-click > "Reformat with Prettier"
+
+### Recommended Plugins
+
+- **Prettier** - Required for IDE integration
+- **PHP Annotation** (Optional) - Better `@Annotation`, `Import`, `Use` support
+- **Twig** (Optional) - Better Twig formatting support
+
+## Troubleshooting
+
+If sections should NOT be formatted by Prettier, use prettier-ignore:
+https://prettier.io/docs/en/ignore.html#javascript
+
+```js
+// prettier-ignore
+const uglyCode = {foo: "bar", baz:    "qux"};
+```
+
+---
+
+# Reference: NVM Installation
+
+## Prerequisites
+
+```bash
+npm -v  # Must output a version
+```
+
+## Ubuntu/Linux (bash/zsh)
+
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
+```
+
+Add to `~/.bashrc` if not present:
+
+```bash
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+```
+
+Restart terminal and verify:
+
+```bash
+nvm -v && node -v && npm -v
+```
+
+### Common Commands
+
+```bash
+nvm list              # Show installed versions
+nvm install stable    # Install stable version
+nvm install 20        # Install specific version
+nvm use stable        # Activate version
+nvm use 20            # Activate specific version
+```
+
+## Fish Shell
+
+Use Fisher plugin:
+
+```fish
+fisher install jorgebucaran/nvm.fish
+```
+
+## Windows
+
+Download from: https://github.com/coreybutler/nvm-windows/releases
+(Assets > nvm-setup.exe)
+
+Install and let it set PATH.
+
+### Windows Commands
+
+```cmd
+nvm version      # Show nvm version
+nvm install 20   # Install Node 20
+nvm use 20       # Activate Node 20
+```
+
+## macOS
+
+Same as Ubuntu/Linux, or use Homebrew:
+
+```bash
+brew install nvm
+```
+
+Add to shell config (`~/.zshrc` or `~/.bash_profile`):
+
+```bash
+export NVM_DIR="$HOME/.nvm"
+[ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && \. "/opt/homebrew/opt/nvm/nvm.sh"
+[ -s "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm" ] && \. "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm"
+```
