@@ -1,169 +1,221 @@
 ---
-description: Run prettier check on project or specific path
+description: Run project-specific linting and formatting on staged files (non-interactive)
 arguments:
   - name: path
-    description: "Optional path to check (default: current directory)"
+    description: "Optional path to check (default: staged files only)"
     required: false
 allowed-tools:
   - Bash
   - Read
   - Glob
+  - Grep
 ---
 
-# Claude-Dogma: Lint Check
+# Claude-Dogma: Lint & Format
 
-You are executing the `/dogma:lint` command. Your task is to **run Prettier formatting checks** on the specified path or current directory.
+You are executing the `/dogma:lint` command. Your task is to **detect the project type and run appropriate linting and formatting tools** on staged files before commit.
+
+**NON-INTERACTIVE:** This command runs silently. Skip anything not installed. No questions asked.
+
+For interactive setup, use `/dogma:lint:setup` instead.
 
 ## Arguments
 
-- `$ARGUMENTS` - Optional path to check. If empty, checks only changed files (git diff)
+- `$ARGUMENTS` - Optional path to check. If empty, checks only staged files
 
-## Step 1: Check Prettier Installation
+## Step 1: Get Staged Files
 
-### 1.1 Check if Prettier is available
-
-```bash
-# Check package.json for prettier
-grep -q '"prettier"' package.json 2>/dev/null && echo "found"
-
-# Check node_modules
-[ -d "node_modules/prettier" ] && echo "installed"
-```
-
-**If Prettier is NOT found:**
-
-```
-Prettier is not installed in this project.
-
-Run /dogma:lint:setup to set up linting/formatting.
-```
-
-**STOP** - Do not continue without Prettier.
-
-### 1.2 Verify Prettier works
+**IMPORTANT:** Only process files that are staged for commit. This protects legacy code.
 
 ```bash
-npx prettier --version 2>/dev/null
+git diff --cached --name-only 2>/dev/null
 ```
 
-If this fails, report the error and stop.
+If `$ARGUMENTS` is provided, use that path instead.
 
-## Step 2: Run Lint Check
+If no staged files, report "No staged files to lint" and exit successfully.
 
-### 2.1 Determine files to check
+## Step 2: Detect Project Type & Available Tools
 
-**IF path argument provided:**
-
-Use the provided path directly.
-
-**ELSE (no argument - check changed files only):**
-
-Get changed files via git:
+Check what tools are actually available (not just configured):
 
 ```bash
-# Get all changed files (staged + unstaged + untracked)
-CHANGED_FILES=$(git diff --name-only HEAD 2>/dev/null || true)
-STAGED_FILES=$(git diff --cached --name-only 2>/dev/null || true)
-UNTRACKED_FILES=$(git ls-files --others --exclude-standard 2>/dev/null || true)
+# Project files
+ls package.json Cargo.toml go.mod pyproject.toml composer.json Gemfile mix.exs 2>/dev/null || true
 
-# Combine and filter to prettier-supported files
-ALL_CHANGED=$(echo -e "${CHANGED_FILES}\n${STAGED_FILES}\n${UNTRACKED_FILES}" | sort -u | grep -v '^$')
-PRETTIER_FILES=$(echo "$ALL_CHANGED" | grep -E '\.(js|ts|jsx|tsx|json|md|css|scss|vue|php|html|yaml|yml|graphql|twig)$' || true)
+# Check installed tools
+[ -f "node_modules/.bin/eslint" ] && echo "eslint: installed"
+[ -f "node_modules/.bin/prettier" ] && echo "prettier: installed"
+command -v cargo &>/dev/null && echo "cargo: installed"
+command -v go &>/dev/null && echo "go: installed"
+command -v ruff &>/dev/null && echo "ruff: installed"
+command -v black &>/dev/null && echo "black: installed"
+[ -f "vendor/bin/phpstan" ] && echo "phpstan: installed"
+[ -f "vendor/bin/php-cs-fixer" ] && echo "php-cs-fixer: installed"
 ```
 
-If no changed files found, report "No changed files to check" and exit.
+## Step 3: Run Linting (find errors)
 
-### 2.2 Execute Prettier check
+For each detected tool, run linting on staged files. **Skip if not installed.**
 
-**With path argument:**
+### JavaScript/TypeScript (ESLint)
+
 ```bash
-npx prettier --check "$ARGUMENTS" 2>&1
+if [ -f "node_modules/.bin/eslint" ]; then
+    ESLINT_FILES=$(git diff --cached --name-only | grep -E '\.(js|jsx|ts|tsx|vue)$' || true)
+    [ -n "$ESLINT_FILES" ] && echo "$ESLINT_FILES" | xargs npx eslint 2>&1
+fi
 ```
 
-**Without path argument (changed files):**
+### Rust (cargo clippy)
+
 ```bash
-echo "$PRETTIER_FILES" | xargs npx prettier --check 2>&1
+command -v cargo &>/dev/null && [ -f "Cargo.toml" ] && cargo clippy -- -D warnings 2>&1
 ```
 
-### 2.3 Interpret results
+### Go (go vet / golangci-lint)
 
-**If exit code 0 (all files formatted):**
-
-```
-All files are properly formatted.
-```
-
-**If exit code 1 (formatting issues found):**
-
-Parse the output and report:
-
-```
-Formatting issues found in X files:
-
-- src/components/Button.tsx
-- src/utils/helper.ts
-- config/settings.json
-[... list all files]
-```
-
-## Step 3: Format Decision
-
-### 3.1 Check auto-format setting
-
-Read environment variable:
 ```bash
-echo "${CLAUDE_MB_DOGMA_AUTO_FORMAT:-false}"
+if [ -f "go.mod" ]; then
+    command -v golangci-lint &>/dev/null && golangci-lint run 2>&1
+    # Fallback
+    command -v go &>/dev/null && go vet ./... 2>&1
+fi
 ```
 
-### 3.2 Handle based on setting
+### Python (ruff / flake8)
 
-**IF ENV CLAUDE_MB_DOGMA_AUTO_FORMAT=true:**
-
-**With path argument:**
 ```bash
-npx prettier --write "$ARGUMENTS"
+if [ -f "pyproject.toml" ] || [ -f "setup.py" ]; then
+    PY_FILES=$(git diff --cached --name-only | grep -E '\.py$' || true)
+    if [ -n "$PY_FILES" ]; then
+        command -v ruff &>/dev/null && echo "$PY_FILES" | xargs ruff check 2>&1
+    fi
+fi
 ```
 
-**Without path argument (changed files):**
+### PHP (PHPStan)
+
 ```bash
-echo "$PRETTIER_FILES" | xargs npx prettier --write
+[ -f "vendor/bin/phpstan" ] && vendor/bin/phpstan analyse 2>&1
 ```
 
-Report:
-```
-Auto-format enabled. Formatted X files:
-[list changed files]
-```
+**If linting finds unfixable errors:** Report them and STOP. Do not proceed to formatting.
 
-**ELSE (default - no auto-format):**
+## Step 4: Run Formatting (fix style)
 
-```
-To fix formatting:
-- Run: npm run format
-- Or manually: npx prettier --write <file>
+Check ENV before formatting:
 
-Auto-format is disabled to protect legacy code from unexpected changes.
-Enable with: CLAUDE_MB_DOGMA_AUTO_FORMAT=true
+```bash
+echo "${CLAUDE_MB_DOGMA_AUTO_FORMAT:-true}"
 ```
 
-**Do NOT automatically format** without explicit ENV setting.
+**If `CLAUDE_MB_DOGMA_AUTO_FORMAT=false`:** Skip formatting entirely.
+
+**If `true` (default):** Run formatters on staged files only.
+
+### Prettier (JS/TS/JSON/CSS/HTML/PHP/MD)
+
+```bash
+if [ -f "node_modules/.bin/prettier" ]; then
+    PRETTIER_FILES=$(git diff --cached --name-only | grep -E '\.(js|ts|jsx|tsx|json|md|css|scss|vue|php|html|yaml|yml)$' || true)
+    [ -n "$PRETTIER_FILES" ] && echo "$PRETTIER_FILES" | xargs npx prettier --write 2>&1
+fi
+```
+
+### ESLint --fix
+
+```bash
+if [ -f "node_modules/.bin/eslint" ]; then
+    ESLINT_FILES=$(git diff --cached --name-only | grep -E '\.(js|jsx|ts|tsx|vue)$' || true)
+    [ -n "$ESLINT_FILES" ] && echo "$ESLINT_FILES" | xargs npx eslint --fix 2>&1
+fi
+```
+
+### Rust (cargo fmt)
+
+```bash
+command -v cargo &>/dev/null && [ -f "Cargo.toml" ] && cargo fmt 2>&1
+```
+
+### Go (gofmt / goimports)
+
+```bash
+if [ -f "go.mod" ]; then
+    GO_FILES=$(git diff --cached --name-only | grep -E '\.go$' || true)
+    if [ -n "$GO_FILES" ]; then
+        command -v goimports &>/dev/null && echo "$GO_FILES" | xargs goimports -w 2>&1
+        command -v gofmt &>/dev/null && echo "$GO_FILES" | xargs gofmt -w 2>&1
+    fi
+fi
+```
+
+### Python (ruff format / black)
+
+```bash
+if [ -f "pyproject.toml" ] || [ -f "setup.py" ]; then
+    PY_FILES=$(git diff --cached --name-only | grep -E '\.py$' || true)
+    if [ -n "$PY_FILES" ]; then
+        command -v ruff &>/dev/null && echo "$PY_FILES" | xargs ruff format 2>&1
+        # Fallback
+        command -v black &>/dev/null && echo "$PY_FILES" | xargs black 2>&1
+    fi
+fi
+```
+
+### PHP (php-cs-fixer)
+
+```bash
+if [ -f "vendor/bin/php-cs-fixer" ]; then
+    PHP_FILES=$(git diff --cached --name-only | grep -E '\.php$' || true)
+    [ -n "$PHP_FILES" ] && echo "$PHP_FILES" | xargs vendor/bin/php-cs-fixer fix 2>&1
+fi
+```
+
+## Step 5: Re-stage Formatted Files
+
+After formatting, re-stage the files:
+
+```bash
+git diff --cached --name-only | xargs -r git add
+```
+
+## Step 6: Report Results
+
+**Success:**
+
+```
+Lint & Format complete.
+
+Tools used: [list what actually ran]
+Files processed: X
+Skipped (not installed): [list if any]
+
+Ready to commit:
+CLAUDE_MB_DOGMA_SKIP_LINT_CHECK=true git commit -m "your message"
+```
+
+**Lint errors:**
+
+```
+Linting failed:
+
+[show errors]
+
+Fix these issues before committing.
+```
 
 ## Important Rules
 
-1. **Never auto-format by default** - Legacy code protection
-2. **Skip gracefully** - If Prettier missing, suggest setup
-3. **Respect ENV settings** - Only auto-format if explicitly enabled
-4. **Clear reporting** - Show exactly which files have issues
+1. **Non-interactive** - Never ask questions, never prompt for installation
+2. **Skip gracefully** - Missing tools are skipped silently
+3. **Staged files only** - Protect legacy code from unexpected changes
+4. **Lint before format** - Find errors before fixing style
+5. **Re-stage after format** - Keep git staging intact
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLAUDE_MB_DOGMA_AUTO_FORMAT` | `false` | Allow automatic formatting |
-
-## Error Handling
-
-- Prettier not installed: Suggest /dogma:lint:setup
-- npx fails: Check node_modules, suggest npm install
-- Permission denied: Report which files and why
-- Config error: Show Prettier error message
+| `CLAUDE_MB_DOGMA_AUTO_FORMAT` | `true` | Allow automatic formatting |
+| `CLAUDE_MB_DOGMA_SKIP_LINT_CHECK` | `false` | Skip pre-commit lint check |
