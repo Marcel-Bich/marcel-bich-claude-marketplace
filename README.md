@@ -25,4 +25,13 @@ Full documentation, installation, configuration, and troubleshooting:
 
 ## License
 
-MIT
+MIT - See [LICENSE](LICENSE) for full terms.
+
+---
+
+<details>
+<summary>Keywords / Tags</summary>
+
+Claude Code, Claude Code Plugin, Claude Code Extension, Claude Code Marketplace, Claude Code Plugins Collection, Anthropic CLI, Anthropic Plugin, Anthropic Extension, Anthropic Claude, Anthropic AI, AI Agent Plugins, AI Code Assistant, AI Coding, AI Programming, AI Development, Marcel Bich, marcel-bich-claude-marketplace, dogma plugin, signal plugin, limit plugin
+
+</details>
