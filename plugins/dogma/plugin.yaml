@@ -11,7 +11,7 @@ commands:
   cleanup:
     description: Find and fix AI-typical patterns in code (reactive cleanup)
     source: commands/cleanup.md
-  lint-setup:
+  lint:setup:
     description: Interactive setup for linting/formatting with Prettier
     source: commands/lint-setup.md
   lint:
