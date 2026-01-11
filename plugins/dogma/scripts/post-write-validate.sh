@@ -120,7 +120,7 @@ case "$EXT" in
     md|txt|rst)
         # Check for ASCII replacements that should be umlauts
         if echo "$CONTENT" | grep -qE '\b(fuer|koennen|groesse|aehnlich|ueberpruefung|moeglich|wuerde|muessen)\b'; then
-            VIOLATIONS="${VIOLATIONS}\n- ASCII instead of umlauts found (fuer->fuer, oe->oe) - use proper German umlauts"
+            VIOLATIONS="${VIOLATIONS}\n- ASCII instead of umlauts found (fuer->für, oe->ö) - use proper German umlauts"
         fi
         ;;
 esac
