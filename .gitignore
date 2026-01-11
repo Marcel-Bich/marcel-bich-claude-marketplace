@@ -3,6 +3,7 @@
 # =============================================================================
 # This repo uses this .gitignore itself (self-fulfilling repo).
 # Force-add exceptions with: git add -f <file>
+# Local ignores (not versioned): .git/info/exclude
 # =============================================================================
 
 # Live-Hack for less versioning headaches:
