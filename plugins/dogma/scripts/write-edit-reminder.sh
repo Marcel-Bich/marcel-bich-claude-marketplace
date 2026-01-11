@@ -85,7 +85,13 @@ if [ -f "$CLAUDE_DIR/CLAUDE.language.md" ]; then
 fi
 
 # AI traces rules - especially for code files
-if [ -f "$CLAUDE_DIR/CLAUDE.git.md" ]; then
+if [ -f "GUIDES/ai-traces.md" ]; then
+    case "$EXT" in
+        js|ts|jsx|tsx|py|rb|go|java|php|c|cpp|h|rs|swift|kt|sh|bash|md|txt)
+            REFS="$REFS@GUIDES/ai-traces.md\n"
+            ;;
+    esac
+elif [ -f "$CLAUDE_DIR/CLAUDE.git.md" ]; then
     case "$EXT" in
         js|ts|jsx|tsx|py|rb|go|java|php|c|cpp|h|rs|swift|kt|sh|bash|md|txt)
             REFS="$REFS@$CLAUDE_DIR/CLAUDE.git.md (ai_traces section)\n"
