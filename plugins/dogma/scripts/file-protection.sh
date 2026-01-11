@@ -8,7 +8,7 @@
 # Modes (based on CLAUDE.git.md checkboxes):
 # - [x] May delete files autonomously -> allow all deletes
 # - [ ] May delete (default) -> block + log to TO-DELETE.md (non-blocking)
-# - [ ] May delete + [ ] Log blocked -> ask user for confirmation
+# - [ ] May delete + [x] Ask before deleting -> ask user for confirmation
 #
 # ENV: DOGMA_ENABLED=true (default) | false - master switch for all hooks
 # ENV: DOGMA_FILE_PROTECTION=true (default) | false
@@ -82,8 +82,8 @@ if [ -n "$CLAUDE_GIT_MD" ] && [ -f "$CLAUDE_GIT_MD" ]; then
     if grep -qE '^\s*-\s*\[x\]\s*May delete files autonomously' "$CLAUDE_GIT_MD" 2>/dev/null; then
         DELETE_ALLOWED="true"
     fi
-    # Check if ask mode explicitly requested: [ ] Log blocked deletes
-    if grep -qE '^\s*-\s*\[ \]\s*Log blocked deletes' "$CLAUDE_GIT_MD" 2>/dev/null; then
+    # Check if ask mode explicitly requested: [x] Ask before deleting
+    if grep -qE '^\s*-\s*\[x\]\s*Ask before deleting' "$CLAUDE_GIT_MD" 2>/dev/null; then
         LOG_MODE="false"
     fi
 fi
