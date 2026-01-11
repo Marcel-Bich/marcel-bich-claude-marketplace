@@ -1,6 +1,6 @@
 #!/bin/bash
 # Dogma: Stop Hook - Lint Check
-# Runs prettier check at session end
+# Runs prettier check when task completes
 #
 # ENV: CLAUDE_MB_DOGMA_LINT_ON_STOP=true | false (default)
 
