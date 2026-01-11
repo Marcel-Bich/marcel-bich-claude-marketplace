@@ -1,5 +1,4 @@
 ---
-name: lint-setup
 description: Interactive setup for linting/formatting with Prettier
 allowed-tools:
   - Bash
