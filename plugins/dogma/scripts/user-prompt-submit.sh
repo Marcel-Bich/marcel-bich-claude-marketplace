@@ -186,7 +186,7 @@ if [ "$CHECKLIST_ENABLED" = "true" ]; then
     TOTAL_OPEN=0
 
     # Scan specific files (no arrays for compatibility)
-    for FILE in PLAN.md TODO.md ROADMAP.md README.md TO-DOS.md; do
+    for FILE in PLAN.md TODO.md ROADMAP.md README.md TO-DOS.md BRIEF.md MILESTONES.md whats-next.md TO-DELETE.md; do
         if [ -f "$FILE" ]; then
             COUNT=$(grep -cE '^\s*[-*]\s*\[ \]' "$FILE" 2>/dev/null | head -1 || echo "0")
             if [ "$COUNT" -gt 0 ] 2>/dev/null; then
@@ -197,7 +197,7 @@ if [ "$CHECKLIST_ENABLED" = "true" ]; then
     done
 
     # Scan directories (simplified, no process substitution)
-    for DIR in docs .claude; do
+    for DIR in docs .claude .planning; do
         if [ -d "$DIR" ]; then
             for FILE in "$DIR"/*.md; do
                 if [ -f "$FILE" ]; then
@@ -210,6 +210,23 @@ if [ "$CHECKLIST_ENABLED" = "true" ]; then
             done
         fi
     done
+
+    # Scan .planning/phases/ subdirectories (for taches-cc-resources create-plans)
+    if [ -d ".planning/phases" ]; then
+        for PHASE_DIR in .planning/phases/*/; do
+            if [ -d "$PHASE_DIR" ]; then
+                for FILE in "$PHASE_DIR"*.md; do
+                    if [ -f "$FILE" ]; then
+                        COUNT=$(grep -cE '^\s*[-*]\s*\[ \]' "$FILE" 2>/dev/null | head -1 || echo "0")
+                        if [ "$COUNT" -gt 0 ] 2>/dev/null; then
+                            OPEN_CHECKLISTS="${OPEN_CHECKLISTS}\n- $FILE ($COUNT open)"
+                            TOTAL_OPEN=$((TOTAL_OPEN + COUNT))
+                        fi
+                    fi
+                done
+            fi
+        done
+    fi
 
     # Output checklist reminder if found
     if [ "$TOTAL_OPEN" -gt 0 ] 2>/dev/null; then
