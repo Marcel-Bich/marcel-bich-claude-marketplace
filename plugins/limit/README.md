@@ -2,59 +2,13 @@
 
 Live API usage display in Claude Code statusline - shows your utilization with colored progress bars and reset times using real Anthropic API data.
 
-**Use case:** You want to see your actual API usage limits (the same data shown by `/usage`) directly in the statusline, updating with each Claude response.
-
-Unlike tools that estimate usage from local logs, this plugin fetches the real utilization data from Anthropic's API.
-
 ## Features
 
-- **Real API Data** - Shows actual utilization from Anthropic's OAuth API (same as `/usage`)
-- **Colored Progress Bars** - Visual indicators with signal colors based on utilization
-- **Multiple Limits** - 5-hour, 7-day, Opus, Sonnet, and Extra Credits
-- **Reset Times** - Shows exact reset date and time for each limit
-- **Smart Display** - Only shows limits that are available/relevant
-- **Cross-Platform** - Works on Linux, macOS, and WSL2
-
-## Output Example
-
-```
-5h all [==--------]  14% reset: 2026-01-08 22:00
-7d all [----------]   3% reset: 2026-01-09 20:00
-7d Opus [=====-----]  52% reset: 2026-01-09 20:00
-```
-
-With high utilization (colored in terminal):
-```
-5h all [=========-]  85% reset: 2026-01-08 22:00
-7d all [===-------]  35% reset: 2026-01-09 20:00
-```
-
-## Color Coding
-
-| Utilization | Color  | Meaning |
-|-------------|--------|---------|
-| < 30%       | Gray   | Low usage |
-| 30-49%      | Green  | Normal |
-| 50-74%      | Yellow | Moderate |
-| 75-89%      | Orange | High |
-| >= 90%      | Red    | Critical |
-
-## Displayed Limits
-
-| Label | Description | When Shown |
-|-------|-------------|------------|
-| 5h all | 5-hour rolling window (all models) | Always |
-| 7d all | 7-day rolling window (all models) | Always (if available) |
-| 7d Opus | 7-day Opus-specific limit | Only if you have Opus usage |
-| 7d Sonnet | 7-day Sonnet-specific limit | Only if utilization > 0 |
-| Extra | Extra usage credits | Only if enabled AND used > $0 |
-
-## Requirements
-
-- `jq` - JSON processor (install: `sudo apt install jq`)
-- `curl` - HTTP client
-- `date` - GNU date (Linux/WSL) or BSD date (macOS)
-- Valid Claude Code OAuth session (login via `claude` CLI)
+- Real API data from Anthropic (same as `/usage`)
+- Colored progress bars with signal colors
+- Multiple limits: 5-hour, 7-day, Opus, Sonnet, Extra Credits
+- Reset times for each limit
+- Cross-platform: Linux, macOS, and WSL2
 
 ## Installation
 
@@ -63,7 +17,7 @@ claude plugin marketplace add Marcel-Bich/marcel-bich-claude-marketplace
 claude plugin install limit@marcel-bich-claude-marketplace
 ```
 
-After installation, add the statusline configuration to `~/.claude/settings.json`:
+After installation, add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -74,227 +28,12 @@ After installation, add the statusline configuration to `~/.claude/settings.json
 }
 ```
 
-**Note:** Restart Claude Code after changing settings.json.
+## Documentation
 
-### Combining with ccstatusline
+Full documentation, configuration options, ccstatusline integration, and troubleshooting:
 
-If you want to use this plugin together with [ccstatusline](https://www.npmjs.com/package/ccstatusline), you have two options:
-
-#### Option A: Automatic Setup (Recommended)
-
-Run the setup script that creates the wrapper and updates your settings:
-
-**Online (via curl):**
-```bash
-curl -sL https://raw.githubusercontent.com/Marcel-Bich/marcel-bich-claude-marketplace/main/plugins/limit/scripts/setup-combined-statusline.sh | bash
-```
-
-**Local (if plugin already installed):**
-```bash
-~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/setup-combined-statusline.sh
-```
-
-Then restart Claude Code.
-
-#### Option B: Manual Setup
-
-**1. Create `~/.claude/statusline-mb-combined.sh`:**
-
-```bash
-#!/bin/bash
-# Combined statusline: ccstatusline + limit plugin
-
-# Get ccstatusline output (all lines)
-CCSTATUS=$(npx -y ccstatusline@latest 2>/dev/null)
-
-# Get limit plugin output
-LIMIT=$(~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/usage-statusline.sh 2>/dev/null)
-
-# Combine with newline
-if [[ -n "$CCSTATUS" ]] && [[ -n "$LIMIT" ]]; then
-    echo -e "$CCSTATUS"
-    echo -e "$LIMIT"
-elif [[ -n "$LIMIT" ]]; then
-    echo -e "$LIMIT"
-elif [[ -n "$CCSTATUS" ]]; then
-    echo -e "$CCSTATUS"
-fi
-```
-
-**2. Make it executable:**
-
-```bash
-chmod +x ~/.claude/statusline-mb-combined.sh
-```
-
-**3. Update `~/.claude/settings.json`:**
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "~/.claude/statusline-mb-combined.sh"
-  }
-}
-```
-
-## Updating
-
-To update the plugin when a new version is available:
-
-1. Run `/plugin` in Claude Code
-2. Go to the **Marketplaces** tab
-3. Select "Update marketplace" (or enable "Enable auto-update" for automatic updates)
-4. Go to the **Installed** tab
-5. Select the limit plugin and choose "Update"
-6. Restart Claude Code
-
-## Configuration
-
-Configure via environment variables in `~/.claude/settings.json`:
-
-```json
-{
-  "env": {
-    "CLAUDE_MB_LIMIT_SHOW_ERRORS": "false",
-    "CLAUDE_MB_LIMIT_DEBUG": "false"
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/usage-statusline.sh"
-  }
-}
-```
-
-### Options
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CLAUDE_MB_LIMIT_5H` | `true` | Show 5-hour limit |
-| `CLAUDE_MB_LIMIT_7D` | `true` | Show 7-day limit |
-| `CLAUDE_MB_LIMIT_OPUS` | `true` | Show Opus limit (if available) |
-| `CLAUDE_MB_LIMIT_SONNET` | `true` | Show Sonnet limit (if available) |
-| `CLAUDE_MB_LIMIT_EXTRA` | `true` | Show extra credits (if used) |
-| `CLAUDE_MB_LIMIT_COLORS` | `true` | Enable colored output |
-| `CLAUDE_MB_LIMIT_PROGRESS` | `true` | Show progress bars |
-| `CLAUDE_MB_LIMIT_RESET` | `true` | Show reset times |
-| `CLAUDE_MB_LIMIT_SHOW_ERRORS` | `false` | Show "limit: error" on failures |
-| `CLAUDE_MB_LIMIT_DEBUG` | `false` | Show raw API response for debugging |
-| `CLAUDE_MB_LIMIT_CACHE_AGE` | `120` | Cache duration in seconds (rate limiting) |
-
-### Example: Minimal Output
-
-To show only the 5-hour percentage without colors or progress bars:
-
-```json
-{
-  "env": {
-    "CLAUDE_MB_LIMIT_7D": "false",
-    "CLAUDE_MB_LIMIT_COLORS": "false",
-    "CLAUDE_MB_LIMIT_PROGRESS": "false",
-    "CLAUDE_MB_LIMIT_RESET": "false"
-  }
-}
-```
-
-Output: `5h all  14%`
-
-## How It Works
-
-1. Reads your OAuth token from `~/.claude/.credentials.json`
-2. Checks if cached data exists and is fresh (default: 2 minutes)
-3. If cache expired, fetches fresh usage data from Anthropic's OAuth API
-4. Formats each limit with colored progress bar, percentage, and reset time
-5. Updates automatically with each Claude response (statusline refresh)
-
-### Rate Limiting
-
-To avoid excessive API calls, responses are cached for 2 minutes by default. The cache is stored in `/tmp/claude-mb-limit-cache.json`. You can adjust the cache duration via `CLAUDE_MB_LIMIT_CACHE_AGE` (in seconds).
-
-**Warning:** Do not set the cache duration lower than the default. Anthropic may rate-limit or block your account if you make too many API requests. The 2-minute default is a safe value.
-
-## Troubleshooting
-
-### Nothing displayed
-
-- Verify you're logged in: `claude /login`
-- Check if credentials exist: `ls ~/.claude/.credentials.json`
-- Test manually: Run the script directly in your terminal
-- Enable error display: `CLAUDE_MB_LIMIT_SHOW_ERRORS=true ./path/to/script.sh`
-
-### Debug mode
-
-To see the raw API response:
-```bash
-CLAUDE_MB_LIMIT_DEBUG=true ~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/usage-statusline.sh
-```
-
-### Test progress bar colors
-
-To visually test the color transitions without real API data, run the debug script:
-```bash
-~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/debug-progress.sh
-```
-
-This simulates progress from 0% to 100% (5% per second) so you can verify all color thresholds are displayed correctly in your terminal.
-
-### "OAuth token missing user:profile scope"
-
-Some accounts may see this error. Workaround:
-1. Run `claude /login` to re-authenticate
-2. If issue persists, see: https://github.com/anthropics/claude-code/issues/15243
-
-### Colors not showing
-
-- Ensure your terminal supports ANSI color codes
-- Some terminals may need specific configuration for 256-color support (orange)
-
-### macOS date parsing issues
-
-The script supports both GNU date (Linux) and BSD date (macOS). If you encounter issues on macOS, ensure you have a recent version of the system tools.
-
-### Plugin not found or updates not working
-
-If the normal update process via `/plugin` doesn't work:
-
-```bash
-# 1. Manually update the marketplace clone
-cd ~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace
-git pull origin main
-
-# 2. Reinstall the plugin
-claude plugin uninstall limit@marcel-bich-claude-marketplace
-claude plugin install limit@marcel-bich-claude-marketplace
-
-# 3. Restart Claude Code
-```
-
-This is a known limitation of the Claude CLI plugin system where the local marketplace clone is not always automatically synced.
-
-## Security
-
-This plugin reads your OAuth token from the local credentials file to authenticate API requests. The token is:
-
-- Only used locally to fetch your own usage data
-- Never transmitted anywhere except to Anthropic's official API
-- Never displayed in the statusline output
-
-**Important:** Do not let Claude Code read or execute this script during a session, as the script output could end up in the conversation context. The statusline runs in a separate process that does not feed back into Claude's context.
-
-## Known Limitations
-
-1. **Unofficial API** - The `/api/oauth/usage` endpoint is not officially documented and may change
-2. **Token Expiry** - If your OAuth token expires, you'll need to re-login with `claude /login`
-3. **Rate Limits** - The script is called on each statusline refresh; Anthropic may rate-limit excessive calls
-
-## Disclaimer
-
-This software is provided "as is", without warranty of any kind. Use at your own risk.
-
-- The author is **not responsible** for any issues arising from use of this plugin
-- The API endpoint used is not officially documented and may change without notice
-- **You are solely responsible** for ensuring this plugin works with your setup
+**[View Documentation on Wiki](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Limit-Plugin)**
 
 ## License
 
-MIT - See [LICENSE](LICENSE) file for full terms.
+MIT - See [LICENSE](LICENSE) for full terms.
