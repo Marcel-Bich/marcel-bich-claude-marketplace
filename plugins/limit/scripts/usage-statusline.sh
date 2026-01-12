@@ -13,8 +13,16 @@ TIMEOUT=5
 CACHE_FILE="/tmp/claude-mb-limit-cache.json"
 CACHE_MAX_AGE="${CLAUDE_MB_LIMIT_CACHE_AGE:-120}"  # 2 minutes default
 
-# Debug mode - shows raw API response and stdin data
+# Debug mode - logs to /tmp/claude-mb-limit-debug.log
 DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-false}"
+DEBUG_LOG="/tmp/claude-mb-limit-debug.log"
+
+# Debug logging function
+debug_log() {
+    if [[ "$DEBUG" == "true" ]]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$DEBUG_LOG"
+    fi
+}
 
 # Feature toggles (all default to true)
 SHOW_MODEL="${CLAUDE_MB_LIMIT_MODEL:-true}"
@@ -89,10 +97,12 @@ read_stdin_data() {
     if [[ -t 0 ]]; then
         # No stdin (running manually in terminal)
         STDIN_DATA=""
+        debug_log "No stdin (TTY mode)"
     else
         # Read first line from stdin with timeout (Claude Code sends single-line JSON)
         # Timeout prevents hanging if stdin has no data
         STDIN_DATA=$(timeout 0.5 head -n 1 2>/dev/null) || STDIN_DATA=""
+        debug_log "Stdin read: ${STDIN_DATA:0:200}..."
     fi
 }
 
@@ -616,6 +626,7 @@ format_output() {
         model_id=$(get_model_id)
         local ctx_len
         ctx_len=$(get_context_length)
+        debug_log "Context: model_id=$model_id ctx_len=$ctx_len SHOW_CTX=$SHOW_CTX"
 
         if [[ -n "$ctx_len" ]]; then
             # Context Length (gray) - format: Ctx: 18.6k
@@ -755,15 +766,10 @@ main() {
     local response
     response=$(fetch_usage "$token")
 
-    # Debug mode - show raw response structure and stdin data
-    if [[ "$DEBUG" == "true" ]]; then
-        echo "DEBUG: Stdin data:"
-        echo "$STDIN_DATA" | jq '.' 2>/dev/null || echo "$STDIN_DATA"
-        echo "---"
-        echo "DEBUG: Raw API response:"
-        echo "$response" | jq '.' 2>/dev/null || echo "$response"
-        echo "---"
-    fi
+    # Debug logging
+    debug_log "=== Statusline execution ==="
+    debug_log "Stdin data: $STDIN_DATA"
+    debug_log "API response: $response"
 
     format_output "$response"
 }
