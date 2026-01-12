@@ -602,7 +602,7 @@ get_session_time() {
     echo ""
 }
 
-# Format seconds as human-readable duration (e.g., 2d5hr, 2hr15m, 45m, 30s)
+# Format seconds as human-readable duration (e.g., 2d5h, 2h15m, 45m, 30s)
 format_duration() {
     local seconds="$1"
     if [[ -z "$seconds" ]] || [[ "$seconds" == "null" ]]; then
@@ -615,9 +615,9 @@ format_duration() {
     local minutes=$(((seconds % 3600) / 60))
 
     if [[ "$days" -gt 0 ]]; then
-        echo "${days}d${hours}hr"
+        echo "${days}d${hours}h"
     elif [[ "$hours" -gt 0 ]]; then
-        echo "${hours}hr${minutes}m"
+        echo "${hours}h${minutes}m"
     elif [[ "$minutes" -gt 0 ]]; then
         echo "${minutes}m"
     else
