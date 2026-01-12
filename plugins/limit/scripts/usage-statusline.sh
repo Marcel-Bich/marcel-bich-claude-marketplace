@@ -38,7 +38,11 @@ SHOW_RESET="${CLAUDE_MB_LIMIT_RESET:-true}"
 # Extended features (all default to true)
 SHOW_CWD="${CLAUDE_MB_LIMIT_CWD:-true}"
 SHOW_GIT="${CLAUDE_MB_LIMIT_GIT:-true}"
+SHOW_TOKENS="${CLAUDE_MB_LIMIT_TOKENS:-true}"
 SHOW_CTX="${CLAUDE_MB_LIMIT_CTX:-true}"
+SHOW_SESSION="${CLAUDE_MB_LIMIT_SESSION:-true}"
+SHOW_INFO="${CLAUDE_MB_LIMIT_INFO:-true}"
+SHOW_SESSION_ID="${CLAUDE_MB_LIMIT_SESSION_ID:-true}"
 
 # Claude settings file (for model info)
 CLAUDE_SETTINGS_FILE="${HOME}/.claude/settings.json"
@@ -496,6 +500,118 @@ get_model_id() {
     echo ""
 }
 
+# Get thinking style from stdin data (e.g., "concise", "verbose")
+get_thinking_style() {
+    if [[ -n "$STDIN_DATA" ]]; then
+        local style
+        style=$(echo "$STDIN_DATA" | jq -r '.thinking.style // empty' 2>/dev/null)
+        if [[ -n "$style" ]] && [[ "$style" != "null" ]]; then
+            echo "$style"
+            return
+        fi
+    fi
+    echo "default"
+}
+
+# Get total cost from stdin data (USD)
+get_total_cost() {
+    if [[ -n "$STDIN_DATA" ]]; then
+        local cost
+        cost=$(echo "$STDIN_DATA" | jq -r '.cost.total_cost_usd // empty' 2>/dev/null)
+        if [[ -n "$cost" ]] && [[ "$cost" != "null" ]]; then
+            # Format to 2 decimal places
+            printf "%.2f" "$cost"
+            return
+        fi
+    fi
+    echo "0.00"
+}
+
+# Get session ID from stdin data
+get_session_id() {
+    if [[ -n "$STDIN_DATA" ]]; then
+        local session_id
+        session_id=$(echo "$STDIN_DATA" | jq -r '.session_id // empty' 2>/dev/null)
+        if [[ -n "$session_id" ]] && [[ "$session_id" != "null" ]]; then
+            echo "$session_id"
+            return
+        fi
+    fi
+    echo ""
+}
+
+# Get token metrics from stdin data
+# Returns: input_tokens output_tokens cache_read_tokens cache_write_tokens
+get_token_metrics() {
+    local metric="$1"  # input, output, cache_read, cache_write
+    if [[ -n "$STDIN_DATA" ]]; then
+        local value
+        case "$metric" in
+            input)
+                value=$(echo "$STDIN_DATA" | jq -r '.token_usage.input_tokens // 0' 2>/dev/null)
+                ;;
+            output)
+                value=$(echo "$STDIN_DATA" | jq -r '.token_usage.output_tokens // 0' 2>/dev/null)
+                ;;
+            cache_read)
+                value=$(echo "$STDIN_DATA" | jq -r '.token_usage.cache_read_tokens // 0' 2>/dev/null)
+                ;;
+            cache_write)
+                value=$(echo "$STDIN_DATA" | jq -r '.token_usage.cache_write_tokens // 0' 2>/dev/null)
+                ;;
+            *)
+                value="0"
+                ;;
+        esac
+        if [[ -n "$value" ]] && [[ "$value" != "null" ]]; then
+            echo "$value"
+            return
+        fi
+    fi
+    echo "0"
+}
+
+# Get session timing info from stdin data
+get_session_time() {
+    local time_type="$1"  # session or block
+    if [[ -n "$STDIN_DATA" ]]; then
+        local value
+        case "$time_type" in
+            session)
+                value=$(echo "$STDIN_DATA" | jq -r '.timing.session_duration_seconds // empty' 2>/dev/null)
+                ;;
+            block)
+                value=$(echo "$STDIN_DATA" | jq -r '.timing.block_duration_seconds // empty' 2>/dev/null)
+                ;;
+        esac
+        if [[ -n "$value" ]] && [[ "$value" != "null" ]]; then
+            echo "$value"
+            return
+        fi
+    fi
+    echo ""
+}
+
+# Format seconds as human-readable duration (e.g., 2hr 15m, 45m, 30s)
+format_duration() {
+    local seconds="$1"
+    if [[ -z "$seconds" ]] || [[ "$seconds" == "null" ]]; then
+        echo "-"
+        return
+    fi
+
+    local hours=$((seconds / 3600))
+    local minutes=$(((seconds % 3600) / 60))
+
+    if [[ "$hours" -gt 0 ]]; then
+        echo "${hours}hr ${minutes}m"
+    elif [[ "$minutes" -gt 0 ]]; then
+        echo "${minutes}m"
+    else
+        echo "${seconds}s"
+    fi
+}
+
 # =============================================================================
 # Output formatting
 # =============================================================================
@@ -564,7 +680,7 @@ format_output() {
 
         # Check if in git repo
         if git rev-parse --git-dir >/dev/null 2>&1; then
-            # Git worktree (blue) - symbol: 𖠰
+            # Git worktree (dark blue) - symbol: 𖠰
             local worktree
             worktree=$(get_git_worktree 2>/dev/null) || true
             if [[ -n "$worktree" ]]; then
@@ -612,64 +728,98 @@ format_output() {
         fi
     fi
 
-    # Context metrics line
+    # Context metrics line (always show, even if 0)
     # Format: Ctx: 18.6k  Ctx(u): 11.6%  Ctx: 9.3%
     if [[ "$SHOW_CTX" == "true" ]]; then
         local ctx_line=""
         local ctx_len
         ctx_len=$(get_context_length)
+        ctx_len="${ctx_len:-0}"
         debug_log "Context: ctx_len=$ctx_len SHOW_CTX=$SHOW_CTX"
 
-        if [[ -n "$ctx_len" ]]; then
-            # Context Length (gray) - format: Ctx: 18.6k
-            local formatted_len
-            formatted_len=$(format_tokens "$ctx_len")
-            local len_color=""
-            local len_color_reset=""
-            if [[ "$SHOW_COLORS" == "true" ]]; then
-                len_color="$COLOR_GRAY"
-                len_color_reset="$COLOR_RESET"
-            fi
-            ctx_line="${len_color}Ctx: ${formatted_len}${len_color_reset}"
-
-            # Context % usable (green) - format: Ctx(u): 11.6%
-            local usable_tokens
-            usable_tokens=$(get_model_context_config "usable")
-            if [[ -n "$usable_tokens" ]] && [[ "$usable_tokens" -gt 0 ]]; then
-                local usable_pct
-                usable_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $usable_tokens) * 100}")
-                local usable_color=""
-                local usable_color_reset=""
-                if [[ "$SHOW_COLORS" == "true" ]]; then
-                    usable_color="$COLOR_GREEN"
-                    usable_color_reset="$COLOR_RESET"
-                fi
-                ctx_line="${ctx_line}  ${usable_color}Ctx(u): ${usable_pct}%${usable_color_reset}"
-            fi
-
-            # Context % total (gray) - format: Ctx: 9.3%
-            local max_tokens
-            max_tokens=$(get_model_context_config "max")
-            if [[ -n "$max_tokens" ]] && [[ "$max_tokens" -gt 0 ]]; then
-                local total_pct
-                total_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $max_tokens) * 100}")
-                local total_color=""
-                local total_color_reset=""
-                if [[ "$SHOW_COLORS" == "true" ]]; then
-                    total_color="$COLOR_GRAY"
-                    total_color_reset="$COLOR_RESET"
-                fi
-                ctx_line="${ctx_line}  ${total_color}Ctx: ${total_pct}%${total_color_reset}"
-            fi
-
-            # Add context line
-            lines+=("$ctx_line")
+        local ctx_color=""
+        local ctx_color_reset=""
+        if [[ "$SHOW_COLORS" == "true" ]]; then
+            ctx_color="$COLOR_GRAY"
+            ctx_color_reset="$COLOR_RESET"
         fi
+
+        # Context Length - format: Ctx: 18.6k
+        local formatted_len
+        formatted_len=$(format_tokens "$ctx_len")
+        ctx_line="${ctx_color}Ctx: ${formatted_len}${ctx_color_reset}"
+
+        # Context % usable - format: Ctx(u): 11.6%
+        local usable_tokens
+        usable_tokens=$(get_model_context_config "usable")
+        if [[ -n "$usable_tokens" ]] && [[ "$usable_tokens" -gt 0 ]]; then
+            local usable_pct
+            usable_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $usable_tokens) * 100}")
+            ctx_line="${ctx_line}  ${ctx_color}Ctx(u): ${usable_pct}%${ctx_color_reset}"
+        fi
+
+        # Context % total - format: Ctx: 9.3%
+        local max_tokens
+        max_tokens=$(get_model_context_config "max")
+        if [[ -n "$max_tokens" ]] && [[ "$max_tokens" -gt 0 ]]; then
+            local total_pct
+            total_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $max_tokens) * 100}")
+            ctx_line="${ctx_line}  ${ctx_color}Ctx: ${total_pct}%${ctx_color_reset}"
+        fi
+
+        # Add context line
+        lines+=("$ctx_line")
+    fi
+
+    # Tokens line (In/Out/Cached/Total) - gray
+    if [[ "$SHOW_TOKENS" == "true" ]]; then
+        local tok_color=""
+        local tok_color_reset=""
+        if [[ "$SHOW_COLORS" == "true" ]]; then
+            tok_color="$COLOR_GRAY"
+            tok_color_reset="$COLOR_RESET"
+        fi
+
+        local in_tokens out_tokens cache_read cache_write total_tokens
+        in_tokens=$(get_token_metrics "input")
+        out_tokens=$(get_token_metrics "output")
+        cache_read=$(get_token_metrics "cache_read")
+        cache_write=$(get_token_metrics "cache_write")
+        total_tokens=$((in_tokens + out_tokens))
+
+        local in_fmt out_fmt cached_fmt total_fmt
+        in_fmt=$(format_tokens "$in_tokens")
+        out_fmt=$(format_tokens "$out_tokens")
+        cached_fmt=$(format_tokens "$cache_read")
+        total_fmt=$(format_tokens "$total_tokens")
+
+        lines+=("${tok_color}In: ${in_fmt}  Out: ${out_fmt}  Cached: ${cached_fmt}  Total: ${total_fmt}${tok_color_reset}")
+    fi
+
+    # Session line (Session time/Block time) - gray
+    if [[ "$SHOW_SESSION" == "true" ]]; then
+        local sess_color=""
+        local sess_color_reset=""
+        if [[ "$SHOW_COLORS" == "true" ]]; then
+            sess_color="$COLOR_GRAY"
+            sess_color_reset="$COLOR_RESET"
+        fi
+
+        local session_secs block_secs session_fmt block_fmt
+        session_secs=$(get_session_time "session")
+        block_secs=$(get_session_time "block")
+        session_fmt=$(format_duration "$session_secs")
+        block_fmt=$(format_duration "$block_secs")
+
+        lines+=("${sess_color}Session: ${session_fmt}      Block: ${block_fmt}${sess_color_reset}")
     fi
 
     # -------------------------------------------------------------------------
-    # Original limit features
+    # Original limit features (with empty line separator)
     # -------------------------------------------------------------------------
+
+    # Add empty line before limits
+    lines+=("")
 
     # 5-hour limit (if enabled) - all models
     if [[ "$SHOW_5H" == "true" ]]; then
@@ -716,7 +866,7 @@ format_output() {
         lines+=("$extra_line")
     fi
 
-    # Current model (if enabled) - always gray, at the bottom
+    # Current model with Style and Cost (if enabled) - always gray
     if [[ "$SHOW_MODEL" == "true" ]]; then
         local current_model
         current_model=$(get_current_model)
@@ -727,7 +877,34 @@ format_output() {
                 model_color="$COLOR_GRAY"
                 model_color_reset="$COLOR_RESET"
             fi
-            lines+=("${model_color}Active Model: ${current_model}${model_color_reset}")
+            local model_line="Active Model: ${current_model}"
+
+            # Add Style
+            local style
+            style=$(get_thinking_style)
+            model_line="${model_line} | Style: ${style}"
+
+            # Add Cost
+            local cost
+            cost=$(get_total_cost)
+            model_line="${model_line} | Cost: \$${cost}"
+
+            lines+=("${model_color}${model_line}${model_color_reset}")
+        fi
+    fi
+
+    # Session ID (if enabled) - always gray, below Active Model
+    if [[ "$SHOW_SESSION_ID" == "true" ]]; then
+        local session_id
+        session_id=$(get_session_id)
+        if [[ -n "$session_id" ]]; then
+            local sid_color=""
+            local sid_color_reset=""
+            if [[ "$SHOW_COLORS" == "true" ]]; then
+                sid_color="$COLOR_GRAY"
+                sid_color_reset="$COLOR_RESET"
+            fi
+            lines+=("${sid_color}Session ID: ${session_id}${sid_color_reset}")
         fi
     fi
 
