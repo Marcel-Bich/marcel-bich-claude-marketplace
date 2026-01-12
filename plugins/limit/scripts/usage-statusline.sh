@@ -41,7 +41,6 @@ SHOW_GIT="${CLAUDE_MB_LIMIT_GIT:-true}"
 SHOW_TOKENS="${CLAUDE_MB_LIMIT_TOKENS:-true}"
 SHOW_CTX="${CLAUDE_MB_LIMIT_CTX:-true}"
 SHOW_SESSION="${CLAUDE_MB_LIMIT_SESSION:-true}"
-SHOW_INFO="${CLAUDE_MB_LIMIT_INFO:-true}"
 SHOW_SESSION_ID="${CLAUDE_MB_LIMIT_SESSION_ID:-true}"
 
 # Claude settings file (for model info)
@@ -674,13 +673,13 @@ format_output() {
     fi
 
     # Git line: worktree + changes + branch
-    # Format: 𖠰 main (+0,-0)⎇ main
+    # Format: [wt] main (+0,-0)⎇ main
     if [[ "$SHOW_GIT" == "true" ]]; then
         local git_line=""
 
         # Check if in git repo
         if git rev-parse --git-dir >/dev/null 2>&1; then
-            # Git worktree (dark blue) - symbol: 𖠰
+            # Git worktree (dark blue) - symbol: [wt]
             local worktree
             worktree=$(get_git_worktree 2>/dev/null) || true
             if [[ -n "$worktree" ]]; then
@@ -690,7 +689,7 @@ format_output() {
                     wt_color="$COLOR_BLUE"
                     wt_color_reset="$COLOR_RESET"
                 fi
-                git_line="${wt_color}𖠰 ${worktree}${wt_color_reset}"
+                git_line="${wt_color}[wt] ${worktree}${wt_color_reset}"
             fi
 
             # Git changes (cyan) - format: (+X,-Y)

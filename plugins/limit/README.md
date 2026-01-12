@@ -9,7 +9,7 @@ Live API usage display in Claude Code statusline - shows your utilization with c
 - Multiple limits: 5-hour, 7-day, Opus, Sonnet, Extra Credits
 - Reset times for each limit
 - Cross-platform: Linux, macOS, and WSL2
-- Extended features (CWD, Git info, Context metrics)
+- Extended features (CWD, Git, Context, Tokens, Session)
 
 ## Installation
 
