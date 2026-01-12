@@ -542,23 +542,23 @@ get_session_id() {
 }
 
 # Get token metrics from stdin data
-# Uses context_window.current_usage for current request tokens
+# Uses context_window totals for session-wide metrics, current_usage for cache
 get_token_metrics() {
-    local metric="$1"  # input, output, cache_read, cache_write
+    local metric="$1"  # input, output, cache_read
     if [[ -n "$STDIN_DATA" ]]; then
         local value
         case "$metric" in
             input)
-                value=$(echo "$STDIN_DATA" | jq -r '.context_window.current_usage.input_tokens // 0' 2>/dev/null)
+                # Session total input tokens
+                value=$(echo "$STDIN_DATA" | jq -r '.context_window.total_input_tokens // 0' 2>/dev/null)
                 ;;
             output)
-                value=$(echo "$STDIN_DATA" | jq -r '.context_window.current_usage.output_tokens // 0' 2>/dev/null)
+                # Session total output tokens
+                value=$(echo "$STDIN_DATA" | jq -r '.context_window.total_output_tokens // 0' 2>/dev/null)
                 ;;
             cache_read)
+                # Current context cache (for context calculation)
                 value=$(echo "$STDIN_DATA" | jq -r '.context_window.current_usage.cache_read_input_tokens // 0' 2>/dev/null)
-                ;;
-            cache_write)
-                value=$(echo "$STDIN_DATA" | jq -r '.context_window.current_usage.cache_creation_input_tokens // 0' 2>/dev/null)
                 ;;
             *)
                 value="0"
