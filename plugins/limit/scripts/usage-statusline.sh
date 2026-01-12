@@ -67,6 +67,7 @@ COLOR_BLACK='\033[30m'
 COLOR_WHITE='\033[97m'
 COLOR_SILVER='\033[38;5;250m'
 COLOR_GOLD='\033[38;5;220m'
+COLOR_SALMON='\033[38;5;210m'
 
 # Progress bar characters
 BAR_FILLED='='
@@ -754,7 +755,7 @@ format_output() {
         cached_fmt=$(format_tokens "$cache_read")
         total_fmt=$(format_tokens "$total_tokens")
 
-        lines+=("${tok_color}Tokens -> In: ${in_fmt}  Out: ${out_fmt}  Cached: ${cached_fmt}  Total: ${total_fmt}${tok_color_reset}")
+        lines+=("${tok_color}Tokens  -> In: ${in_fmt}  Out: ${out_fmt}  Cached: ${cached_fmt}  Total: ${total_fmt}${tok_color_reset}")
     fi
 
     # Context metrics line (always show, even if 0)
@@ -894,8 +895,8 @@ format_output() {
                 cost_value_color="$COLOR_WHITE"
                 # Model name color based on model type
                 case "${current_model,,}" in
-                    haiku) model_name_color="$COLOR_WHITE" ;;
-                    sonnet) model_name_color="$COLOR_SILVER" ;;
+                    haiku) model_name_color="$COLOR_SILVER" ;;
+                    sonnet) model_name_color="$COLOR_SALMON" ;;
                     opus) model_name_color="$COLOR_GOLD" ;;
                     *) model_name_color="$COLOR_GRAY" ;;
                 esac
