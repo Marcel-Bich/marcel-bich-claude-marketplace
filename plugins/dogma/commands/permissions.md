@@ -1,7 +1,7 @@
 ---
-description: Create DOGMA-PERMISSIONS.md interactively
+description: Create or update DOGMA-PERMISSIONS.md interactively
 arguments: none
-allowedTools:
+allowed-tools:
   - Read
   - Write
   - AskUserQuestion
