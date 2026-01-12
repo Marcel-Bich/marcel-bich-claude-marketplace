@@ -828,8 +828,8 @@ format_output() {
     # Original limit features (with empty line separator)
     # -------------------------------------------------------------------------
 
-    # Add empty line before limits
-    lines+=("")
+    # Add visual separator before limits (space character, empty lines get filtered)
+    lines+=(" ")
 
     # 5-hour limit (if enabled) - all models
     if [[ "$SHOW_5H" == "true" ]]; then
@@ -914,7 +914,7 @@ format_output() {
                 sid_color="$COLOR_GRAY"
                 sid_color_reset="$COLOR_RESET"
             fi
-            lines+=("")
+            lines+=(" ")
             lines+=("${sid_color}Session ID: ${session_id}${sid_color_reset}")
         fi
     fi
