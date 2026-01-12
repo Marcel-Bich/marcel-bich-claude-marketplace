@@ -754,7 +754,7 @@ format_output() {
         cached_fmt=$(format_tokens "$cache_read")
         total_fmt=$(format_tokens "$total_tokens")
 
-        lines+=("${tok_color}In: ${in_fmt}  Out: ${out_fmt}  Cached: ${cached_fmt}  Total: ${total_fmt}${tok_color_reset}")
+        lines+=("${tok_color}Tokens -> In: ${in_fmt}  Out: ${out_fmt}  Cached: ${cached_fmt}  Total: ${total_fmt}${tok_color_reset}")
     fi
 
     # Context metrics line (always show, even if 0)
@@ -773,10 +773,10 @@ format_output() {
             ctx_color_reset="$COLOR_RESET"
         fi
 
-        # Context Length - format: Ctx: 18.6k
+        # Context Length - format: Context: Ctx: 18.6k
         local formatted_len
         formatted_len=$(format_tokens "$ctx_len")
-        ctx_line="${ctx_color}Ctx: ${formatted_len}${ctx_color_reset}"
+        ctx_line="${ctx_color}Context -> Ctx: ${formatted_len}${ctx_color_reset}"
 
         # Context % usable - format: Ctx(u): 11.6% (colored by percentage like progress bars)
         local usable_tokens
@@ -822,7 +822,7 @@ format_output() {
         session_fmt=$(format_duration "$session_secs")
         api_fmt=$(format_duration "$api_secs")
 
-        lines+=("${sess_color}Total: ${session_fmt}  API: ${api_fmt}${sess_color_reset}")
+        lines+=("${sess_color}Session -> Total: ${session_fmt}  API: ${api_fmt}${sess_color_reset}")
     fi
 
     # -------------------------------------------------------------------------
