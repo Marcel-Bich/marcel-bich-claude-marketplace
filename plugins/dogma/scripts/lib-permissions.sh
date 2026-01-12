@@ -2,12 +2,10 @@
 # Dogma: Shared Permissions Library
 # Used by git-permissions.sh and file-protection.sh
 #
-# Searches for permissions in:
-# 1. DOGMA-PERMISSIONS.md (project root)
-# 2. CLAUDE/CLAUDE.git.md (fallback for compatibility)
-# 3. CLAUDE.git.md (fallback)
+# Searches for DOGMA-PERMISSIONS.md in project root (upward search)
+# If not found, returns empty (allow by default)
 #
-# If no permissions file found, returns empty (allow by default)
+# Use /dogma:setup to create the permissions file interactively
 
 # Debug log file
 DOGMA_DEBUG_LOG="/tmp/dogma-debug.log"
@@ -25,31 +23,15 @@ find_permissions_file() {
 
     # Search upward from current directory
     while [ "$dir" != "/" ]; do
-        # Priority 1: DOGMA-PERMISSIONS.md
         if [ -f "$dir/DOGMA-PERMISSIONS.md" ]; then
             dogma_debug_log "Found permissions: $dir/DOGMA-PERMISSIONS.md"
             echo "$dir/DOGMA-PERMISSIONS.md"
             return 0
         fi
-
-        # Priority 2: CLAUDE/CLAUDE.git.md
-        if [ -f "$dir/CLAUDE/CLAUDE.git.md" ]; then
-            dogma_debug_log "Found permissions: $dir/CLAUDE/CLAUDE.git.md"
-            echo "$dir/CLAUDE/CLAUDE.git.md"
-            return 0
-        fi
-
-        # Priority 3: CLAUDE.git.md
-        if [ -f "$dir/CLAUDE.git.md" ]; then
-            dogma_debug_log "Found permissions: $dir/CLAUDE.git.md"
-            echo "$dir/CLAUDE.git.md"
-            return 0
-        fi
-
         dir=$(dirname "$dir")
     done
 
-    dogma_debug_log "No permissions file found"
+    dogma_debug_log "No DOGMA-PERMISSIONS.md found"
     return 1
 }
 
