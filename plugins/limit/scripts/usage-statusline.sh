@@ -449,17 +449,24 @@ format_tokens() {
 }
 
 # Get context length from stdin data
+# Current context = cache_read + cache_creation + input tokens
 get_context_length() {
     if [[ -n "$STDIN_DATA" ]]; then
-        local ctx_len
-        # Try context_window.total_input_tokens (Claude Code format)
-        ctx_len=$(echo "$STDIN_DATA" | jq -r '.context_window.total_input_tokens // empty' 2>/dev/null)
-        if [[ -n "$ctx_len" ]] && [[ "$ctx_len" != "null" ]]; then
-            echo "$ctx_len"
-            return
-        fi
+        local cache_read cache_create input_tok
+        cache_read=$(echo "$STDIN_DATA" | jq -r '.context_window.current_usage.cache_read_input_tokens // 0' 2>/dev/null)
+        cache_create=$(echo "$STDIN_DATA" | jq -r '.context_window.current_usage.cache_creation_input_tokens // 0' 2>/dev/null)
+        input_tok=$(echo "$STDIN_DATA" | jq -r '.context_window.current_usage.input_tokens // 0' 2>/dev/null)
+
+        # Handle null values
+        [[ "$cache_read" == "null" ]] && cache_read=0
+        [[ "$cache_create" == "null" ]] && cache_create=0
+        [[ "$input_tok" == "null" ]] && input_tok=0
+
+        local total=$((cache_read + cache_create + input_tok))
+        echo "$total"
+        return
     fi
-    echo ""
+    echo "0"
 }
 
 # Get max context for model (usable = 80% before auto-compact)
