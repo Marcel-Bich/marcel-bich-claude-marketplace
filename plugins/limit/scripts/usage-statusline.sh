@@ -27,6 +27,11 @@ SHOW_COLORS="${CLAUDE_MB_LIMIT_COLORS:-true}"
 SHOW_PROGRESS="${CLAUDE_MB_LIMIT_PROGRESS:-true}"
 SHOW_RESET="${CLAUDE_MB_LIMIT_RESET:-true}"
 
+# Extended features (all default to true)
+SHOW_CWD="${CLAUDE_MB_LIMIT_CWD:-true}"
+SHOW_GIT="${CLAUDE_MB_LIMIT_GIT:-true}"
+SHOW_CTX="${CLAUDE_MB_LIMIT_CTX:-true}"
+
 # Claude settings file (for model info)
 CLAUDE_SETTINGS_FILE="${HOME}/.claude/settings.json"
 
@@ -37,6 +42,8 @@ COLOR_GREEN='\033[32m'
 COLOR_YELLOW='\033[33m'
 COLOR_ORANGE='\033[38;5;208m'
 COLOR_RED='\033[31m'
+COLOR_CYAN='\033[36m'
+COLOR_MAGENTA='\033[35m'
 
 # Progress bar characters
 BAR_FILLED='='
@@ -329,6 +336,164 @@ parse_int() {
     echo "$result"
 }
 
+# =============================================================================
+# Extended features
+# =============================================================================
+
+# Get current working directory from stdin data
+get_cwd() {
+    if [[ -n "$STDIN_DATA" ]]; then
+        local cwd
+        cwd=$(echo "$STDIN_DATA" | jq -r '.cwd // empty' 2>/dev/null)
+        if [[ -n "$cwd" ]] && [[ "$cwd" != "null" ]]; then
+            echo "$cwd"
+            return
+        fi
+    fi
+    # Fallback to pwd
+    pwd 2>/dev/null || echo ""
+}
+
+# Get git worktree name
+# Returns "main" for standard repos, worktree name for worktrees
+get_git_worktree() {
+    local git_dir
+    git_dir=$(git rev-parse --git-dir 2>/dev/null) || return 1
+
+    # Standard repo: ends with /.git or is just .git
+    if [[ "$git_dir" == ".git" ]] || [[ "$git_dir" == *"/.git" ]]; then
+        echo "main"
+        return
+    fi
+
+    # Worktree: path like /path/to/.git/worktrees/worktree-name
+    if [[ "$git_dir" == *"/worktrees/"* ]]; then
+        # Extract worktree name from path
+        local worktree_name
+        worktree_name=$(basename "$git_dir")
+        echo "$worktree_name"
+        return
+    fi
+
+    # Unknown structure, return main
+    echo "main"
+}
+
+# Get git changes (insertions and deletions)
+# Returns "+X,-Y" format
+get_git_changes() {
+    local insertions=0
+    local deletions=0
+
+    # Staged changes
+    local staged
+    staged=$(git diff --cached --shortstat 2>/dev/null) || true
+    if [[ -n "$staged" ]]; then
+        local staged_ins staged_del
+        staged_ins=$(echo "$staged" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo "0")
+        staged_del=$(echo "$staged" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' || echo "0")
+        insertions=$((insertions + ${staged_ins:-0}))
+        deletions=$((deletions + ${staged_del:-0}))
+    fi
+
+    # Unstaged changes
+    local unstaged
+    unstaged=$(git diff --shortstat 2>/dev/null) || true
+    if [[ -n "$unstaged" ]]; then
+        local unstaged_ins unstaged_del
+        unstaged_ins=$(echo "$unstaged" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo "0")
+        unstaged_del=$(echo "$unstaged" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' || echo "0")
+        insertions=$((insertions + ${unstaged_ins:-0}))
+        deletions=$((deletions + ${unstaged_del:-0}))
+    fi
+
+    echo "+${insertions},-${deletions}"
+}
+
+# Get current git branch
+get_git_branch() {
+    git branch --show-current 2>/dev/null || echo ""
+}
+
+# Format tokens as human-readable (e.g., 18600 -> 18.6k)
+format_tokens() {
+    local tokens="$1"
+    if [[ -z "$tokens" ]] || [[ "$tokens" == "null" ]]; then
+        echo "0"
+        return
+    fi
+
+    if [[ "$tokens" -ge 1000 ]]; then
+        # Calculate with one decimal place
+        local k_val
+        k_val=$(awk "BEGIN {printf \"%.1f\", $tokens/1000}")
+        echo "${k_val}k"
+    else
+        echo "$tokens"
+    fi
+}
+
+# Get context length from stdin data
+get_context_length() {
+    if [[ -n "$STDIN_DATA" ]]; then
+        local ctx_len
+        ctx_len=$(echo "$STDIN_DATA" | jq -r '.tokenMetrics.contextLength // empty' 2>/dev/null)
+        if [[ -n "$ctx_len" ]] && [[ "$ctx_len" != "null" ]]; then
+            echo "$ctx_len"
+            return
+        fi
+    fi
+    echo ""
+}
+
+# Get max context for model (usable = 80% before auto-compact)
+get_model_context_config() {
+    local model_id="$1"
+    local config_type="$2"  # "max" or "usable"
+
+    # Default context windows based on model
+    local max_tokens=200000
+    local usable_tokens=160000
+
+    case "$model_id" in
+        *opus*)
+            max_tokens=200000
+            usable_tokens=160000
+            ;;
+        *sonnet*)
+            max_tokens=200000
+            usable_tokens=160000
+            ;;
+        *haiku*)
+            max_tokens=200000
+            usable_tokens=160000
+            ;;
+    esac
+
+    if [[ "$config_type" == "usable" ]]; then
+        echo "$usable_tokens"
+    else
+        echo "$max_tokens"
+    fi
+}
+
+# Get model ID from stdin data
+get_model_id() {
+    if [[ -n "$STDIN_DATA" ]]; then
+        local model_id
+        model_id=$(echo "$STDIN_DATA" | jq -r '.model.id // empty' 2>/dev/null)
+        if [[ -n "$model_id" ]] && [[ "$model_id" != "null" ]]; then
+            echo "$model_id"
+            return
+        fi
+    fi
+    echo ""
+}
+
+# =============================================================================
+# Output formatting
+# =============================================================================
+
 # Main output formatting
 format_output() {
     local response="$1"
@@ -366,6 +531,140 @@ format_output() {
 
     # Build output lines
     local lines=()
+
+    # -------------------------------------------------------------------------
+    # Extended features (displayed first, before limits)
+    # -------------------------------------------------------------------------
+
+    # CWD (Current Working Directory) - gray
+    if [[ "$SHOW_CWD" == "true" ]]; then
+        local cwd
+        cwd=$(get_cwd)
+        if [[ -n "$cwd" ]]; then
+            local cwd_color=""
+            local cwd_color_reset=""
+            if [[ "$SHOW_COLORS" == "true" ]]; then
+                cwd_color="$COLOR_GRAY"
+                cwd_color_reset="$COLOR_RESET"
+            fi
+            lines+=("${cwd_color}cwd: ${cwd}${cwd_color_reset}")
+        fi
+    fi
+
+    # Git line: worktree + changes + branch
+    # Format: 𖠰 main (+0,-0)⎇ main
+    if [[ "$SHOW_GIT" == "true" ]]; then
+        local git_line=""
+
+        # Check if in git repo
+        if git rev-parse --git-dir >/dev/null 2>&1; then
+            # Git worktree (cyan) - symbol: 𖠰
+            local worktree
+            worktree=$(get_git_worktree 2>/dev/null) || true
+            if [[ -n "$worktree" ]]; then
+                local wt_color=""
+                local wt_color_reset=""
+                if [[ "$SHOW_COLORS" == "true" ]]; then
+                    wt_color="$COLOR_CYAN"
+                    wt_color_reset="$COLOR_RESET"
+                fi
+                git_line="${wt_color}𖠰 ${worktree}${wt_color_reset}"
+            fi
+
+            # Git changes (yellow) - format: (+X,-Y)
+            local changes
+            changes=$(get_git_changes)
+            local chg_color=""
+            local chg_color_reset=""
+            if [[ "$SHOW_COLORS" == "true" ]]; then
+                chg_color="$COLOR_YELLOW"
+                chg_color_reset="$COLOR_RESET"
+            fi
+            if [[ -n "$git_line" ]]; then
+                git_line="${git_line} ${chg_color}(${changes})${chg_color_reset}"
+            else
+                git_line="${chg_color}(${changes})${chg_color_reset}"
+            fi
+
+            # Git branch (magenta) - symbol: ⎇
+            local branch
+            branch=$(get_git_branch)
+            if [[ -n "$branch" ]]; then
+                local br_color=""
+                local br_color_reset=""
+                if [[ "$SHOW_COLORS" == "true" ]]; then
+                    br_color="$COLOR_MAGENTA"
+                    br_color_reset="$COLOR_RESET"
+                fi
+                git_line="${git_line}${br_color}⎇ ${branch}${br_color_reset}"
+            fi
+
+            # Add git line
+            if [[ -n "$git_line" ]]; then
+                lines+=("$git_line")
+            fi
+        fi
+    fi
+
+    # Context metrics line
+    # Format: Ctx: 18.6k  Ctx(u): 11.6%  Ctx: 9.3%
+    if [[ "$SHOW_CTX" == "true" ]]; then
+        local ctx_line=""
+        local model_id
+        model_id=$(get_model_id)
+        local ctx_len
+        ctx_len=$(get_context_length)
+
+        if [[ -n "$ctx_len" ]]; then
+            # Context Length (gray) - format: Ctx: 18.6k
+            local formatted_len
+            formatted_len=$(format_tokens "$ctx_len")
+            local len_color=""
+            local len_color_reset=""
+            if [[ "$SHOW_COLORS" == "true" ]]; then
+                len_color="$COLOR_GRAY"
+                len_color_reset="$COLOR_RESET"
+            fi
+            ctx_line="${len_color}Ctx: ${formatted_len}${len_color_reset}"
+
+            # Context % usable (green) - format: Ctx(u): 11.6%
+            local usable_tokens
+            usable_tokens=$(get_model_context_config "$model_id" "usable")
+            if [[ -n "$usable_tokens" ]] && [[ "$usable_tokens" -gt 0 ]]; then
+                local usable_pct
+                usable_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $usable_tokens) * 100}")
+                local usable_color=""
+                local usable_color_reset=""
+                if [[ "$SHOW_COLORS" == "true" ]]; then
+                    usable_color="$COLOR_GREEN"
+                    usable_color_reset="$COLOR_RESET"
+                fi
+                ctx_line="${ctx_line}  ${usable_color}Ctx(u): ${usable_pct}%${usable_color_reset}"
+            fi
+
+            # Context % total (gray) - format: Ctx: 9.3%
+            local max_tokens
+            max_tokens=$(get_model_context_config "$model_id" "max")
+            if [[ -n "$max_tokens" ]] && [[ "$max_tokens" -gt 0 ]]; then
+                local total_pct
+                total_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $max_tokens) * 100}")
+                local total_color=""
+                local total_color_reset=""
+                if [[ "$SHOW_COLORS" == "true" ]]; then
+                    total_color="$COLOR_GRAY"
+                    total_color_reset="$COLOR_RESET"
+                fi
+                ctx_line="${ctx_line}  ${total_color}Ctx: ${total_pct}%${total_color_reset}"
+            fi
+
+            # Add context line
+            lines+=("$ctx_line")
+        fi
+    fi
+
+    # -------------------------------------------------------------------------
+    # Original limit features
+    # -------------------------------------------------------------------------
 
     # 5-hour limit (if enabled) - all models
     if [[ "$SHOW_5H" == "true" ]]; then
