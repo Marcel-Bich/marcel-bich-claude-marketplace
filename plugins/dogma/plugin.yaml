@@ -1,6 +1,6 @@
 name: dogma
 description: Intelligent sync of Claude instructions with enforcement hooks for security and consistency
-version: 1.22.0
+version: 1.23.0
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
@@ -17,9 +17,12 @@ commands:
   versioning:
     description: Check and fix version mismatches across all version files
     source: commands/versioning.md
-  setup:
-    description: Create DOGMA-PERMISSIONS.md interactively
-    source: commands/setup.md
+  permissions:
+    description: Create or update DOGMA-PERMISSIONS.md interactively
+    source: commands/permissions.md
+  force:
+    description: Interactively collect and apply CLAUDE rules to the project
+    source: commands/force.md
 
 hooks:
   # ============================================
