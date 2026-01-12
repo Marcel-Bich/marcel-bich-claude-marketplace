@@ -425,7 +425,7 @@ get_git_branch() {
     git branch --show-current 2>/dev/null || echo ""
 }
 
-# Format tokens as human-readable (e.g., 18600 -> 18.6k)
+# Format tokens as human-readable (e.g., 1500000 -> 1.5M, 18600 -> 18.6k)
 format_tokens() {
     local tokens="$1"
     if [[ -z "$tokens" ]] || [[ "$tokens" == "null" ]]; then
@@ -433,8 +433,13 @@ format_tokens() {
         return
     fi
 
-    if [[ "$tokens" -ge 1000 ]]; then
-        # Calculate with one decimal place
+    if [[ "$tokens" -ge 1000000 ]]; then
+        # Millions
+        local m_val
+        m_val=$(awk "BEGIN {printf \"%.1f\", $tokens/1000000}")
+        echo "${m_val}M"
+    elif [[ "$tokens" -ge 1000 ]]; then
+        # Thousands
         local k_val
         k_val=$(awk "BEGIN {printf \"%.1f\", $tokens/1000}")
         echo "${k_val}k"
@@ -597,7 +602,7 @@ get_session_time() {
     echo ""
 }
 
-# Format seconds as human-readable duration (e.g., 2hr 15m, 45m, 30s)
+# Format seconds as human-readable duration (e.g., 2d5hr, 2hr15m, 45m, 30s)
 format_duration() {
     local seconds="$1"
     if [[ -z "$seconds" ]] || [[ "$seconds" == "null" ]]; then
@@ -605,10 +610,13 @@ format_duration() {
         return
     fi
 
-    local hours=$((seconds / 3600))
+    local days=$((seconds / 86400))
+    local hours=$(((seconds % 86400) / 3600))
     local minutes=$(((seconds % 3600) / 60))
 
-    if [[ "$hours" -gt 0 ]]; then
+    if [[ "$days" -gt 0 ]]; then
+        echo "${days}d${hours}hr"
+    elif [[ "$hours" -gt 0 ]]; then
         echo "${hours}hr${minutes}m"
     elif [[ "$minutes" -gt 0 ]]; then
         echo "${minutes}m"
