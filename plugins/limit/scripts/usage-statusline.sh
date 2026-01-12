@@ -609,7 +609,7 @@ format_duration() {
     local minutes=$(((seconds % 3600) / 60))
 
     if [[ "$hours" -gt 0 ]]; then
-        echo "${hours}hr ${minutes}m"
+        echo "${hours}hr${minutes}m"
     elif [[ "$minutes" -gt 0 ]]; then
         echo "${minutes}m"
     else
