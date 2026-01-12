@@ -1,6 +1,11 @@
 #!/bin/bash
 # Dogma: Git Permissions Hook
-# Blocks git add/commit/push based on checkboxes in CLAUDE.git.md
+# Blocks git add/commit/push based on checkboxes in permissions file
+#
+# Searches for permissions in (priority order):
+# 1. DOGMA-PERMISSIONS.md (project root)
+# 2. CLAUDE/CLAUDE.git.md (fallback)
+# 3. CLAUDE.git.md (fallback)
 #
 # Reads <permissions> section and checks:
 # - [ ] = not allowed (blocked)
@@ -8,14 +13,19 @@
 #
 # ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch for all hooks
 # ENV: CLAUDE_MB_DOGMA_GIT_PERMISSIONS=true (default) | false
+# ENV: CLAUDE_MB_DOGMA_DEBUG=true | false (default) - debug logging to /tmp/dogma-debug.log
 
 # NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
 # Trap all errors and exit cleanly
 trap 'exit 0' ERR
 
+# Load shared permissions library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib-permissions.sh"
+
 # === JSON OUTPUT FOR BLOCKING ===
 # Claude Code expects JSON with permissionDecision
-# Using "deny" - git permissions from CLAUDE.git.md are binding policy
+# Using "deny" - git permissions are binding policy
 output_block() {
     local reason="$1"
     cat <<EOF
@@ -23,15 +33,6 @@ output_block() {
 EOF
     exit 0
 }
-
-# === DEBUG MODE ===
-DEBUG="${CLAUDE_MB_DOGMA_DEBUG:-false}"
-if [ "$DEBUG" = "true" ]; then
-    exec 2>>/tmp/dogma-hooks.log
-    set -x
-    echo "=== git-permissions.sh START $(date) ===" >&2
-    echo "PWD: $(pwd)" >&2
-fi
 
 # === MASTER SWITCH ===
 # CLAUDE_MB_DOGMA_ENABLED=false disables ALL dogma hooks at once
@@ -45,6 +46,9 @@ if [ "$ENABLED" != "true" ]; then
     exit 0
 fi
 
+dogma_debug_log "=== git-permissions.sh START ==="
+dogma_debug_log "PWD: $(pwd)"
+
 # Read JSON input from stdin
 INPUT=$(cat 2>/dev/null || true)
 
@@ -52,69 +56,50 @@ INPUT=$(cat 2>/dev/null || true)
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
 TOOL_INPUT=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
+dogma_debug_log "Tool: $TOOL_NAME, Input: $TOOL_INPUT"
+
 # Only process Bash tool calls
 if [ "$TOOL_NAME" != "Bash" ]; then
     exit 0
 fi
 
-# Find CLAUDE.git.md
-CLAUDE_GIT=""
-if [ -f "CLAUDE/CLAUDE.git.md" ]; then
-    CLAUDE_GIT="CLAUDE/CLAUDE.git.md"
-elif [ -f "CLAUDE.git.md" ]; then
-    CLAUDE_GIT="CLAUDE.git.md"
-elif [ -f ".claude/CLAUDE.git.md" ]; then
-    CLAUDE_GIT=".claude/CLAUDE.git.md"
-fi
-
-# If no CLAUDE.git.md found, allow all
-if [ -z "$CLAUDE_GIT" ]; then
+# Find permissions file
+PERMS_FILE=$(find_permissions_file)
+if [ -z "$PERMS_FILE" ]; then
+    # No permissions file - allow all by default
+    dogma_debug_log "No permissions file found - allowing all"
     exit 0
 fi
 
 # Extract permissions section
-PERMS_SECTION=$(sed -n '/<permissions>/,/<\/permissions>/p' "$CLAUDE_GIT" 2>/dev/null)
+PERMS_SECTION=$(get_permissions_section "$PERMS_FILE")
+dogma_debug_log "Permissions section: ${PERMS_SECTION:0:100}..."
 
 if [ -z "$PERMS_SECTION" ]; then
+    dogma_debug_log "No <permissions> section found - allowing all"
     exit 0
 fi
 
-# Function to check if permission is granted
-check_permission() {
-    local CMD="$1"
-    local PATTERN="$2"
-
-    # Look for the checkbox line
-    # - [x] = allowed
-    # - [ ] = not allowed
-    if echo "$PERMS_SECTION" | grep -qE "^\s*-\s*\[x\].*$PATTERN"; then
-        return 0  # Allowed
-    elif echo "$PERMS_SECTION" | grep -qE "^\s*-\s*\[ \].*$PATTERN"; then
-        return 1  # Not allowed
-    fi
-    # If pattern not found, allow by default
-    return 0
-}
-
 # Check git add
 if echo "$TOOL_INPUT" | grep -qE '^git\s+add(\s|$)'; then
-    if ! check_permission "git add" "git add"; then
-        output_block "BLOCKED by dogma: git add not permitted. Change [ ] to [x] for git add in $CLAUDE_GIT or run manually."
+    if ! check_permission "$PERMS_SECTION" "git add"; then
+        output_block "BLOCKED by dogma: git add not permitted. Change [ ] to [x] for git add in $PERMS_FILE or run manually."
     fi
 fi
 
 # Check git commit
 if echo "$TOOL_INPUT" | grep -qE '^git\s+commit(\s|$)'; then
-    if ! check_permission "git commit" "git commit"; then
-        output_block "BLOCKED by dogma: git commit not permitted. Change [ ] to [x] for git commit in $CLAUDE_GIT or ask user."
+    if ! check_permission "$PERMS_SECTION" "git commit"; then
+        output_block "BLOCKED by dogma: git commit not permitted. Change [ ] to [x] for git commit in $PERMS_FILE or ask user."
     fi
 fi
 
 # Check git push
 if echo "$TOOL_INPUT" | grep -qE '^git\s+push(\s|$)'; then
-    if ! check_permission "git push" "git push"; then
-        output_block "BLOCKED by dogma: git push not permitted. Change [ ] to [x] for git push in $CLAUDE_GIT or push manually."
+    if ! check_permission "$PERMS_SECTION" "git push"; then
+        output_block "BLOCKED by dogma: git push not permitted. Change [ ] to [x] for git push in $PERMS_FILE or push manually."
     fi
 fi
 
+dogma_debug_log "=== git-permissions.sh END ==="
 exit 0

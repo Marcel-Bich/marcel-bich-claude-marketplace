@@ -5,17 +5,27 @@
 # Blocked: rm, del, unlink, git clean, rmdir
 # Allowed: git rm --cached, git reset (safe operations)
 #
-# Modes (based on CLAUDE.git.md checkboxes):
+# Searches for permissions in (priority order):
+# 1. DOGMA-PERMISSIONS.md (project root)
+# 2. CLAUDE/CLAUDE.git.md (fallback)
+# 3. CLAUDE.git.md (fallback)
+#
+# Modes (based on checkboxes):
 # - [x] May delete files autonomously -> allow all deletes
 # - [ ] May delete (default) -> block + log to TO-DELETE.md (non-blocking)
 # - [ ] May delete + [x] Ask before deleting -> ask user for confirmation
 #
 # ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch for all hooks
 # ENV: CLAUDE_MB_DOGMA_FILE_PROTECTION=true (default) | false
+# ENV: CLAUDE_MB_DOGMA_DEBUG=true | false (default) - debug logging to /tmp/dogma-debug.log
 
 # NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
 # Trap all errors and exit cleanly
 trap 'exit 0' ERR
+
+# Load shared permissions library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib-permissions.sh"
 
 # === JSON OUTPUT FOR BLOCKING ===
 # Claude Code expects JSON with permissionDecision
@@ -35,15 +45,6 @@ EOF
     exit 0
 }
 
-# === DEBUG MODE ===
-DEBUG="${CLAUDE_MB_DOGMA_DEBUG:-false}"
-if [ "$DEBUG" = "true" ]; then
-    exec 2>>/tmp/dogma-hooks.log
-    set -x
-    echo "=== file-protection.sh START $(date) ===" >&2
-    echo "PWD: $(pwd)" >&2
-fi
-
 # === MASTER SWITCH ===
 # CLAUDE_MB_DOGMA_ENABLED=false disables ALL dogma hooks at once
 if [ "${CLAUDE_MB_DOGMA_ENABLED:-true}" != "true" ]; then
@@ -56,40 +57,36 @@ if [ "$ENABLED" != "true" ]; then
     exit 0
 fi
 
+dogma_debug_log "=== file-protection.sh START ==="
+dogma_debug_log "PWD: $(pwd)"
+
 # Read JSON input from stdin
 INPUT=$(cat 2>/dev/null || true)
 
-# === CHECK CLAUDE.git.md PERMISSIONS ===
-# Find CLAUDE.git.md in current directory or parents
-find_claude_git_md() {
-    local dir="$PWD"
-    while [ "$dir" != "/" ]; do
-        if [ -f "$dir/CLAUDE/CLAUDE.git.md" ]; then
-            echo "$dir/CLAUDE/CLAUDE.git.md"
-            return 0
-        fi
-        dir=$(dirname "$dir")
-    done
-    return 1
-}
-
-CLAUDE_GIT_MD=$(find_claude_git_md 2>/dev/null || true)
+# === CHECK PERMISSIONS ===
+PERMS_FILE=$(find_permissions_file)
 DELETE_ALLOWED="false"
 LOG_MODE="true"  # Default: log to TO-DELETE.md (non-blocking)
 
-if [ -n "$CLAUDE_GIT_MD" ] && [ -f "$CLAUDE_GIT_MD" ]; then
+if [ -n "$PERMS_FILE" ] && [ -f "$PERMS_FILE" ]; then
+    PERMS_SECTION=$(get_permissions_section "$PERMS_FILE")
+
     # Check if delete is allowed: [x] May delete files autonomously
-    if grep -qE '^\s*-\s*\[x\]\s*May delete files autonomously' "$CLAUDE_GIT_MD" 2>/dev/null; then
+    if check_permission "$PERMS_SECTION" "May delete files autonomously"; then
         DELETE_ALLOWED="true"
+        dogma_debug_log "Delete allowed by permissions"
     fi
+
     # Check if ask mode explicitly requested: [x] Ask before deleting
-    if grep -qE '^\s*-\s*\[x\]\s*Ask before deleting' "$CLAUDE_GIT_MD" 2>/dev/null; then
+    if check_permission "$PERMS_SECTION" "Ask before deleting"; then
         LOG_MODE="false"
+        dogma_debug_log "Ask mode enabled"
     fi
 fi
 
 # If delete is allowed, exit early (no blocking)
 if [ "$DELETE_ALLOWED" = "true" ]; then
+    dogma_debug_log "Delete permitted - exiting"
     exit 0
 fi
 
@@ -101,6 +98,8 @@ TOOL_INPUT=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 if [ "$TOOL_NAME" != "Bash" ]; then
     exit 0
 fi
+
+dogma_debug_log "Tool: $TOOL_NAME, Input: $TOOL_INPUT"
 
 # Allow safe git operations
 if echo "$TOOL_INPUT" | grep -qE '^git\s+rm\s+--cached'; then
@@ -200,4 +199,5 @@ HEADER
     fi
 fi
 
+dogma_debug_log "=== file-protection.sh END ==="
 exit 0
