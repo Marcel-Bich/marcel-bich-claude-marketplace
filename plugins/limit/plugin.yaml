@@ -1,5 +1,5 @@
 name: limit
-description: Live API usage display in Claude Code statusline - shows utilization with colored progress bars and reset times, plus optional CWD, Git, and context metrics
-version: 1.3.1
+description: Live API usage display in Claude Code statusline - shows utilization with colored progress bars, reset times, CWD, Git info, and context metrics
+version: 1.3.2
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
