@@ -11,7 +11,7 @@ Intelligent sync of Claude instructions with enforcement hooks for security and 
 - `/dogma:lint` - Project-agnostic linting and formatting on staged files (non-interactive)
 - `/dogma:lint:setup` - Interactive setup for linting/formatting tools
 - `/dogma:versioning` - Check and sync version numbers across all config files
-- `/dogma:setup` - Interactive setup for DOGMA-PERMISSIONS.md
+- `/dogma:permissions` - Create or update DOGMA-PERMISSIONS.md interactively
 - `/dogma:force` - Interactively collect and apply CLAUDE rules to the project
 
 ### Enforcement Hooks
