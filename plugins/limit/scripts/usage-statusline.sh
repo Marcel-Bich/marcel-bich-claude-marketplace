@@ -44,12 +44,16 @@ SHOW_SESSION="${CLAUDE_MB_LIMIT_SESSION:-true}"
 SHOW_SESSION_ID="${CLAUDE_MB_LIMIT_SESSION_ID:-true}"
 SHOW_SEPARATORS="${CLAUDE_MB_LIMIT_SEPARATORS:-true}"
 
+# Default color (full ANSI escape sequence, default \033[90m = dark gray)
+# Example: export CLAUDE_MB_LIMIT_DEFAULT_COLOR='\033[38;5;244m' for lighter gray
+DEFAULT_COLOR="${CLAUDE_MB_LIMIT_DEFAULT_COLOR:-\033[90m}"
+
 # Claude settings file (for model info)
 CLAUDE_SETTINGS_FILE="${HOME}/.claude/settings.json"
 
 # ANSI color codes
 COLOR_RESET='\033[0m'
-COLOR_GRAY='\033[90m'
+COLOR_GRAY="$DEFAULT_COLOR"
 COLOR_GREEN='\033[32m'
 COLOR_YELLOW='\033[33m'
 COLOR_ORANGE='\033[38;5;208m'
@@ -58,7 +62,11 @@ COLOR_CYAN='\033[36m'
 COLOR_MAGENTA='\033[35m'
 COLOR_BLUE='\033[34m'
 COLOR_BRIGHT_BLUE='\033[94m'
+COLOR_BRIGHT_CYAN='\033[96m'
 COLOR_BLACK='\033[30m'
+COLOR_WHITE='\033[97m'
+COLOR_SILVER='\033[38;5;250m'
+COLOR_GOLD='\033[38;5;220m'
 
 # Progress bar characters
 BAR_FILLED='='
@@ -111,7 +119,7 @@ read_stdin_data() {
     fi
 }
 
-# Get current model from stdin data (primary) or settings.json (fallback)
+# Get current model name only (e.g., "Opus", "Sonnet", "Haiku")
 get_current_model() {
     local display_name=""
 
@@ -120,10 +128,12 @@ get_current_model() {
         display_name=$(echo "$STDIN_DATA" | jq -r '.model.display_name // empty' 2>/dev/null)
     fi
 
-    # Return display_name if found (e.g., "Claude Opus 4.5")
+    # Return model name only (e.g., "Opus" from "Claude Opus 4.5")
     if [[ -n "$display_name" ]] && [[ "$display_name" != "null" ]]; then
-        # Remove "Claude " prefix if present for cleaner output
+        # Remove "Claude " prefix and version number
         display_name="${display_name#Claude }"
+        # Extract just the model name (first word)
+        display_name="${display_name%% *}"
         echo "$display_name"
         return
     fi
@@ -140,25 +150,7 @@ get_current_model() {
     fi
 
     # Capitalize first letter (opus -> Opus, sonnet -> Sonnet)
-    local model_name="${model^}"
-
-    # Try to get version from stats-cache.json
-    local stats_file="${HOME}/.claude/stats-cache.json"
-    local version=""
-    if [[ -f "$stats_file" ]]; then
-        local full_model_id
-        full_model_id=$(jq -r --arg m "$model" '.modelUsage | keys[] | select(contains($m))' "$stats_file" 2>/dev/null | head -1)
-        if [[ -n "$full_model_id" ]]; then
-            # Extract version from ID: claude-opus-4-5-20251101 -> 4.5
-            local ver_part
-            ver_part=$(echo "$full_model_id" | sed -E 's/claude-[a-z]+-([0-9]+)-([0-9]+)-.*/\1.\2/')
-            if [[ "$ver_part" =~ ^[0-9]+\.[0-9]+$ ]]; then
-                version=" $ver_part"
-            fi
-        fi
-    fi
-
-    echo "${model_name}${version}"
+    echo "${model^}"
 }
 
 # Check if cache is valid (not expired)
@@ -699,7 +691,7 @@ format_output() {
                 local wt_color=""
                 local wt_color_reset=""
                 if [[ "$SHOW_COLORS" == "true" ]]; then
-                    wt_color="$COLOR_BLUE"
+                    wt_color="$COLOR_BRIGHT_BLUE"
                     wt_color_reset="$COLOR_RESET"
                 fi
                 git_line="${wt_color}[wt] ${worktree}${wt_color_reset}"
@@ -720,14 +712,14 @@ format_output() {
                 git_line="${chg_color}(${changes})${chg_color_reset}"
             fi
 
-            # Git branch (bright blue) - symbol: ⎇
+            # Git branch (bright cyan/light blue) - symbol: ⎇
             local branch
             branch=$(get_git_branch)
             if [[ -n "$branch" ]]; then
                 local br_color=""
                 local br_color_reset=""
                 if [[ "$SHOW_COLORS" == "true" ]]; then
-                    br_color="$COLOR_BRIGHT_BLUE"
+                    br_color="$COLOR_BRIGHT_CYAN"
                     br_color_reset="$COLOR_RESET"
                 fi
                 git_line="${git_line}${br_color}⎇ ${branch}${br_color_reset}"
@@ -786,13 +778,20 @@ format_output() {
         formatted_len=$(format_tokens "$ctx_len")
         ctx_line="${ctx_color}Ctx: ${formatted_len}${ctx_color_reset}"
 
-        # Context % usable - format: Ctx(u): 11.6%
+        # Context % usable - format: Ctx(u): 11.6% (colored by percentage like progress bars)
         local usable_tokens
         usable_tokens=$(get_model_context_config "usable")
         if [[ -n "$usable_tokens" ]] && [[ "$usable_tokens" -gt 0 ]]; then
-            local usable_pct
+            local usable_pct usable_pct_int usable_color usable_color_reset
             usable_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $usable_tokens) * 100}")
-            ctx_line="${ctx_line}  ${ctx_color}Ctx(u): ${usable_pct}%${ctx_color_reset}"
+            usable_pct_int="${usable_pct%%.*}"
+            usable_color=""
+            usable_color_reset=""
+            if [[ "$SHOW_COLORS" == "true" ]]; then
+                usable_color=$(get_color "$usable_pct_int")
+                usable_color_reset="$COLOR_RESET"
+            fi
+            ctx_line="${ctx_line}  ${usable_color}Ctx(u): ${usable_pct}%${usable_color_reset}"
         fi
 
         # Context % total - format: Ctx: 9.3%
@@ -880,30 +879,39 @@ format_output() {
         lines+=("$extra_line")
     fi
 
-    # Current model with Style and Cost (if enabled) - always gray
+    # Current model with Style and Cost (if enabled)
     if [[ "$SHOW_MODEL" == "true" ]]; then
         local current_model
         current_model=$(get_current_model)
         if [[ -n "$current_model" ]]; then
+            local model_name_color=""
             local model_color=""
             local model_color_reset=""
+            local cost_value_color=""
             if [[ "$SHOW_COLORS" == "true" ]]; then
                 model_color="$COLOR_GRAY"
                 model_color_reset="$COLOR_RESET"
+                cost_value_color="$COLOR_WHITE"
+                # Model name color based on model type
+                case "${current_model,,}" in
+                    haiku) model_name_color="$COLOR_WHITE" ;;
+                    sonnet) model_name_color="$COLOR_SILVER" ;;
+                    opus) model_name_color="$COLOR_GOLD" ;;
+                    *) model_name_color="$COLOR_GRAY" ;;
+                esac
             fi
-            local model_line="Active Model: ${current_model}"
 
             # Add Style
             local style
             style=$(get_thinking_style)
-            model_line="${model_line} | Style: ${style}"
 
-            # Add Cost
+            # Add Cost (dollar sign gray, value white)
             local cost
             cost=$(get_total_cost)
-            model_line="${model_line} | Cost: \$${cost}"
 
-            lines+=("${model_color}${model_line}${model_color_reset}")
+            local model_line="${model_name_color}${current_model}${model_color_reset}${model_color} | Style: ${style} | Cost: \$${model_color_reset}${cost_value_color}${cost}${model_color_reset}"
+
+            lines+=("$model_line")
         fi
     fi
 
