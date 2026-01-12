@@ -733,102 +733,113 @@ format_output() {
         fi
     fi
 
-    # Table-like alignment: Col1=12, Col2=12, then 2 spaces before remaining fields
-    local COL1_WIDTH=12
-    local COL2_WIDTH=12
+    # -------------------------------------------------------------------------
+    # Tokens/Context/Session with dynamic column alignment
+    # -------------------------------------------------------------------------
 
-    # Tokens line (In/Out/Cached/Total) - gray
+    # First, gather all values to calculate dynamic column widths
+    local tok_col1_str="" tok_col2_str="" tok_col3_str="" tok_col4_str=""
+    local ctx_col1_str="" ctx_col2_str="" ctx_col3_str=""
+    local sess_col1_str="" sess_col2_str=""
+
+    # Tokens values
     if [[ "$SHOW_TOKENS" == "true" ]]; then
-        local tok_color=""
-        local tok_color_reset=""
-        if [[ "$SHOW_COLORS" == "true" ]]; then
-            tok_color="$COLOR_GRAY"
-            tok_color_reset="$COLOR_RESET"
-        fi
-
-        local in_tokens out_tokens cache_read cache_write total_tokens
+        local in_tokens out_tokens cache_read total_tokens
         in_tokens=$(get_token_metrics "input")
         out_tokens=$(get_token_metrics "output")
         cache_read=$(get_token_metrics "cache_read")
-        cache_write=$(get_token_metrics "cache_write")
         total_tokens=$((in_tokens + out_tokens))
 
-        local in_fmt out_fmt cached_fmt total_fmt
-        in_fmt=$(format_tokens "$in_tokens")
-        out_fmt=$(format_tokens "$out_tokens")
-        cached_fmt=$(format_tokens "$cache_read")
-        total_fmt=$(format_tokens "$total_tokens")
-
-        local tok_col1 tok_col2
-        printf -v tok_col1 "%-${COL1_WIDTH}s" "In: ${in_fmt}"
-        printf -v tok_col2 "%-${COL2_WIDTH}s" "Out: ${out_fmt}"
-
-        lines+=("${tok_color}Tokens  -> ${tok_col1}${tok_col2}Cached: ${cached_fmt}  Total: ${total_fmt}${tok_color_reset}")
+        tok_col1_str="In: $(format_tokens "$in_tokens")"
+        tok_col2_str="Out: $(format_tokens "$out_tokens")"
+        tok_col3_str="Cached: $(format_tokens "$cache_read")"
+        tok_col4_str="Total: $(format_tokens "$total_tokens")"
     fi
 
-    # Context metrics line (always show, even if 0)
+    # Context values
+    local ctx_usable_color="" ctx_usable_color_reset=""
     if [[ "$SHOW_CTX" == "true" ]]; then
-        local ctx_len
+        local ctx_len formatted_len max_tokens total_pct="" usable_tokens usable_pct="" usable_pct_int
         ctx_len=$(get_context_length)
         ctx_len="${ctx_len:-0}"
-        debug_log "Context: ctx_len=$ctx_len SHOW_CTX=$SHOW_CTX"
-
-        local ctx_color=""
-        local ctx_color_reset=""
-        if [[ "$SHOW_COLORS" == "true" ]]; then
-            ctx_color="$COLOR_GRAY"
-            ctx_color_reset="$COLOR_RESET"
-        fi
-
-        # Context Length
-        local formatted_len
         formatted_len=$(format_tokens "$ctx_len")
 
-        # Context % total
-        local max_tokens total_pct=""
         max_tokens=$(get_model_context_config "max")
         if [[ -n "$max_tokens" ]] && [[ "$max_tokens" -gt 0 ]]; then
             total_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $max_tokens) * 100}")
         fi
 
-        # Context % usable (colored by percentage)
-        local usable_tokens usable_pct="" usable_pct_int usable_color="" usable_color_reset=""
         usable_tokens=$(get_model_context_config "usable")
         if [[ -n "$usable_tokens" ]] && [[ "$usable_tokens" -gt 0 ]]; then
             usable_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $usable_tokens) * 100}")
             usable_pct_int="${usable_pct%%.*}"
             if [[ "$SHOW_COLORS" == "true" ]]; then
-                usable_color=$(get_color "$usable_pct_int")
-                usable_color_reset="$COLOR_RESET"
+                ctx_usable_color=$(get_color "$usable_pct_int")
+                ctx_usable_color_reset="$COLOR_RESET"
             fi
         fi
 
-        local ctx_col1 ctx_col2
-        printf -v ctx_col1 "%-${COL1_WIDTH}s" "Ctx: ${formatted_len}"
-        printf -v ctx_col2 "%-${COL2_WIDTH}s" "Ctx: ${total_pct}%"
-
-        lines+=("${ctx_color}Context -> ${ctx_col1}${ctx_col2}${ctx_color_reset}${usable_color}Ctx(usable): ${usable_pct}%${usable_color_reset}")
+        ctx_col1_str="Ctx: ${formatted_len}"
+        ctx_col2_str="Ctx: ${total_pct}%"
+        ctx_col3_str="Ctx(usable): ${usable_pct}%"
     fi
 
-    # Session line (Total duration / API duration) - gray
+    # Session values
     if [[ "$SHOW_SESSION" == "true" ]]; then
-        local sess_color=""
-        local sess_color_reset=""
-        if [[ "$SHOW_COLORS" == "true" ]]; then
-            sess_color="$COLOR_GRAY"
-            sess_color_reset="$COLOR_RESET"
-        fi
-
-        local session_secs api_secs session_fmt api_fmt
+        local session_secs api_secs
         session_secs=$(get_session_time "session")
         api_secs=$(get_session_time "block")
-        session_fmt=$(format_duration "$session_secs")
-        api_fmt=$(format_duration "$api_secs")
 
-        local sess_col1
-        printf -v sess_col1 "%-${COL1_WIDTH}s" "Total: ${session_fmt}"
+        sess_col1_str="Total: $(format_duration "$session_secs")"
+        sess_col2_str="API: $(format_duration "$api_secs")"
+    fi
 
-        lines+=("${sess_color}Session -> ${sess_col1}API: ${api_fmt}${sess_color_reset}")
+    # Calculate dynamic column widths (max of each column + 2 for spacing)
+    local col1_width=0 col2_width=0
+    local len
+
+    # Col1: tok_col1, ctx_col1, sess_col1
+    for str in "$tok_col1_str" "$ctx_col1_str" "$sess_col1_str"; do
+        len=${#str}
+        [[ $len -gt $col1_width ]] && col1_width=$len
+    done
+    col1_width=$((col1_width + 2))
+
+    # Col2: tok_col2, ctx_col2, sess_col2
+    for str in "$tok_col2_str" "$ctx_col2_str" "$sess_col2_str"; do
+        len=${#str}
+        [[ $len -gt $col2_width ]] && col2_width=$len
+    done
+    col2_width=$((col2_width + 2))
+
+    # Now output the lines with dynamic widths
+    local gray_color="" gray_color_reset=""
+    if [[ "$SHOW_COLORS" == "true" ]]; then
+        gray_color="$COLOR_GRAY"
+        gray_color_reset="$COLOR_RESET"
+    fi
+
+    # Tokens line
+    if [[ "$SHOW_TOKENS" == "true" ]]; then
+        local tok_c1 tok_c2
+        printf -v tok_c1 "%-${col1_width}s" "$tok_col1_str"
+        printf -v tok_c2 "%-${col2_width}s" "$tok_col2_str"
+        lines+=("${gray_color}Tokens  -> ${tok_c1}${tok_c2}${tok_col3_str}  ${tok_col4_str}${gray_color_reset}")
+    fi
+
+    # Context line
+    if [[ "$SHOW_CTX" == "true" ]]; then
+        local ctx_c1 ctx_c2
+        printf -v ctx_c1 "%-${col1_width}s" "$ctx_col1_str"
+        printf -v ctx_c2 "%-${col2_width}s" "$ctx_col2_str"
+        lines+=("${gray_color}Context -> ${ctx_c1}${ctx_c2}${gray_color_reset}${ctx_usable_color}${ctx_col3_str}${ctx_usable_color_reset}")
+    fi
+
+    # Session line
+    if [[ "$SHOW_SESSION" == "true" ]]; then
+        local sess_c1
+        printf -v sess_c1 "%-${col1_width}s" "$sess_col1_str"
+        lines+=("${gray_color}Session -> ${sess_c1}${sess_col2_str}${gray_color_reset}")
     fi
 
     # -------------------------------------------------------------------------
