@@ -733,6 +733,10 @@ format_output() {
         fi
     fi
 
+    # Table-like alignment: Col1=12, Col2=12, then 2 spaces before remaining fields
+    local COL1_WIDTH=12
+    local COL2_WIDTH=12
+
     # Tokens line (In/Out/Cached/Total) - gray
     if [[ "$SHOW_TOKENS" == "true" ]]; then
         local tok_color=""
@@ -755,13 +759,15 @@ format_output() {
         cached_fmt=$(format_tokens "$cache_read")
         total_fmt=$(format_tokens "$total_tokens")
 
-        lines+=("${tok_color}Tokens  -> In: ${in_fmt}  Out: ${out_fmt}  Cached: ${cached_fmt}  Total: ${total_fmt}${tok_color_reset}")
+        local tok_col1 tok_col2
+        printf -v tok_col1 "%-${COL1_WIDTH}s" "In: ${in_fmt}"
+        printf -v tok_col2 "%-${COL2_WIDTH}s" "Out: ${out_fmt}"
+
+        lines+=("${tok_color}Tokens  -> ${tok_col1}${tok_col2}Cached: ${cached_fmt}  Total: ${total_fmt}${tok_color_reset}")
     fi
 
     # Context metrics line (always show, even if 0)
-    # Format: Ctx: 18.6k  Ctx(u): 11.6%  Ctx: 9.3%
     if [[ "$SHOW_CTX" == "true" ]]; then
-        local ctx_line=""
         local ctx_len
         ctx_len=$(get_context_length)
         ctx_len="${ctx_len:-0}"
@@ -774,38 +780,34 @@ format_output() {
             ctx_color_reset="$COLOR_RESET"
         fi
 
-        # Context Length - format: Context: Ctx: 18.6k
+        # Context Length
         local formatted_len
         formatted_len=$(format_tokens "$ctx_len")
-        ctx_line="${ctx_color}Context -> Ctx: ${formatted_len}${ctx_color_reset}"
 
-        # Context % total - format: Ctx: 9.3%
-        local max_tokens
+        # Context % total
+        local max_tokens total_pct=""
         max_tokens=$(get_model_context_config "max")
         if [[ -n "$max_tokens" ]] && [[ "$max_tokens" -gt 0 ]]; then
-            local total_pct
             total_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $max_tokens) * 100}")
-            ctx_line="${ctx_line}  ${ctx_color}Ctx: ${total_pct}%${ctx_color_reset}"
         fi
 
-        # Context % usable - format: Ctx(usable): 11.6% (colored by percentage like progress bars)
-        local usable_tokens
+        # Context % usable (colored by percentage)
+        local usable_tokens usable_pct="" usable_pct_int usable_color="" usable_color_reset=""
         usable_tokens=$(get_model_context_config "usable")
         if [[ -n "$usable_tokens" ]] && [[ "$usable_tokens" -gt 0 ]]; then
-            local usable_pct usable_pct_int usable_color usable_color_reset
             usable_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $usable_tokens) * 100}")
             usable_pct_int="${usable_pct%%.*}"
-            usable_color=""
-            usable_color_reset=""
             if [[ "$SHOW_COLORS" == "true" ]]; then
                 usable_color=$(get_color "$usable_pct_int")
                 usable_color_reset="$COLOR_RESET"
             fi
-            ctx_line="${ctx_line}  ${usable_color}Ctx(usable): ${usable_pct}%${usable_color_reset}"
         fi
 
-        # Add context line
-        lines+=("$ctx_line")
+        local ctx_col1 ctx_col2
+        printf -v ctx_col1 "%-${COL1_WIDTH}s" "Ctx: ${formatted_len}"
+        printf -v ctx_col2 "%-${COL2_WIDTH}s" "Ctx: ${total_pct}%"
+
+        lines+=("${ctx_color}Context -> ${ctx_col1}${ctx_col2}${ctx_color_reset}${usable_color}Ctx(usable): ${usable_pct}%${usable_color_reset}")
     fi
 
     # Session line (Total duration / API duration) - gray
@@ -823,7 +825,10 @@ format_output() {
         session_fmt=$(format_duration "$session_secs")
         api_fmt=$(format_duration "$api_secs")
 
-        lines+=("${sess_color}Session -> Total: ${session_fmt}  API: ${api_fmt}${sess_color_reset}")
+        local sess_col1
+        printf -v sess_col1 "%-${COL1_WIDTH}s" "Total: ${session_fmt}"
+
+        lines+=("${sess_color}Session -> ${sess_col1}API: ${api_fmt}${sess_color_reset}")
     fi
 
     # -------------------------------------------------------------------------
