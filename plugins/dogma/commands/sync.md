@@ -605,6 +605,7 @@ Add ALL known AI-file patterns. This protects files even if they don't exist yet
 <list all files that were just copied during this sync>
 
 # --- Dogma-specific ---
+DOGMA-PERMISSIONS.md
 GUIDES/
 whats-next.md
 
