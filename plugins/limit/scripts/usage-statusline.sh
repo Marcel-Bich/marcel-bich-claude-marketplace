@@ -13,7 +13,7 @@ TIMEOUT=5
 CACHE_FILE="/tmp/claude-mb-limit-cache.json"
 CACHE_MAX_AGE="${CLAUDE_MB_LIMIT_CACHE_AGE:-120}"  # 2 minutes default
 
-# Debug mode - shows raw API response
+# Debug mode - shows raw API response and stdin data
 DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-false}"
 
 # Feature toggles (all default to true)
@@ -44,6 +44,8 @@ COLOR_ORANGE='\033[38;5;208m'
 COLOR_RED='\033[31m'
 COLOR_CYAN='\033[36m'
 COLOR_MAGENTA='\033[35m'
+COLOR_BLUE='\033[34m'
+COLOR_BRIGHT_BLUE='\033[94m'
 
 # Progress bar characters
 BAR_FILLED='='
@@ -558,26 +560,26 @@ format_output() {
 
         # Check if in git repo
         if git rev-parse --git-dir >/dev/null 2>&1; then
-            # Git worktree (cyan) - symbol: 𖠰
+            # Git worktree (blue) - symbol: 𖠰
             local worktree
             worktree=$(get_git_worktree 2>/dev/null) || true
             if [[ -n "$worktree" ]]; then
                 local wt_color=""
                 local wt_color_reset=""
                 if [[ "$SHOW_COLORS" == "true" ]]; then
-                    wt_color="$COLOR_CYAN"
+                    wt_color="$COLOR_BLUE"
                     wt_color_reset="$COLOR_RESET"
                 fi
                 git_line="${wt_color}𖠰 ${worktree}${wt_color_reset}"
             fi
 
-            # Git changes (yellow) - format: (+X,-Y)
+            # Git changes (cyan) - format: (+X,-Y)
             local changes
             changes=$(get_git_changes)
             local chg_color=""
             local chg_color_reset=""
             if [[ "$SHOW_COLORS" == "true" ]]; then
-                chg_color="$COLOR_YELLOW"
+                chg_color="$COLOR_CYAN"
                 chg_color_reset="$COLOR_RESET"
             fi
             if [[ -n "$git_line" ]]; then
@@ -586,14 +588,14 @@ format_output() {
                 git_line="${chg_color}(${changes})${chg_color_reset}"
             fi
 
-            # Git branch (magenta) - symbol: ⎇
+            # Git branch (bright blue) - symbol: ⎇
             local branch
             branch=$(get_git_branch)
             if [[ -n "$branch" ]]; then
                 local br_color=""
                 local br_color_reset=""
                 if [[ "$SHOW_COLORS" == "true" ]]; then
-                    br_color="$COLOR_MAGENTA"
+                    br_color="$COLOR_BRIGHT_BLUE"
                     br_color_reset="$COLOR_RESET"
                 fi
                 git_line="${git_line}${br_color}⎇ ${branch}${br_color_reset}"
@@ -753,8 +755,11 @@ main() {
     local response
     response=$(fetch_usage "$token")
 
-    # Debug mode - show raw response structure
+    # Debug mode - show raw response structure and stdin data
     if [[ "$DEBUG" == "true" ]]; then
+        echo "DEBUG: Stdin data:"
+        echo "$STDIN_DATA" | jq '.' 2>/dev/null || echo "$STDIN_DATA"
+        echo "---"
         echo "DEBUG: Raw API response:"
         echo "$response" | jq '.' 2>/dev/null || echo "$response"
         echo "---"
