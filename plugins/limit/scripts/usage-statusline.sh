@@ -42,6 +42,7 @@ SHOW_TOKENS="${CLAUDE_MB_LIMIT_TOKENS:-true}"
 SHOW_CTX="${CLAUDE_MB_LIMIT_CTX:-true}"
 SHOW_SESSION="${CLAUDE_MB_LIMIT_SESSION:-true}"
 SHOW_SESSION_ID="${CLAUDE_MB_LIMIT_SESSION_ID:-true}"
+SHOW_SEPARATORS="${CLAUDE_MB_LIMIT_SEPARATORS:-true}"
 
 # Claude settings file (for model info)
 CLAUDE_SETTINGS_FILE="${HOME}/.claude/settings.json"
@@ -57,6 +58,7 @@ COLOR_CYAN='\033[36m'
 COLOR_MAGENTA='\033[35m'
 COLOR_BLUE='\033[34m'
 COLOR_BRIGHT_BLUE='\033[94m'
+COLOR_BLACK='\033[30m'
 
 # Progress bar characters
 BAR_FILLED='='
@@ -828,8 +830,10 @@ format_output() {
     # Original limit features (with empty line separator)
     # -------------------------------------------------------------------------
 
-    # Add visual separator before limits (space character, empty lines get filtered)
-    lines+=(" ")
+    # Add visual separator before limits (black dash, invisible on dark terminals)
+    if [[ "$SHOW_SEPARATORS" == "true" ]]; then
+        lines+=("${COLOR_BLACK}-${COLOR_RESET}")
+    fi
 
     # 5-hour limit (if enabled) - all models
     if [[ "$SHOW_5H" == "true" ]]; then
@@ -914,7 +918,9 @@ format_output() {
                 sid_color="$COLOR_GRAY"
                 sid_color_reset="$COLOR_RESET"
             fi
-            lines+=(" ")
+            if [[ "$SHOW_SEPARATORS" == "true" ]]; then
+                lines+=("${COLOR_BLACK}-${COLOR_RESET}")
+            fi
             lines+=("${sid_color}Session ID: ${session_id}${sid_color_reset}")
         fi
     fi
