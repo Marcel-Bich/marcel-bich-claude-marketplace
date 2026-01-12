@@ -778,7 +778,16 @@ format_output() {
         formatted_len=$(format_tokens "$ctx_len")
         ctx_line="${ctx_color}Context -> Ctx: ${formatted_len}${ctx_color_reset}"
 
-        # Context % usable - format: Ctx(u): 11.6% (colored by percentage like progress bars)
+        # Context % total - format: Ctx: 9.3%
+        local max_tokens
+        max_tokens=$(get_model_context_config "max")
+        if [[ -n "$max_tokens" ]] && [[ "$max_tokens" -gt 0 ]]; then
+            local total_pct
+            total_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $max_tokens) * 100}")
+            ctx_line="${ctx_line}  ${ctx_color}Ctx: ${total_pct}%${ctx_color_reset}"
+        fi
+
+        # Context % usable - format: Ctx(usable): 11.6% (colored by percentage like progress bars)
         local usable_tokens
         usable_tokens=$(get_model_context_config "usable")
         if [[ -n "$usable_tokens" ]] && [[ "$usable_tokens" -gt 0 ]]; then
@@ -791,16 +800,7 @@ format_output() {
                 usable_color=$(get_color "$usable_pct_int")
                 usable_color_reset="$COLOR_RESET"
             fi
-            ctx_line="${ctx_line}  ${usable_color}Ctx(u): ${usable_pct}%${usable_color_reset}"
-        fi
-
-        # Context % total - format: Ctx: 9.3%
-        local max_tokens
-        max_tokens=$(get_model_context_config "max")
-        if [[ -n "$max_tokens" ]] && [[ "$max_tokens" -gt 0 ]]; then
-            local total_pct
-            total_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $max_tokens) * 100}")
-            ctx_line="${ctx_line}  ${ctx_color}Ctx: ${total_pct}%${ctx_color_reset}"
+            ctx_line="${ctx_line}  ${usable_color}Ctx(usable): ${usable_pct}%${usable_color_reset}"
         fi
 
         # Add context line
