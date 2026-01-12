@@ -499,11 +499,11 @@ get_model_id() {
     echo ""
 }
 
-# Get thinking style from stdin data (e.g., "concise", "verbose")
+# Get output style from stdin data (e.g., "default", "concise")
 get_thinking_style() {
     if [[ -n "$STDIN_DATA" ]]; then
         local style
-        style=$(echo "$STDIN_DATA" | jq -r '.thinking.style // empty' 2>/dev/null)
+        style=$(echo "$STDIN_DATA" | jq -r '.output_style.name // empty' 2>/dev/null)
         if [[ -n "$style" ]] && [[ "$style" != "null" ]]; then
             echo "$style"
             return
@@ -540,23 +540,23 @@ get_session_id() {
 }
 
 # Get token metrics from stdin data
-# Returns: input_tokens output_tokens cache_read_tokens cache_write_tokens
+# Uses context_window.current_usage for current request tokens
 get_token_metrics() {
     local metric="$1"  # input, output, cache_read, cache_write
     if [[ -n "$STDIN_DATA" ]]; then
         local value
         case "$metric" in
             input)
-                value=$(echo "$STDIN_DATA" | jq -r '.token_usage.input_tokens // 0' 2>/dev/null)
+                value=$(echo "$STDIN_DATA" | jq -r '.context_window.current_usage.input_tokens // 0' 2>/dev/null)
                 ;;
             output)
-                value=$(echo "$STDIN_DATA" | jq -r '.token_usage.output_tokens // 0' 2>/dev/null)
+                value=$(echo "$STDIN_DATA" | jq -r '.context_window.current_usage.output_tokens // 0' 2>/dev/null)
                 ;;
             cache_read)
-                value=$(echo "$STDIN_DATA" | jq -r '.token_usage.cache_read_tokens // 0' 2>/dev/null)
+                value=$(echo "$STDIN_DATA" | jq -r '.context_window.current_usage.cache_read_input_tokens // 0' 2>/dev/null)
                 ;;
             cache_write)
-                value=$(echo "$STDIN_DATA" | jq -r '.token_usage.cache_write_tokens // 0' 2>/dev/null)
+                value=$(echo "$STDIN_DATA" | jq -r '.context_window.current_usage.cache_creation_input_tokens // 0' 2>/dev/null)
                 ;;
             *)
                 value="0"
@@ -571,20 +571,24 @@ get_token_metrics() {
 }
 
 # Get session timing info from stdin data
+# Uses cost.total_duration_ms and cost.total_api_duration_ms
 get_session_time() {
-    local time_type="$1"  # session or block
+    local time_type="$1"  # session or api
     if [[ -n "$STDIN_DATA" ]]; then
-        local value
+        local value_ms
         case "$time_type" in
             session)
-                value=$(echo "$STDIN_DATA" | jq -r '.timing.session_duration_seconds // empty' 2>/dev/null)
+                value_ms=$(echo "$STDIN_DATA" | jq -r '.cost.total_duration_ms // empty' 2>/dev/null)
                 ;;
             block)
-                value=$(echo "$STDIN_DATA" | jq -r '.timing.block_duration_seconds // empty' 2>/dev/null)
+                # Use API duration as "block" time
+                value_ms=$(echo "$STDIN_DATA" | jq -r '.cost.total_api_duration_ms // empty' 2>/dev/null)
                 ;;
         esac
-        if [[ -n "$value" ]] && [[ "$value" != "null" ]]; then
-            echo "$value"
+        if [[ -n "$value_ms" ]] && [[ "$value_ms" != "null" ]]; then
+            # Convert ms to seconds
+            local seconds=$((value_ms / 1000))
+            echo "$seconds"
             return
         fi
     fi
@@ -727,6 +731,31 @@ format_output() {
         fi
     fi
 
+    # Tokens line (In/Out/Cached/Total) - gray
+    if [[ "$SHOW_TOKENS" == "true" ]]; then
+        local tok_color=""
+        local tok_color_reset=""
+        if [[ "$SHOW_COLORS" == "true" ]]; then
+            tok_color="$COLOR_GRAY"
+            tok_color_reset="$COLOR_RESET"
+        fi
+
+        local in_tokens out_tokens cache_read cache_write total_tokens
+        in_tokens=$(get_token_metrics "input")
+        out_tokens=$(get_token_metrics "output")
+        cache_read=$(get_token_metrics "cache_read")
+        cache_write=$(get_token_metrics "cache_write")
+        total_tokens=$((in_tokens + out_tokens))
+
+        local in_fmt out_fmt cached_fmt total_fmt
+        in_fmt=$(format_tokens "$in_tokens")
+        out_fmt=$(format_tokens "$out_tokens")
+        cached_fmt=$(format_tokens "$cache_read")
+        total_fmt=$(format_tokens "$total_tokens")
+
+        lines+=("${tok_color}In: ${in_fmt}  Out: ${out_fmt}  Cached: ${cached_fmt}  Total: ${total_fmt}${tok_color_reset}")
+    fi
+
     # Context metrics line (always show, even if 0)
     # Format: Ctx: 18.6k  Ctx(u): 11.6%  Ctx: 9.3%
     if [[ "$SHOW_CTX" == "true" ]]; then
@@ -770,32 +799,7 @@ format_output() {
         lines+=("$ctx_line")
     fi
 
-    # Tokens line (In/Out/Cached/Total) - gray
-    if [[ "$SHOW_TOKENS" == "true" ]]; then
-        local tok_color=""
-        local tok_color_reset=""
-        if [[ "$SHOW_COLORS" == "true" ]]; then
-            tok_color="$COLOR_GRAY"
-            tok_color_reset="$COLOR_RESET"
-        fi
-
-        local in_tokens out_tokens cache_read cache_write total_tokens
-        in_tokens=$(get_token_metrics "input")
-        out_tokens=$(get_token_metrics "output")
-        cache_read=$(get_token_metrics "cache_read")
-        cache_write=$(get_token_metrics "cache_write")
-        total_tokens=$((in_tokens + out_tokens))
-
-        local in_fmt out_fmt cached_fmt total_fmt
-        in_fmt=$(format_tokens "$in_tokens")
-        out_fmt=$(format_tokens "$out_tokens")
-        cached_fmt=$(format_tokens "$cache_read")
-        total_fmt=$(format_tokens "$total_tokens")
-
-        lines+=("${tok_color}In: ${in_fmt}  Out: ${out_fmt}  Cached: ${cached_fmt}  Total: ${total_fmt}${tok_color_reset}")
-    fi
-
-    # Session line (Session time/Block time) - gray
+    # Session line (Total duration / API duration) - gray
     if [[ "$SHOW_SESSION" == "true" ]]; then
         local sess_color=""
         local sess_color_reset=""
@@ -804,13 +808,13 @@ format_output() {
             sess_color_reset="$COLOR_RESET"
         fi
 
-        local session_secs block_secs session_fmt block_fmt
+        local session_secs api_secs session_fmt api_fmt
         session_secs=$(get_session_time "session")
-        block_secs=$(get_session_time "block")
+        api_secs=$(get_session_time "block")
         session_fmt=$(format_duration "$session_secs")
-        block_fmt=$(format_duration "$block_secs")
+        api_fmt=$(format_duration "$api_secs")
 
-        lines+=("${sess_color}Session: ${session_fmt}      Block: ${block_fmt}${sess_color_reset}")
+        lines+=("${sess_color}Total: ${session_fmt}  API: ${api_fmt}${sess_color_reset}")
     fi
 
     # -------------------------------------------------------------------------
@@ -892,7 +896,7 @@ format_output() {
         fi
     fi
 
-    # Session ID (if enabled) - always gray, below Active Model
+    # Session ID (if enabled) - always gray, below Active Model with empty line
     if [[ "$SHOW_SESSION_ID" == "true" ]]; then
         local session_id
         session_id=$(get_session_id)
@@ -903,6 +907,7 @@ format_output() {
                 sid_color="$COLOR_GRAY"
                 sid_color_reset="$COLOR_RESET"
             fi
+            lines+=("")
             lines+=("${sid_color}Session ID: ${session_id}${sid_color_reset}")
         fi
     fi
