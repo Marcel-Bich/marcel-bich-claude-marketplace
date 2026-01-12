@@ -449,7 +449,8 @@ format_tokens() {
 get_context_length() {
     if [[ -n "$STDIN_DATA" ]]; then
         local ctx_len
-        ctx_len=$(echo "$STDIN_DATA" | jq -r '.tokenMetrics.contextLength // empty' 2>/dev/null)
+        # Try context_window.total_input_tokens (Claude Code format)
+        ctx_len=$(echo "$STDIN_DATA" | jq -r '.context_window.total_input_tokens // empty' 2>/dev/null)
         if [[ -n "$ctx_len" ]] && [[ "$ctx_len" != "null" ]]; then
             echo "$ctx_len"
             return
@@ -460,27 +461,20 @@ get_context_length() {
 
 # Get max context for model (usable = 80% before auto-compact)
 get_model_context_config() {
-    local model_id="$1"
-    local config_type="$2"  # "max" or "usable"
+    local config_type="$1"  # "max" or "usable"
 
-    # Default context windows based on model
+    # Get context_window_size from stdin data
     local max_tokens=200000
-    local usable_tokens=160000
+    if [[ -n "$STDIN_DATA" ]]; then
+        local size
+        size=$(echo "$STDIN_DATA" | jq -r '.context_window.context_window_size // empty' 2>/dev/null)
+        if [[ -n "$size" ]] && [[ "$size" != "null" ]]; then
+            max_tokens="$size"
+        fi
+    fi
 
-    case "$model_id" in
-        *opus*)
-            max_tokens=200000
-            usable_tokens=160000
-            ;;
-        *sonnet*)
-            max_tokens=200000
-            usable_tokens=160000
-            ;;
-        *haiku*)
-            max_tokens=200000
-            usable_tokens=160000
-            ;;
-    esac
+    # Usable = 80% of max (before auto-compact)
+    local usable_tokens=$((max_tokens * 80 / 100))
 
     if [[ "$config_type" == "usable" ]]; then
         echo "$usable_tokens"
@@ -622,11 +616,9 @@ format_output() {
     # Format: Ctx: 18.6k  Ctx(u): 11.6%  Ctx: 9.3%
     if [[ "$SHOW_CTX" == "true" ]]; then
         local ctx_line=""
-        local model_id
-        model_id=$(get_model_id)
         local ctx_len
         ctx_len=$(get_context_length)
-        debug_log "Context: model_id=$model_id ctx_len=$ctx_len SHOW_CTX=$SHOW_CTX"
+        debug_log "Context: ctx_len=$ctx_len SHOW_CTX=$SHOW_CTX"
 
         if [[ -n "$ctx_len" ]]; then
             # Context Length (gray) - format: Ctx: 18.6k
@@ -642,7 +634,7 @@ format_output() {
 
             # Context % usable (green) - format: Ctx(u): 11.6%
             local usable_tokens
-            usable_tokens=$(get_model_context_config "$model_id" "usable")
+            usable_tokens=$(get_model_context_config "usable")
             if [[ -n "$usable_tokens" ]] && [[ "$usable_tokens" -gt 0 ]]; then
                 local usable_pct
                 usable_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $usable_tokens) * 100}")
@@ -657,7 +649,7 @@ format_output() {
 
             # Context % total (gray) - format: Ctx: 9.3%
             local max_tokens
-            max_tokens=$(get_model_context_config "$model_id" "max")
+            max_tokens=$(get_model_context_config "max")
             if [[ -n "$max_tokens" ]] && [[ "$max_tokens" -gt 0 ]]; then
                 local total_pct
                 total_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $max_tokens) * 100}")
