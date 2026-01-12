@@ -297,6 +297,114 @@ Would you like to add this license?
 
 This is less critical than changing an existing license, but still ask for confirmation.
 
+### 4.1.3 Special: settings.json (Global vs Project)
+
+Claude Code settings can be applied globally or per-project. When `.claude/settings.json` is found in source:
+
+**Key principles:**
+- **SCOPE CHOICE** - User decides global (~/.claude/settings.json) or project (.claude/settings.json)
+- **MERGE, NOT REPLACE** - Combine settings intelligently
+- **SHOW DIFF** - User sees exactly what will change
+
+**When .claude/settings.json is found in source:**
+
+```
+Found: .claude/settings.json
+
+Source settings:
+- env.CLAUDE_MB_DOGMA_DEBUG: "true"
+- env.CLAUDE_MB_LIMIT_COLORS: "true"
+- permissions.allow-mcp-disk-access: true
+
+Where should these settings be applied?
+
+1. Global (~/.claude/settings.json)
+   - Applies to ALL Claude Code projects
+   - Recommended for: personal preferences, default tools
+
+2. Project (.claude/settings.json)
+   - Applies only to THIS project
+   - Recommended for: project-specific env vars, team settings
+
+3. Skip - Don't sync settings
+4. Show full settings first
+```
+
+**Merge Logic:**
+
+```bash
+# Read existing settings
+if [ "$SCOPE" = "global" ]; then
+    TARGET="$HOME/.claude/settings.json"
+else
+    TARGET=".claude/settings.json"
+    mkdir -p .claude
+fi
+
+# If target exists, merge; otherwise create
+if [ -f "$TARGET" ]; then
+    # Parse both JSON files
+    # For each key in source:
+    #   - If key exists in target with DIFFERENT value: ask user
+    #   - If key exists in target with SAME value: skip
+    #   - If key NOT in target: add (after confirmation)
+fi
+```
+
+**For each conflicting setting, ask:**
+
+```
+CONFLICT in settings:
+
+Target (global):  env.CLAUDE_MB_DOGMA_DEBUG = "false"
+Source:           env.CLAUDE_MB_DOGMA_DEBUG = "true"
+
+1. Keep current (false)
+2. Use source (true)
+3. Skip this setting
+```
+
+**For new settings, ask:**
+
+```
+NEW SETTING from source:
+
+env.CLAUDE_MB_LIMIT_COLORS = "true"
+
+Add to [global/project] settings?
+1. Yes
+2. No
+```
+
+**Preview before applying:**
+
+```
+PREVIEW: ~/.claude/settings.json after merge
+
+{
+  "env": {
+    "CLAUDE_MB_DOGMA_DEBUG": "true",     <-- updated
+    "CLAUDE_MB_LIMIT_COLORS": "true",    <-- NEW
+    "EXISTING_VAR": "unchanged"          <-- kept
+  },
+  "permissions": {
+    "allow-mcp-disk-access": true        <-- NEW
+  }
+}
+
+Apply these changes?
+1. Yes
+2. No
+3. Go back
+```
+
+**Key points:**
+- Global settings affect all projects - warn user
+- Project settings are local - safer default for team repos
+- Always merge, never replace entire file
+- Each setting change requires confirmation
+- Existing settings not in source are preserved
+
 ### 4.2 File EXISTS in Project - Granular Rule-by-Rule Merge
 
 **CRITICAL: Never merge entire files at once. Always go rule-by-rule.**
