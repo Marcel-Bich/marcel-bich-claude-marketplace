@@ -5,7 +5,7 @@
 # Searches for DOGMA-PERMISSIONS.md in project root (upward search)
 # If not found, returns empty (allow by default)
 #
-# Use /dogma:setup to create the permissions file interactively
+# Use /dogma:permissions to create the permissions file interactively
 
 # Debug log file
 DOGMA_DEBUG_LOG="/tmp/dogma-debug.log"
@@ -78,7 +78,7 @@ get_missing_permissions_message() {
 DOGMA: No permissions file found.
 
 Create DOGMA-PERMISSIONS.md in your project root to control Claude's autonomy.
-Use /dogma:setup to interactively create it, or create manually:
+Use /dogma:permissions to interactively create it, or create manually:
 
 ```markdown
 # Dogma Permissions
