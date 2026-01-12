@@ -17,9 +17,10 @@ allowed-tools:
 # Dogma Force: Collect Rules, Summarize, Then Apply
 
 You are executing the `/dogma:force` command. Your task is to:
-1. **Collect** all CLAUDE rules and ask user about each
-2. **Summarize** what will be done
-3. **Execute** only after user confirmation
+1. **Select** which CLAUDE files to process (multiple choice)
+2. **Collect** rules from selected files, asking about each
+3. **Summarize** what will be done
+4. **Execute** only after user confirmation
 
 **No changes are made until the final confirmation!**
 
@@ -29,118 +30,325 @@ You are executing the `/dogma:force` command. Your task is to:
 TARGET_PATH="$ARGUMENTS"  # Optional path (default: entire project)
 ```
 
-## Phase 1: Discovery
+## Phase 1: File Selection (Multiple Choice)
 
-### 1.1 Find CLAUDE Files
+### 1.1 Find All CLAUDE Files
 
 ```bash
 find . -name "CLAUDE.md" -o -name "CLAUDE.*.md" -o -path "./CLAUDE/*.md" 2>/dev/null | grep -v node_modules | sort
 ```
 
-### 1.2 Present Overview
+### 1.2 Present File Selection with Explanations
+
+Use AskUserQuestion with multiSelect: true to let user choose which rule categories to process.
+
+**IMPORTANT: Use human-friendly names, NOT file names!**
 
 ```
-Found X CLAUDE instruction files.
-Target: [entire project / specific path]
+Which rules do you want to apply to the project?
 
-Phase 1: I'll go through each rule and ask if you want to include it.
-Phase 2: I'll show a summary of all planned actions.
-Phase 3: After your confirmation, I'll execute everything.
+[ ] Language Rules
+    German/English, umlaut correction (ae->a, oe->o, ue->u)
+    Enforceable: Finds and fixes ASCII umlauts
 
-No changes will be made until you confirm in Phase 3.
+[ ] Git & AI-Traces
+    Typography (quotes, dashes), AI-typical phrases, emojis
+    Enforceable: Finds and fixes AI-typical patterns
 
-Start?
+[ ] Code Formatting
+    Prettier configuration and application
+    Enforceable: Runs Prettier (if installed)
+
+[ ] Code Linting
+    ESLint configuration and application
+    Enforceable: Runs ESLint with auto-fix (if installed)
+
+[ ] Security Rules
+    Secret detection, dependency checks
+    Partially enforceable: Scans for secrets (report only)
+
+[ ] Coding Philosophy
+    YAGNI, KISS, Rule of Three, etc.
+    NOT enforceable: Guidance principles only
+
+[ ] Honesty Rules
+    Admit uncertainty, don't fabricate
+    NOT enforceable: Guidance principles only
+
+[ ] Planning Rules
+    When to plan, complexity assessment
+    NOT enforceable: Guidance principles only
+
+[ ] Versioning Rules
+    Version bumping, commit prefixes
+    Partially enforceable: Checks version sync
+
+[ ] Testing Rules
+    When and how to write tests
+    Partially enforceable: Can run tests (if configured)
+
+Select (Space to toggle, Enter to confirm):
+```
+
+### 1.3 Category to File Mapping
+
+Internal reference - map user-friendly names to actual files:
+
+| Category | File | Enforceable? |
+|----------|------|--------------|
+| Language Rules | CLAUDE.language.md | Yes - ae/oe/ue -> a/o/u |
+| Git & AI-Traces | CLAUDE.git.md | Yes - typography, phrases, emojis |
+| Code Formatting | CLAUDE.formatting.md | Yes - Prettier |
+| Code Linting | CLAUDE.linting.md | Yes - ESLint --fix |
+| Security Rules | CLAUDE.security.md | Partial - report only |
+| Coding Philosophy | CLAUDE.philosophy.md | No - guidance only |
+| Honesty Rules | CLAUDE.honesty.md | No - guidance only |
+| Planning Rules | CLAUDE.planning.md | No - guidance only |
+| Versioning Rules | CLAUDE.versioning.md | Partial - checks sync |
+| Testing Rules | CLAUDE.testing.md | Partial - can run tests |
+| Error Handling | CLAUDE.error-handling.md | No - guidance only |
+| Documentation | CLAUDE.documentation.md | No - guidance only |
+| Accessibility | CLAUDE.accessibility.md | Partial - can check |
+
+### 1.4 After Selection
+
+```
+Selected:
+- Language Rules
+- Git & AI-Traces
+- Code Formatting
+
+Target path: [entire project / specific path]
+
+NO changes will be made until you confirm at the end.
+
+Continue to rule overview?
 1. Yes
-2. Cancel
+2. Change selection
+3. Cancel
 ```
 
-## Phase 2: Collect Rules (Interactive)
+## Phase 2: Rule Collection (Interactive)
 
-For each CLAUDE file, go through each rule and ask:
+For each **selected** file, extract and present rules with explanations.
 
-### 2.1 For Each Rule
-
-```
----
-File: CLAUDE/CLAUDE.language.md
-Rule 1/4: "German umlauts - ALWAYS use a, o, u, ss. NEVER ae, oe, ue, ss."
-Type: Enforceable (find & replace)
----
-
-Include this rule in the execution plan?
-1. Yes, include
-2. No, skip
-3. Stop collecting
-```
-
-### 2.2 If User Includes an Enforceable Rule
-
-**Scan immediately to show what WOULD be changed (but don't change yet):**
-
-```
-Scanning for violations...
-
-Found 5 potential fixes:
-1. docs/guide.md:23 - "fuer" -> "fur"
-2. README.md:45 - "koennen" -> "konnen"
-3. src/messages.ts:12 - "Groesse" -> "Grosse"
-4. src/ui.ts:34 - "aehnlich" -> "ahnlich"
-5. docs/api.md:78 - "ueberpruefung" -> "Uberprufung"
-
-These will be added to the execution plan.
-```
-
-### 2.3 Continue Through All Rules
+### 2.1 Announce Current Category
 
 ```
 ---
-File: CLAUDE/CLAUDE.git.md
-Rule 1/3: "Typography - Use straight quotes, normal dashes, three dots"
-Type: Enforceable
+Category 1/3: Language Rules
+
+This category defines:
+- Which language to use (German/English)
+- How German umlauts are handled
+- Language consistency within files
 ---
-
-Include?
-1. Yes
-2. No
-3. Stop
 ```
 
-If yes:
-```
-Scanning...
+### 2.2 Present Each Rule with Explanation
 
-Found 3 potential fixes:
-1. src/utils.ts:15 - Curly quote "" -> ""
-2. docs/readme.md:8 - Em-dash -- -> --
-3. src/api.ts:23 - Ellipsis ... -> ...
-
-Added to plan.
-```
+**Always explain what the rule does and what happens if enforced:**
 
 ```
----
-File: CLAUDE/CLAUDE.philosophy.md
-Rule 1/7: "YAGNI - Prefer implementing only what's needed now"
-Type: Guidance only (not enforceable)
----
+Rule 1/4: "Maintain existing language"
 
-This is a guidance rule. No automatic action possible.
-1. Acknowledge (continue)
+What it means:
+  Never translate or switch languages mid-file.
+  If a file starts in German, keep it German throughout.
+
+Enforceable: No
+  This is a guidance rule. I'll keep it in mind but can't auto-check.
+
+1. Acknowledge (I understand this rule)
+2. Skip
+3. Stop processing this file
+```
+
+```
+Rule 2/4: "Default German for new files"
+
+What it means:
+  New files should be in German, except README.md and public docs.
+
+Enforceable: No
+  This only applies when creating new files.
+
+1. Acknowledge
 2. Skip
 3. Stop
 ```
 
-### 2.4 After All Rules Collected
+```
+Rule 3/4: "German umlauts - use a, o, u, ss. Never ae, oe, ue"
+
+What it means:
+  In German text, always use proper umlauts (a, o, u, ss).
+  Never use ASCII replacements like "fuer" or "koennen".
+
+Enforceable: YES
+  I can scan all text files for ASCII umlaut patterns and fix them.
+
+  Examples of what will be fixed:
+  - "fuer" -> "fur"
+  - "koennen" -> "konnen"
+  - "Groesse" -> "Grosse"
+  - "aehnlich" -> "ahnlich"
+
+Include in execution plan?
+1. Yes, scan and collect fixes
+2. No, skip this rule
+3. Stop
+```
+
+If user chooses "Yes":
 
 ```
-Collection complete.
+Scanning for ASCII umlauts in [target path]...
 
-Moving to Phase 2: Summary...
+Found 5 violations:
+
+1. docs/guide.md:23
+   Line: "Dies ist fuer den Benutzer"
+   Fix:  "Dies ist fur den Benutzer"
+
+2. README.md:45
+   Line: "Sie koennen auch folgendes tun"
+   Fix:  "Sie konnen auch folgendes tun"
+
+3. src/messages.ts:12
+   Line: const msg = "Dateigroesse"
+   Fix:  const msg = "Dateigrosse"
+
+...
+
+5 fixes added to execution plan.
+Continuing to next rule...
+```
+
+### 2.3 Example: Git & AI-Traces
+
+```
+---
+Category 2/3: Git & AI-Traces
+
+This category defines:
+- Git permissions (add, commit, push)
+- Typography rules against AI-typical patterns
+- Forbidden phrases that reveal AI usage
+- Emoji restrictions in code
+---
+```
+
+```
+Rule 1/5: "Typography - straight quotes, normal dashes, three dots"
+
+What it means:
+  AI models often produce "smart" typography that reveals AI usage:
+  - Curly quotes " " instead of straight quotes " "
+  - Em-dashes -- instead of normal dashes --
+  - Ellipsis ... (single char) instead of three dots ...
+  - Smart apostrophes ' ' instead of straight ' '
+
+Enforceable: YES
+  I can scan all files and replace these characters.
+
+  What will be fixed:
+  - " and " -> "
+  - -- and -- -> --
+  - ... -> ...
+  - ' and ' -> '
+
+Include in execution plan?
+1. Yes, scan and collect fixes
+2. No, skip
+3. Stop
+```
+
+```
+Rule 2/5: "Avoid AI phrases"
+
+What it means:
+  Certain phrases are typical AI responses and should be avoided:
+  - "Let me..."
+  - "I'll..."
+  - "Sure!"
+  - "Certainly!"
+  - "Great question!"
+
+Enforceable: YES (in comments/docs)
+  I can scan for these phrases in comments. Removal needs manual review.
+
+Include in execution plan?
+1. Yes, scan and report findings
+2. No, skip
+3. Stop
+```
+
+```
+Rule 3/5: "No emojis in code"
+
+What it means:
+  Emojis should never appear in:
+  - Source code comments
+  - Log messages
+  - Variable names or identifiers
+
+  (Emojis in UI/user-facing output are OK)
+
+Enforceable: YES
+  I can scan code files for emojis and flag/remove them.
+
+Include in execution plan?
+1. Yes, scan and collect fixes
+2. No, skip
+3. Stop
+```
+
+### 2.4 Example: Non-enforceable Category
+
+```
+---
+Category 3/3: Coding Philosophy
+
+This category defines coding principles:
+- YAGNI, KISS, Rule of Three
+- Function size and complexity guidelines
+- When to abstract vs. keep simple
+
+These are GUIDANCE PRINCIPLES ONLY - no automatic enforcement possible.
+I'll present each rule for acknowledgment.
+---
+```
+
+```
+Rule 1/7: "YAGNI - You Ain't Gonna Need It"
+
+What it means:
+  Only implement what's needed NOW.
+  Don't add features "just in case" or for hypothetical future needs.
+  If you're not sure you need it today, don't build it.
+
+Enforceable: No
+  This is a judgment call during development.
+
+1. Acknowledge (I'll keep this in mind)
+2. Skip
+3. Stop
+```
+
+### 2.5 After All Rules Collected
+
+```
+Rule collection complete.
+
+From 3 selected categories:
+- 4 enforceable rules with 12 planned fixes
+- 8 guidance principles acknowledged
+
+Continuing to summary...
 ```
 
 ## Phase 3: Summary (Before Execution)
-
-Present a complete summary of everything that will be done:
 
 ```
 ===========================================
@@ -152,7 +360,8 @@ Target: [entire project / src/]
 RULES TO APPLY:
 ---------------
 
-1. CLAUDE.language.md - German umlauts
+1. Language Rules - German Umlauts
+   What: Replace ASCII umlauts with real umlauts
    5 fixes planned:
    - docs/guide.md:23 - "fuer" -> "fur"
    - README.md:45 - "koennen" -> "konnen"
@@ -160,71 +369,76 @@ RULES TO APPLY:
    - src/ui.ts:34 - "aehnlich" -> "ahnlich"
    - docs/api.md:78 - "ueberpruefung" -> "Uberprufung"
 
-2. CLAUDE.git.md - Typography
+2. Git & AI-Traces - Typography
+   What: Replace smart typography with normal ASCII
    3 fixes planned:
-   - src/utils.ts:15 - Curly quote "" -> ""
-   - docs/readme.md:8 - Em-dash -- -> --
-   - src/api.ts:23 - Ellipsis ... -> ...
+   - src/utils.ts:15 - curly quotes "" -> ""
+   - docs/readme.md:8 - em-dash -- -> --
+   - src/api.ts:23 - ellipsis ... -> ...
 
-3. CLAUDE.git.md - Emojis in code
+3. Git & AI-Traces - Emojis in Code
+   What: Remove emojis from code comments
    1 fix planned:
-   - src/logger.ts:45 - Remove emoji from comment
+   - src/logger.ts:45 - remove emoji from comment
 
-4. CLAUDE.formatting.md - Prettier
+4. Code Formatting - Prettier
+   What: Auto-format code files
    4 files to format:
    - src/index.ts
    - src/utils.ts
    - src/api.ts
    - tests/test.ts
 
-RULES SKIPPED:
+SKIPPED RULES:
 --------------
-- CLAUDE.git.md - AI phrases (user skipped)
-- CLAUDE.security.md - All rules (user skipped)
+- Git & AI-Traces - AI Phrases (user skipped)
 
-GUIDANCE ACKNOWLEDGED:
-----------------------
-- CLAUDE.philosophy.md - YAGNI, KISS, etc. (7 rules)
-- CLAUDE.honesty.md - All rules (5 rules)
+GUIDANCE PRINCIPLES ACKNOWLEDGED:
+---------------------------------
+- Coding Philosophy (7 rules: YAGNI, KISS, etc.)
+
+NOT SELECTED (categories):
+--------------------------
+- Security Rules
+- Honesty Rules
 
 ===========================================
 TOTAL: 13 fixes + 4 files to format
 ===========================================
 
-Execute this plan?
+Execute plan?
 1. Yes, execute all
-2. Review individual items first
+2. Review individual fixes first
 3. Cancel (no changes)
 ```
 
-### 3.1 If User Chooses "Review Individual Items"
+### 3.1 Review Mode (if requested)
 
 ```
-Review mode. For each planned action:
+Review mode - each fix individually:
 
-1/13: docs/guide.md:23
-      "fuer" -> "fur"
+Fix 1/13:
+  File: docs/guide.md:23
+  Rule: German umlauts
+  Current: "Dies ist fuer den Benutzer"
+  After:   "Dies ist fur den Benutzer"
 
-      Execute this fix?
-      1. Yes
-      2. No (remove from plan)
-      3. Yes to all remaining
-      4. Back to summary
+  Keep in plan?
+  1. Yes
+  2. No (remove)
+  3. Yes to all remaining
+  4. Back to summary
 ```
 
 ## Phase 4: Execution
-
-Only after user confirms:
 
 ```
 Executing plan...
 
 [1/13] docs/guide.md:23 - Fixed "fuer" -> "fur"
 [2/13] README.md:45 - Fixed "koennen" -> "konnen"
-[3/13] src/messages.ts:12 - Fixed "Groesse" -> "Grosse"
 ...
 [10/13] Running Prettier on src/index.ts... Done
-[11/13] Running Prettier on src/utils.ts... Done
 ...
 
 ===========================================
@@ -232,48 +446,22 @@ EXECUTION COMPLETE
 ===========================================
 
 Applied:
-+ 9 text fixes
++ 9 text fixes (umlauts, typography, emojis)
 + 4 files formatted
 
-Files modified:
-- docs/guide.md
-- README.md
-- src/messages.ts
-- src/ui.ts
-- docs/api.md
-- src/utils.ts
-- docs/readme.md
-- src/api.ts
-- src/logger.ts
-- src/index.ts
-- tests/test.ts
+Files modified: 11
 
-Stage all changes?
-1. Yes (git add)
+Stage changes?
+1. Yes (git add all)
 2. No, review with git diff first
 ```
 
-## Rule Types
-
-| Type | Phase 2 Action | Phase 4 Action |
-|------|----------------|----------------|
-| Enforceable | Scan, collect findings | Apply fixes |
-| Tool-based (Prettier, ESLint) | Check if installed, list files | Run tool |
-| Guidance | Acknowledge only | Nothing |
-| Report-only (secrets) | Scan, show warnings | Nothing (manual) |
-
 ## Important Principles
 
-1. **Collect first, execute later** - Never modify during Phase 2
-2. **Full transparency** - Show exact changes before execution
-3. **User controls everything** - Every rule needs explicit inclusion
-4. **Batch execution** - All approved changes run together
-5. **Reviewable plan** - User can review/modify plan before execution
-6. **No partial runs** - Cancel aborts everything cleanly
-
-## Error Handling
-
-- Tool not installed: "Prettier not found. Skip formatting rules."
-- No violations found: "No issues found for this rule. Nothing to add to plan."
-- User cancels: "Cancelled. No changes were made."
-- Execution error: "Error modifying [file]. Stopping. X changes were applied before error."
+1. **File selection first** - User chooses relevant files upfront
+2. **Explain everything** - Every rule gets a "What it means" explanation
+3. **Classify clearly** - Always say if enforceable or guidance
+4. **Show examples** - Demonstrate what will change
+5. **Collect, don't execute** - No changes during collection
+6. **Full summary** - Complete overview before any execution
+7. **User controls all** - Cancel possible at any point
