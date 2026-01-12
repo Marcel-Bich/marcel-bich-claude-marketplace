@@ -8,7 +8,7 @@ allowed-tools:
   - Glob
 ---
 
-# /dogma:setup - Create Permissions File
+# /dogma:permissions - Create Permissions File
 
 Create or update DOGMA-PERMISSIONS.md to configure what Claude can do autonomously.
 
@@ -91,7 +91,7 @@ Show the created file content and confirm with user.
 </instructions>
 
 <example>
-User: /dogma:setup
+User: /dogma:permissions
 
 Claude: Let me check if you already have a permissions file...
 
