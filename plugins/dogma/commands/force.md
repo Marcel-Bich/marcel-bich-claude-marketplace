@@ -1,5 +1,5 @@
 ---
-description: Interactively collect and apply CLAUDE rules to the project
+description: dogma - Interactively collect and apply CLAUDE rules to the project
 arguments:
   - name: path
     description: "Optional: specific path to apply rules to (default: entire project)"

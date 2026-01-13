@@ -1,5 +1,5 @@
 ---
-description: Run project-specific linting and formatting on staged files (non-interactive)
+description: dogma - Run project-specific linting and formatting on staged files (non-interactive)
 arguments:
   - name: path
     description: "Optional path to check (default: staged files only)"

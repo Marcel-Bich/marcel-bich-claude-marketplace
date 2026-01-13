@@ -1,5 +1,5 @@
 ---
-description: Create or update DOGMA-PERMISSIONS.md interactively
+description: dogma - Create or update DOGMA-PERMISSIONS.md interactively
 arguments: none
 allowed-tools:
   - Read
