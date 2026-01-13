@@ -1,6 +1,6 @@
 # get-shit-done
 
-Installer for Lex Christopherson's Get-Shit-Done workflow system.
+Installer for TÂCHES' Get-Shit-Done workflow system.
 
 ## What This Does
 
@@ -23,7 +23,7 @@ This plugin clones the original GSD repository to `~/.claude/get-shit-done/`. Af
 
 All code and credit belongs to the original author:
 
-**[Lex Christopherson (TACHES)](https://github.com/glittercowboy)** - [Original Repository](https://github.com/glittercowboy/get-shit-done)
+**[TÂCHES (glittercowboy)](https://github.com/glittercowboy)** - [Original Repository](https://github.com/glittercowboy/get-shit-done)
 
 ## Documentation
 
@@ -31,13 +31,13 @@ All code and credit belongs to the original author:
 
 ## License
 
-MIT - [Lex Christopherson](https://github.com/glittercowboy/get-shit-done/blob/main/LICENSE)
+MIT - [TÂCHES](https://github.com/glittercowboy/get-shit-done/blob/main/LICENSE)
 
 ---
 
 <details>
 <summary>Keywords / Tags</summary>
 
-Claude Code, Claude Code Plugin, Claude Code Extension, Claude Code Slash Commands, Claude Code Project Management, Claude Code Workflow, Claude Code Context Engineering, Claude Code Meta-Prompting, Claude Code Spec-Driven Development, Claude Code Planning, Claude Code Roadmap, Claude Code Phases, Claude Code Tasks, Claude Code Milestones, Claude Code State Management, Claude Code Context Rot, Claude Code Subagents, Claude Code Parallel Execution, GSD, Get Shit Done, TACHES, Lex Christopherson, glittercowboy, Project Initialization, Project Planning, Project Execution, Project Tracking, Software Development Workflow, Agile, Iterative Development, Requirements Management, Third Party Plugin, External Plugin, Community Plugin
+Claude Code, Claude Code Plugin, Claude Code Extension, Claude Code Slash Commands, Claude Code Project Management, Claude Code Workflow, Claude Code Context Engineering, Claude Code Meta-Prompting, Claude Code Spec-Driven Development, Claude Code Planning, Claude Code Roadmap, Claude Code Phases, Claude Code Tasks, Claude Code Milestones, Claude Code State Management, Claude Code Context Rot, Claude Code Subagents, Claude Code Parallel Execution, GSD, Get Shit Done, TÂCHES, glittercowboy, Project Initialization, Project Planning, Project Execution, Project Tracking, Software Development Workflow, Agile, Iterative Development, Requirements Management, Third Party Plugin, External Plugin, Community Plugin
 
 </details>
