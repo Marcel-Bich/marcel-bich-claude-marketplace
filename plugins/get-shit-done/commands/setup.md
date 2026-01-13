@@ -8,9 +8,10 @@ allowed-tools:
 
 <objective>
 
-Clone the GSD workflow resources (templates, workflows, references) to ~/.claude/get-shit-done/.
+Install GSD by cloning the repo to /tmp and copying resources to the correct locations:
 
-This is required because the GSD commands reference resources at ~/.claude/get-shit-done/. Run this once after installing the plugin.
+- Commands to ~/.claude/commands/gsd/
+- Resources to ~/.claude/get-shit-done/
 
 </objective>
 
@@ -18,17 +19,13 @@ This is required because the GSD commands reference resources at ~/.claude/get-s
 
 <step name="check">
 
-Check if resources already exist:
+Check if GSD is already installed:
 
 ```bash
-if [ -d ~/.claude/get-shit-done ]; then
+if [ -d ~/.claude/commands/gsd ] || [ -d ~/.claude/get-shit-done ]; then
     echo "EXISTS"
-    if [ -d ~/.claude/get-shit-done/.git ]; then
-        echo "IS_GIT_REPO"
-        git -C ~/.claude/get-shit-done remote -v
-    else
-        echo "NOT_GIT_REPO"
-    fi
+    [ -d ~/.claude/commands/gsd ] && echo "commands: $(ls ~/.claude/commands/gsd/*.md 2>/dev/null | wc -l) files"
+    [ -d ~/.claude/get-shit-done ] && echo "resources: present"
 else
     echo "NOT_EXISTS"
 fi
@@ -38,75 +35,46 @@ fi
 
 <step name="decide">
 
-**If EXISTS and IS_GIT_REPO:**
+**If EXISTS:**
 
 Use AskUserQuestion:
 
 - header: "Update"
-- question: "GSD resources already exist at ~/.claude/get-shit-done/. What would you like to do?"
+- question: "GSD is already installed. What would you like to do?"
 - options:
-    - "Update (git pull)" - Pull latest changes from upstream
-    - "Keep existing" - Do not modify existing installation
-    - "Fresh install" - Remove and re-clone
-
-**If EXISTS and NOT_GIT_REPO:**
-
-Use AskUserQuestion:
-
-- header: "Upgrade"
-- question: "GSD resources exist but are not a git repo (old installation). What would you like to do?"
-- options:
-    - "Backup and fresh install" - Backup old, then clone fresh
-    - "Keep existing" - Do not modify existing installation
+    - "Update" - Replace with latest version
+    - "Keep existing" - Do not modify
 
 **If NOT_EXISTS:** Proceed to install step.
 
 </step>
 
-<step name="backup">
-
-**If "Backup and fresh install" selected:**
-
-```bash
-BACKUP_DIR=~/.claude/get-shit-done.backup.$(date +%Y%m%d_%H%M%S)
-mv ~/.claude/get-shit-done "$BACKUP_DIR"
-echo "Backed up to: $BACKUP_DIR"
-```
-
-</step>
-
-<step name="update">
-
-**If "Update (git pull)" selected:**
-
-```bash
-git -C ~/.claude/get-shit-done pull
-echo "Updated GSD resources"
-```
-
-</step>
-
-<step name="fresh_install">
-
-**If "Fresh install" selected:**
-
-```bash
-rm -rf ~/.claude/get-shit-done
-```
-
-Then proceed to install step.
-
-</step>
-
 <step name="install">
 
-**If NOT_EXISTS, "Backup and fresh install", or "Fresh install":**
+**If NOT_EXISTS or "Update" selected:**
 
 ```bash
-mkdir -p ~/.claude
-git clone https://github.com/glittercowboy/get-shit-done.git ~/.claude/get-shit-done
-echo "Cloned GSD resources to ~/.claude/get-shit-done/"
-ls -la ~/.claude/get-shit-done/
+# Clone to temp
+rm -rf /tmp/gsd-install
+git clone --depth 1 https://github.com/glittercowboy/get-shit-done.git /tmp/gsd-install
+
+# Create directories
+mkdir -p ~/.claude/commands/gsd
+mkdir -p ~/.claude/get-shit-done
+
+# Copy commands (excluding _archive)
+cp /tmp/gsd-install/commands/gsd/*.md ~/.claude/commands/gsd/
+
+# Copy resources
+cp -r /tmp/gsd-install/get-shit-done/* ~/.claude/get-shit-done/
+
+# Cleanup
+rm -rf /tmp/gsd-install
+
+# Verify
+echo "Installed:"
+echo "- Commands: $(ls ~/.claude/commands/gsd/*.md | wc -l) files"
+echo "- Resources: $(ls -d ~/.claude/get-shit-done/*/ | wc -l) directories"
 ```
 
 </step>
@@ -118,26 +86,17 @@ Present completion:
 ```
 GSD Setup Complete
 
-Resources cloned to: ~/.claude/get-shit-done/
-- templates/    (project templates)
-- workflows/    (execution workflows)
-- references/   (principles and formats)
-
-Update anytime with: /gsd:setup -> "Update (git pull)"
+Commands installed to: ~/.claude/commands/gsd/
+Resources installed to: ~/.claude/get-shit-done/
 
 You can now use all /gsd:* commands.
 
 ---
 
-## Next Up
+Start a new project: /gsd:new-project
+Get help: /gsd:help
 
-Start a new project:
-
-`/gsd:new-project`
-
-Or get help:
-
-`/gsd:help`
+Update anytime: /gsd:setup -> "Update"
 
 ---
 ```
@@ -148,9 +107,8 @@ Or get help:
 
 <success_criteria>
 
+- [ ] Commands exist at ~/.claude/commands/gsd/
 - [ ] Resources exist at ~/.claude/get-shit-done/
-- [ ] Directory is a git repo (can be updated)
-- [ ] templates/, workflows/, references/ directories present
 - [ ] User informed of next steps
 
 </success_criteria>
