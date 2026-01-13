@@ -129,12 +129,10 @@ get_current_model() {
         display_name=$(echo "$STDIN_DATA" | jq -r '.model.display_name // empty' 2>/dev/null)
     fi
 
-    # Return model name only (e.g., "Opus" from "Claude Opus 4.5")
+    # Return model name with version (e.g., "Opus 4.5" from "Claude Opus 4.5")
     if [[ -n "$display_name" ]] && [[ "$display_name" != "null" ]]; then
-        # Remove "Claude " prefix and version number
+        # Remove "Claude " prefix, keep version
         display_name="${display_name#Claude }"
-        # Extract just the model name (first word)
-        display_name="${display_name%% *}"
         echo "$display_name"
         return
     fi
