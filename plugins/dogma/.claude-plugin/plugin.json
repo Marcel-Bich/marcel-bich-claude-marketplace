@@ -1,6 +1,6 @@
 {
   "name": "dogma",
-  "version": "1.25.0",
+  "version": "1.26.0",
   "description": "Intelligent sync of Claude instructions with enforcement hooks for security and consistency.",
   "keywords": [
     "sync",

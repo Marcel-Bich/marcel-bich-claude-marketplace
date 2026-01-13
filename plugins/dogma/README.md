@@ -14,6 +14,7 @@ Intelligent sync of Claude instructions with enforcement hooks for security and 
 - `/dogma:permissions` - Create or update DOGMA-PERMISSIONS.md interactively
 - `/dogma:force` - Interactively collect and apply CLAUDE rules to the project
 - `/dogma:sanitize-git` - Sanitize git history from Claude/AI traces and fix tracking issues
+- `/dogma:docs-update` - Sync documentation across README files and wiki articles
 
 ### Enforcement Hooks
 
