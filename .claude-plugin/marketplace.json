@@ -26,6 +26,12 @@
       "source": "./plugins/limit",
       "description": "Live API usage display in Claude Code statusline - shows utilization with colored progress bars and reset times.",
       "version": "1.2.6"
+    },
+    {
+      "name": "get-shit-done",
+      "source": "./plugins/get-shit-done",
+      "description": "Meta-prompting, context engineering and spec-driven development system for Claude Code",
+      "version": "1.0.0"
     }
   ]
 }

@@ -1,0 +1,88 @@
+name: get-shit-done
+description: Meta-prompting, context engineering and spec-driven development system for Claude Code
+version: 1.0.0
+author: Lex Christopherson (TACHES)
+repository: https://github.com/glittercowboy/get-shit-done
+
+commands:
+  gsd:setup:
+    description: Install GSD resources to ~/.claude/get-shit-done/ (required once after plugin install)
+    source: commands/setup.md
+  gsd:new-project:
+    description: Initialize a new project with deep context gathering
+    source: commands/new-project.md
+  gsd:create-roadmap:
+    description: Create project roadmap from PROJECT.md
+    source: commands/create-roadmap.md
+  gsd:progress:
+    description: View current project progress and state
+    source: commands/progress.md
+  gsd:status:
+    description: Quick status check
+    source: commands/status.md
+  gsd:help:
+    description: Full command reference
+    source: commands/help.md
+  gsd:add-phase:
+    description: Add a new phase to the roadmap
+    source: commands/add-phase.md
+  gsd:add-todo:
+    description: Add a todo item
+    source: commands/add-todo.md
+  gsd:check-todos:
+    description: Check and manage todos
+    source: commands/check-todos.md
+  gsd:complete-milestone:
+    description: Complete a milestone
+    source: commands/complete-milestone.md
+  gsd:consider-issues:
+    description: Consider and triage issues
+    source: commands/consider-issues.md
+  gsd:debug:
+    description: Debug current state
+    source: commands/debug.md
+  gsd:discuss-milestone:
+    description: Discuss a milestone
+    source: commands/discuss-milestone.md
+  gsd:discuss-phase:
+    description: Discuss a phase
+    source: commands/discuss-phase.md
+  gsd:execute-phase:
+    description: Execute a phase
+    source: commands/execute-phase.md
+  gsd:execute-plan:
+    description: Execute a plan
+    source: commands/execute-plan.md
+  gsd:insert-phase:
+    description: Insert a phase at specific position
+    source: commands/insert-phase.md
+  gsd:list-phase-assumptions:
+    description: List assumptions for a phase
+    source: commands/list-phase-assumptions.md
+  gsd:map-codebase:
+    description: Map existing codebase structure
+    source: commands/map-codebase.md
+  gsd:new-milestone:
+    description: Create a new milestone
+    source: commands/new-milestone.md
+  gsd:pause-work:
+    description: Pause work with state capture
+    source: commands/pause-work.md
+  gsd:plan-fix:
+    description: Plan a fix for an issue
+    source: commands/plan-fix.md
+  gsd:plan-phase:
+    description: Plan a phase
+    source: commands/plan-phase.md
+  gsd:remove-phase:
+    description: Remove a phase
+    source: commands/remove-phase.md
+  gsd:research-phase:
+    description: Research for a phase
+    source: commands/research-phase.md
+  gsd:resume-work:
+    description: Resume paused work
+    source: commands/resume-work.md
+  gsd:verify-work:
+    description: Verify completed work
+    source: commands/verify-work.md
