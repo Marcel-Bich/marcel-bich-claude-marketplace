@@ -524,7 +524,7 @@ get_total_cost() {
         cost=$(echo "$STDIN_DATA" | jq -r '.cost.total_cost_usd // empty' 2>/dev/null)
         if [[ -n "$cost" ]] && [[ "$cost" != "null" ]]; then
             # Format to 2 decimal places
-            printf "%.2f" "$cost"
+            awk "BEGIN {printf \"%.2f\", ${cost:-0}}"
             return
         fi
     fi
