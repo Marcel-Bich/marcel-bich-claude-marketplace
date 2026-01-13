@@ -4,19 +4,24 @@ Installer for TÂCHES' Get-Shit-Done workflow system.
 
 ## What This Does
 
-This plugin clones the original GSD repository to `~/.claude/get-shit-done/`. After setup, you use the original commands directly - this plugin provides no wrappers or modifications.
+This plugin installs GSD by copying commands and resources to:
+
+- `~/.claude/commands/gsd/` (slash commands)
+- `~/.claude/get-shit-done/` (templates, workflows, references)
+
+After setup, you use the original GSD commands directly.
 
 ## Commands
 
-| Command          | Description                              |
-| ---------------- | ---------------------------------------- |
-| `/gsd:setup`     | Clone GSD to ~/.claude/get-shit-done/    |
-| `/gsd:uninstall` | Remove GSD from ~/.claude/get-shit-done/ |
+| Command          | Description                |
+| ---------------- | -------------------------- |
+| `/gsd:setup`     | Install GSD to ~/.claude/  |
+| `/gsd:uninstall` | Remove GSD from ~/.claude/ |
 
 ## Usage
 
 1. Run `/gsd:setup` once after installing the plugin
-2. Use the original GSD commands (e.g., `/new-project`, `/progress`, `/help`)
+2. Use the GSD commands (e.g., `/gsd:new-project`, `/gsd:progress`, `/gsd:help`)
 3. Run `/gsd:uninstall` to remove
 
 ## Credits

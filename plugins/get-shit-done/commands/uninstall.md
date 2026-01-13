@@ -1,6 +1,6 @@
 ---
 name: gsd:uninstall
-description: Remove GSD resources from ~/.claude/get-shit-done/
+description: Remove GSD resources from ~/.claude/
 allowed-tools:
     - Bash
     - AskUserQuestion
@@ -8,7 +8,10 @@ allowed-tools:
 
 <objective>
 
-Remove the GSD workflow resources from ~/.claude/get-shit-done/.
+Remove GSD installation:
+
+- Commands from ~/.claude/commands/gsd/
+- Resources from ~/.claude/get-shit-done/
 
 </objective>
 
@@ -16,12 +19,13 @@ Remove the GSD workflow resources from ~/.claude/get-shit-done/.
 
 <step name="check">
 
-Check if resources exist:
+Check if GSD is installed:
 
 ```bash
-if [ -d ~/.claude/get-shit-done ]; then
+if [ -d ~/.claude/commands/gsd ] || [ -d ~/.claude/get-shit-done ]; then
     echo "EXISTS"
-    du -sh ~/.claude/get-shit-done
+    [ -d ~/.claude/commands/gsd ] && echo "commands: $(ls ~/.claude/commands/gsd/*.md 2>/dev/null | wc -l) files"
+    [ -d ~/.claude/get-shit-done ] && echo "resources: present"
 else
     echo "NOT_EXISTS"
 fi
@@ -34,7 +38,7 @@ fi
 **If NOT_EXISTS:**
 
 ```
-GSD is not installed at ~/.claude/get-shit-done/
+GSD is not installed.
 Nothing to uninstall.
 ```
 
@@ -45,9 +49,9 @@ Exit.
 Use AskUserQuestion:
 
 - header: "Uninstall"
-- question: "Remove GSD resources from ~/.claude/get-shit-done/?"
+- question: "Remove GSD from ~/.claude/?"
 - options:
-    - "Yes, remove" - Delete the directory
+    - "Yes, remove" - Delete commands and resources
     - "Cancel" - Keep the installation
 
 </step>
@@ -57,8 +61,9 @@ Use AskUserQuestion:
 **If "Yes, remove" selected:**
 
 ```bash
+rm -rf ~/.claude/commands/gsd
 rm -rf ~/.claude/get-shit-done
-echo "Removed ~/.claude/get-shit-done/"
+echo "Removed GSD installation"
 ```
 
 </step>
@@ -70,7 +75,9 @@ echo "Removed ~/.claude/get-shit-done/"
 ```
 GSD Uninstalled
 
-Resources removed from: ~/.claude/get-shit-done/
+Removed:
+- ~/.claude/commands/gsd/
+- ~/.claude/get-shit-done/
 
 To reinstall: /gsd:setup
 ```
@@ -81,7 +88,8 @@ To reinstall: /gsd:setup
 
 <success_criteria>
 
-- [ ] Directory ~/.claude/get-shit-done/ no longer exists
+- [ ] ~/.claude/commands/gsd/ no longer exists
+- [ ] ~/.claude/get-shit-done/ no longer exists
 - [ ] User informed of reinstall option
 
 </success_criteria>
