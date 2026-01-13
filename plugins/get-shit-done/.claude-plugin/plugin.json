@@ -1,0 +1,12 @@
+{
+  "name": "get-shit-done",
+  "version": "1.0.0",
+  "description": "Meta-prompting, context engineering and spec-driven development system for Claude Code",
+  "keywords": [
+    "meta-prompting",
+    "context-engineering",
+    "spec-driven-development",
+    "project-management"
+  ],
+  "license": "MIT"
+}
