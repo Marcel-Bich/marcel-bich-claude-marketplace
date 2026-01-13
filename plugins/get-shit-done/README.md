@@ -21,7 +21,7 @@ After setup, you use the original GSD commands directly.
 ## Usage
 
 1. Run `/gsd:setup` once after installing the plugin
-2. Use the GSD commands (e.g., `/gsd:new-project`, `/gsd:progress`, `/gsd:help`)
+2. Use the GSD commands (e.g., `/gsd:new-project`, `/gsd:map-codebase`, `/gsd:help`)
 3. Run `/gsd:uninstall` to remove
 
 ## Credits

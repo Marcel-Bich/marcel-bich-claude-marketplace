@@ -94,6 +94,7 @@ You can now use all /gsd:* commands.
 ---
 
 Start a new project: /gsd:new-project
+Map existing codebase: /gsd:map-codebase
 Get help: /gsd:help
 
 Update anytime: /gsd:setup -> "Update"
