@@ -8,6 +8,18 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/user-prompt-submit.sh",
             "timeout": 5,
             "description": "Remind of rules at every prompt (Honesty, Planning, Philosophy, Language)"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/prompt-intervention-reminder.sh",
+            "timeout": 5,
+            "description": "Suggest skills/MCPs when relevant to the task"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/checklist-tracking.sh",
+            "timeout": 5,
+            "description": "Scan for open checklists in PLAN.md, TODO.md, etc."
           }
         ]
       }
@@ -132,6 +144,12 @@
     "Stop": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/version-sync-check.sh",
+            "timeout": 5,
+            "description": "Check for version mismatches across version files"
+          },
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/lint-on-stop.sh",
