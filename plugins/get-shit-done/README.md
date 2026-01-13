@@ -21,8 +21,9 @@ After setup, you use the original GSD commands directly.
 ## Usage
 
 1. Run `/gsd:setup` once after installing the plugin
-2. Use the GSD commands (e.g., `/gsd:new-project`, `/gsd:map-codebase`, `/gsd:help`)
-3. Run `/gsd:uninstall` to remove
+2. **Restart Claude Code** to load the new commands
+3. Use the GSD commands (e.g., `/gsd:new-project`, `/gsd:map-codebase`, `/gsd:help`)
+4. Run `/gsd:uninstall` to remove
 
 ## Credits
 
