@@ -10,6 +10,37 @@ allowed-tools:
 
 Check all version files and fix any mismatches.
 
+## Step 0: Bump versions for pending changes FIRST
+
+**CRITICAL:** Before syncing, check if there are uncommitted changes that require a version bump.
+
+```bash
+git status --porcelain
+```
+
+**If changes exist in any plugin directory:**
+
+1. Identify which plugins have changes:
+   ```bash
+   git status --porcelain | grep "plugins/" | sed 's|.*plugins/\([^/]*\)/.*|\1|' | sort -u
+   ```
+
+2. For EACH affected plugin:
+   - Read the current version from `plugins/<name>/plugin.yaml`
+   - Bump the version according to these rules:
+     - **patch** (default): bugfixes, small features, improvements, refactoring, description changes
+     - **minor**: breaking changes, migration required, BIG new features
+     - **major**: groundbreaking changes, relaunch, full rewrite
+   - **When in doubt, use patch!**
+   - Update the version in `plugins/<name>/plugin.yaml`
+
+3. Report what was bumped:
+   ```
+   Bumped <plugin> from X.Y.Z to X.Y.(Z+1)
+   ```
+
+**If no pending changes:** Skip to Step 1.
+
 ## Step 1: Find version files
 
 ```bash
