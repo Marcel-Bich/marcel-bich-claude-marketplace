@@ -1,6 +1,6 @@
 name: dogma
 description: Intelligent sync of Claude instructions with enforcement hooks for security and consistency
-version: 1.24.0
+version: 1.25.0
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
@@ -26,6 +26,9 @@ commands:
   force:
     description: Interactively collect and apply CLAUDE rules to the project
     source: commands/force.md
+  sanitize-git:
+    description: Sanitize git history from Claude/AI traces and fix tracking issues
+    source: commands/sanitize-git.md
 
 hooks:
   # ============================================
