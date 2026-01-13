@@ -89,7 +89,9 @@ GSD Setup Complete
 Commands installed to: ~/.claude/commands/gsd/
 Resources installed to: ~/.claude/get-shit-done/
 
-You can now use all /gsd:* commands.
+IMPORTANT: Restart Claude Code to load the new commands.
+
+After restart, you can use all /gsd:* commands.
 
 ---
 
