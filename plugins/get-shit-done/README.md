@@ -1,24 +1,29 @@
 # get-shit-done
 
-Meta-prompting, context engineering and spec-driven development system for Claude Code.
+Installer for Lex Christopherson's Get-Shit-Done workflow system.
+
+## What This Does
+
+This plugin clones the original GSD repository to `~/.claude/get-shit-done/`. After setup, you use the original commands directly - this plugin provides no wrappers or modifications.
+
+## Commands
+
+| Command          | Description                              |
+| ---------------- | ---------------------------------------- |
+| `/gsd:setup`     | Clone GSD to ~/.claude/get-shit-done/    |
+| `/gsd:uninstall` | Remove GSD from ~/.claude/get-shit-done/ |
+
+## Usage
+
+1. Run `/gsd:setup` once after installing the plugin
+2. Use the original GSD commands (e.g., `/new-project`, `/progress`, `/help`)
+3. Run `/gsd:uninstall` to remove
 
 ## Credits
 
-This plugin is a wrapper for convenient marketplace installation. All code and credit belongs to the original author:
+All code and credit belongs to the original author:
 
 **[Lex Christopherson (TACHES)](https://github.com/glittercowboy)** - [Original Repository](https://github.com/glittercowboy/get-shit-done)
-
-Thank you for building this in the open and inspiring others to dream big and just do it.
-
-## Setup
-
-After installation, run once:
-
-```
-/gsd:setup
-```
-
-Then start with `/gsd:new-project` or `/gsd:help`.
 
 ## Documentation
 
