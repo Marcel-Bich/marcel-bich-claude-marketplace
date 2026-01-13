@@ -818,6 +818,8 @@ Add ALL known AI-file patterns. This protects files even if they don't exist yet
 DOGMA-PERMISSIONS.md
 GUIDES/
 whats-next.md
+whats-next*.md
+.planning/
 
 # --- Unified Standard (2025) ---
 AGENTS.md
