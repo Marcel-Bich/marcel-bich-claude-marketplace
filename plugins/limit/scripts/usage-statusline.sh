@@ -917,9 +917,9 @@ format_output() {
                 cost_value_color="$COLOR_WHITE"
                 # Model name color based on model type
                 case "${current_model,,}" in
-                    haiku) model_name_color="$COLOR_SILVER" ;;
-                    sonnet) model_name_color="$COLOR_SALMON" ;;
-                    opus) model_name_color="$COLOR_GOLD" ;;
+                    haiku*) model_name_color="$COLOR_SILVER" ;;
+                    sonnet*) model_name_color="$COLOR_SALMON" ;;
+                    opus*) model_name_color="$COLOR_GOLD" ;;
                     *) model_name_color="$COLOR_GRAY" ;;
                 esac
             fi
