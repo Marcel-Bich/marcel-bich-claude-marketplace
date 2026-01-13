@@ -20,21 +20,26 @@ git status --porcelain
 
 **If changes exist in any plugin directory:**
 
-1. Identify which plugins have changes:
+1. **Load versioning rules** (try in order, use first that exists):
+   - `CLAUDE/CLAUDE.versioning.md` - project-specific rules
+   - `CLAUDE.versioning.md` - project-specific rules
+   - `.claude/CLAUDE.versioning.md` - project-specific rules
+   - **Fallback only if none exist:**
+     - patch (default): bugfixes, small features, improvements, refactoring
+     - minor: breaking changes, migration required, BIG new features
+     - major: groundbreaking changes, relaunch, full rewrite
+
+2. Identify which plugins have changes:
    ```bash
    git status --porcelain | grep "plugins/" | sed 's|.*plugins/\([^/]*\)/.*|\1|' | sort -u
    ```
 
-2. For EACH affected plugin:
+3. For EACH affected plugin:
    - Read the current version from `plugins/<name>/plugin.yaml`
-   - Bump the version according to these rules:
-     - **patch** (default): bugfixes, small features, improvements, refactoring, description changes
-     - **minor**: breaking changes, migration required, BIG new features
-     - **major**: groundbreaking changes, relaunch, full rewrite
-   - **When in doubt, use patch!**
+   - Apply the versioning rules loaded in step 1
    - Update the version in `plugins/<name>/plugin.yaml`
 
-3. Report what was bumped:
+4. Report what was bumped:
    ```
    Bumped <plugin> from X.Y.Z to X.Y.(Z+1)
    ```
