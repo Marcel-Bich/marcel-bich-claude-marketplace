@@ -1,5 +1,5 @@
 ---
-description: Intelligently sync Claude instructions from a source to the current project with interactive review
+description: dogma - Intelligently sync Claude instructions from a source to the current project with interactive review
 arguments:
   - name: args
     description: "Source and/or instructions in any order. Source: URL or path. Instructions: text in quotes."

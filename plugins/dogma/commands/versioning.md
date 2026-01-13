@@ -1,5 +1,5 @@
 ---
-description: Check and fix version mismatches across all version files
+description: dogma - Check and fix version mismatches across all version files
 allowed-tools:
   - Bash
   - Read

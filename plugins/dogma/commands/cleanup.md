@@ -1,5 +1,5 @@
 ---
-description: Find and fix AI-typical patterns in code (reactive cleanup)
+description: dogma - Find and fix AI-typical patterns in code (reactive cleanup)
 arguments:
   - name: path
     description: "Path to scan (default: current directory)"
