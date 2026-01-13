@@ -1,5 +1,5 @@
 ---
-description: dogma - Interactive setup for linting/formatting with Prettier
+description: dogma - Interactive setup for linting/formatting tools
 allowed-tools:
   - Bash
   - Read

@@ -1,6 +1,6 @@
 name: dogma
 description: Intelligent sync of Claude instructions with enforcement hooks for security and consistency
-version: 1.23.4
+version: 1.24.0
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
@@ -14,6 +14,9 @@ commands:
   lint:
     description: Run prettier and eslint check on project
     source: commands/lint.md
+  lint:setup:
+    description: Interactive setup for linting/formatting tools
+    source: commands/lint/setup.md
   versioning:
     description: Check and fix version mismatches across all version files
     source: commands/versioning.md
