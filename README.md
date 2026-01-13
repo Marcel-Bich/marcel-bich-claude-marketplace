@@ -10,6 +10,12 @@ A collection of productivity plugins for Claude Code.
 | [**signal**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Signal-Plugin) | Desktop notifications for Claude Code |
 | [**limit**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Limit-Plugin) | Live API usage display in statusline |
 
+### Third-Party Plugins
+
+| Plugin | Author | Description |
+|--------|--------|-------------|
+| [**get-shit-done**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Get-Shit-Done-Plugin) | [TÂCHES](https://github.com/glittercowboy) | Meta-prompting and spec-driven development system |
+
 ## Quick Start
 
 ```bash
