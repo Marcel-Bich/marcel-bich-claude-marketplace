@@ -80,22 +80,22 @@ if [ -z "$PERMS_SECTION" ]; then
     exit 0
 fi
 
-# Check git add
-if echo "$TOOL_INPUT" | grep -qE '^git\s+add(\s|$)'; then
+# Check git add (also catches: && git add, ; git add, || git add)
+if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\|)\s*git\s+add(\s|$)'; then
     if ! check_permission "$PERMS_SECTION" "git add"; then
         output_block "BLOCKED by dogma: git add not permitted. Change [ ] to [x] for git add in $PERMS_FILE or run manually."
     fi
 fi
 
-# Check git commit
-if echo "$TOOL_INPUT" | grep -qE '^git\s+commit(\s|$)'; then
+# Check git commit (also catches chained commands)
+if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\|)\s*git\s+commit(\s|$)'; then
     if ! check_permission "$PERMS_SECTION" "git commit"; then
         output_block "BLOCKED by dogma: git commit not permitted. Change [ ] to [x] for git commit in $PERMS_FILE or ask user."
     fi
 fi
 
-# Check git push
-if echo "$TOOL_INPUT" | grep -qE '^git\s+push(\s|$)'; then
+# Check git push (also catches chained commands)
+if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\|)\s*git\s+push(\s|$)'; then
     if ! check_permission "$PERMS_SECTION" "git push"; then
         output_block "BLOCKED by dogma: git push not permitted. Change [ ] to [x] for git push in $PERMS_FILE or push manually."
     fi

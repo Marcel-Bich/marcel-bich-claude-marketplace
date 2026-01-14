@@ -135,20 +135,35 @@ fi
 log_debug "Checking dangerous commands..."
 
 # Git remote commands (tokens can be embedded in URLs)
-if echo "$COMMAND" | grep -qE '^\s*git\s+remote\s+(-v|show|get-url)'; then
+# Catches: git remote -v, git remote --verbose, git remote show, git remote get-url
+# Also: /usr/bin/git, command git, sudo git
+if echo "$COMMAND" | grep -qE '(^|\||;|&&|\s)(sudo\s+)?(command\s+)?([/a-z]*\/)?git\s+remote\s+(-v|--verbose|show|get-url)'; then
     log_debug "BLOCKING: git remote"
-    output_block "BLOCKED: 'git remote -v/show/get-url' can expose tokens embedded in remote URLs. Use 'git remote' (without -v) to list remote names only, or check .git/config manually if needed."
+    output_block "BLOCKED: 'git remote -v/--verbose/show/get-url' can expose tokens embedded in remote URLs. Use 'git remote' (without -v) to list remote names only."
 fi
 
-if echo "$COMMAND" | grep -qE 'git\s+config.*remote\..*\.url'; then
-    output_block "BLOCKED: 'git config remote.*.url' can expose tokens embedded in remote URLs."
+# Git config remote URL
+if echo "$COMMAND" | grep -qE 'git\s+config.*(remote\.|url\.)'; then
+    output_block "BLOCKED: 'git config' with remote/url can expose tokens embedded in remote URLs."
 fi
 
 # Environment variable dumps (expose all tokens)
+# Catches: env, printenv, export, set (alone or piped)
+# Also: /usr/bin/env, command env, sudo env, bash -c "env"
 log_debug "Checking env pattern against: $COMMAND"
-if echo "$COMMAND" | grep -qE '^\s*(env|printenv|export|set)(\s*$|\s*\|)'; then
-    log_debug "BLOCKING: env/printenv/export/set"
-    output_block "BLOCKED: Commands like 'env', 'printenv', 'export', 'set' expose all environment variables including tokens. Use specific variable checks like '[ -n \"\$VAR\" ]' instead."
+if echo "$COMMAND" | grep -qE '(^|\||;|&&|\s)(sudo\s+)?(command\s+)?([/a-z]*\/)?(env|printenv)(\s*$|\s*\||\s+[^=])'; then
+    log_debug "BLOCKING: env/printenv"
+    output_block "BLOCKED: 'env'/'printenv' would expose all environment variables including tokens. Use specific variable checks instead."
+fi
+# Standalone export/set (without variable assignment)
+if echo "$COMMAND" | grep -qE '(^|\||;|&&)\s*(export|set)\s*($|\|)'; then
+    log_debug "BLOCKING: export/set"
+    output_block "BLOCKED: 'export'/'set' without arguments exposes all variables. Use specific variable checks instead."
+fi
+# bash -c with env inside
+if echo "$COMMAND" | grep -qE 'bash\s+-c\s+["\x27].*\b(env|printenv)\b'; then
+    log_debug "BLOCKING: bash -c env"
+    output_block "BLOCKED: Running env/printenv via bash -c would expose all environment variables including tokens."
 fi
 log_debug "env pattern check done"
 
