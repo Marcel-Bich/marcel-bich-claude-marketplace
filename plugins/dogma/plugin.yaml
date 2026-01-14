@@ -108,8 +108,8 @@ hooks:
         - -c
         - "cat | {{pluginPath}}/scripts/write-edit-reminder.sh"
 
-    # Read hooks (token protection)
-    - matcher: Read
+    # Read hooks (token protection) - using wildcard because Read matcher may not be supported
+    - matcher: "*"
       command: bash
       args:
         - -c
