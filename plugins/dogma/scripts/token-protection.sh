@@ -19,32 +19,57 @@ DEBUG="${CLAUDE_MB_DOGMA_DEBUG:-false}"
 if [ "$DEBUG" = "true" ]; then
     exec 2>>/tmp/dogma-debug.log
     set -x
+    echo "=== token-protection.sh START $(date) ===" >> /tmp/dogma-token-protection.log
 fi
+
+# Log function
+log_debug() {
+    if [ "$DEBUG" = "true" ]; then
+        echo "[$(date '+%H:%M:%S')] $1" >> /tmp/dogma-token-protection.log
+    fi
+}
+
+log_debug "Hook invoked"
 
 # Master switch
 if [ "${CLAUDE_MB_DOGMA_ENABLED:-true}" != "true" ]; then
+    log_debug "Master switch OFF - exiting"
     exit 0
 fi
 
 # Feature switch
 ENABLED="${CLAUDE_MB_DOGMA_TOKEN_PROTECTION:-true}"
 if [ "$ENABLED" != "true" ]; then
+    log_debug "Token protection disabled - exiting"
     exit 0
 fi
 
 # Read input
 INPUT=$(cat 2>/dev/null || true)
-[ -z "$INPUT" ] && exit 0
+if [ -z "$INPUT" ]; then
+    log_debug "No input received - exiting"
+    exit 0
+fi
 
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
+log_debug "Tool: $TOOL_NAME"
 
 # =============================================================================
 # READ TOOL - Scan file for tokens BEFORE reading
 # =============================================================================
 if [ "$TOOL_NAME" = "Read" ]; then
+    log_debug "Processing Read tool"
     FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
-    [ -z "$FILE_PATH" ] && exit 0
-    [ ! -f "$FILE_PATH" ] && exit 0
+    log_debug "File path: $FILE_PATH"
+    if [ -z "$FILE_PATH" ]; then
+        log_debug "Empty file path - exiting"
+        exit 0
+    fi
+    if [ ! -f "$FILE_PATH" ]; then
+        log_debug "File does not exist - exiting"
+        exit 0
+    fi
+    log_debug "Scanning file for tokens..."
 
     # Block known credential files by name
     if echo "$FILE_PATH" | grep -qiE '(\.env|\.netrc|credentials|secrets|\.git-credentials|\.npmrc|\.pypirc|id_rsa|id_ed25519|id_ecdsa|\.pem|\.key)$'; then
