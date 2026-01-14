@@ -30,6 +30,12 @@
         "hooks": [
           {
             "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/token-protection.sh",
+            "timeout": 5,
+            "description": "Block commands that could expose tokens/credentials (env, git remote -v, etc.)"
+          },
+          {
+            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/git-add-protection.sh",
             "timeout": 5,
             "description": "Block git add for AI files and secret files"
