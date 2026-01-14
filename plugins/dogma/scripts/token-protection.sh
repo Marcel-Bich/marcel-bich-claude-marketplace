@@ -1,6 +1,6 @@
 #!/bin/bash
-# Token Protection Hook - Blocks commands that could expose tokens/credentials
-# PreToolUse hook for Bash - runs BEFORE command execution
+# Token Protection Hook - Blocks commands/reads that could expose tokens/credentials
+# PreToolUse hook for Bash and Read - runs BEFORE tool execution
 
 # Exit cleanly on any error (don't break Claude)
 trap 'exit 0' ERR
@@ -37,6 +37,57 @@ INPUT=$(cat 2>/dev/null || true)
 [ -z "$INPUT" ] && exit 0
 
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
+
+# =============================================================================
+# READ TOOL - Scan file for tokens BEFORE reading
+# =============================================================================
+if [ "$TOOL_NAME" = "Read" ]; then
+    FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
+    [ -z "$FILE_PATH" ] && exit 0
+    [ ! -f "$FILE_PATH" ] && exit 0
+
+    # Block known credential files by name
+    if echo "$FILE_PATH" | grep -qiE '(\.env|\.netrc|credentials|secrets|\.git-credentials|\.npmrc|\.pypirc|id_rsa|id_ed25519|id_ecdsa|\.pem|\.key)$'; then
+        output_block "BLOCKED: Reading credential/secrets file '$FILE_PATH'. These files typically contain sensitive tokens."
+    fi
+
+    # Scan file content for token patterns (only if file is small enough)
+    FILE_SIZE=$(stat -c%s "$FILE_PATH" 2>/dev/null || echo "0")
+    if [ "$FILE_SIZE" -lt 1000000 ]; then  # Only scan files < 1MB
+        # GitHub token
+        if grep -qE 'ghp_[a-zA-Z0-9]{36}' "$FILE_PATH" 2>/dev/null; then
+            output_block "BLOCKED: File '$FILE_PATH' contains a GitHub Personal Access Token (ghp_...). Reading would expose credentials."
+        fi
+        # Generic token in URL (x-access-token pattern)
+        if grep -qE 'x-access-token:[a-zA-Z0-9_-]+@' "$FILE_PATH" 2>/dev/null; then
+            output_block "BLOCKED: File '$FILE_PATH' contains embedded access tokens in URLs. Reading would expose credentials."
+        fi
+        # OpenAI key
+        if grep -qE 'sk-[a-zA-Z0-9]{20,}' "$FILE_PATH" 2>/dev/null; then
+            if ! grep -qE 'sk-your|sk-xxx|sk-\.\.\.' "$FILE_PATH" 2>/dev/null; then
+                output_block "BLOCKED: File '$FILE_PATH' contains an OpenAI API key (sk-...). Reading would expose credentials."
+            fi
+        fi
+        # Anthropic key
+        if grep -qE 'sk-ant-[a-zA-Z0-9]{20,}' "$FILE_PATH" 2>/dev/null; then
+            output_block "BLOCKED: File '$FILE_PATH' contains an Anthropic API key (sk-ant-...). Reading would expose credentials."
+        fi
+        # AWS keys
+        if grep -qE 'AKIA[0-9A-Z]{16}' "$FILE_PATH" 2>/dev/null; then
+            output_block "BLOCKED: File '$FILE_PATH' contains an AWS Access Key. Reading would expose credentials."
+        fi
+        # Private keys
+        if grep -qE '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----' "$FILE_PATH" 2>/dev/null; then
+            output_block "BLOCKED: File '$FILE_PATH' contains a private key. Reading would expose credentials."
+        fi
+    fi
+
+    exit 0
+fi
+
+# =============================================================================
+# BASH TOOL - Block dangerous commands
+# =============================================================================
 [ "$TOOL_NAME" != "Bash" ] && exit 0
 
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
