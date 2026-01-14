@@ -57,7 +57,9 @@ log_debug "Tool: $TOOL_NAME"
 # =============================================================================
 # READ TOOL - Scan file for tokens BEFORE reading
 # =============================================================================
+log_debug "Checking tool type..."
 if [ "$TOOL_NAME" = "Read" ]; then
+    log_debug "Processing Read tool"
     log_debug "Processing Read tool"
     FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
     log_debug "File path: $FILE_PATH"
@@ -113,17 +115,28 @@ fi
 # =============================================================================
 # BASH TOOL - Block dangerous commands
 # =============================================================================
-[ "$TOOL_NAME" != "Bash" ] && exit 0
+if [ "$TOOL_NAME" != "Bash" ]; then
+    log_debug "Not Bash tool, exiting"
+    exit 0
+fi
 
+log_debug "Processing Bash tool"
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
-[ -z "$COMMAND" ] && exit 0
+log_debug "Command: $COMMAND"
+
+if [ -z "$COMMAND" ]; then
+    log_debug "Empty command, exiting"
+    exit 0
+fi
 
 # =============================================================================
 # DANGEROUS COMMANDS - Commands that could expose tokens in output
 # =============================================================================
+log_debug "Checking dangerous commands..."
 
 # Git remote commands (tokens can be embedded in URLs)
 if echo "$COMMAND" | grep -qE '^\s*git\s+remote\s+(-v|show|get-url)'; then
+    log_debug "BLOCKING: git remote"
     output_block "BLOCKED: 'git remote -v/show/get-url' can expose tokens embedded in remote URLs. Use 'git remote' (without -v) to list remote names only, or check .git/config manually if needed."
 fi
 
@@ -132,9 +145,12 @@ if echo "$COMMAND" | grep -qE 'git\s+config.*remote\..*\.url'; then
 fi
 
 # Environment variable dumps (expose all tokens)
+log_debug "Checking env pattern against: $COMMAND"
 if echo "$COMMAND" | grep -qE '^\s*(env|printenv|export|set)\s*$'; then
+    log_debug "BLOCKING: env/printenv/export/set"
     output_block "BLOCKED: '$COMMAND' would expose all environment variables including tokens. Use specific variable checks like '[ -n \"\$VAR\" ]' instead."
 fi
+log_debug "env pattern check done"
 
 # Direct token variable access
 if echo "$COMMAND" | grep -qE '\$\{?(GITHUB_TOKEN|GITLAB_TOKEN|BITBUCKET_TOKEN|NPM_TOKEN|PYPI_TOKEN|AWS_SECRET|API_KEY|AUTH_TOKEN|ACCESS_TOKEN|BEARER_TOKEN|SECRET_KEY|PRIVATE_KEY)'; then
