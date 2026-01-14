@@ -104,6 +104,7 @@ Look for files that contain **Claude/AI instructions, guidelines, or configurati
 **Highest priority (personal/project config):**
 - `.gitconfig`, `gitconfig` - Git user, email, aliases (apply with `git config`)
 - `.editorconfig` - Editor settings for consistent formatting
+- `.gitignore` - Git ignore patterns (merge rule-by-rule like other config files)
 
 **High priority (always check):**
 - `CLAUDE.md`, `CLAUDE.*.md` - Direct Claude instructions
@@ -1337,7 +1338,7 @@ Note: Files are untracked. Run 'git status' to see them.
 
 1. **Never auto-overwrite** - Always ask the user
 2. **Never git add** - Files stay untracked
-3. **Never modify .gitignore** - Use .git/info/exclude instead (local-only, not versioned)
+3. **Never auto-modify project's .gitignore** - For AI-file patterns use .git/info/exclude (local-only, not versioned). But DO sync .gitignore from source if user wants it.
 4. **Be helpful** - Explain differences clearly, suggest what makes sense
 5. **Respect user decisions** - If they say skip, skip without arguing
 6. **Granular is mandatory** - Never merge files wholesale, always rule-by-rule
