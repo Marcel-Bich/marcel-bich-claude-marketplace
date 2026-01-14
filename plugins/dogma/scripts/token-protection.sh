@@ -146,9 +146,9 @@ fi
 
 # Environment variable dumps (expose all tokens)
 log_debug "Checking env pattern against: $COMMAND"
-if echo "$COMMAND" | grep -qE '^\s*(env|printenv|export|set)\s*$'; then
+if echo "$COMMAND" | grep -qE '^\s*(env|printenv|export|set)(\s*$|\s*\|)'; then
     log_debug "BLOCKING: env/printenv/export/set"
-    output_block "BLOCKED: '$COMMAND' would expose all environment variables including tokens. Use specific variable checks like '[ -n \"\$VAR\" ]' instead."
+    output_block "BLOCKED: Commands like 'env', 'printenv', 'export', 'set' expose all environment variables including tokens. Use specific variable checks like '[ -n \"\$VAR\" ]' instead."
 fi
 log_debug "env pattern check done"
 
