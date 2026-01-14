@@ -1,6 +1,6 @@
 name: dogma
 description: Intelligent sync of Claude instructions with enforcement hooks for security and consistency
-version: 1.28.3
+version: 1.28.4
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
@@ -58,7 +58,13 @@ hooks:
   # ============================================
   pre_tool_use:
     # Bash hooks (git, file operations, dependencies)
-    # TOKEN PROTECTION FIRST - critical security hook
+    # TEST: Check if first hook is skipped
+    - matcher: Bash
+      command: bash
+      args:
+        - -c
+        - "cat | {{pluginPath}}/scripts/hook-test.sh"
+    # TOKEN PROTECTION - second position now
     - matcher: Bash
       command: bash
       args:
