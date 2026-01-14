@@ -2,6 +2,9 @@
 # Token Protection Hook - Blocks commands/reads that could expose tokens/credentials
 # PreToolUse hook for Bash and Read - runs BEFORE tool execution
 
+# ALWAYS log to verify hook is called
+echo "=== token-protection.sh INVOKED $(date) ===" >> /tmp/dogma-token-protection.log
+
 # Exit cleanly on any error (don't break Claude)
 trap 'exit 0' ERR
 
@@ -19,14 +22,11 @@ DEBUG="${CLAUDE_MB_DOGMA_DEBUG:-false}"
 if [ "$DEBUG" = "true" ]; then
     exec 2>>/tmp/dogma-debug.log
     set -x
-    echo "=== token-protection.sh START $(date) ===" >> /tmp/dogma-token-protection.log
 fi
 
-# Log function
+# Log function - always log for debugging
 log_debug() {
-    if [ "$DEBUG" = "true" ]; then
-        echo "[$(date '+%H:%M:%S')] $1" >> /tmp/dogma-token-protection.log
-    fi
+    echo "[$(date '+%H:%M:%S')] $1" >> /tmp/dogma-token-protection.log
 }
 
 log_debug "Hook invoked"
