@@ -815,72 +815,76 @@ Add ALL known AI-file patterns. This protects files even if they don't exist yet
 <list all files that were just copied during this sync>
 
 # --- Dogma-specific ---
-DOGMA-PERMISSIONS.md
-GUIDES/
-whats-next.md
-whats-next*.md
-.planning/
+[Dd][Oo][Gg][Mm][Aa]-[Pp][Ee][Rr][Mm][Ii][Ss][Ss][Ii][Oo][Nn][Ss].[Mm][Dd]
+[Gg][Uu][Ii][Dd][Ee][Ss]/
+[Ww][Hh][Aa][Tt][Ss]-[Nn][Ee][Xx][Tt]*.[Mm][Dd]
+.[Pp][Ll][Aa][Nn][Nn][Ii][Nn][Gg]/
+[Pp][Rr][Oo][Mm][Pp][Tt][Ss]/
+*[Tt][Oo][Dd][Oo]*.[Mm][Dd]
+*[Tt][Oo]-[Dd][Oo]*.[Mm][Dd]
+
+# --- Claude Code Local Config ---
+.[Cc][Ll][Aa][Uu][Dd][Ee]/
 
 # --- Unified Standard (2025) ---
-AGENTS.md
-AGENT.md
+[Aa][Gg][Ee][Nn][Tt][Ss].[Mm][Dd]
+[Aa][Gg][Ee][Nn][Tt].[Mm][Dd]
 
 # --- Claude ---
-CLAUDE.md
-CLAUDE/
-CLAUDE.*.md
+[Cc][Ll][Aa][Uu][Dd][Ee].[Mm][Dd]
+[Cc][Ll][Aa][Uu][Dd][Ee]/
+[Cc][Ll][Aa][Uu][Dd][Ee].*.[Mm][Dd]
 
 # --- Cursor ---
-.cursor/
-.cursorrules
-cursor.rules
+.[Cc][Uu][Rr][Ss][Oo][Rr]/
+.[Cc][Uu][Rr][Ss][Oo][Rr][Rr][Uu][Ll][Ee][Ss]
+[Cc][Uu][Rr][Ss][Oo][Rr].[Rr][Uu][Ll][Ee][Ss]
 
 # --- Windsurf ---
-.windsurfrules
-.windsurf/
+.[Ww][Ii][Nn][Dd][Ss][Uu][Rr][Ff][Rr][Uu][Ll][Ee][Ss]
+.[Ww][Ii][Nn][Dd][Ss][Uu][Rr][Ff]/
 
 # --- GitHub Copilot ---
-.github/copilot-instructions.md
-copilot-*
+.[Gg][Ii][Tt][Hh][Uu][Bb]/[Cc][Oo][Pp][Ii][Ll][Oo][Tt]-[Ii][Nn][Ss][Tt][Rr][Uu][Cc][Tt][Ii][Oo][Nn][Ss].[Mm][Dd]
+[Cc][Oo][Pp][Ii][Ll][Oo][Tt]-*
 
 # --- Google ---
-JULES.md
-GEMINI.md
-gemini.md
+[Jj][Uu][Ll][Ee][Ss].[Mm][Dd]
+[Gg][Ee][Mm][Ii][Nn][Ii].[Mm][Dd]
 
 # --- Cline / Roo Code / Kilo Code ---
-.clinerules
-.cline/
-.roo/
-.kilocode/
+.[Cc][Ll][Ii][Nn][Ee][Rr][Uu][Ll][Ee][Ss]
+.[Cc][Ll][Ii][Nn][Ee]/
+.[Rr][Oo][Oo]/
+.[Kk][Ii][Ll][Oo][Cc][Oo][Dd][Ee]/
 
 # --- Aider ---
-.aider/
-.aider.conf.json
-aider.conf.json
-.aiderignore
+.[Aa][Ii][Dd][Ee][Rr]/
+.[Aa][Ii][Dd][Ee][Rr].[Cc][Oo][Nn][Ff].[Jj][Ss][Oo][Nn]
+[Aa][Ii][Dd][Ee][Rr].[Cc][Oo][Nn][Ff].[Jj][Ss][Oo][Nn]
+.[Aa][Ii][Dd][Ee][Rr][Ii][Gg][Nn][Oo][Rr][Ee]
 
 # --- Continue ---
-.continue/
-.continuerules
+.[Cc][Oo][Nn][Tt][Ii][Nn][Uu][Ee]/
+.[Cc][Oo][Nn][Tt][Ii][Nn][Uu][Ee][Rr][Uu][Ll][Ee][Ss]
 
 # --- Amazon Q / CodeWhisperer ---
-.amazonq/
-.aws/codewhisperer/
+.[Aa][Mm][Aa][Zz][Oo][Nn][Qq]/
+.[Aa][Ww][Ss]/[Cc][Oo][Dd][Ee][Ww][Hh][Ii][Ss][Pp][Ee][Rr][Ee][Rr]/
 
 # --- Other AI Tools ---
-.codeium/
-.tabnine/
-.sourcery/
-.codex/
-.opencode/
-.openhands/
-.augment/
-.firebender/
-.junie/
-.kiro/
-.trae/
-.goose/
+.[Cc][Oo][Dd][Ee][Ii][Uu][Mm]/
+.[Tt][Aa][Bb][Nn][Ii][Nn][Ee]/
+.[Ss][Oo][Uu][Rr][Cc][Ee][Rr][Yy]/
+.[Cc][Oo][Dd][Ee][Xx]/
+.[Oo][Pp][Ee][Nn][Cc][Oo][Dd][Ee]/
+.[Oo][Pp][Ee][Nn][Hh][Aa][Nn][Dd][Ss]/
+.[Aa][Uu][Gg][Mm][Ee][Nn][Tt]/
+.[Ff][Ii][Rr][Ee][Bb][Ee][Nn][Dd][Ee][Rr]/
+.[Jj][Uu][Nn][Ii][Ee]/
+.[Kk][Ii][Rr][Oo]/
+.[Tt][Rr][Aa][Ee]/
+.[Gg][Oo][Oo][Ss][Ee]/
 ```
 
 ### 4.5.4 Merge with existing excludes
