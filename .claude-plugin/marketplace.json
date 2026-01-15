@@ -37,7 +37,7 @@
       "name": "hydra",
       "source": "./plugins/hydra",
       "description": "Git Worktree management for parallel agent execution - isolated working directories without Git conflicts.",
-      "version": "0.1.0"
+      "version": "0.1.1"
     }
   ]
 }
