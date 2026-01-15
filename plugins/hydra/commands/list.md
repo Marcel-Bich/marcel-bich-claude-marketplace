@@ -6,7 +6,7 @@ allowed-tools:
 
 # Worktree List
 
-Du fuehrst den `/worktree:list` Command aus. Zeige alle Git Worktrees des aktuellen Repositories.
+Du fuehrst den `/hydra:list` Command aus. Zeige alle Git Worktrees des aktuellen Repositories.
 
 ## Ablauf
 
@@ -32,8 +32,8 @@ Git Worktrees:
   Pfad                              Branch              Commit
   ----------------------------------------------------------------
   /home/user/project                main                a1b2c3d
-  /home/user/project-worktrees/a    worktree/feature-a  d4e5f6g
-  /home/user/project-worktrees/b    worktree/feature-b  h7i8j9k
+  /home/user/project-worktrees/a    hydra/feature-a  d4e5f6g
+  /home/user/project-worktrees/b    hydra/feature-b  h7i8j9k
 ```
 
 ### 4. Zusaetzliche Infos
@@ -55,7 +55,7 @@ Falls nur der Hauptworktree existiert:
 Nur der Haupt-Worktree existiert (main/master).
 
 Erstelle einen neuen mit:
-  /worktree:create {name}
+  /hydra:create {name}
 ```
 
 ## Ausgabe-Format

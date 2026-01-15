@@ -14,7 +14,7 @@ allowed-tools:
 
 # Worktree Merge
 
-Du fuehrst den `/worktree:merge` Command aus. Merge einen Worktree-Branch zurueck in den aktuellen Branch.
+Du fuehrst den `/hydra:merge` Command aus. Merge einen Worktree-Branch zurueck in den aktuellen Branch.
 
 ## Argumente
 
@@ -23,8 +23,8 @@ Du fuehrst den `/worktree:merge` Command aus. Merge einen Worktree-Branch zuruec
   - Zweites Wort (optional): Strategy (merge/rebase)
 
 Beispiele:
-- `/worktree:merge feature-a` - Merge mit Standard-Strategie
-- `/worktree:merge feature-a rebase` - Rebase statt Merge
+- `/hydra:merge feature-a` - Merge mit Standard-Strategie
+- `/hydra:merge feature-a rebase` - Rebase statt Merge
 
 ## Ablauf
 
@@ -45,7 +45,7 @@ fi
 ### 2. Pruefe ob Worktree existiert
 
 ```bash
-git worktree list | grep -qE "$WORKTREE_NAME|worktree/$WORKTREE_NAME" || {
+git worktree list | grep -qE "$WORKTREE_NAME|hydra/$WORKTREE_NAME" || {
   echo "Worktree '$WORKTREE_NAME' nicht gefunden"
   exit 1
 }
@@ -100,7 +100,7 @@ git diff --stat "$CURRENT_BRANCH"..."$WORKTREE_BRANCH"
 **Merge:**
 
 ```bash
-git merge "$WORKTREE_BRANCH" -m "Merge worktree/$WORKTREE_NAME"
+git merge "$WORKTREE_BRANCH" -m "Merge hydra/$WORKTREE_NAME"
 ```
 
 **Rebase:**
@@ -141,7 +141,7 @@ Optionen:
 ```
 Merge erfolgreich!
 
-  Von: worktree/$WORKTREE_NAME
+  Von: hydra/$WORKTREE_NAME
   Nach: $CURRENT_BRANCH
   Commits: X
 
@@ -149,8 +149,8 @@ Gemergte Dateien:
 {diff --stat output}
 
 Naechste Schritte:
-  - /worktree:delete $WORKTREE_NAME  # Worktree aufraeumen
-  - /worktree:cleanup                 # Alle gemergten aufraeumen
+  - /hydra:delete $WORKTREE_NAME  # Worktree aufraeumen
+  - /hydra:cleanup                 # Alle gemergten aufraeumen
   - git push                          # Falls gewuenscht
 ```
 

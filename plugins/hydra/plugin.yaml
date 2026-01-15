@@ -1,4 +1,4 @@
-name: worktree
+name: hydra
 description: Git Worktree Management fuer parallele Agent-Execution ohne Git-Konflikte
 version: 0.1.0
 author: Marcel Bich
@@ -6,7 +6,7 @@ repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
 commands:
   help:
-    description: Zeigt verfuegbare Worktree-Commands und erklaert das Konzept
+    description: Zeigt verfuegbare Hydra-Commands und erklaert das Konzept
     source: commands/help.md
   create:
     description: Erstellt einen neuen Git Worktree fuer isolierte Arbeit

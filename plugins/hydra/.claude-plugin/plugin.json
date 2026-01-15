@@ -1,5 +1,5 @@
 {
-  "name": "worktree",
+  "name": "hydra",
   "version": "0.1.0",
   "description": "Git Worktree Management fuer parallele Agent-Execution ohne Git-Konflikte.",
   "keywords": [
@@ -8,7 +8,8 @@
     "parallel",
     "agents",
     "isolation",
-    "merge"
+    "merge",
+    "hydra"
   ],
   "license": "MIT"
 }

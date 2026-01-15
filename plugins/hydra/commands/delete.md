@@ -11,7 +11,7 @@ allowed-tools:
 
 # Worktree Delete
 
-Du fuehrst den `/worktree:delete` Command aus. Entferne einen Git Worktree sicher mit Schutz vor Datenverlust.
+Du fuehrst den `/hydra:delete` Command aus. Entferne einen Git Worktree sicher mit Schutz vor Datenverlust.
 
 ## Argumente
 
@@ -22,7 +22,7 @@ Du fuehrst den `/worktree:delete` Command aus. Entferne einen Git Worktree siche
 ### 1. Pruefe ob Worktree existiert
 
 ```bash
-git worktree list | grep -E "$ARGUMENTS|worktree/$ARGUMENTS"
+git worktree list | grep -E "$ARGUMENTS|hydra/$ARGUMENTS"
 ```
 
 Falls nicht gefunden:
@@ -33,7 +33,7 @@ Worktree '{name}' nicht gefunden.
 Verfuegbare Worktrees:
 {liste}
 
-Tipp: Nutze /worktree:list fuer eine Uebersicht.
+Tipp: Nutze /hydra:list fuer eine Uebersicht.
 ```
 
 ### 2. Bestimme Pfad und Branch
@@ -123,7 +123,7 @@ Worktree geloescht:
   Pfad:   {path} (entfernt)
   Branch: {branch} (behalten/geloescht)
 
-Verbleibende Worktrees: /worktree:list
+Verbleibende Worktrees: /hydra:list
 ```
 
 ## Sicherheits-Features

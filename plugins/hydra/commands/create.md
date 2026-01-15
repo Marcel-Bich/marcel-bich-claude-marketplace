@@ -11,7 +11,7 @@ allowed-tools:
 
 # Worktree Create
 
-Du fuehrst den `/worktree:create` Command aus. Erstelle einen neuen Git Worktree fuer isolierte Arbeit.
+Du fuehrst den `/hydra:create` Command aus. Erstelle einen neuen Git Worktree fuer isolierte Arbeit.
 
 ## Argumente
 
@@ -34,7 +34,7 @@ basename "$(git rev-parse --show-toplevel)"
 Falls `$ARGUMENTS` leer ist, frage nach dem Namen.
 
 Bestimme:
-- **Branch-Name**: `worktree/$ARGUMENTS` (oder nur `$ARGUMENTS` falls bereits Pfad-artig)
+- **Branch-Name**: `hydra/$ARGUMENTS` (oder nur `$ARGUMENTS` falls bereits Pfad-artig)
 - **Worktree-Pfad**: `../{repo-name}-worktrees/$ARGUMENTS/`
 
 ### 3. Pruefe ob bereits existiert
@@ -44,7 +44,7 @@ Bestimme:
 git worktree list | grep -q "$ARGUMENTS" && echo "Worktree existiert bereits"
 
 # Branch existiert?
-git show-ref --verify --quiet "refs/heads/worktree/$ARGUMENTS" && echo "Branch existiert"
+git show-ref --verify --quiet "refs/heads/hydra/$ARGUMENTS" && echo "Branch existiert"
 ```
 
 Falls Worktree existiert: Zeige Pfad und beende mit Hinweis.
@@ -60,7 +60,7 @@ WORKTREE_PATH="../${REPO_NAME}-worktrees/$ARGUMENTS"
 mkdir -p "$(dirname "$WORKTREE_PATH")"
 
 # Worktree mit neuem Branch erstellen
-git worktree add -b "worktree/$ARGUMENTS" "$WORKTREE_PATH"
+git worktree add -b "hydra/$ARGUMENTS" "$WORKTREE_PATH"
 ```
 
 ### 5. Ausgabe
@@ -71,12 +71,12 @@ Bei Erfolg:
 Worktree erstellt:
 
   Pfad:   {absoluter Pfad}
-  Branch: worktree/{name}
+  Branch: hydra/{name}
 
 Naechste Schritte:
   - cd {pfad}                        # Manuell wechseln
-  - /worktree:spawn {name} "..."     # Agent dort starten
-  - /worktree:status                 # Status pruefen
+  - /hydra:spawn {name} "..."     # Agent dort starten
+  - /hydra:status                 # Status pruefen
 ```
 
 Bei Fehler:
@@ -96,4 +96,4 @@ Moegliche Ursachen:
 
 - Uncommitted changes im aktuellen Verzeichnis blockieren NICHT die Erstellung
 - Der neue Worktree startet vom aktuellen HEAD
-- Branch-Praefix `worktree/` hilft bei der Organisation
+- Branch-Praefix `hydra/` hilft bei der Organisation
