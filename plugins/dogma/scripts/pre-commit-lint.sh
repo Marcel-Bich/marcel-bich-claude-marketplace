@@ -58,7 +58,7 @@ if [ "$TOOL_NAME" != "Bash" ]; then
 fi
 
 # Only trigger on git commit
-if ! echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\|)git\s+commit(\s|$)'; then
+if ! echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\||\$\(|\(|`)git\s+commit(\s|$)'; then
     exit 0
 fi
 
