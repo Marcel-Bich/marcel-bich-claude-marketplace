@@ -102,12 +102,12 @@ fi
 dogma_debug_log "Tool: $TOOL_NAME, Input: $TOOL_INPUT"
 
 # Allow safe git operations
-if echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\|)git\s+rm\s+--cached'; then
+if echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\||\$\(|\(|`)git\s+rm\s+--cached'; then
     # git rm --cached only untracks, doesn't delete
     exit 0
 fi
 
-if echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\|)git\s+reset'; then
+if echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\||\$\(|\(|`)git\s+reset'; then
     # git reset is safe (unstages)
     exit 0
 fi
@@ -117,31 +117,31 @@ BLOCKED=""
 REASON=""
 
 # Check for rm command
-if echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\|)rm\s'; then
+if echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\||\$\(|\(|`)rm\s'; then
     BLOCKED="rm"
     REASON="Deletes files permanently"
 fi
 
 # Check for del command (Windows)
-if echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\|)del\s'; then
+if echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\||\$\(|\(|`)del\s'; then
     BLOCKED="del"
     REASON="Deletes files permanently"
 fi
 
 # Check for unlink command
-if echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\|)unlink\s'; then
+if echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\||\$\(|\(|`)unlink\s'; then
     BLOCKED="unlink"
     REASON="Deletes files permanently"
 fi
 
 # Check for rmdir command
-if echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\|)rmdir\s'; then
+if echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\||\$\(|\(|`)rmdir\s'; then
     BLOCKED="rmdir"
     REASON="Deletes directories permanently"
 fi
 
 # Check for git clean
-if echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\|)git\s+clean'; then
+if echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\||\$\(|\(|`)git\s+clean'; then
     BLOCKED="git clean"
     REASON="Deletes untracked files permanently"
 fi
