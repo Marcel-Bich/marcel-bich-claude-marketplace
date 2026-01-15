@@ -990,8 +990,10 @@ fi
 
 | Tool | Compatible When |
 |------|-----------------|
+<!-- TODO: Find better security tools - these are problematic
 | socket.dev CLI | Node.js project with external dependencies |
 | snyk CLI | Any project with external dependencies (npm, pip, cargo, etc.) |
+-->
 | Prettier | Node.js project (any) |
 | ESLint | Node.js project (any) |
 | Vitest/Jest | Node.js project (any) |
@@ -1005,11 +1007,13 @@ fi
 
 For each tool, check **BOTH global AND local** installation:
 
+<!-- TODO: Find better security tools - these are problematic
 **Security Tools:**
 | Tool | Global Detection | Local Detection | Scope |
 |------|------------------|-----------------|-------|
 | socket.dev CLI | `command -v socket` | package.json devDeps | Global recommended |
 | snyk CLI | `command -v snyk` | package.json devDeps | Global recommended |
+-->
 
 **JavaScript/TypeScript:**
 | Tool | Global Detection | Local Detection | Scope |
@@ -1055,9 +1059,9 @@ check_global_cli() {
     fi
 }
 
-# Security tools
-SOCKET_STATUS=$(check_global_cli "socket")
-SNYK_STATUS=$(check_global_cli "snyk")
+# Security tools - disabled, need better alternatives
+# SOCKET_STATUS=$(check_global_cli "socket")
+# SNYK_STATUS=$(check_global_cli "snyk")
 
 # Python tools
 RUFF_STATUS=$(check_global_cli "ruff")
@@ -1131,6 +1135,7 @@ check_composer_dep() {
 
 ### 6.5 Present Items with Intelligent Status
 
+<!-- TODO: Find better security tools - these are problematic
 **For Global CLI tools (socket, snyk):**
 
 ```
@@ -1163,6 +1168,7 @@ Installation options:
 
 Which option?
 ```
+-->
 
 **For Local-only tools (Prettier, ESLint):**
 
@@ -1213,6 +1219,7 @@ If user chooses "Yes, find alternative":
 
 ### 6.7 Installation Actions
 
+<!-- TODO: Find better security tools - these are problematic
 **Global CLI tools:**
 ```bash
 # socket.dev - always global
@@ -1221,6 +1228,7 @@ npm install -g @socketsecurity/cli
 # snyk - always global
 npm install -g snyk
 ```
+-->
 
 **Local project tools:**
 ```bash

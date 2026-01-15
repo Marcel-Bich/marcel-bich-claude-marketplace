@@ -188,6 +188,7 @@ Build list of packages to install:
 - `prettier` (always required)
 - Plugins based on detected file types (Step 2)
 
+<!-- TODO: Find better security tools - socket.dev API is problematic
 ### 3.3 Security check for EACH package
 
 **CRITICAL: Follow @CLAUDE/CLAUDE.security.md**
@@ -225,8 +226,9 @@ Install this package?
 - No maintainers listed
 - Known vulnerabilities
 - Typosquatting (check spelling!)
+-->
 
-### 3.4 Install approved packages
+### 3.3 Install packages
 
 ```bash
 npm install --save-dev prettier @prettier/plugin-php @shopify/prettier-plugin-liquid
@@ -580,11 +582,10 @@ Next steps:
 
 ## Important Rules
 
-1. **Security first** - ALWAYS check packages before installing
-2. **Ask before creating** - Never create files without user confirmation
-3. **Adapt to project** - Only include plugins for detected file types
-4. **Preserve existing** - Merge with existing configs, don't overwrite blindly
-5. **Explain choices** - User should understand why each setting is recommended
+1. **Ask before creating** - Never create files without user confirmation
+2. **Adapt to project** - Only include plugins for detected file types
+3. **Preserve existing** - Merge with existing configs, don't overwrite blindly
+4. **Explain choices** - User should understand why each setting is recommended
 
 ## Error Handling
 
