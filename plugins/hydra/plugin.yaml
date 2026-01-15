@@ -1,34 +1,34 @@
 name: hydra
-description: Git Worktree Management fuer parallele Agent-Execution ohne Git-Konflikte
+description: Git Worktree management for parallel agent execution - isolated working directories without Git conflicts
 version: 0.1.0
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
 commands:
   help:
-    description: Zeigt verfuegbare Hydra-Commands und erklaert das Konzept
+    description: hydra - Show available commands and explain the concept
     source: commands/help.md
   create:
-    description: Erstellt einen neuen Git Worktree fuer isolierte Arbeit
+    description: hydra - Create a new Git worktree for isolated work
     source: commands/create.md
   list:
-    description: Zeigt alle Git Worktrees des aktuellen Repositories
+    description: hydra - List all Git worktrees of the repository
     source: commands/list.md
   status:
-    description: Zeigt detaillierten Status eines oder aller Worktrees
+    description: hydra - Show detailed status of one or all worktrees
     source: commands/status.md
   delete:
-    description: Entfernt einen Git Worktree sicher
+    description: hydra - Safely remove a Git worktree
     source: commands/delete.md
   spawn:
-    description: Startet einen Agent in einem existierenden Worktree
+    description: hydra - Start an agent in an existing worktree
     source: commands/spawn.md
   parallel:
-    description: Startet mehrere Agents parallel in verschiedenen Worktrees
+    description: hydra - Start multiple agents in parallel across worktrees
     source: commands/parallel.md
   merge:
-    description: Merged einen Worktree-Branch zurueck in den aktuellen Branch
+    description: hydra - Merge a worktree branch back into current branch
     source: commands/merge.md
   cleanup:
-    description: Entfernt bereits gemergte Worktrees und deren Branches
+    description: hydra - Remove already merged worktrees and their branches
     source: commands/cleanup.md

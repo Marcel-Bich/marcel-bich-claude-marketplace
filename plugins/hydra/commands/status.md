@@ -1,8 +1,8 @@
 ---
-description: Zeigt detaillierten Status eines oder aller Worktrees
+description: hydra - Show detailed status of one or all worktrees
 arguments:
   - name: name
-    description: Spezifischer Worktree (optional, sonst alle)
+    description: Specific worktree (optional, otherwise all)
     required: false
 allowed-tools:
   - Bash
@@ -10,38 +10,38 @@ allowed-tools:
 
 # Worktree Status
 
-Du fuehrst den `/hydra:status` Command aus. Zeige detaillierten Status eines oder aller Worktrees.
+You are executing the `/hydra:status` command. Show detailed status of one or all worktrees.
 
-## Argumente
+## Arguments
 
-- `$ARGUMENTS` - Optional: Name eines spezifischen Worktrees
+- `$ARGUMENTS` - Optional: Name of a specific worktree
 
-## Ablauf
+## Process
 
-### 1. Hole Worktree-Liste
+### 1. Get Worktree List
 
 ```bash
 git worktree list --porcelain
 ```
 
-### 2. Fuer jeden Worktree (oder nur angegebenen)
+### 2. For Each Worktree (or Only Specified)
 
-Wechsle in das Worktree-Verzeichnis und sammle Infos:
+Switch to the worktree directory and gather info:
 
 ```bash
 # Status
 git -C {worktree-path} status --short
 
-# Letzter Commit
+# Last commit
 git -C {worktree-path} log -1 --oneline
 
-# Ahead/Behind zu main
+# Ahead/behind main
 git -C {worktree-path} rev-list --left-right --count main...HEAD 2>/dev/null
 ```
 
-### 3. Formatiere Ausgabe
+### 3. Format Output
 
-**Alle Worktrees:**
+**All worktrees:**
 
 ```
 Worktree Status:
@@ -64,7 +64,7 @@ Worktree Status:
   Ahead: 5 commits | Behind: 2
 ```
 
-**Einzelner Worktree (detailliert):**
+**Single worktree (detailed):**
 
 ```
 Worktree: feature-a
@@ -86,23 +86,23 @@ Comparison to main:
   Behind: 0 commits
 ```
 
-### 4. Fehlerbehandlung
+### 4. Error Handling
 
-Falls Worktree nicht gefunden:
+If worktree not found:
 
 ```
-Worktree '{name}' nicht gefunden.
+Worktree '{name}' not found.
 
-Verfuegbare Worktrees:
-  - main (Haupt)
+Available worktrees:
+  - main (Main)
   - feature-a
   - feature-b
 
-Zeige alle mit: /hydra:list
+Show all with: /hydra:list
 ```
 
-## Hinweise
+## Notes
 
-- Ohne Argument werden alle Worktrees gezeigt
-- Mit Argument nur der spezifische (detaillierter)
-- "Behind" zeigt ob main neue Commits hat die nicht im Worktree sind
+- Without argument, all worktrees are shown
+- With argument, only the specific one (more detailed)
+- "Behind" shows if main has new commits not in the worktree

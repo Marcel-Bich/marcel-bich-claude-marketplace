@@ -1,63 +1,63 @@
 ---
-description: Zeigt alle Git Worktrees des aktuellen Repositories
+description: hydra - List all Git worktrees of the repository
 allowed-tools:
   - Bash
 ---
 
 # Worktree List
 
-Du fuehrst den `/hydra:list` Command aus. Zeige alle Git Worktrees des aktuellen Repositories.
+You are executing the `/hydra:list` command. Show all Git worktrees of the current repository.
 
-## Ablauf
+## Process
 
-### 1. Pruefe Git-Repository
+### 1. Check Git Repository
 
 ```bash
-git rev-parse --git-dir 2>/dev/null || { echo "Fehler: Kein Git-Repository"; exit 1; }
+git rev-parse --git-dir 2>/dev/null || { echo "Error: Not a Git repository"; exit 1; }
 ```
 
-### 2. Liste Worktrees
+### 2. List Worktrees
 
 ```bash
 git worktree list
 ```
 
-### 3. Formatiere Ausgabe
+### 3. Format Output
 
-Parse den Output und zeige uebersichtlich:
+Parse the output and display clearly:
 
 ```
 Git Worktrees:
 
-  Pfad                              Branch              Commit
+  Path                              Branch              Commit
   ----------------------------------------------------------------
   /home/user/project                main                a1b2c3d
-  /home/user/project-worktrees/a    hydra/feature-a  d4e5f6g
-  /home/user/project-worktrees/b    hydra/feature-b  h7i8j9k
+  /home/user/project-worktrees/a    hydra/feature-a     d4e5f6g
+  /home/user/project-worktrees/b    hydra/feature-b     h7i8j9k
 ```
 
-### 4. Zusaetzliche Infos
+### 4. Additional Info
 
-Fuer jeden Worktree zeige optional:
-- Lock-Status (falls locked)
-- Prunable-Status (falls verwaist)
+For each worktree optionally show:
+- Lock status (if locked)
+- Prunable status (if orphaned)
 
 ```bash
-# Lock-Status pruefen
+# Check lock status
 git worktree list --porcelain | grep -A3 "worktree"
 ```
 
-### 5. Falls keine Worktrees
+### 5. If No Worktrees
 
-Falls nur der Hauptworktree existiert:
+If only the main worktree exists:
 
 ```
-Nur der Haupt-Worktree existiert (main/master).
+Only the main worktree exists (main/master).
 
-Erstelle einen neuen mit:
+Create a new one with:
   /hydra:create {name}
 ```
 
-## Ausgabe-Format
+## Output Format
 
-Kompakte Tabelle mit allen relevanten Infos auf einen Blick.
+Compact table with all relevant info at a glance.

@@ -1,8 +1,8 @@
 ---
-description: Erstellt einen neuen Git Worktree fuer isolierte Arbeit
+description: hydra - Create a new Git worktree for isolated work
 arguments:
   - name: name
-    description: Name/Branch fuer den Worktree
+    description: Name/branch for the worktree
     required: true
 allowed-tools:
   - Bash
@@ -11,89 +11,89 @@ allowed-tools:
 
 # Worktree Create
 
-Du fuehrst den `/hydra:create` Command aus. Erstelle einen neuen Git Worktree fuer isolierte Arbeit.
+You are executing the `/hydra:create` command. Create a new Git worktree for isolated work.
 
-## Argumente
+## Arguments
 
-- `$ARGUMENTS` - Name fuer den Worktree (wird auch Branch-Name)
+- `$ARGUMENTS` - Name for the worktree (also becomes branch name)
 
-## Ablauf
+## Process
 
-### 1. Pruefe Voraussetzungen
+### 1. Check Prerequisites
 
 ```bash
-# Git-Repo?
-git rev-parse --git-dir 2>/dev/null || { echo "Fehler: Kein Git-Repository"; exit 1; }
+# Git repo?
+git rev-parse --git-dir 2>/dev/null || { echo "Error: Not a Git repository"; exit 1; }
 
-# Repo-Name fuer Pfad
+# Repo name for path
 basename "$(git rev-parse --show-toplevel)"
 ```
 
-### 2. Parameter vorbereiten
+### 2. Prepare Parameters
 
-Falls `$ARGUMENTS` leer ist, frage nach dem Namen.
+If `$ARGUMENTS` is empty, ask for the name.
 
-Bestimme:
-- **Branch-Name**: `hydra/$ARGUMENTS` (oder nur `$ARGUMENTS` falls bereits Pfad-artig)
-- **Worktree-Pfad**: `../{repo-name}-worktrees/$ARGUMENTS/`
+Determine:
+- **Branch name**: `hydra/$ARGUMENTS` (or just `$ARGUMENTS` if already path-like)
+- **Worktree path**: `../{repo-name}-worktrees/$ARGUMENTS/`
 
-### 3. Pruefe ob bereits existiert
+### 3. Check if Already Exists
 
 ```bash
-# Worktree mit diesem Namen?
-git worktree list | grep -q "$ARGUMENTS" && echo "Worktree existiert bereits"
+# Worktree with this name?
+git worktree list | grep -q "$ARGUMENTS" && echo "Worktree already exists"
 
-# Branch existiert?
-git show-ref --verify --quiet "refs/heads/hydra/$ARGUMENTS" && echo "Branch existiert"
+# Branch exists?
+git show-ref --verify --quiet "refs/heads/hydra/$ARGUMENTS" && echo "Branch exists"
 ```
 
-Falls Worktree existiert: Zeige Pfad und beende mit Hinweis.
+If worktree exists: Show path and exit with hint.
 
-### 4. Erstelle Worktree
+### 4. Create Worktree
 
 ```bash
-# Pfad bestimmen
+# Determine path
 REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
 WORKTREE_PATH="../${REPO_NAME}-worktrees/$ARGUMENTS"
 
-# Verzeichnis erstellen falls noetig
+# Create directory if needed
 mkdir -p "$(dirname "$WORKTREE_PATH")"
 
-# Worktree mit neuem Branch erstellen
+# Create worktree with new branch
 git worktree add -b "hydra/$ARGUMENTS" "$WORKTREE_PATH"
 ```
 
-### 5. Ausgabe
+### 5. Output
 
-Bei Erfolg:
+On success:
 
 ```
-Worktree erstellt:
+Worktree created:
 
-  Pfad:   {absoluter Pfad}
+  Path:   {absolute path}
   Branch: hydra/{name}
 
-Naechste Schritte:
-  - cd {pfad}                        # Manuell wechseln
-  - /hydra:spawn {name} "..."     # Agent dort starten
-  - /hydra:status                 # Status pruefen
+Next steps:
+  - cd {path}                     # Switch manually
+  - /hydra:spawn {name} "..."     # Start agent there
+  - /hydra:status                 # Check status
 ```
 
-Bei Fehler:
+On error:
 
 ```
-Fehler beim Erstellen des Worktrees:
+Error creating worktree:
 
 {git error message}
 
-Moegliche Ursachen:
-- Worktree existiert bereits
-- Branch-Name bereits vergeben
-- Keine Schreibrechte im Zielverzeichnis
+Possible causes:
+- Worktree already exists
+- Branch name already taken
+- No write permission in target directory
 ```
 
-## Hinweise
+## Notes
 
-- Uncommitted changes im aktuellen Verzeichnis blockieren NICHT die Erstellung
-- Der neue Worktree startet vom aktuellen HEAD
-- Branch-Praefix `hydra/` hilft bei der Organisation
+- Uncommitted changes in current directory do NOT block creation
+- New worktree starts from current HEAD
+- Branch prefix `hydra/` helps with organization

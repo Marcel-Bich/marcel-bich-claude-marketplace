@@ -1,11 +1,11 @@
 ---
-description: Startet einen Agent in einem existierenden Worktree
+description: hydra - Start an agent in an existing worktree
 arguments:
   - name: worktree
-    description: Name des Worktrees
+    description: Name of the worktree
     required: true
   - name: prompt
-    description: Aufgabe fuer den Agent
+    description: Task for the agent
     required: true
 allowed-tools:
   - Bash
@@ -15,113 +15,113 @@ allowed-tools:
 
 # Worktree Spawn
 
-Du fuehrst den `/hydra:spawn` Command aus. Starte einen Agent in einem existierenden Worktree.
+You are executing the `/hydra:spawn` command. Start an agent in an existing worktree.
 
-## Argumente
+## Arguments
 
-`$ARGUMENTS` wird geparst als:
-- Erstes Wort: Worktree-Name
-- Rest: Prompt fuer den Agent
+`$ARGUMENTS` is parsed as:
+- First word: Worktree name
+- Rest: Prompt for the agent
 
-Beispiel: `feature-a Implementiere das neue Feature`
+Example: `feature-a Implement the new feature`
 - worktree: `feature-a`
-- prompt: `Implementiere das neue Feature`
+- prompt: `Implement the new feature`
 
-## Ablauf
+## Process
 
-### 1. Parse Argumente
+### 1. Parse Arguments
 
 ```bash
-# Erstes Wort = Worktree
+# First word = Worktree
 WORKTREE_NAME=$(echo "$ARGUMENTS" | awk '{print $1}')
 
 # Rest = Prompt
 AGENT_PROMPT=$(echo "$ARGUMENTS" | cut -d' ' -f2-)
 ```
 
-Falls eines fehlt, zeige Hilfe:
+If either is missing, show help:
 
 ```
-Nutzung: /hydra:spawn {worktree} {prompt}
+Usage: /hydra:spawn {worktree} {prompt}
 
-Beispiel:
-  /hydra:spawn feature-a "Implementiere Login-Formular"
+Example:
+  /hydra:spawn feature-a "Implement login form"
 ```
 
-### 2. Pruefe ob Worktree existiert
+### 2. Check if Worktree Exists
 
 ```bash
 git worktree list | grep -E "$WORKTREE_NAME|hydra/$WORKTREE_NAME"
 ```
 
-Falls nicht gefunden:
+If not found:
 
 ```
-Worktree '{name}' nicht gefunden.
+Worktree '{name}' not found.
 
-Optionen:
-1. Erstelle ihn zuerst: /hydra:create {name}
-2. Zeige vorhandene: /hydra:list
+Options:
+1. Create it first: /hydra:create {name}
+2. Show available: /hydra:list
 ```
 
-### 3. Bestimme absoluten Pfad
+### 3. Determine Absolute Path
 
 ```bash
 WORKTREE_PATH=$(git worktree list --porcelain | grep -B1 "$WORKTREE_NAME" | grep "worktree " | head -1 | cut -d' ' -f2-)
 
-# In absoluten Pfad umwandeln
+# Convert to absolute path
 WORKTREE_PATH=$(cd "$WORKTREE_PATH" && pwd)
 ```
 
-### 4. Starte Agent mit Task tool
+### 4. Start Agent with Task Tool
 
-Nutze das Task tool mit folgenden Parametern:
+Use the Task tool with these parameters:
 
 ```
 subagent_type: general-purpose
-run_in_background: true (optional, je nach Aufgabe)
-prompt: [siehe unten]
+run_in_background: true (optional, depending on task)
+prompt: [see below]
 ```
 
-**Agent-Prompt konstruieren:**
+**Construct agent prompt:**
 
 ```
-Du arbeitest in einem isolierten Git Worktree.
+You are working in an isolated Git worktree.
 
-WICHTIG - Dein Arbeitsverzeichnis:
+IMPORTANT - Your working directory:
   {WORKTREE_PATH}
 
-Alle Dateioperationen muessen relativ zu diesem Verzeichnis erfolgen.
-Nutze absolute Pfade oder stelle sicher dass du im richtigen Verzeichnis bist.
+All file operations must be relative to this directory.
+Use absolute paths or ensure you are in the correct directory.
 
-Deine Aufgabe:
+Your task:
 {AGENT_PROMPT}
 
-Wenn du fertig bist:
-1. Committe deine Aenderungen im Worktree
-2. Zeige git status und git log -3
+When finished:
+1. Commit your changes in the worktree
+2. Show git status and git log -3
 ```
 
-### 5. Ausgabe
+### 5. Output
 
-Nach dem Start:
+After starting:
 
 ```
-Agent gestartet in Worktree '{name}':
+Agent started in worktree '{name}':
 
-  Worktree-Pfad: {path}
-  Aufgabe: {prompt}
-  Agent-ID: {id falls background}
+  Worktree path: {path}
+  Task: {prompt}
+  Agent ID: {id if background}
 
-Naechste Schritte:
-  - /hydra:status {name}    # Fortschritt pruefen
-  - TaskOutput mit Agent-ID    # Ergebnis abrufen (falls background)
-  - /hydra:merge {name}     # Wenn fertig: zurueckmergen
+Next steps:
+  - /hydra:status {name}       # Check progress
+  - TaskOutput with agent ID   # Get result (if background)
+  - /hydra:merge {name}        # When done: merge back
 ```
 
-## Hinweise
+## Notes
 
-- Der Agent arbeitet vollstaendig isoliert im Worktree
-- Keine Konflikte mit anderen parallelen Agents
-- Agent sollte am Ende committen
-- Nutze `run_in_background: true` fuer lange Aufgaben
+- The agent works completely isolated in the worktree
+- No conflicts with other parallel agents
+- Agent should commit at the end
+- Use `run_in_background: true` for long tasks

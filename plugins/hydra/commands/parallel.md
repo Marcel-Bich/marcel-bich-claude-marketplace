@@ -1,8 +1,8 @@
 ---
-description: Startet mehrere Agents parallel in verschiedenen Worktrees
+description: hydra - Start multiple agents in parallel across worktrees
 arguments:
   - name: tasks
-    description: "Aufgaben im Format: worktree1:prompt1 | worktree2:prompt2"
+    description: "Tasks in format: worktree1:prompt1 | worktree2:prompt2"
     required: true
 allowed-tools:
   - Bash
@@ -12,29 +12,29 @@ allowed-tools:
 
 # Worktree Parallel
 
-Du fuehrst den `/hydra:parallel` Command aus. Starte mehrere Agents gleichzeitig in verschiedenen Worktrees.
+You are executing the `/hydra:parallel` command. Start multiple agents simultaneously in different worktrees.
 
-## Argumente
+## Arguments
 
-`$ARGUMENTS` wird als pipe-separierte Liste von Tasks geparst:
+`$ARGUMENTS` is parsed as a pipe-separated list of tasks:
 
 ```
 worktree1:prompt1 | worktree2:prompt2 | worktree3:prompt3
 ```
 
-Beispiel:
+Example:
 ```
-/hydra:parallel feature-a:Implementiere Login | feature-b:Implementiere Logout | feature-c:Schreibe Tests
+/hydra:parallel feature-a:Implement login | feature-b:Implement logout | feature-c:Write tests
 ```
 
-## Ablauf
+## Process
 
-### 1. Parse Aufgaben
+### 1. Parse Tasks
 
-Teile `$ARGUMENTS` bei `|` und parse jeden Teil:
+Split `$ARGUMENTS` at `|` and parse each part:
 
 ```bash
-# Beispiel-Parsing
+# Example parsing
 echo "$ARGUMENTS" | tr '|' '\n' | while read task; do
   WORKTREE=$(echo "$task" | cut -d':' -f1 | xargs)
   PROMPT=$(echo "$task" | cut -d':' -f2- | xargs)
@@ -42,25 +42,25 @@ echo "$ARGUMENTS" | tr '|' '\n' | while read task; do
 done
 ```
 
-### 2. Validiere alle Worktrees
+### 2. Validate All Worktrees
 
-Fuer jeden Task:
+For each task:
 
 ```bash
 git worktree list | grep -qE "$WORKTREE|hydra/$WORKTREE"
 ```
 
-Falls ein Worktree fehlt, biete an ihn zu erstellen:
+If a worktree is missing, offer to create it:
 
 ```
-Folgende Worktrees existieren nicht:
+The following worktrees do not exist:
   - feature-x
   - feature-y
 
-Soll ich sie erstellen? (Branches werden von main abgezweigt)
+Should I create them? (Branches will be forked from main)
 ```
 
-Falls ja, erstelle fehlende Worktrees:
+If yes, create missing worktrees:
 
 ```bash
 for WT in feature-x feature-y; do
@@ -69,65 +69,65 @@ for WT in feature-x feature-y; do
 done
 ```
 
-### 3. Starte alle Agents parallel
+### 3. Start All Agents in Parallel
 
-**WICHTIG:** Nutze einen einzigen Response mit mehreren Task-tool Aufrufen!
+**IMPORTANT:** Use a single response with multiple Task tool calls!
 
-Fuer jeden Task, rufe Task tool auf mit:
+For each task, call Task tool with:
 
 ```
 subagent_type: general-purpose
 run_in_background: true
-prompt: [wie bei /hydra:spawn]
+prompt: [like in /hydra:spawn]
 ```
 
-Alle Task-Aufrufe muessen in EINER Antwort sein fuer echte Parallelitaet.
+All Task calls must be in ONE response for true parallelism.
 
-### 4. Sammle Ergebnisse
+### 4. Collect Results
 
-Nach dem Start aller Agents:
+After starting all agents:
 
 ```
-Parallele Agents gestartet:
+Parallel agents started:
 
-  Worktree      | Agent-ID        | Aufgabe
+  Worktree      | Agent ID        | Task
   --------------|-----------------|---------------------------
-  feature-a     | agent-abc123    | Implementiere Login
-  feature-b     | agent-def456    | Implementiere Logout
-  feature-c     | agent-ghi789    | Schreibe Tests
+  feature-a     | agent-abc123    | Implement login
+  feature-b     | agent-def456    | Implement logout
+  feature-c     | agent-ghi789    | Write tests
 
-Alle Agents laufen im Hintergrund.
+All agents running in background.
 
-Naechste Schritte:
-  - /hydra:status             # Fortschritt aller Worktrees
-  - TaskOutput agent-abc123      # Ergebnis eines Agents
-  - /hydra:merge feature-a    # Wenn fertig: einzeln mergen
+Next steps:
+  - /hydra:status                # Progress of all worktrees
+  - TaskOutput agent-abc123      # Result of one agent
+  - /hydra:merge feature-a       # When done: merge individually
 ```
 
-## Eingabe-Format Alternativen
+## Input Format Alternatives
 
-Falls JSON bevorzugt:
+If JSON preferred:
 
 ```json
 [
-  {"worktree": "feature-a", "prompt": "Implementiere Login"},
-  {"worktree": "feature-b", "prompt": "Implementiere Logout"}
+  {"worktree": "feature-a", "prompt": "Implement login"},
+  {"worktree": "feature-b", "prompt": "Implement logout"}
 ]
 ```
 
-Falls Zeilenumbrueche:
+If line breaks:
 
 ```
-feature-a: Implementiere Login
-feature-b: Implementiere Logout
-feature-c: Schreibe Tests
+feature-a: Implement login
+feature-b: Implement logout
+feature-c: Write tests
 ```
 
-Erkenne das Format automatisch und parse entsprechend.
+Detect the format automatically and parse accordingly.
 
-## Hinweise
+## Notes
 
-- Maximale Parallelitaet: ~3-5 Agents (System-Limit)
-- Jeder Agent arbeitet isoliert
-- Keine Git-Konflikte zwischen Agents
-- Ergebnisse koennen in beliebiger Reihenfolge fertig werden
+- Maximum parallelism: ~3-5 agents (system limit)
+- Each agent works in isolation
+- No Git conflicts between agents
+- Results can finish in any order
