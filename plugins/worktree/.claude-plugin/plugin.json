@@ -1,0 +1,14 @@
+{
+  "name": "worktree",
+  "version": "0.1.0",
+  "description": "Git Worktree Management fuer parallele Agent-Execution ohne Git-Konflikte.",
+  "keywords": [
+    "git",
+    "worktree",
+    "parallel",
+    "agents",
+    "isolation",
+    "merge"
+  ],
+  "license": "MIT"
+}
