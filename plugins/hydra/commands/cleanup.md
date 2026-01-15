@@ -11,7 +11,7 @@ allowed-tools:
 
 # Worktree Cleanup
 
-Du fuehrst den `/worktree:cleanup` Command aus. Entferne bereits gemergte Worktrees und deren Branches.
+Du fuehrst den `/hydra:cleanup` Command aus. Entferne bereits gemergte Worktrees und deren Branches.
 
 ## Argumente
 
@@ -62,12 +62,12 @@ fi
 Cleanup-Analyse:
 
 GEMERGTE Worktrees (werden entfernt):
-  - feature-a (worktree/feature-a) - 3 Commits, gemerged vor 2 Tagen
-  - feature-b (worktree/feature-b) - 5 Commits, gemerged vor 1 Woche
+  - feature-a (hydra/feature-a) - 3 Commits, gemerged vor 2 Tagen
+  - feature-b (hydra/feature-b) - 5 Commits, gemerged vor 1 Woche
 
 NICHT GEMERGTE Worktrees (werden behalten):
-  - feature-c (worktree/feature-c) - 2 Commits, noch offen
-  - feature-d (worktree/feature-d) - 7 Commits, noch offen
+  - feature-c (hydra/feature-c) - 2 Commits, noch offen
+  - feature-d (hydra/feature-d) - 7 Commits, noch offen
 
 {Falls dry-run}
 --dry-run Modus: Keine Aenderungen vorgenommen.
@@ -83,8 +83,8 @@ Nutze AskUserQuestion:
 ```
 Sollen folgende Worktrees und Branches entfernt werden?
 
-  - feature-a (worktree/feature-a)
-  - feature-b (worktree/feature-b)
+  - feature-a (hydra/feature-a)
+  - feature-b (hydra/feature-b)
 
 Optionen:
 - Alle entfernen
@@ -126,10 +126,10 @@ Falls keine Kandidaten:
 Keine bereits gemergten Worktrees gefunden.
 
 Aktive Worktrees:
-  - feature-c (worktree/feature-c) - 2 Commits
-  - feature-d (worktree/feature-d) - 7 Commits
+  - feature-c (hydra/feature-c) - 2 Commits
+  - feature-d (hydra/feature-d) - 7 Commits
 
-Nutze /worktree:merge {name} um Worktrees zu mergen.
+Nutze /hydra:merge {name} um Worktrees zu mergen.
 ```
 
 ## Sicherheits-Features

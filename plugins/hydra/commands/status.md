@@ -10,7 +10,7 @@ allowed-tools:
 
 # Worktree Status
 
-Du fuehrst den `/worktree:status` Command aus. Zeige detaillierten Status eines oder aller Worktrees.
+Du fuehrst den `/hydra:status` Command aus. Zeige detaillierten Status eines oder aller Worktrees.
 
 ## Argumente
 
@@ -52,13 +52,13 @@ Worktree Status:
   Commit: a1b2c3d - Initial commit (2h ago)
 
 [feature-a] /home/user/project-worktrees/feature-a
-  Branch: worktree/feature-a
+  Branch: hydra/feature-a
   Status: 2 modified, 1 untracked
   Commit: d4e5f6g - Add feature A (30m ago)
   Ahead: 3 commits | Behind: 0
 
 [feature-b] /home/user/project-worktrees/feature-b
-  Branch: worktree/feature-b
+  Branch: hydra/feature-b
   Status: clean
   Commit: h7i8j9k - Implement B (1h ago)
   Ahead: 5 commits | Behind: 2
@@ -69,7 +69,7 @@ Worktree Status:
 ```
 Worktree: feature-a
 Path: /home/user/project-worktrees/feature-a
-Branch: worktree/feature-a
+Branch: hydra/feature-a
 
 Status:
   M  src/feature.ts
@@ -98,7 +98,7 @@ Verfuegbare Worktrees:
   - feature-a
   - feature-b
 
-Zeige alle mit: /worktree:list
+Zeige alle mit: /hydra:list
 ```
 
 ## Hinweise

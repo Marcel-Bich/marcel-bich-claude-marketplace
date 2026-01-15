@@ -6,7 +6,7 @@ allowed-tools:
 
 # Worktree Plugin Hilfe
 
-Du fuehrst den `/worktree:help` Command aus. Zeige dem Nutzer die verfuegbaren Commands und erklaere das Konzept von Git Worktrees.
+Du fuehrst den `/hydra:help` Command aus. Zeige dem Nutzer die verfuegbaren Commands und erklaere das Konzept von Git Worktrees.
 
 ## Was sind Git Worktrees?
 
@@ -39,11 +39,11 @@ grep -A2 "^  [a-z]" "${CLAUDE_PLUGIN_ROOT:-$(dirname $(dirname $0))}/plugin.yaml
 ## Typischer Workflow
 
 ```
-1. /worktree:create feature-x     # Erstellt Worktree
-2. /worktree:spawn feature-x "..."  # Agent arbeitet dort
-3. /worktree:status               # Fortschritt pruefen
-4. /worktree:merge feature-x      # Aenderungen integrieren
-5. /worktree:cleanup              # Aufraeumen
+1. /hydra:create feature-x     # Erstellt Worktree
+2. /hydra:spawn feature-x "..."  # Agent arbeitet dort
+3. /hydra:status               # Fortschritt pruefen
+4. /hydra:merge feature-x      # Aenderungen integrieren
+5. /hydra:cleanup              # Aufraeumen
 ```
 
 ## Weitere Informationen

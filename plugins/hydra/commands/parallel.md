@@ -12,7 +12,7 @@ allowed-tools:
 
 # Worktree Parallel
 
-Du fuehrst den `/worktree:parallel` Command aus. Starte mehrere Agents gleichzeitig in verschiedenen Worktrees.
+Du fuehrst den `/hydra:parallel` Command aus. Starte mehrere Agents gleichzeitig in verschiedenen Worktrees.
 
 ## Argumente
 
@@ -24,7 +24,7 @@ worktree1:prompt1 | worktree2:prompt2 | worktree3:prompt3
 
 Beispiel:
 ```
-/worktree:parallel feature-a:Implementiere Login | feature-b:Implementiere Logout | feature-c:Schreibe Tests
+/hydra:parallel feature-a:Implementiere Login | feature-b:Implementiere Logout | feature-c:Schreibe Tests
 ```
 
 ## Ablauf
@@ -47,7 +47,7 @@ done
 Fuer jeden Task:
 
 ```bash
-git worktree list | grep -qE "$WORKTREE|worktree/$WORKTREE"
+git worktree list | grep -qE "$WORKTREE|hydra/$WORKTREE"
 ```
 
 Falls ein Worktree fehlt, biete an ihn zu erstellen:
@@ -65,7 +65,7 @@ Falls ja, erstelle fehlende Worktrees:
 ```bash
 for WT in feature-x feature-y; do
   REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
-  git worktree add -b "worktree/$WT" "../${REPO_NAME}-worktrees/$WT"
+  git worktree add -b "hydra/$WT" "../${REPO_NAME}-worktrees/$WT"
 done
 ```
 
@@ -78,7 +78,7 @@ Fuer jeden Task, rufe Task tool auf mit:
 ```
 subagent_type: general-purpose
 run_in_background: true
-prompt: [wie bei /worktree:spawn]
+prompt: [wie bei /hydra:spawn]
 ```
 
 Alle Task-Aufrufe muessen in EINER Antwort sein fuer echte Parallelitaet.
@@ -99,9 +99,9 @@ Parallele Agents gestartet:
 Alle Agents laufen im Hintergrund.
 
 Naechste Schritte:
-  - /worktree:status             # Fortschritt aller Worktrees
+  - /hydra:status             # Fortschritt aller Worktrees
   - TaskOutput agent-abc123      # Ergebnis eines Agents
-  - /worktree:merge feature-a    # Wenn fertig: einzeln mergen
+  - /hydra:merge feature-a    # Wenn fertig: einzeln mergen
 ```
 
 ## Eingabe-Format Alternativen

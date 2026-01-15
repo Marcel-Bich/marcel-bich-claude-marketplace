@@ -15,7 +15,7 @@ allowed-tools:
 
 # Worktree Spawn
 
-Du fuehrst den `/worktree:spawn` Command aus. Starte einen Agent in einem existierenden Worktree.
+Du fuehrst den `/hydra:spawn` Command aus. Starte einen Agent in einem existierenden Worktree.
 
 ## Argumente
 
@@ -42,16 +42,16 @@ AGENT_PROMPT=$(echo "$ARGUMENTS" | cut -d' ' -f2-)
 Falls eines fehlt, zeige Hilfe:
 
 ```
-Nutzung: /worktree:spawn {worktree} {prompt}
+Nutzung: /hydra:spawn {worktree} {prompt}
 
 Beispiel:
-  /worktree:spawn feature-a "Implementiere Login-Formular"
+  /hydra:spawn feature-a "Implementiere Login-Formular"
 ```
 
 ### 2. Pruefe ob Worktree existiert
 
 ```bash
-git worktree list | grep -E "$WORKTREE_NAME|worktree/$WORKTREE_NAME"
+git worktree list | grep -E "$WORKTREE_NAME|hydra/$WORKTREE_NAME"
 ```
 
 Falls nicht gefunden:
@@ -60,8 +60,8 @@ Falls nicht gefunden:
 Worktree '{name}' nicht gefunden.
 
 Optionen:
-1. Erstelle ihn zuerst: /worktree:create {name}
-2. Zeige vorhandene: /worktree:list
+1. Erstelle ihn zuerst: /hydra:create {name}
+2. Zeige vorhandene: /hydra:list
 ```
 
 ### 3. Bestimme absoluten Pfad
@@ -114,9 +114,9 @@ Agent gestartet in Worktree '{name}':
   Agent-ID: {id falls background}
 
 Naechste Schritte:
-  - /worktree:status {name}    # Fortschritt pruefen
+  - /hydra:status {name}    # Fortschritt pruefen
   - TaskOutput mit Agent-ID    # Ergebnis abrufen (falls background)
-  - /worktree:merge {name}     # Wenn fertig: zurueckmergen
+  - /hydra:merge {name}     # Wenn fertig: zurueckmergen
 ```
 
 ## Hinweise
