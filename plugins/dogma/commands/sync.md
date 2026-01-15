@@ -821,8 +821,9 @@ Add ALL known AI-file patterns. This protects files even if they don't exist yet
 [Ww][Hh][Aa][Tt][Ss]-[Nn][Ee][Xx][Tt]*.[Mm][Dd]
 .[Pp][Ll][Aa][Nn][Nn][Ii][Nn][Gg]/
 [Pp][Rr][Oo][Mm][Pp][Tt][Ss]/
-*[Tt][Oo][Dd][Oo]*.[Mm][Dd]
-*[Tt][Oo]-[Dd][Oo]*.[Mm][Dd]
+**/[Tt][Oo][Dd][Oo]*
+**/[Tt][Oo]-[Dd][Oo]*
+**/[Tt][Oo]_[Dd][Oo]*
 
 # --- Claude Code Local Config ---
 .[Cc][Ll][Aa][Uu][Dd][Ee]/
