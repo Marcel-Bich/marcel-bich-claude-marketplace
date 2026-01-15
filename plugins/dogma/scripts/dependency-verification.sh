@@ -1,11 +1,6 @@
 #!/bin/bash
 # Dogma: Dependency Verification Hook
-# BLOCKS package installations until verified
-#
-# IDEA.md Zeile 381-388:
-# - BLOCKIEREN bis geprueft
-# - PFLICHT: WebFetch zu socket.dev/snyk fuer Vulnerabilities
-# - Kein Install ohne vorherige Pruefung - das ist das Wichtigste!
+# Asks user if they want to search for security risks before installing packages
 #
 # ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch for all hooks
 # ENV: CLAUDE_MB_DOGMA_DEPENDENCY_VERIFICATION=true (default) | false
@@ -14,10 +9,10 @@
 # Trap all errors and exit cleanly
 trap 'exit 0' ERR
 
-# === JSON OUTPUT FOR BLOCKING ===
+# === JSON OUTPUT FOR ASKING ===
 # Claude Code expects JSON with permissionDecision
-# Using "ask" allows user to confirm and proceed if they really want to
-output_block() {
+# Using "ask" prompts user to confirm
+output_ask() {
     local reason="$1"
     cat <<EOF
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"$reason"}}
@@ -101,22 +96,4 @@ fi
 # ============================================
 PKG_LIST=$(echo "$PACKAGES" | tr '\n' ' ' | sed 's/  */ /g')
 
-# Build verification URLs based on package manager
-VERIFY_URLS=""
-for PKG in $PACKAGES; do
-    CLEAN_PKG=$(echo "$PKG" | sed 's/@.*//' | sed 's/\^.*//' | sed 's/~.*//')
-    case "$PACKAGE_MANAGER" in
-        npm|yarn|pnpm)
-            VERIFY_URLS="$VERIFY_URLS socket.dev/npm/package/$CLEAN_PKG"
-            ;;
-        pip)
-            VERIFY_URLS="$VERIFY_URLS snyk.io/advisor/python/$CLEAN_PKG"
-            ;;
-        cargo)
-            VERIFY_URLS="$VERIFY_URLS crates.io/crates/$CLEAN_PKG"
-            ;;
-    esac
-done
-VERIFY_URLS=$(echo "$VERIFY_URLS" | tr ' ' ', ')
-
-output_block "BLOCKED by dogma: Dependency verification required. Packages: $PKG_LIST ($PACKAGE_MANAGER). FIRST use WebFetch to verify: $VERIFY_URLS - Check for typosquatting, malware, vulnerabilities before installing."
+output_ask "Dogma: Installing packages: $PKG_LIST ($PACKAGE_MANAGER). Ask the user: Would you like me to search the web for security risks or vulnerabilities for these packages (including specific versions) before installing? Recent npm supply chain attacks often target specific versions. If yes, use WebSearch to check each package and version."

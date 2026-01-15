@@ -56,7 +56,7 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/dependency-verification.sh",
             "timeout": 10,
-            "description": "Block package installations until verified via socket.dev/snyk"
+            "description": "Ask user if they want to search for security risks before installing packages"
           },
           {
             "type": "command",
