@@ -32,6 +32,12 @@
       "source": "./plugins/get-shit-done",
       "description": "Meta-prompting, context engineering and spec-driven development system for Claude Code",
       "version": "1.0.0"
+    },
+    {
+      "name": "worktree",
+      "source": "./plugins/worktree",
+      "description": "Git Worktree management for parallel agent execution - isolated working directories without Git conflicts.",
+      "version": "0.1.0"
     }
   ]
 }
