@@ -1,39 +1,39 @@
 # hydra
 
-Git Worktree Management fuer parallele Agent-Execution - isolierte Arbeitsverzeichnisse ohne Git-Konflikte.
+Git Worktree management for parallel agent execution - isolated working directories without Git conflicts.
 
 ## Features
 
 ### Slash Commands
 
-- `/hydra:help` - Zeigt verfuegbare Commands und erklaert das Konzept
-- `/hydra:create` - Erstellt neuen Worktree mit eigenem Branch
-- `/hydra:list` - Zeigt alle Git Worktrees des Repositories
-- `/hydra:status` - Detaillierter Status eines oder aller Worktrees
-- `/hydra:delete` - Entfernt Worktree sicher mit Bestaetigung
-- `/hydra:spawn` - Startet Agent in einem Worktree
-- `/hydra:parallel` - Mehrere Agents parallel in verschiedenen Worktrees
-- `/hydra:merge` - Merged Worktree-Branch zurueck (merge oder rebase)
-- `/hydra:cleanup` - Entfernt bereits gemergte Worktrees automatisch
+- `/hydra:help` - Show available commands and explain the concept
+- `/hydra:create` - Create a new worktree with its own branch
+- `/hydra:list` - List all Git worktrees of the repository
+- `/hydra:status` - Detailed status of one or all worktrees
+- `/hydra:delete` - Safely remove a worktree with confirmation
+- `/hydra:spawn` - Start an agent in a worktree
+- `/hydra:parallel` - Multiple agents in parallel across worktrees
+- `/hydra:merge` - Merge worktree branch back (merge or rebase)
+- `/hydra:cleanup` - Automatically remove already merged worktrees
 
-### Typischer Workflow
+### Typical Workflow
 
 ```bash
-# 1. Worktrees erstellen
+# 1. Create worktrees
 /hydra:create feature-a
 /hydra:create feature-b
 
-# 2. Agents parallel starten
-/hydra:parallel feature-a:Implementiere Login | feature-b:Implementiere Logout
+# 2. Start agents in parallel
+/hydra:parallel feature-a:Implement login | feature-b:Implement logout
 
-# 3. Status pruefen
+# 3. Check status
 /hydra:status
 
-# 4. Zurueckmergen wenn fertig
+# 4. Merge back when done
 /hydra:merge feature-a
 /hydra:merge feature-b
 
-# 5. Aufraeumen
+# 5. Clean up
 /hydra:cleanup
 ```
 

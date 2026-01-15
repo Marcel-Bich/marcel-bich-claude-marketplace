@@ -1,52 +1,52 @@
 ---
-description: Zeigt verfuegbare Worktree-Commands und erklaert das Konzept
+description: hydra - Show available commands and explain the concept
 allowed-tools:
   - Bash
 ---
 
-# Worktree Plugin Hilfe
+# Hydra Plugin Help
 
-Du fuehrst den `/hydra:help` Command aus. Zeige dem Nutzer die verfuegbaren Commands und erklaere das Konzept von Git Worktrees.
+You are executing the `/hydra:help` command. Show the user available commands and explain the Git worktree concept.
 
-## Was sind Git Worktrees?
+## What are Git Worktrees?
 
-Git Worktrees ermöglichen es, mehrere Branches gleichzeitig in verschiedenen Verzeichnissen ausgecheckt zu haben. Jeder Worktree hat:
+Git worktrees allow having multiple branches checked out simultaneously in different directories. Each worktree has:
 
-- Eigenes Arbeitsverzeichnis
-- Eigenen Index (Staging Area)
-- Eigenen HEAD
+- Its own working directory
+- Its own index (staging area)
+- Its own HEAD
 
-Das bedeutet: Parallele Arbeit an verschiedenen Features ohne `git stash` oder Branch-Wechsel.
+This means: Parallel work on different features without `git stash` or branch switching.
 
-## Warum fuer Claude-Agents?
+## Why for Claude Agents?
 
-Wenn mehrere Agents parallel arbeiten sollen, braucht jeder sein eigenes Verzeichnis. Sonst:
+When multiple agents need to work in parallel, each needs its own directory. Otherwise:
 
-- Git-Konflikte beim gleichzeitigen Commit
-- Ueberschreiben von Aenderungen
-- Chaos im Staging-Bereich
+- Git conflicts during simultaneous commits
+- Overwriting changes
+- Chaos in staging area
 
-Mit Worktrees bekommt jeder Agent sein isoliertes Arbeitsverzeichnis.
+With worktrees, each agent gets its own isolated working directory.
 
-## Verfuegbare Commands
+## Available Commands
 
-Zeige die aktuell verfuegbaren Commands:
+Show currently available commands:
 
 ```bash
-grep -A2 "^  [a-z]" "${CLAUDE_PLUGIN_ROOT:-$(dirname $(dirname $0))}/plugin.yaml" 2>/dev/null || echo "Konnte plugin.yaml nicht lesen"
+grep -A2 "^  [a-z]" "${CLAUDE_PLUGIN_ROOT:-$(dirname $(dirname $0))}/plugin.yaml" 2>/dev/null || echo "Could not read plugin.yaml"
 ```
 
-## Typischer Workflow
+## Typical Workflow
 
 ```
-1. /hydra:create feature-x     # Erstellt Worktree
-2. /hydra:spawn feature-x "..."  # Agent arbeitet dort
-3. /hydra:status               # Fortschritt pruefen
-4. /hydra:merge feature-x      # Aenderungen integrieren
-5. /hydra:cleanup              # Aufraeumen
+1. /hydra:create feature-x       # Create worktree
+2. /hydra:spawn feature-x "..."  # Agent works there
+3. /hydra:status                 # Check progress
+4. /hydra:merge feature-x        # Integrate changes
+5. /hydra:cleanup                # Clean up
 ```
 
-## Weitere Informationen
+## More Information
 
-- Git Worktree Dokumentation: `git worktree --help`
-- Plugin-Wiki fuer ausfuehrliche Anleitung
+- Git worktree documentation: `git worktree --help`
+- Plugin wiki for detailed guide

@@ -1,8 +1,8 @@
 ---
-description: Entfernt einen Git Worktree sicher
+description: hydra - Safely remove a Git worktree
 arguments:
   - name: name
-    description: Name des zu loeschenden Worktrees
+    description: Name of the worktree to delete
     required: true
 allowed-tools:
   - Bash
@@ -11,124 +11,124 @@ allowed-tools:
 
 # Worktree Delete
 
-Du fuehrst den `/hydra:delete` Command aus. Entferne einen Git Worktree sicher mit Schutz vor Datenverlust.
+You are executing the `/hydra:delete` command. Safely remove a Git worktree with data loss protection.
 
-## Argumente
+## Arguments
 
-- `$ARGUMENTS` - Name des zu loeschenden Worktrees (required)
+- `$ARGUMENTS` - Name of the worktree to delete (required)
 
-## Ablauf
+## Process
 
-### 1. Pruefe ob Worktree existiert
+### 1. Check if Worktree Exists
 
 ```bash
 git worktree list | grep -E "$ARGUMENTS|hydra/$ARGUMENTS"
 ```
 
-Falls nicht gefunden:
+If not found:
 
 ```
-Worktree '{name}' nicht gefunden.
+Worktree '{name}' not found.
 
-Verfuegbare Worktrees:
-{liste}
+Available worktrees:
+{list}
 
-Tipp: Nutze /hydra:list fuer eine Uebersicht.
+Tip: Use /hydra:list for an overview.
 ```
 
-### 2. Bestimme Pfad und Branch
+### 2. Determine Path and Branch
 
 ```bash
-# Finde exakten Pfad
+# Find exact path
 WORKTREE_PATH=$(git worktree list --porcelain | grep -A2 "worktree.*$ARGUMENTS" | grep "worktree " | cut -d' ' -f2-)
 
-# Finde Branch
+# Find branch
 WORKTREE_BRANCH=$(git worktree list --porcelain | grep -A2 "worktree.*$ARGUMENTS" | grep "branch " | sed 's/branch refs\/heads\///')
 ```
 
-### 3. Pruefe auf uncommitted changes
+### 3. Check for Uncommitted Changes
 
 ```bash
 cd "$WORKTREE_PATH"
 git status --porcelain
 ```
 
-Falls uncommitted changes vorhanden, nutze AskUserQuestion:
+If uncommitted changes exist, use AskUserQuestion:
 
 ```
-WARNUNG: Worktree '{name}' hat ungespeicherte Aenderungen:
+WARNING: Worktree '{name}' has unsaved changes:
 
 {git status output}
 
-Diese Aenderungen gehen verloren!
+These changes will be lost!
 
-Frage: Trotzdem loeschen?
-Optionen:
-- Ja, loeschen (Aenderungen verwerfen)
-- Nein, abbrechen
+Question: Delete anyway?
+Options:
+- Yes, delete (discard changes)
+- No, cancel
 ```
 
-### 4. Entferne Worktree
+### 4. Remove Worktree
 
 ```bash
-# Zurueck zum Hauptverzeichnis
+# Return to main directory
 cd "$(git worktree list | head -1 | awk '{print $1}')"
 
-# Worktree entfernen
+# Remove worktree
 git worktree remove "$WORKTREE_PATH"
 ```
 
-Falls locked:
+If locked:
 
 ```bash
-# Mit --force falls locked
+# With --force if locked
 git worktree remove --force "$WORKTREE_PATH"
 ```
 
-### 5. Optional: Branch loeschen
+### 5. Optional: Delete Branch
 
-Frage ob der Branch auch geloescht werden soll:
+Ask if the branch should also be deleted:
 
 ```
-Worktree entfernt.
+Worktree removed.
 
-Der Branch '{branch}' existiert noch.
-Soll er auch geloescht werden?
+The branch '{branch}' still exists.
+Should it also be deleted?
 
-Optionen:
-- Ja, Branch loeschen (git branch -d {branch})
-- Nein, Branch behalten
+Options:
+- Yes, delete branch (git branch -d {branch})
+- No, keep branch
 ```
 
-Falls ja:
+If yes:
 
 ```bash
 git branch -d "$WORKTREE_BRANCH"
 ```
 
-Falls Branch nicht gemerged:
+If branch not merged:
 
 ```
-Branch kann nicht geloescht werden - noch nicht gemerged.
-Nutze 'git branch -D {branch}' zum erzwungenen Loeschen.
+Branch cannot be deleted - not yet merged.
+Use 'git branch -D {branch}' for forced deletion.
 ```
 
-### 6. Ausgabe
+### 6. Output
 
-Bei Erfolg:
+On success:
 
 ```
-Worktree geloescht:
+Worktree deleted:
 
-  Pfad:   {path} (entfernt)
-  Branch: {branch} (behalten/geloescht)
+  Path:   {path} (removed)
+  Branch: {branch} (kept/deleted)
 
-Verbleibende Worktrees: /hydra:list
+Remaining worktrees: /hydra:list
 ```
 
-## Sicherheits-Features
+## Safety Features
 
-- Uncommitted changes werden IMMER angezeigt
-- Bestaetigung erforderlich bei ungespeicherten Aenderungen
-- Branch-Loeschung ist optional und separat
-- Kein --force ohne explizite Zustimmung
+- Uncommitted changes are ALWAYS shown
+- Confirmation required for unsaved changes
+- Branch deletion is optional and separate
+- No --force without explicit consent

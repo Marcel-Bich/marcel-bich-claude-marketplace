@@ -1,7 +1,7 @@
 {
   "name": "hydra",
   "version": "0.1.0",
-  "description": "Git Worktree Management fuer parallele Agent-Execution ohne Git-Konflikte.",
+  "description": "Git Worktree management for parallel agent execution - isolated working directories without Git conflicts.",
   "keywords": [
     "git",
     "worktree",

@@ -1,8 +1,8 @@
 ---
-description: Entfernt bereits gemergte Worktrees und deren Branches
+description: hydra - Remove already merged worktrees and their branches
 arguments:
   - name: dry-run
-    description: "Zeigt nur was entfernt werden wuerde (optional: --dry-run)"
+    description: "Show only what would be removed (optional: --dry-run)"
     required: false
 allowed-tools:
   - Bash
@@ -11,17 +11,17 @@ allowed-tools:
 
 # Worktree Cleanup
 
-Du fuehrst den `/hydra:cleanup` Command aus. Entferne bereits gemergte Worktrees und deren Branches.
+You are executing the `/hydra:cleanup` command. Remove already merged worktrees and their branches.
 
-## Argumente
+## Arguments
 
 - `$ARGUMENTS`:
-  - `--dry-run` oder `-n`: Zeigt nur was entfernt werden wuerde
-  - Leer: Fuehrt Cleanup mit Bestaetigung durch
+  - `--dry-run` or `-n`: Show only what would be removed
+  - Empty: Perform cleanup with confirmation
 
-## Ablauf
+## Process
 
-### 1. Bestimme Modus
+### 1. Determine Mode
 
 ```bash
 DRY_RUN=false
@@ -30,111 +30,111 @@ if [[ "$ARGUMENTS" == "--dry-run" || "$ARGUMENTS" == "-n" ]]; then
 fi
 ```
 
-### 2. Sammle alle Worktrees
+### 2. Collect All Worktrees
 
 ```bash
-# Alle Worktrees ausser dem Haupt-Worktree
+# All worktrees except the main worktree
 git worktree list | tail -n +2
 ```
 
-### 3. Pruefe jeden Worktree auf Merge-Status
+### 3. Check Each Worktree for Merge Status
 
-Fuer jeden Worktree:
+For each worktree:
 
 ```bash
-# Branch des Worktrees
+# Branch of the worktree
 BRANCH=$(git worktree list --porcelain | grep -A2 "$WORKTREE_PATH" | grep "branch " | sed 's/branch refs\/heads\///')
 
-# Ist der Branch in main/master gemerged?
+# Is the branch merged into main/master?
 MAIN_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
 
 git branch --merged "$MAIN_BRANCH" | grep -q "$BRANCH"
 if [[ $? -eq 0 ]]; then
-  echo "GEMERGED: $WORKTREE_NAME ($BRANCH)"
+  echo "MERGED: $WORKTREE_NAME ($BRANCH)"
 else
-  echo "NICHT GEMERGED: $WORKTREE_NAME ($BRANCH)"
+  echo "NOT MERGED: $WORKTREE_NAME ($BRANCH)"
 fi
 ```
 
-### 4. Zeige Cleanup-Kandidaten
+### 4. Show Cleanup Candidates
 
 ```
-Cleanup-Analyse:
+Cleanup Analysis:
 
-GEMERGTE Worktrees (werden entfernt):
-  - feature-a (hydra/feature-a) - 3 Commits, gemerged vor 2 Tagen
-  - feature-b (hydra/feature-b) - 5 Commits, gemerged vor 1 Woche
+MERGED worktrees (will be removed):
+  - feature-a (hydra/feature-a) - 3 commits, merged 2 days ago
+  - feature-b (hydra/feature-b) - 5 commits, merged 1 week ago
 
-NICHT GEMERGTE Worktrees (werden behalten):
-  - feature-c (hydra/feature-c) - 2 Commits, noch offen
-  - feature-d (hydra/feature-d) - 7 Commits, noch offen
+NOT MERGED worktrees (will be kept):
+  - feature-c (hydra/feature-c) - 2 commits, still open
+  - feature-d (hydra/feature-d) - 7 commits, still open
 
-{Falls dry-run}
---dry-run Modus: Keine Aenderungen vorgenommen.
-Ohne --dry-run ausfuehren zum Aufraeumen.
+{If dry-run}
+--dry-run mode: No changes made.
+Run without --dry-run to clean up.
 ```
 
-### 5. Bestaetigung (falls nicht dry-run)
+### 5. Confirmation (if not dry-run)
 
-Falls nicht `--dry-run` und es gibt Kandidaten:
+If not `--dry-run` and there are candidates:
 
-Nutze AskUserQuestion:
+Use AskUserQuestion:
 
 ```
-Sollen folgende Worktrees und Branches entfernt werden?
+Should the following worktrees and branches be removed?
 
   - feature-a (hydra/feature-a)
   - feature-b (hydra/feature-b)
 
-Optionen:
-- Alle entfernen
-- Einzeln bestaetigen
-- Abbrechen
+Options:
+- Remove all
+- Confirm individually
+- Cancel
 ```
 
-### 6. Cleanup durchfuehren
+### 6. Perform Cleanup
 
-Fuer jeden bestaetigten Worktree:
+For each confirmed worktree:
 
 ```bash
-# Worktree entfernen
+# Remove worktree
 git worktree remove "$WORKTREE_PATH"
 
-# Branch entfernen
+# Remove branch
 git branch -d "$BRANCH"
 ```
 
-### 7. Ausgabe
+### 7. Output
 
 ```
-Cleanup abgeschlossen:
+Cleanup completed:
 
-Entfernt:
-  - feature-a (Worktree + Branch)
-  - feature-b (Worktree + Branch)
+Removed:
+  - feature-a (worktree + branch)
+  - feature-b (worktree + branch)
 
-Behalten (nicht gemerged):
+Kept (not merged):
   - feature-c
   - feature-d
 
-Gesamt: 2 Worktrees entfernt, 2 behalten
+Total: 2 worktrees removed, 2 kept
 ```
 
-Falls keine Kandidaten:
+If no candidates:
 
 ```
-Keine bereits gemergten Worktrees gefunden.
+No already merged worktrees found.
 
-Aktive Worktrees:
-  - feature-c (hydra/feature-c) - 2 Commits
-  - feature-d (hydra/feature-d) - 7 Commits
+Active worktrees:
+  - feature-c (hydra/feature-c) - 2 commits
+  - feature-d (hydra/feature-d) - 7 commits
 
-Nutze /hydra:merge {name} um Worktrees zu mergen.
+Use /hydra:merge {name} to merge worktrees.
 ```
 
-## Sicherheits-Features
+## Safety Features
 
-- Nur vollstaendig gemergte Branches werden entfernt
-- Kein Force-Delete (`git branch -d` statt `-D`)
-- Bestaetigung vor Loeschung (ausser dry-run)
-- Nicht-gemergte Worktrees bleiben immer erhalten
+- Only fully merged branches are removed
+- No force-delete (`git branch -d` not `-D`)
+- Confirmation before deletion (except dry-run)
+- Non-merged worktrees are always kept

@@ -1,11 +1,11 @@
 ---
-description: Merged einen Worktree-Branch zurueck in den aktuellen Branch
+description: hydra - Merge a worktree branch back into current branch
 arguments:
   - name: worktree
-    description: Name des Worktrees dessen Branch gemerged wird
+    description: Name of the worktree whose branch will be merged
     required: true
   - name: strategy
-    description: "merge (default) oder rebase"
+    description: "merge (default) or rebase"
     required: false
 allowed-tools:
   - Bash
@@ -14,44 +14,44 @@ allowed-tools:
 
 # Worktree Merge
 
-Du fuehrst den `/hydra:merge` Command aus. Merge einen Worktree-Branch zurueck in den aktuellen Branch.
+You are executing the `/hydra:merge` command. Merge a worktree branch back into the current branch.
 
-## Argumente
+## Arguments
 
-- `$ARGUMENTS` wird geparst als:
-  - Erstes Wort: Worktree-Name
-  - Zweites Wort (optional): Strategy (merge/rebase)
+- `$ARGUMENTS` is parsed as:
+  - First word: Worktree name
+  - Second word (optional): Strategy (merge/rebase)
 
-Beispiele:
-- `/hydra:merge feature-a` - Merge mit Standard-Strategie
-- `/hydra:merge feature-a rebase` - Rebase statt Merge
+Examples:
+- `/hydra:merge feature-a` - Merge with default strategy
+- `/hydra:merge feature-a rebase` - Rebase instead of merge
 
-## Ablauf
+## Process
 
-### 1. Parse Argumente und validiere
+### 1. Parse Arguments and Validate
 
 ```bash
 WORKTREE_NAME=$(echo "$ARGUMENTS" | awk '{print $1}')
 STRATEGY=$(echo "$ARGUMENTS" | awk '{print $2}')
 STRATEGY=${STRATEGY:-merge}  # Default: merge
 
-# Validiere Strategy
+# Validate strategy
 if [[ "$STRATEGY" != "merge" && "$STRATEGY" != "rebase" ]]; then
-  echo "Unbekannte Strategie: $STRATEGY (erlaubt: merge, rebase)"
+  echo "Unknown strategy: $STRATEGY (allowed: merge, rebase)"
   exit 1
 fi
 ```
 
-### 2. Pruefe ob Worktree existiert
+### 2. Check if Worktree Exists
 
 ```bash
 git worktree list | grep -qE "$WORKTREE_NAME|hydra/$WORKTREE_NAME" || {
-  echo "Worktree '$WORKTREE_NAME' nicht gefunden"
+  echo "Worktree '$WORKTREE_NAME' not found"
   exit 1
 }
 ```
 
-### 3. Bestimme Branch-Namen
+### 3. Determine Branch Names
 
 ```bash
 WORKTREE_BRANCH=$(git worktree list --porcelain | grep -A2 "$WORKTREE_NAME" | grep "branch " | sed 's/branch refs\/heads\///')
@@ -60,42 +60,42 @@ CURRENT_BRANCH=$(git branch --show-current)
 echo "Merge: $WORKTREE_BRANCH -> $CURRENT_BRANCH"
 ```
 
-### 4. Pruefe auf uncommitted changes
+### 4. Check for Uncommitted Changes
 
-**Im aktuellen Verzeichnis (blockiert):**
+**In current directory (blocks):**
 
 ```bash
 if [[ -n $(git status --porcelain) ]]; then
-  echo "FEHLER: Uncommitted changes im aktuellen Verzeichnis"
-  echo "Committe oder stashe zuerst deine Aenderungen."
+  echo "ERROR: Uncommitted changes in current directory"
+  echo "Commit or stash your changes first."
   git status --short
   exit 1
 fi
 ```
 
-**Im Worktree (Warnung):**
+**In worktree (warning):**
 
 ```bash
 WORKTREE_PATH=$(git worktree list | grep "$WORKTREE_NAME" | awk '{print $1}')
 if [[ -n $(git -C "$WORKTREE_PATH" status --porcelain) ]]; then
-  echo "WARNUNG: Uncommitted changes im Worktree '$WORKTREE_NAME'"
+  echo "WARNING: Uncommitted changes in worktree '$WORKTREE_NAME'"
   git -C "$WORKTREE_PATH" status --short
-  # Frage ob fortfahren
+  # Ask whether to continue
 fi
 ```
 
-### 5. Zeige was gemerged wird
+### 5. Show What Will Be Merged
 
 ```bash
-echo "Folgende Commits werden gemerged:"
+echo "The following commits will be merged:"
 git log --oneline "$CURRENT_BRANCH".."$WORKTREE_BRANCH"
 
 echo ""
-echo "Betroffene Dateien:"
+echo "Affected files:"
 git diff --stat "$CURRENT_BRANCH"..."$WORKTREE_BRANCH"
 ```
 
-### 6. Fuehre Merge/Rebase aus
+### 6. Execute Merge/Rebase
 
 **Merge:**
 
@@ -109,54 +109,54 @@ git merge "$WORKTREE_BRANCH" -m "Merge hydra/$WORKTREE_NAME"
 git rebase "$WORKTREE_BRANCH"
 ```
 
-### 7. Konflikt-Handling
+### 7. Conflict Handling
 
-Falls Konflikte auftreten:
-
-```
-MERGE-KONFLIKT erkannt!
-
-Betroffene Dateien:
-{git status --short zeigt UU fuer conflicts}
-
-Optionen:
-1. Konflikte manuell loesen:
-   - Bearbeite die markierten Dateien
-   - git add {datei}
-   - git commit (bei merge) oder git rebase --continue
-
-2. Merge abbrechen:
-   - git merge --abort (bei merge)
-   - git rebase --abort (bei rebase)
-
-3. Ihre Version behalten (ours):
-   - git checkout --ours {datei}
-
-4. Deren Version behalten (theirs):
-   - git checkout --theirs {datei}
-```
-
-### 8. Erfolgreiche Ausgabe
+If conflicts occur:
 
 ```
-Merge erfolgreich!
+MERGE CONFLICT detected!
 
-  Von: hydra/$WORKTREE_NAME
-  Nach: $CURRENT_BRANCH
+Affected files:
+{git status --short shows UU for conflicts}
+
+Options:
+1. Resolve conflicts manually:
+   - Edit the marked files
+   - git add {file}
+   - git commit (for merge) or git rebase --continue
+
+2. Abort merge:
+   - git merge --abort (for merge)
+   - git rebase --abort (for rebase)
+
+3. Keep their version (ours):
+   - git checkout --ours {file}
+
+4. Keep their version (theirs):
+   - git checkout --theirs {file}
+```
+
+### 8. Success Output
+
+```
+Merge successful!
+
+  From: hydra/$WORKTREE_NAME
+  To: $CURRENT_BRANCH
   Commits: X
 
-Gemergte Dateien:
+Merged files:
 {diff --stat output}
 
-Naechste Schritte:
-  - /hydra:delete $WORKTREE_NAME  # Worktree aufraeumen
-  - /hydra:cleanup                 # Alle gemergten aufraeumen
-  - git push                          # Falls gewuenscht
+Next steps:
+  - /hydra:delete $WORKTREE_NAME   # Clean up worktree
+  - /hydra:cleanup                  # Clean up all merged
+  - git push                        # If desired
 ```
 
-## Sicherheits-Features
+## Safety Features
 
-- Kein automatisches Force-Push
-- Klare Anzeige was gemerged wird BEVOR es passiert
-- Konflikt-Handling mit Abort-Option
-- Uncommitted changes im Hauptverzeichnis blockieren
+- No automatic force-push
+- Clear display of what will be merged BEFORE it happens
+- Conflict handling with abort option
+- Uncommitted changes in main directory block operation
