@@ -9,13 +9,13 @@
 # Trap all errors and exit cleanly
 trap 'exit 0' ERR
 
-# === JSON OUTPUT FOR ASKING ===
+# === JSON OUTPUT FOR DENY ===
 # Claude Code expects JSON with permissionDecision
-# Using "ask" prompts user to confirm
-output_ask() {
+# Using "deny" blocks the command and shows the reason
+output_deny() {
     local reason="$1"
     cat <<EOF
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"$reason"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"$reason"}}
 EOF
     exit 0
 }
@@ -97,6 +97,9 @@ fi
 # ============================================
 # BLOCK and require verification
 # ============================================
-PKG_LIST=$(echo "$PACKAGES" | tr '\n' ' ' | sed 's/  */ /g')
+PKG_LIST=$(echo "$PACKAGES" | tr '\n' ' ' | sed 's/  */ /g' | sed 's/ $//')
 
-output_ask "Dogma: Installing packages: $PKG_LIST ($PACKAGE_MANAGER). Ask the user: Would you like me to search the web for security risks or vulnerabilities for these packages (including specific versions) before installing? Recent npm supply chain attacks often target specific versions. If yes, use WebSearch to check each package and version."
+# Build the install command for user reference
+INSTALL_CMD="$TOOL_INPUT"
+
+output_deny "BLOCKED: Package installation detected ($PACKAGE_MANAGER: $PKG_LIST). Ask the user: Do you want me to search the web for security risks or vulnerabilities for these packages first? Supply chain attacks often target specific package versions. If the user wants to skip the security check and install directly, show this command: $INSTALL_CMD"
