@@ -886,6 +886,9 @@ Add ALL known AI-file patterns. This protects files even if they don't exist yet
 .[Kk][Ii][Rr][Oo]/
 .[Tt][Rr][Aa][Ee]/
 .[Gg][Oo][Oo][Ss][Ee]/
+
+# --- Windows ---
+*:[Zz][Oo][Nn][Ee].[Ii][Dd][Ee][Nn][Tt][Ii][Ff][Ii][Ee][Rr]
 ```
 
 ### 4.5.4 Merge with existing excludes
