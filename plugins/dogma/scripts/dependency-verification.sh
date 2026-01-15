@@ -53,37 +53,39 @@ if [ "$TOOL_NAME" != "Bash" ]; then
 fi
 
 # Check for package installation commands
+# Pattern matches at start OR after && or ; or || (chained commands)
 PACKAGE_MANAGER=""
 PACKAGES=""
 
 # npm install <package> (not just npm install without args)
-if echo "$TOOL_INPUT" | grep -qE '^npm\s+(install|i|add)\s+[^-]'; then
+if echo "$TOOL_INPUT" | grep -qE '(^|&&\s*|;\s*|\|\|\s*)npm\s+(install|i|add)\s+[^-]'; then
     PACKAGE_MANAGER="npm"
-    PACKAGES=$(echo "$TOOL_INPUT" | sed -E 's/^npm\s+(install|i|add)\s+//' | sed 's/\s*--.*//' | tr ' ' '\n' | grep -v '^-' | grep -v '^$')
+    # Extract packages from the npm install part of the command
+    PACKAGES=$(echo "$TOOL_INPUT" | grep -oE 'npm\s+(install|i|add)\s+[^;&]+' | sed -E 's/npm\s+(install|i|add)\s+//' | sed 's/\s*--.*//' | tr ' ' '\n' | grep -v '^-' | grep -v '^$')
 fi
 
 # yarn add <package>
-if echo "$TOOL_INPUT" | grep -qE '^yarn\s+add\s+[^-]'; then
+if echo "$TOOL_INPUT" | grep -qE '(^|&&\s*|;\s*|\|\|\s*)yarn\s+add\s+[^-]'; then
     PACKAGE_MANAGER="yarn"
-    PACKAGES=$(echo "$TOOL_INPUT" | sed 's/^yarn\s\+add\s\+//' | sed 's/\s*--.*//' | tr ' ' '\n' | grep -v '^-' | grep -v '^$')
+    PACKAGES=$(echo "$TOOL_INPUT" | grep -oE 'yarn\s+add\s+[^;&]+' | sed 's/yarn\s\+add\s\+//' | sed 's/\s*--.*//' | tr ' ' '\n' | grep -v '^-' | grep -v '^$')
 fi
 
 # pnpm add <package>
-if echo "$TOOL_INPUT" | grep -qE '^pnpm\s+(add|install)\s+[^-]'; then
+if echo "$TOOL_INPUT" | grep -qE '(^|&&\s*|;\s*|\|\|\s*)pnpm\s+(add|install)\s+[^-]'; then
     PACKAGE_MANAGER="pnpm"
-    PACKAGES=$(echo "$TOOL_INPUT" | sed -E 's/^pnpm\s+(add|install)\s+//' | sed 's/\s*--.*//' | tr ' ' '\n' | grep -v '^-' | grep -v '^$')
+    PACKAGES=$(echo "$TOOL_INPUT" | grep -oE 'pnpm\s+(add|install)\s+[^;&]+' | sed -E 's/pnpm\s+(add|install)\s+//' | sed 's/\s*--.*//' | tr ' ' '\n' | grep -v '^-' | grep -v '^$')
 fi
 
 # pip install <package>
-if echo "$TOOL_INPUT" | grep -qE '^pip[3]?\s+install\s+[^-]'; then
+if echo "$TOOL_INPUT" | grep -qE '(^|&&\s*|;\s*|\|\|\s*)pip[3]?\s+install\s+[^-]'; then
     PACKAGE_MANAGER="pip"
-    PACKAGES=$(echo "$TOOL_INPUT" | sed -E 's/^pip[3]?\s+install\s+//' | sed 's/\s*--.*//' | tr ' ' '\n' | grep -v '^-' | grep -v '^$')
+    PACKAGES=$(echo "$TOOL_INPUT" | grep -oE 'pip[3]?\s+install\s+[^;&]+' | sed -E 's/pip[3]?\s+install\s+//' | sed 's/\s*--.*//' | tr ' ' '\n' | grep -v '^-' | grep -v '^$')
 fi
 
 # cargo add <package>
-if echo "$TOOL_INPUT" | grep -qE '^cargo\s+add\s+'; then
+if echo "$TOOL_INPUT" | grep -qE '(^|&&\s*|;\s*|\|\|\s*)cargo\s+add\s+'; then
     PACKAGE_MANAGER="cargo"
-    PACKAGES=$(echo "$TOOL_INPUT" | sed 's/^cargo\s\+add\s\+//' | sed 's/\s*--.*//' | tr ' ' '\n' | grep -v '^-' | grep -v '^$')
+    PACKAGES=$(echo "$TOOL_INPUT" | grep -oE 'cargo\s+add\s+[^;&]+' | sed 's/cargo\s\+add\s\+//' | sed 's/\s*--.*//' | tr ' ' '\n' | grep -v '^-' | grep -v '^$')
 fi
 
 # If no package manager detected or no packages, exit

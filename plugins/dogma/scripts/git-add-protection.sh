@@ -60,9 +60,9 @@ fi
 # ============================================
 # Part 1: Check for git add commands
 # ============================================
-if ! echo "$TOOL_INPUT" | grep -qE '^git\s+add\s'; then
+if ! echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\|)git\s+add\s'; then
     # Also check for git commit -a (adds all modified files including secrets)
-    if echo "$TOOL_INPUT" | grep -qE '^git\s+commit\s.*-a'; then
+    if echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\|)git\s+commit\s.*-a'; then
         # Check if .env exists and is modified
         if [ -f ".env" ]; then
             if git status --porcelain .env 2>/dev/null | grep -q '^.M\|^M'; then

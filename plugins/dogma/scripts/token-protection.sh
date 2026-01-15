@@ -137,7 +137,7 @@ log_debug "Checking dangerous commands..."
 # Git remote commands (tokens can be embedded in URLs)
 # Catches: git remote -v, git remote --verbose, git remote show, git remote get-url
 # Also: /usr/bin/git, command git, sudo git
-if echo "$COMMAND" | grep -qE '(^|\||;|&&|\s)(sudo\s+)?(command\s+)?([/a-z]*\/)?git\s+remote\s+(-v|--verbose|show|get-url)'; then
+if echo "$COMMAND" | grep -qE '(^|\||;|&&|\|\||\s)(sudo\s+)?(command\s+)?([/a-z]*\/)?git\s+remote\s+(-v|--verbose|show|get-url)'; then
     log_debug "BLOCKING: git remote"
     output_block "BLOCKED: 'git remote -v/--verbose/show/get-url' can expose tokens embedded in remote URLs. Use 'git remote' (without -v) to list remote names only."
 fi
@@ -151,12 +151,12 @@ fi
 # Catches: env, printenv, export, set (alone or piped)
 # Also: /usr/bin/env, command env, sudo env, bash -c "env"
 log_debug "Checking env pattern against: $COMMAND"
-if echo "$COMMAND" | grep -qE '(^|\||;|&&|\s)(sudo\s+)?(command\s+)?([/a-z]*\/)?(env|printenv)(\s*$|\s*\||\s+[^=])'; then
+if echo "$COMMAND" | grep -qE '(^|\||;|&&|\|\||\s)(sudo\s+)?(command\s+)?([/a-z]*\/)?(env|printenv)(\s*$|\s*\||\s+[^=])'; then
     log_debug "BLOCKING: env/printenv"
     output_block "BLOCKED: 'env'/'printenv' would expose all environment variables including tokens. Use specific variable checks instead."
 fi
 # Standalone export/set (without variable assignment)
-if echo "$COMMAND" | grep -qE '(^|\||;|&&)\s*(export|set)\s*($|\|)'; then
+if echo "$COMMAND" | grep -qE '(^|\||;|&&|\|\|)\s*(export|set)\s*($|\|)'; then
     log_debug "BLOCKING: export/set"
     output_block "BLOCKED: 'export'/'set' without arguments exposes all variables. Use specific variable checks instead."
 fi
