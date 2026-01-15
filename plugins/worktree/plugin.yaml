@@ -1,0 +1,34 @@
+name: worktree
+description: Git Worktree Management fuer parallele Agent-Execution ohne Git-Konflikte
+version: 0.1.0
+author: Marcel Bich
+repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
+
+commands:
+  help:
+    description: Zeigt verfuegbare Worktree-Commands und erklaert das Konzept
+    source: commands/help.md
+  create:
+    description: Erstellt einen neuen Git Worktree fuer isolierte Arbeit
+    source: commands/create.md
+  list:
+    description: Zeigt alle Git Worktrees des aktuellen Repositories
+    source: commands/list.md
+  status:
+    description: Zeigt detaillierten Status eines oder aller Worktrees
+    source: commands/status.md
+  delete:
+    description: Entfernt einen Git Worktree sicher
+    source: commands/delete.md
+  spawn:
+    description: Startet einen Agent in einem existierenden Worktree
+    source: commands/spawn.md
+  parallel:
+    description: Startet mehrere Agents parallel in verschiedenen Worktrees
+    source: commands/parallel.md
+  merge:
+    description: Merged einen Worktree-Branch zurueck in den aktuellen Branch
+    source: commands/merge.md
+  cleanup:
+    description: Entfernt bereits gemergte Worktrees und deren Branches
+    source: commands/cleanup.md
