@@ -880,7 +880,12 @@ format_output() {
         lines+=("$(format_limit_line "5h all" "$five_pct" "$five_hour_reset")")
         # Local 5h directly below global 5h
         if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "${local_5h_pct}" ]]; then
-            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset") (${LOCAL_DEVICE_LABEL})")
+            local local_5h_color="" local_5h_reset=""
+            if [[ "$SHOW_COLORS" == "true" ]]; then
+                local_5h_color=$(get_color "${local_5h_pct}")
+                local_5h_reset="${COLOR_RESET}"
+            fi
+            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset") ${local_5h_color}(${LOCAL_DEVICE_LABEL})${local_5h_reset}")
         fi
     fi
 
@@ -889,7 +894,12 @@ format_output() {
         lines+=("$(format_limit_line "7d all" "$seven_pct" "$seven_day_reset")")
         # Local 7d directly below global 7d
         if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "${local_7d_pct}" ]]; then
-            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset") (${LOCAL_DEVICE_LABEL})")
+            local local_7d_color="" local_7d_reset=""
+            if [[ "$SHOW_COLORS" == "true" ]]; then
+                local_7d_color=$(get_color "${local_7d_pct}")
+                local_7d_reset="${COLOR_RESET}"
+            fi
+            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset") ${local_7d_color}(${LOCAL_DEVICE_LABEL})${local_7d_reset}")
         fi
     fi
 
