@@ -282,7 +282,8 @@ progress_bar() {
     echo "[$bar]"
 }
 
-# Format reset time as "yyyy-mm-dd hh:mm"
+# Format reset time as "yyyy-mm-dd hh:mm", rounded to nearest hour
+# API sometimes returns :59:59, sometimes :00:00 - we round to the hour
 format_reset_datetime() {
     local reset_at="$1"
 
@@ -293,11 +294,15 @@ format_reset_datetime() {
 
     local formatted
     if date --version >/dev/null 2>&1; then
-        # GNU date (Linux/WSL)
-        formatted=$(date -d "$reset_at" "+%Y-%m-%d %H:%M" 2>/dev/null) || formatted="-"
+        # GNU date (Linux/WSL) - round to nearest hour by adding 30 minutes then truncating
+        # This handles :59:59 -> next hour, :00:00 -> same hour
+        formatted=$(date -d "$reset_at + 30 minutes" "+%Y-%m-%d %H:00" 2>/dev/null) || formatted="-"
     else
-        # BSD date (macOS)
-        formatted=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${reset_at%%.*}" "+%Y-%m-%d %H:%M" 2>/dev/null) || formatted="-"
+        # BSD date (macOS) - same rounding logic
+        local epoch
+        epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${reset_at%%.*}" "+%s" 2>/dev/null) || { echo "-"; return; }
+        epoch=$((epoch + 1800))  # Add 30 minutes
+        formatted=$(date -r "$epoch" "+%Y-%m-%d %H:00" 2>/dev/null) || formatted="-"
     fi
 
     echo "$formatted"
@@ -1069,13 +1074,14 @@ format_output() {
             needs_update=true
         fi
 
-        # Reset detection: if reset_at changed, reset start_pct
-        if [[ -n "$five_hour_reset" ]] && [[ "$five_hour_reset" != "$last_5h_reset" ]] && [[ -n "$last_5h_reset" ]]; then
+        # Reset detection: if current % dropped below start % (usage was reset by API)
+        # This is more reliable than comparing timestamps which vary between :59:59 and :00:00
+        if [[ "$five_pct" -lt "$start_5h" ]]; then
             start_5h="$five_pct"
             needs_update=true
         fi
-        if [[ -n "$seven_day_reset" ]] && [[ "$seven_day_reset" != "$last_7d_reset" ]] && [[ -n "$last_7d_reset" ]]; then
-            start_7d="${seven_pct:-0}"
+        if [[ -n "$seven_pct" ]] && [[ "$seven_pct" -lt "$start_7d" ]]; then
+            start_7d="$seven_pct"
             needs_update=true
         fi
 
