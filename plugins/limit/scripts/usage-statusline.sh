@@ -44,8 +44,8 @@ SHOW_SESSION="${CLAUDE_MB_LIMIT_SESSION:-true}"
 SHOW_SESSION_ID="${CLAUDE_MB_LIMIT_SESSION_ID:-true}"
 SHOW_SEPARATORS="${CLAUDE_MB_LIMIT_SEPARATORS:-true}"
 
-# Local device tracking (opt-in, default false)
-SHOW_LOCAL="${CLAUDE_MB_LIMIT_LOCAL:-false}"
+# Local device tracking (default true)
+SHOW_LOCAL="${CLAUDE_MB_LIMIT_LOCAL:-true}"
 LOCAL_DEVICE_LABEL="${CLAUDE_MB_LIMIT_DEVICE_LABEL:-$(hostname)}"
 
 # Default color (full ANSI escape sequence, default \033[90m = dark gray)
