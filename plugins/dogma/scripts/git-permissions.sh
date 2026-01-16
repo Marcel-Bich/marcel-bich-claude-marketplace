@@ -25,11 +25,18 @@ source "$SCRIPT_DIR/lib-permissions.sh"
 
 # === JSON OUTPUT FOR BLOCKING ===
 # Claude Code expects JSON with permissionDecision
-# Using "deny" - git permissions are binding policy
-output_block() {
+output_deny() {
     local reason="$1"
     cat <<EOF
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"$reason"}}
+EOF
+    exit 0
+}
+
+output_ask() {
+    local reason="$1"
+    cat <<EOF
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"$reason"}}
 EOF
     exit 0
 }
@@ -89,23 +96,41 @@ fi
 
 # Check git add (also catches: && git add, ; git add, || git add)
 if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\||\||\$\(|\(|`)\s*git\s+add(\s|$)'; then
-    if ! check_permission "$PERMS_SECTION" "git add"; then
-        output_block "BLOCKED by dogma: git add not permitted. Change [ ] to [x] for git add in $PERMS_FILE or run manually."
-    fi
+    MODE=$(get_permission_mode "$PERMS_SECTION" "git add")
+    case "$MODE" in
+        deny)
+            output_deny "BLOCKED by dogma: git add not permitted. Change [ ] to [x] or [?] for git add in $PERMS_FILE or run manually."
+            ;;
+        ask)
+            output_ask "dogma: git add requires confirmation. Change [?] to [x] in $PERMS_FILE to allow automatically."
+            ;;
+    esac
 fi
 
 # Check git commit (also catches chained commands)
 if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\||\||\$\(|\(|`)\s*git\s+commit(\s|$)'; then
-    if ! check_permission "$PERMS_SECTION" "git commit"; then
-        output_block "BLOCKED by dogma: git commit not permitted. Change [ ] to [x] for git commit in $PERMS_FILE or ask user."
-    fi
+    MODE=$(get_permission_mode "$PERMS_SECTION" "git commit")
+    case "$MODE" in
+        deny)
+            output_deny "BLOCKED by dogma: git commit not permitted. Change [ ] to [x] or [?] for git commit in $PERMS_FILE or run manually."
+            ;;
+        ask)
+            output_ask "dogma: git commit requires confirmation. Change [?] to [x] in $PERMS_FILE to allow automatically."
+            ;;
+    esac
 fi
 
 # Check git push (also catches chained commands)
 if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\||\||\$\(|\(|`)\s*git\s+push(\s|$)'; then
-    if ! check_permission "$PERMS_SECTION" "git push"; then
-        output_block "BLOCKED by dogma: git push not permitted. Change [ ] to [x] for git push in $PERMS_FILE or push manually."
-    fi
+    MODE=$(get_permission_mode "$PERMS_SECTION" "git push")
+    case "$MODE" in
+        deny)
+            output_deny "BLOCKED by dogma: git push not permitted. Change [ ] to [x] or [?] for git push in $PERMS_FILE or push manually."
+            ;;
+        ask)
+            output_ask "dogma: git push requires confirmation. Change [?] to [x] in $PERMS_FILE to allow automatically."
+            ;;
+    esac
 fi
 
 dogma_debug_log "=== git-permissions.sh END ==="

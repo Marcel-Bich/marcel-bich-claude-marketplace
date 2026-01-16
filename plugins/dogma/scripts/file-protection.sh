@@ -11,9 +11,9 @@
 # 3. CLAUDE.git.md (fallback)
 #
 # Modes (based on checkboxes):
-# - [x] May delete files autonomously -> allow all deletes
-# - [ ] May delete (default) -> block + log to TO-DELETE.md (non-blocking)
-# - [ ] May delete + [x] Ask before deleting -> ask user for confirmation
+# - [x] May delete files autonomously -> auto: allow all deletes
+# - [?] May delete files autonomously -> ask: prompt user for confirmation
+# - [ ] May delete files autonomously -> deny: log to TO-DELETE.md
 #
 # ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch for all hooks
 # ENV: CLAUDE_MB_DOGMA_FILE_PROTECTION=true (default) | false
@@ -72,28 +72,17 @@ INPUT=$(cat 2>/dev/null || true)
 
 # === CHECK PERMISSIONS ===
 PERMS_FILE=$(find_permissions_file)
-DELETE_ALLOWED="false"
-LOG_MODE="true"  # Default: log to TO-DELETE.md (non-blocking)
+DELETE_MODE="deny"  # Default: deny (log to TO-DELETE.md)
 
 if [ -n "$PERMS_FILE" ] && [ -f "$PERMS_FILE" ]; then
     PERMS_SECTION=$(get_permissions_section "$PERMS_FILE")
-
-    # Check if delete is allowed: [x] May delete files autonomously
-    if check_permission "$PERMS_SECTION" "May delete files autonomously"; then
-        DELETE_ALLOWED="true"
-        dogma_debug_log "Delete allowed by permissions"
-    fi
-
-    # Check if ask mode explicitly requested: [x] Ask before deleting
-    if check_permission "$PERMS_SECTION" "Ask before deleting"; then
-        LOG_MODE="false"
-        dogma_debug_log "Ask mode enabled"
-    fi
+    DELETE_MODE=$(get_permission_mode "$PERMS_SECTION" "delete files")
+    dogma_debug_log "Delete mode: $DELETE_MODE"
 fi
 
-# If delete is allowed, exit early (no blocking)
-if [ "$DELETE_ALLOWED" = "true" ]; then
-    dogma_debug_log "Delete permitted - exiting"
+# If delete is allowed (auto), exit early (no blocking)
+if [ "$DELETE_MODE" = "auto" ]; then
+    dogma_debug_log "Delete permitted (auto) - exiting"
     exit 0
 fi
 
@@ -175,8 +164,13 @@ if [ -n "$BLOCKED" ]; then
             ;;
     esac
 
-    if [ "$LOG_MODE" = "true" ]; then
-        # Log mode: Write to TO-DELETE.md and deny (non-blocking for agent)
+    if [ "$DELETE_MODE" = "ask" ]; then
+        # Ask mode: Prompt user for confirmation
+        REASON_MSG="dogma: $BLOCKED ${TARGET:-command} requires confirmation. Change [?] to [x] in $PERMS_FILE to allow automatically."
+        REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
+        output_ask "$REASON_MSG"
+    else
+        # Deny mode: Write to TO-DELETE.md and deny
         TO_DELETE_FILE="$PWD/TO-DELETE.md"
         TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
@@ -195,14 +189,9 @@ HEADER
         echo "- [ ] \`$BLOCKED ${TARGET:-unknown}\` - $REASON ($TIMESTAMP)" >> "$TO_DELETE_FILE"
 
         # Deny with info message
-        REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} logged to TO-DELETE.md. Agent continues without deleting."
+        REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} logged to TO-DELETE.md. Change [ ] to [x] or [?] in $PERMS_FILE."
         REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
         output_deny "$REASON_MSG"
-    else
-        # Ask mode: Prompt user for confirmation
-        REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} - $REASON. User can run manually or bypass with CLAUDE_MB_DOGMA_FILE_PROTECTION=false"
-        REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
-        output_ask "$REASON_MSG"
     fi
 fi
 
