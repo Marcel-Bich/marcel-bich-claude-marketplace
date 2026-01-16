@@ -16,6 +16,27 @@ Intelligent sync of Claude instructions with enforcement hooks for security and 
 - `/dogma:sanitize-git` - Sanitize git history from Claude/AI traces and fix tracking issues
 - `/dogma:docs-update` - Sync documentation across README files and wiki articles
 
+### Permissions System
+
+Control Claude's autonomy with `DOGMA-PERMISSIONS.md` in your project root:
+
+```markdown
+<permissions>
+- [x] May run `git add` autonomously      # auto
+- [x] May run `git commit` autonomously   # auto
+- [?] May run `git push` autonomously     # ask first
+- [?] May delete files autonomously       # ask first
+</permissions>
+```
+
+| Marker | Mode | Behavior |
+|--------|------|----------|
+| `[x]` | auto | Claude does it automatically |
+| `[?]` | ask | Claude asks for confirmation |
+| `[ ]` | deny | Blocked (manual only) |
+
+Run `/dogma:permissions` to configure interactively.
+
 ### Enforcement Hooks
 
 - Git permissions, secrets detection
