@@ -44,6 +44,10 @@ SHOW_SESSION="${CLAUDE_MB_LIMIT_SESSION:-true}"
 SHOW_SESSION_ID="${CLAUDE_MB_LIMIT_SESSION_ID:-true}"
 SHOW_SEPARATORS="${CLAUDE_MB_LIMIT_SEPARATORS:-true}"
 
+# Local device tracking (opt-in, default false)
+SHOW_LOCAL="${CLAUDE_MB_LIMIT_LOCAL:-false}"
+LOCAL_DEVICE_LABEL="${CLAUDE_MB_LIMIT_DEVICE_LABEL:-$(hostname)}"
+
 # Default color (full ANSI escape sequence, default \033[90m = dark gray)
 # Example: export CLAUDE_MB_LIMIT_DEFAULT_COLOR='\033[38;5;244m' for lighter gray
 DEFAULT_COLOR="${CLAUDE_MB_LIMIT_DEFAULT_COLOR:-\033[90m}"
@@ -857,14 +861,36 @@ format_output() {
         lines+=("${COLOR_BLACK}-${COLOR_RESET}")
     fi
 
+    # Source local calculator if enabled (needed for local bars below each global bar)
+    local local_5h_pct="" local_7d_pct=""
+    if [[ "$SHOW_LOCAL" == "true" ]]; then
+        local script_dir
+        script_dir="$(dirname "${BASH_SOURCE[0]}")"
+        # shellcheck source=/dev/null
+        source "${script_dir}/local-usage-calculator.sh" 2>/dev/null || true
+
+        if type get_local_5h_percent &>/dev/null; then
+            local_5h_pct=$(get_local_5h_percent "${five_pct}" 2>/dev/null) || local_5h_pct=""
+            local_7d_pct=$(get_local_7d_percent "${seven_pct:-0}" 2>/dev/null) || local_7d_pct=""
+        fi
+    fi
+
     # 5-hour limit (if enabled) - all models
     if [[ "$SHOW_5H" == "true" ]]; then
         lines+=("$(format_limit_line "5h all" "$five_pct" "$five_hour_reset")")
+        # Local 5h directly below global 5h
+        if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "${local_5h_pct}" ]]; then
+            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset") (${LOCAL_DEVICE_LABEL})")
+        fi
     fi
 
     # 7-day limit (if enabled and available) - all models
     if [[ "$SHOW_7D" == "true" ]] && [[ -n "$seven_pct" ]]; then
         lines+=("$(format_limit_line "7d all" "$seven_pct" "$seven_day_reset")")
+        # Local 7d directly below global 7d
+        if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "${local_7d_pct}" ]]; then
+            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset") (${LOCAL_DEVICE_LABEL})")
+        fi
     fi
 
     # 7-day Opus limit (if enabled and has data)
