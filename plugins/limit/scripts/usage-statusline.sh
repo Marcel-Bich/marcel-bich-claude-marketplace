@@ -868,6 +868,11 @@ format_output() {
     seven_pct=$(parse_int "$seven_day_util")
     opus_pct=$(parse_int "$opus_util")
     sonnet_pct=$(parse_int "$sonnet_util")
+    # Cap all percentages at 100 max
+    [[ "$five_pct" -gt 100 ]] && five_pct=100
+    [[ -n "$seven_pct" && "$seven_pct" -gt 100 ]] && seven_pct=100
+    [[ -n "$opus_pct" && "$opus_pct" -gt 100 ]] && opus_pct=100
+    [[ -n "$sonnet_pct" && "$sonnet_pct" -gt 100 ]] && sonnet_pct=100
 
     # Build output lines
     local lines=()
