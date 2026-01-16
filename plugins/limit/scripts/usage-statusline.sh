@@ -1098,12 +1098,16 @@ format_output() {
         # Read calibration state (includes window-specific token counts)
         local estimated_max_5h="$DEFAULT_ESTIMATED_MAX_5H"
         local estimated_max_7d="$DEFAULT_ESTIMATED_MAX_7D"
+        local backup_max_5h="$DEFAULT_ESTIMATED_MAX_5H"
+        local backup_max_7d="$DEFAULT_ESTIMATED_MAX_7D"
         local last_total_tokens=0 last_api_5h=0 last_api_7d=0
         local window_tokens_5h=0 window_tokens_7d=0
 
         if [[ -f "$STATE_FILE" ]]; then
             estimated_max_5h=$(jq -r '.calibration.estimated_max_5h // '"$DEFAULT_ESTIMATED_MAX_5H"'' "$STATE_FILE" 2>/dev/null) || estimated_max_5h="$DEFAULT_ESTIMATED_MAX_5H"
             estimated_max_7d=$(jq -r '.calibration.estimated_max_7d // '"$DEFAULT_ESTIMATED_MAX_7D"'' "$STATE_FILE" 2>/dev/null) || estimated_max_7d="$DEFAULT_ESTIMATED_MAX_7D"
+            backup_max_5h=$(jq -r '.calibration.backup_max_5h // '"$DEFAULT_ESTIMATED_MAX_5H"'' "$STATE_FILE" 2>/dev/null) || backup_max_5h="$DEFAULT_ESTIMATED_MAX_5H"
+            backup_max_7d=$(jq -r '.calibration.backup_max_7d // '"$DEFAULT_ESTIMATED_MAX_7D"'' "$STATE_FILE" 2>/dev/null) || backup_max_7d="$DEFAULT_ESTIMATED_MAX_7D"
             last_total_tokens=$(jq -r '.calibration.last_total_tokens // 0' "$STATE_FILE" 2>/dev/null) || last_total_tokens=0
             last_api_5h=$(jq -r '.calibration.last_api_5h // 0' "$STATE_FILE" 2>/dev/null) || last_api_5h=0
             last_api_7d=$(jq -r '.calibration.last_api_7d // 0' "$STATE_FILE" 2>/dev/null) || last_api_7d=0
@@ -1112,6 +1116,8 @@ format_output() {
 
             [[ "$estimated_max_5h" == "null" ]] && estimated_max_5h="$DEFAULT_ESTIMATED_MAX_5H"
             [[ "$estimated_max_7d" == "null" ]] && estimated_max_7d="$DEFAULT_ESTIMATED_MAX_7D"
+            [[ "$backup_max_5h" == "null" ]] && backup_max_5h="$DEFAULT_ESTIMATED_MAX_5H"
+            [[ "$backup_max_7d" == "null" ]] && backup_max_7d="$DEFAULT_ESTIMATED_MAX_7D"
             [[ "$last_total_tokens" == "null" ]] && last_total_tokens=0
             [[ "$last_api_5h" == "null" ]] && last_api_5h=0
             [[ "$last_api_7d" == "null" ]] && last_api_7d=0
@@ -1155,22 +1161,49 @@ format_output() {
 
         # Dynamic calibration: observe token_delta vs pct_delta
         # Only calibrate when we have positive deltas and no reset just happened
+        # Sanity check: if jump > 50% of old value, revert to backup
+        local CALIBRATION_THRESHOLD=50  # percent
+
         if [[ "$token_delta" -gt 1000 ]] && [[ "$pct_delta_5h" -gt 0 ]] && [[ "$reset_5h" == "false" ]]; then
             # observed_max = token_delta * 100 / pct_delta
             local observed_max_5h=$((token_delta * 100 / pct_delta_5h))
             # Sanity check: ignore extreme outliers (other PCs working simultaneously)
             if [[ "$observed_max_5h" -gt 50000 ]] && [[ "$observed_max_5h" -lt 2000000 ]]; then
+                local old_max_5h="$estimated_max_5h"
                 # Exponential moving average: 80% old + 20% new
-                estimated_max_5h=$(awk "BEGIN {printf \"%.0f\", 0.8 * $estimated_max_5h + 0.2 * $observed_max_5h}")
-                debug_log "Calibrated 5h max: observed=$observed_max_5h new_estimate=$estimated_max_5h"
+                local new_max_5h=$(awk "BEGIN {printf \"%.0f\", 0.8 * $estimated_max_5h + 0.2 * $observed_max_5h}")
+                # Check if jump is too large (> threshold % of old value)
+                local jump_5h=$((new_max_5h > old_max_5h ? new_max_5h - old_max_5h : old_max_5h - new_max_5h))
+                local threshold_5h=$((old_max_5h * CALIBRATION_THRESHOLD / 100))
+                if [[ "$jump_5h" -gt "$threshold_5h" ]]; then
+                    # Jump too large - revert to backup
+                    estimated_max_5h="$backup_max_5h"
+                    debug_log "Calibration 5h rejected (jump $jump_5h > threshold $threshold_5h), reverted to backup $backup_max_5h"
+                else
+                    # Jump acceptable - update backup and apply new value
+                    backup_max_5h="$old_max_5h"
+                    estimated_max_5h="$new_max_5h"
+                    debug_log "Calibrated 5h max: observed=$observed_max_5h new_estimate=$estimated_max_5h"
+                fi
             fi
         fi
 
         if [[ "$token_delta" -gt 1000 ]] && [[ "$pct_delta_7d" -gt 0 ]] && [[ "$reset_7d" == "false" ]]; then
             local observed_max_7d=$((token_delta * 100 / pct_delta_7d))
             if [[ "$observed_max_7d" -gt 500000 ]] && [[ "$observed_max_7d" -lt 50000000 ]]; then
-                estimated_max_7d=$(awk "BEGIN {printf \"%.0f\", 0.8 * $estimated_max_7d + 0.2 * $observed_max_7d}")
-                debug_log "Calibrated 7d max: observed=$observed_max_7d new_estimate=$estimated_max_7d"
+                local old_max_7d="$estimated_max_7d"
+                local new_max_7d=$(awk "BEGIN {printf \"%.0f\", 0.8 * $estimated_max_7d + 0.2 * $observed_max_7d}")
+                # Check if jump is too large
+                local jump_7d=$((new_max_7d > old_max_7d ? new_max_7d - old_max_7d : old_max_7d - new_max_7d))
+                local threshold_7d=$((old_max_7d * CALIBRATION_THRESHOLD / 100))
+                if [[ "$jump_7d" -gt "$threshold_7d" ]]; then
+                    estimated_max_7d="$backup_max_7d"
+                    debug_log "Calibration 7d rejected (jump $jump_7d > threshold $threshold_7d), reverted to backup $backup_max_7d"
+                else
+                    backup_max_7d="$old_max_7d"
+                    estimated_max_7d="$new_max_7d"
+                    debug_log "Calibrated 7d max: observed=$observed_max_7d new_estimate=$estimated_max_7d"
+                fi
             fi
         fi
 
@@ -1222,6 +1255,8 @@ format_output() {
   "calibration": {
     "estimated_max_5h": ${estimated_max_5h},
     "estimated_max_7d": ${estimated_max_7d},
+    "backup_max_5h": ${backup_max_5h},
+    "backup_max_7d": ${backup_max_7d},
     "last_total_tokens": ${current_total_tokens},
     "last_api_5h": ${five_pct},
     "last_api_7d": ${seven_pct:-0},
