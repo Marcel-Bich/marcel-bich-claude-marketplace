@@ -13,9 +13,22 @@ TIMEOUT=5
 CACHE_FILE="/tmp/claude-mb-limit-cache.json"
 CACHE_MAX_AGE="${CLAUDE_MB_LIMIT_CACHE_AGE:-120}"  # 2 minutes default
 
-# Debug mode - logs to /tmp/claude-mb-limit-debug.log
+# Plugin data directory (organized under marketplace name)
+PLUGIN_DATA_DIR="${HOME}/.claude/marcel-bich-claude-marketplace/limit"
+
+# State file for local tracking (sessions, totals, calibration)
+STATE_FILE="${PLUGIN_DATA_DIR}/state.json"
+
+# Debug mode - logs stay in /tmp (temporary, cleared on reboot)
 DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-false}"
 DEBUG_LOG="/tmp/claude-mb-limit-debug.log"
+
+# Ensure plugin data directory exists
+ensure_plugin_dir() {
+    if [[ ! -d "$PLUGIN_DATA_DIR" ]]; then
+        mkdir -p "$PLUGIN_DATA_DIR" 2>/dev/null || true
+    fi
+}
 
 # Debug logging function
 debug_log() {
@@ -47,6 +60,11 @@ SHOW_SEPARATORS="${CLAUDE_MB_LIMIT_SEPARATORS:-true}"
 # Local device tracking (default false - feature in development)
 SHOW_LOCAL="${CLAUDE_MB_LIMIT_LOCAL:-false}"
 LOCAL_DEVICE_LABEL="${CLAUDE_MB_LIMIT_DEVICE_LABEL:-$(hostname)}"
+
+# Default estimated max tokens (can be overridden, will be calibrated dynamically)
+# These are conservative estimates for Max20 plan
+DEFAULT_ESTIMATED_MAX_5H="${CLAUDE_MB_LIMIT_EST_MAX_5H:-220000}"
+DEFAULT_ESTIMATED_MAX_7D="${CLAUDE_MB_LIMIT_EST_MAX_7D:-5000000}"
 
 # Default color (full ANSI escape sequence, default \033[90m = dark gray)
 # Example: export CLAUDE_MB_LIMIT_DEFAULT_COLOR='\033[38;5;244m' for lighter gray
@@ -474,7 +492,7 @@ calculate_token_cost() {
 # Each session is tracked by its session_id, allowing parallel sessions to accumulate correctly
 # Also tracks cost using Claude's total_cost_usd (which is correctly calculated)
 get_total_tokens_ever() {
-    local state_file="${HOME}/.claude/limit-local-state.json"
+    ensure_plugin_dir
 
     # Get current session data from stdin
     local session_id="" current_input=0 current_output=0 current_cost="0.00"
@@ -501,8 +519,8 @@ get_total_tokens_ever() {
     # Read current state file
     local state="{}"
     local state_file_exists="false"
-    if [[ -f "$state_file" ]]; then
-        state=$(cat "$state_file" 2>/dev/null) || state="{}"
+    if [[ -f "$STATE_FILE" ]]; then
+        state=$(cat "$STATE_FILE" 2>/dev/null) || state="{}"
         state_file_exists="true"
         debug_log "State file exists, content length: ${#state}"
     else
@@ -570,19 +588,24 @@ get_total_tokens_ever() {
 
     # Only update if there was a change
     local delta_total=$((delta_input + delta_output))
-    if [[ "$delta_total" -gt 0 ]] || [[ ! -f "$state_file" ]]; then
-        mkdir -p "$(dirname "$state_file")" 2>/dev/null || true
+    if [[ "$delta_total" -gt 0 ]] || [[ ! -f "$STATE_FILE" ]]; then
+        ensure_plugin_dir
 
-        # Preserve start_pct values for local tracking feature
-        local start_5h=-1 start_7d=-1 last_5h="" last_7d=""
-        start_5h=$(echo "$state" | jq -r '.start_5h_pct // -1' 2>/dev/null) || start_5h=-1
-        start_7d=$(echo "$state" | jq -r '.start_7d_pct // -1' 2>/dev/null) || start_7d=-1
+        # Preserve local tracking values
+        local last_5h="" last_7d=""
         last_5h=$(echo "$state" | jq -r '.last_5h_reset // ""' 2>/dev/null) || last_5h=""
         last_7d=$(echo "$state" | jq -r '.last_7d_reset // ""' 2>/dev/null) || last_7d=""
-        [[ "$start_5h" == "null" ]] && start_5h=-1
-        [[ "$start_7d" == "null" ]] && start_7d=-1
         [[ "$last_5h" == "null" ]] && last_5h=""
         [[ "$last_7d" == "null" ]] && last_7d=""
+
+        # Preserve and update calibration block for local tracking
+        # Update last_total_tokens to match new totals so local tracking stays in sync
+        local new_total=$((new_total_input + new_total_output))
+        local calibration_json
+        calibration_json=$(echo "$state" | jq -c '.calibration // {"estimated_max_5h":'"$DEFAULT_ESTIMATED_MAX_5H"',"estimated_max_7d":'"$DEFAULT_ESTIMATED_MAX_7D"',"last_total_tokens":0,"last_api_5h":0,"last_api_7d":0,"window_tokens_5h":0,"window_tokens_7d":0}' 2>/dev/null)
+        [[ -z "$calibration_json" || "$calibration_json" == "null" ]] && calibration_json='{"estimated_max_5h":'"$DEFAULT_ESTIMATED_MAX_5H"',"estimated_max_7d":'"$DEFAULT_ESTIMATED_MAX_7D"',"last_total_tokens":0,"last_api_5h":0,"last_api_7d":0,"window_tokens_5h":0,"window_tokens_7d":0}'
+        # Update last_total_tokens in calibration to match new totals
+        calibration_json=$(echo "$calibration_json" | jq -c '.last_total_tokens = '"$new_total"'' 2>/dev/null) || calibration_json='{"estimated_max_5h":'"$DEFAULT_ESTIMATED_MAX_5H"',"estimated_max_7d":'"$DEFAULT_ESTIMATED_MAX_7D"',"last_total_tokens":'"$new_total"',"last_api_5h":0,"last_api_7d":0,"window_tokens_5h":0,"window_tokens_7d":0}'
 
         # Build sessions object - preserve existing sessions, update current
         local sessions_json
@@ -595,11 +618,9 @@ get_total_tokens_ever() {
 
         debug_log "Writing state file with sessions: $(echo "$sessions_json" | jq -c '.')"
 
-        # Write updated state
-        cat > "$state_file" << EOF
+        # Write updated state (preserving calibration block)
+        cat > "$STATE_FILE" << EOF
 {
-  "start_5h_pct": ${start_5h},
-  "start_7d_pct": ${start_7d},
   "last_5h_reset": "${last_5h}",
   "last_7d_reset": "${last_7d}",
   "sessions": ${sessions_json},
@@ -607,7 +628,8 @@ get_total_tokens_ever() {
     "input_tokens": ${new_total_input},
     "output_tokens": ${new_total_output},
     "total_cost_usd": ${new_total_cost}
-  }
+  },
+  "calibration": ${calibration_json}
 }
 EOF
         debug_log "State file written successfully"
@@ -621,10 +643,9 @@ EOF
 
 # Get total accumulated cost from state file
 get_total_cost_ever() {
-    local state_file="${HOME}/.claude/limit-local-state.json"
-    if [[ -f "$state_file" ]]; then
+    if [[ -f "$STATE_FILE" ]]; then
         local cost
-        cost=$(jq -r '.totals.total_cost_usd // 0' "$state_file" 2>/dev/null) || cost="0"
+        cost=$(jq -r '.totals.total_cost_usd // 0' "$STATE_FILE" 2>/dev/null) || cost="0"
         [[ "$cost" == "null" ]] && cost="0"
         awk "BEGIN {printf \"%.2f\", $cost}"
     else
@@ -1043,81 +1064,151 @@ format_output() {
         lines+=("${COLOR_BLACK}-${COLOR_RESET}")
     fi
 
-    # Local tracking: Delta-based calculation (current_pct - start_pct)
+    # IMPORTANT: Call get_total_tokens_ever FIRST to update state file totals
+    # This ensures calibration.last_total_tokens is synced before local tracking reads it
+    local _total_tokens_sync=""
+    if [[ "$SHOW_LOCAL" == "true" ]]; then
+        _total_tokens_sync=$(get_total_tokens_ever)
+        debug_log "Synced totals before local tracking: $_total_tokens_sync"
+    fi
+
+    # Local tracking: Token-based calculation with dynamic calibration
+    # Tracks tokens per window (5h/7d) separately, resets when API % drops
+    # Calculates local_pct = window_tokens / estimated_max_tokens * 100
     local local_5h_pct="" local_7d_pct=""
     if [[ "$SHOW_LOCAL" == "true" ]]; then
-        local state_file="${HOME}/.claude/limit-local-state.json"
+        ensure_plugin_dir
 
-        # Read current state
-        local start_5h=-1 start_7d=-1 last_5h_reset="" last_7d_reset=""
-        if [[ -f "$state_file" ]]; then
-            start_5h=$(jq -r '.start_5h_pct // -1' "$state_file" 2>/dev/null) || start_5h=-1
-            start_7d=$(jq -r '.start_7d_pct // -1' "$state_file" 2>/dev/null) || start_7d=-1
-            last_5h_reset=$(jq -r '.last_5h_reset // ""' "$state_file" 2>/dev/null) || last_5h_reset=""
-            last_7d_reset=$(jq -r '.last_7d_reset // ""' "$state_file" 2>/dev/null) || last_7d_reset=""
-            [[ "$start_5h" == "null" ]] && start_5h=-1
-            [[ "$start_7d" == "null" ]] && start_7d=-1
-            [[ "$last_5h_reset" == "null" ]] && last_5h_reset=""
-            [[ "$last_7d_reset" == "null" ]] && last_7d_reset=""
+        # Get current total local tokens from totals (already tracked by get_total_tokens_ever)
+        local current_total_tokens=0
+        if [[ -f "$STATE_FILE" ]]; then
+            local in_tok out_tok
+            in_tok=$(jq -r '.totals.input_tokens // 0' "$STATE_FILE" 2>/dev/null) || in_tok=0
+            out_tok=$(jq -r '.totals.output_tokens // 0' "$STATE_FILE" 2>/dev/null) || out_tok=0
+            [[ "$in_tok" == "null" ]] && in_tok=0
+            [[ "$out_tok" == "null" ]] && out_tok=0
+            current_total_tokens=$((in_tok + out_tok))
         fi
 
-        # Initialize or reset start values
-        local needs_update=false
+        # Read calibration state (includes window-specific token counts)
+        local estimated_max_5h="$DEFAULT_ESTIMATED_MAX_5H"
+        local estimated_max_7d="$DEFAULT_ESTIMATED_MAX_7D"
+        local last_total_tokens=0 last_api_5h=0 last_api_7d=0
+        local window_tokens_5h=0 window_tokens_7d=0
 
-        # First run: initialize start values
-        if [[ "$start_5h" == "-1" ]]; then
-            start_5h="$five_pct"
-            needs_update=true
-        fi
-        if [[ "$start_7d" == "-1" ]]; then
-            start_7d="${seven_pct:-0}"
-            needs_update=true
+        if [[ -f "$STATE_FILE" ]]; then
+            estimated_max_5h=$(jq -r '.calibration.estimated_max_5h // '"$DEFAULT_ESTIMATED_MAX_5H"'' "$STATE_FILE" 2>/dev/null) || estimated_max_5h="$DEFAULT_ESTIMATED_MAX_5H"
+            estimated_max_7d=$(jq -r '.calibration.estimated_max_7d // '"$DEFAULT_ESTIMATED_MAX_7D"'' "$STATE_FILE" 2>/dev/null) || estimated_max_7d="$DEFAULT_ESTIMATED_MAX_7D"
+            last_total_tokens=$(jq -r '.calibration.last_total_tokens // 0' "$STATE_FILE" 2>/dev/null) || last_total_tokens=0
+            last_api_5h=$(jq -r '.calibration.last_api_5h // 0' "$STATE_FILE" 2>/dev/null) || last_api_5h=0
+            last_api_7d=$(jq -r '.calibration.last_api_7d // 0' "$STATE_FILE" 2>/dev/null) || last_api_7d=0
+            window_tokens_5h=$(jq -r '.calibration.window_tokens_5h // 0' "$STATE_FILE" 2>/dev/null) || window_tokens_5h=0
+            window_tokens_7d=$(jq -r '.calibration.window_tokens_7d // 0' "$STATE_FILE" 2>/dev/null) || window_tokens_7d=0
+
+            [[ "$estimated_max_5h" == "null" ]] && estimated_max_5h="$DEFAULT_ESTIMATED_MAX_5H"
+            [[ "$estimated_max_7d" == "null" ]] && estimated_max_7d="$DEFAULT_ESTIMATED_MAX_7D"
+            [[ "$last_total_tokens" == "null" ]] && last_total_tokens=0
+            [[ "$last_api_5h" == "null" ]] && last_api_5h=0
+            [[ "$last_api_7d" == "null" ]] && last_api_7d=0
+            [[ "$window_tokens_5h" == "null" ]] && window_tokens_5h=0
+            [[ "$window_tokens_7d" == "null" ]] && window_tokens_7d=0
         fi
 
-        # Reset detection: if current % dropped below start % (usage was reset by API)
-        # This is more reliable than comparing timestamps which vary between :59:59 and :00:00
-        if [[ "$five_pct" -lt "$start_5h" ]]; then
-            start_5h="$five_pct"
-            needs_update=true
-        fi
-        if [[ -n "$seven_pct" ]] && [[ "$seven_pct" -lt "$start_7d" ]]; then
-            start_7d="$seven_pct"
-            needs_update=true
+        # Calculate token delta since last update
+        local token_delta=$((current_total_tokens - last_total_tokens))
+        [[ "$token_delta" -lt 0 ]] && token_delta=0
+
+        # Calculate API % deltas
+        local pct_delta_5h=$((five_pct - last_api_5h))
+        local pct_delta_7d=0
+        if [[ -n "$seven_pct" ]]; then
+            pct_delta_7d=$((seven_pct - last_api_7d))
         fi
 
-        # Update state file if needed - PRESERVE sessions and totals!
-        if [[ "$needs_update" == "true" ]]; then
-            mkdir -p "$(dirname "$state_file")" 2>/dev/null || true
+        # Reset detection: if API % dropped, new window started
+        local reset_5h=false reset_7d=false
+        if [[ "$five_pct" -lt "$last_api_5h" ]]; then
+            reset_5h=true
+            window_tokens_5h=0
+            debug_log "5h window reset detected: $five_pct < $last_api_5h, resetting window_tokens_5h"
+        fi
+        if [[ -n "$seven_pct" ]] && [[ "$seven_pct" -lt "$last_api_7d" ]]; then
+            reset_7d=true
+            window_tokens_7d=0
+            debug_log "7d window reset detected: $seven_pct < $last_api_7d, resetting window_tokens_7d"
+        fi
 
-            # Read existing sessions and totals to preserve them
-            local existing_sessions="{}" existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
-            if [[ -f "$state_file" ]]; then
-                existing_sessions=$(jq -r '.sessions // {}' "$state_file" 2>/dev/null) || existing_sessions="{}"
-                existing_totals=$(jq -c '.totals // {"input_tokens":0,"output_tokens":0,"total_cost_usd":0}' "$state_file" 2>/dev/null) || existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
-                [[ "$existing_sessions" == "null" ]] && existing_sessions="{}"
-                [[ "$existing_totals" == "null" ]] && existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
+        # Accumulate tokens to window counters
+        window_tokens_5h=$((window_tokens_5h + token_delta))
+        window_tokens_7d=$((window_tokens_7d + token_delta))
+
+        # Dynamic calibration: observe token_delta vs pct_delta
+        # Only calibrate when we have positive deltas and no reset just happened
+        if [[ "$token_delta" -gt 1000 ]] && [[ "$pct_delta_5h" -gt 0 ]] && [[ "$reset_5h" == "false" ]]; then
+            # observed_max = token_delta * 100 / pct_delta
+            local observed_max_5h=$((token_delta * 100 / pct_delta_5h))
+            # Sanity check: ignore extreme outliers (other PCs working simultaneously)
+            if [[ "$observed_max_5h" -gt 50000 ]] && [[ "$observed_max_5h" -lt 2000000 ]]; then
+                # Exponential moving average: 80% old + 20% new
+                estimated_max_5h=$(awk "BEGIN {printf \"%.0f\", 0.8 * $estimated_max_5h + 0.2 * $observed_max_5h}")
+                debug_log "Calibrated 5h max: observed=$observed_max_5h new_estimate=$estimated_max_5h"
             fi
+        fi
 
-            cat > "$state_file" << EOF
+        if [[ "$token_delta" -gt 1000 ]] && [[ "$pct_delta_7d" -gt 0 ]] && [[ "$reset_7d" == "false" ]]; then
+            local observed_max_7d=$((token_delta * 100 / pct_delta_7d))
+            if [[ "$observed_max_7d" -gt 500000 ]] && [[ "$observed_max_7d" -lt 50000000 ]]; then
+                estimated_max_7d=$(awk "BEGIN {printf \"%.0f\", 0.8 * $estimated_max_7d + 0.2 * $observed_max_7d}")
+                debug_log "Calibrated 7d max: observed=$observed_max_7d new_estimate=$estimated_max_7d"
+            fi
+        fi
+
+        # Calculate local percentage based on WINDOW tokens (not total)
+        if [[ "$estimated_max_5h" -gt 0 ]]; then
+            local_5h_pct=$((window_tokens_5h * 100 / estimated_max_5h))
+            [[ "$local_5h_pct" -lt 0 ]] && local_5h_pct=0
+            [[ "$local_5h_pct" -gt 100 ]] && local_5h_pct=100
+        else
+            local_5h_pct=0
+        fi
+
+        if [[ -n "$seven_pct" ]] && [[ "$estimated_max_7d" -gt 0 ]]; then
+            local_7d_pct=$((window_tokens_7d * 100 / estimated_max_7d))
+            [[ "$local_7d_pct" -lt 0 ]] && local_7d_pct=0
+            [[ "$local_7d_pct" -gt 100 ]] && local_7d_pct=100
+        fi
+
+        # Always update state file with calibration data
+        ensure_plugin_dir
+
+        # Read existing data to preserve
+        local existing_sessions="{}" existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
+        if [[ -f "$STATE_FILE" ]]; then
+            existing_sessions=$(jq -r '.sessions // {}' "$STATE_FILE" 2>/dev/null) || existing_sessions="{}"
+            existing_totals=$(jq -c '.totals // {"input_tokens":0,"output_tokens":0,"total_cost_usd":0}' "$STATE_FILE" 2>/dev/null) || existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
+            [[ "$existing_sessions" == "null" ]] && existing_sessions="{}"
+            [[ "$existing_totals" == "null" ]] && existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
+        fi
+
+        # Write updated state with calibration
+        cat > "$STATE_FILE" << EOF
 {
-  "start_5h_pct": ${start_5h},
-  "start_7d_pct": ${start_7d},
   "last_5h_reset": "${five_hour_reset:-}",
   "last_7d_reset": "${seven_day_reset:-}",
   "sessions": ${existing_sessions},
-  "totals": ${existing_totals}
+  "totals": ${existing_totals},
+  "calibration": {
+    "estimated_max_5h": ${estimated_max_5h},
+    "estimated_max_7d": ${estimated_max_7d},
+    "last_total_tokens": ${current_total_tokens},
+    "last_api_5h": ${five_pct},
+    "last_api_7d": ${seven_pct:-0},
+    "window_tokens_5h": ${window_tokens_5h},
+    "window_tokens_7d": ${window_tokens_7d}
+  }
 }
 EOF
-        fi
-
-        # Calculate delta: local = current - start
-        local_5h_pct=$((five_pct - start_5h))
-        [[ "$local_5h_pct" -lt 0 ]] && local_5h_pct=0
-
-        if [[ -n "$seven_pct" ]]; then
-            local_7d_pct=$((seven_pct - start_7d))
-            [[ "$local_7d_pct" -lt 0 ]] && local_7d_pct=0
-        fi
+        debug_log "Local tracking: window_5h=$window_tokens_5h window_7d=$window_tokens_7d est_max_5h=$estimated_max_5h local_5h_pct=$local_5h_pct local_7d_pct=$local_7d_pct"
     fi
 
     # 5-hour limit (if enabled) - all models
@@ -1218,7 +1309,12 @@ EOF
             # Add local token stats if enabled (gray) - shows lifetime total tokens and cost
             if [[ "$SHOW_LOCAL" == "true" ]]; then
                 local total_tokens_ever
-                total_tokens_ever=$(get_total_tokens_ever)
+                # Use cached value if available, otherwise call function
+                if [[ -n "$_total_tokens_sync" ]] && [[ "$_total_tokens_sync" -gt 0 ]]; then
+                    total_tokens_ever="$_total_tokens_sync"
+                else
+                    total_tokens_ever=$(get_total_tokens_ever)
+                fi
                 if [[ "$total_tokens_ever" -gt 0 ]]; then
                     local formatted_tokens total_cost_ever
                     formatted_tokens=$(format_tokens "$total_tokens_ever")
