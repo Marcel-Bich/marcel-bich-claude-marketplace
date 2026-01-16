@@ -133,5 +133,68 @@ if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\||\||\$\(|\(|`)\s*git\s+push(\s|$)'
     esac
 fi
 
+# =============================================================================
+# EVASION DETECTION - Block attempts to bypass git permission checks
+# =============================================================================
+
+# Helper: Check evasion for a specific git operation
+check_evasion() {
+    local keyword="$1"
+    local perm_name="git $keyword"
+    local MODE=$(get_permission_mode "$PERMS_SECTION" "$perm_name")
+    case "$MODE" in
+        deny)
+            output_deny "BLOCKED by dogma: Potential $perm_name evasion detected. Run manually if legitimate."
+            ;;
+        ask)
+            output_ask "dogma: Potential $perm_name detected (indirect command). Confirm?"
+            ;;
+    esac
+}
+
+# 1. Variable-based evasion: git with $ or backticks AND keywords
+# e.g., CMD=commit && git $CMD, git `echo commit`, git $(echo push)
+if echo "$TOOL_INPUT" | grep -qE '\bgit\b.*(\$|`)' && echo "$TOOL_INPUT" | grep -qE '\b(add|commit|push)\b'; then
+    echo "$TOOL_INPUT" | grep -qE '\bcommit\b' && check_evasion "commit"
+    echo "$TOOL_INPUT" | grep -qE '\badd\b' && check_evasion "add"
+    echo "$TOOL_INPUT" | grep -qE '\bpush\b' && check_evasion "push"
+fi
+
+# 2. eval-based evasion: eval "git commit", eval 'git push'
+if echo "$TOOL_INPUT" | grep -qE '\beval\b.*\bgit\b'; then
+    output_deny "BLOCKED by dogma: eval with git detected - potential permission evasion. Run manually if legitimate."
+fi
+
+# 3. xargs evasion: echo "commit" | xargs git, echo "-m msg" | xargs git commit
+if echo "$TOOL_INPUT" | grep -qE '\|\s*xargs\s+.*\bgit\b|\bgit\b.*\|\s*xargs'; then
+    output_deny "BLOCKED by dogma: xargs with git detected - potential permission evasion. Run manually if legitimate."
+fi
+if echo "$TOOL_INPUT" | grep -qE '\b(add|commit|push)\b.*\|\s*xargs' && echo "$TOOL_INPUT" | grep -qE '\bgit\b'; then
+    echo "$TOOL_INPUT" | grep -qE '\bcommit\b' && check_evasion "commit"
+    echo "$TOOL_INPUT" | grep -qE '\badd\b' && check_evasion "add"
+    echo "$TOOL_INPUT" | grep -qE '\bpush\b' && check_evasion "push"
+fi
+
+# 4. Here-string/heredoc evasion: bash <<< "git commit", bash << EOF
+if echo "$TOOL_INPUT" | grep -qE '\b(bash|sh|zsh)\b.*<<<.*\bgit\b'; then
+    output_deny "BLOCKED by dogma: Here-string with git detected - potential permission evasion. Run manually if legitimate."
+fi
+if echo "$TOOL_INPUT" | grep -qE '\b(bash|sh|zsh)\b.*<<.*\bgit\b'; then
+    output_deny "BLOCKED by dogma: Heredoc with git detected - potential permission evasion. Run manually if legitimate."
+fi
+
+# 5. Hex/Octal/ANSI-C quoting evasion: git $'\x63ommit', git $'\143ommit'
+if echo "$TOOL_INPUT" | grep -qE "\bgit\b.*\\\$'"; then
+    output_deny "BLOCKED by dogma: ANSI-C quoting with git detected - potential permission evasion. Run manually if legitimate."
+fi
+
+# 6. Newline evasion (escaped newlines): git \<newline>commit
+# In JSON, newlines might be \n - check for git followed by escaped newline patterns
+if echo "$TOOL_INPUT" | grep -qE '\bgit\b\s*\\$' || echo "$TOOL_INPUT" | grep -qE '\bgit\b.*\\n.*\b(add|commit|push)\b'; then
+    echo "$TOOL_INPUT" | grep -qE '\bcommit\b' && check_evasion "commit"
+    echo "$TOOL_INPUT" | grep -qE '\badd\b' && check_evasion "add"
+    echo "$TOOL_INPUT" | grep -qE '\bpush\b' && check_evasion "push"
+fi
+
 dogma_debug_log "=== git-permissions.sh END ==="
 exit 0
