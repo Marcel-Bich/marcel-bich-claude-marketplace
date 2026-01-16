@@ -73,7 +73,7 @@ get_permissions_section() {
     fi
 }
 
-# Check if permission is granted
+# Check if permission is granted (legacy - use get_permission_mode for 3-state)
 # Returns 0 (true) if allowed, 1 (false) if blocked
 # If pattern not found, returns 0 (allow by default)
 check_permission() {
@@ -91,6 +91,12 @@ check_permission() {
         return 0  # Allowed
     fi
 
+    # Check for [?] (ask) - treat as allowed for legacy compatibility
+    if echo "$perms_section" | grep -qE "^\s*-\s*\[\?\].*$pattern"; then
+        dogma_debug_log "Permission ask mode for: $pattern"
+        return 0  # Allowed (caller should use get_permission_mode instead)
+    fi
+
     # Check for [ ] (blocked)
     if echo "$perms_section" | grep -qE "^\s*-\s*\[ \].*$pattern"; then
         dogma_debug_log "Permission denied for: $pattern"
@@ -100,6 +106,45 @@ check_permission() {
     # Pattern not found - allow by default
     dogma_debug_log "Permission pattern not found: $pattern - allowing by default"
     return 0
+}
+
+# Get permission mode (3-state: auto/ask/deny)
+# Returns: "auto", "ask", or "deny"
+# If pattern not found, returns "auto" (allow by default)
+get_permission_mode() {
+    local perms_section="$1"
+    local pattern="$2"
+
+    if [ -z "$perms_section" ]; then
+        dogma_debug_log "No permissions section - auto by default"
+        echo "auto"
+        return
+    fi
+
+    # Check for [x] (auto)
+    if echo "$perms_section" | grep -qE "^\s*-\s*\[x\].*$pattern"; then
+        dogma_debug_log "Permission mode auto for: $pattern"
+        echo "auto"
+        return
+    fi
+
+    # Check for [?] (ask)
+    if echo "$perms_section" | grep -qE "^\s*-\s*\[\?\].*$pattern"; then
+        dogma_debug_log "Permission mode ask for: $pattern"
+        echo "ask"
+        return
+    fi
+
+    # Check for [ ] (deny)
+    if echo "$perms_section" | grep -qE "^\s*-\s*\[ \].*$pattern"; then
+        dogma_debug_log "Permission mode deny for: $pattern"
+        echo "deny"
+        return
+    fi
+
+    # Pattern not found - auto by default
+    dogma_debug_log "Permission pattern not found: $pattern - auto by default"
+    echo "auto"
 }
 
 # Get missing permissions message
@@ -115,11 +160,11 @@ Use /dogma:permissions to interactively create it, or create manually:
 <permissions>
 - [x] May run `git add` autonomously
 - [x] May run `git commit` autonomously
-- [ ] May run `git push` autonomously
+- [?] May run `git push` autonomously
 - [ ] May delete files autonomously (rm, unlink, git clean)
 </permissions>
 ```
 
-Mark [x] to allow, [ ] to block.
+Mark [x] for auto, [?] for ask, [ ] for deny.
 EOF
 }

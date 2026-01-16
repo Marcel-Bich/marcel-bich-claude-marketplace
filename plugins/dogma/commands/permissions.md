@@ -21,35 +21,34 @@ Create or update DOGMA-PERMISSIONS.md to configure what Claude can do autonomous
 
 ## Step 2: Interactive questions
 
-Ask the user about each permission using AskUserQuestion. For each permission:
-- Explain what it does
-- Show what happens when blocked
-- Get their choice
+Ask the user about each permission using AskUserQuestion. For each permission offer 3 choices:
+- **auto** `[x]`: Claude does it automatically
+- **ask** `[?]`: Claude asks for confirmation first
+- **deny** `[ ]`: Claude cannot do it (blocked)
 
 ### Git Operations
 
 **git add**
-- Allowed: Claude can stage files for commits
-- Blocked: User must run `git add` manually
+- auto: Claude can stage files for commits
+- ask: Claude asks before staging
+- deny: User must run `git add` manually
 
 **git commit**
-- Allowed: Claude can create commits autonomously
-- Blocked: User must create commits manually
+- auto: Claude can create commits autonomously
+- ask: Claude asks before committing
+- deny: User must create commits manually
 
 **git push**
-- Allowed: Claude can push to remote repositories
-- Blocked: User must push manually (recommended for safety)
+- auto: Claude can push to remote repositories
+- ask: Claude asks before pushing (recommended)
+- deny: User must push manually
 
 ### File Operations
 
-**Delete files autonomously**
-- Allowed: Claude can run rm, unlink, git clean
-- Blocked: Deletion commands are logged to TO-DELETE.md for manual deletion
-
-**Ask before deleting**
-- Only relevant if delete is blocked
-- Enabled: Claude prompts for confirmation before delete
-- Disabled: Delete is silently logged to TO-DELETE.md
+**Delete files**
+- auto: Claude can run rm, unlink, git clean
+- ask: Claude prompts for confirmation before delete
+- deny: Deletion commands are logged to TO-DELETE.md for manual deletion
 
 ## Step 3: Generate DOGMA-PERMISSIONS.md
 
@@ -59,31 +58,29 @@ Create the file with the user's choices:
 # Dogma Permissions
 
 Configure what Claude is allowed to do autonomously.
-Mark with `[x]` to allow, `[ ]` to block.
+Mark with `[x]` for auto, `[?]` for ask, `[ ]` for deny.
 
 <permissions>
 ## Git Operations
-- [X] May run `git add` autonomously
-- [X] May run `git commit` autonomously
-- [ ] May run `git push` autonomously
+- [x] May run `git add` autonomously
+- [x] May run `git commit` autonomously
+- [?] May run `git push` autonomously
 
 ## File Operations
-- [ ] May delete files autonomously (rm, unlink, git clean)
-- [ ] Ask before deleting (instead of logging to TO-DELETE.md)
+- [?] May delete files autonomously (rm, unlink, git clean)
 </permissions>
 
-## Behavior When Blocked
+## Behavior
 
-| Permission | If [ ] (blocked) |
-|------------|------------------|
-| git add | Claude cannot stage files |
-| git commit | Claude cannot create commits |
-| git push | Claude cannot push to remote |
-| delete files | Logged to TO-DELETE.md, delete manually |
-| ask before deleting | Shows confirmation prompt before delete |
+| Permission | [x] auto | [?] ask | [ ] deny |
+|------------|----------|---------|----------|
+| git add | Stages files | Asks first | Blocked |
+| git commit | Creates commits | Asks first | Blocked |
+| git push | Pushes to remote | Asks first | Blocked |
+| delete files | Deletes files | Asks first | Logged to TO-DELETE.md |
 ```
 
-Replace [X] and [ ] based on user choices.
+Replace markers based on user choices.
 
 ## Step 4: Confirm
 
@@ -97,7 +94,7 @@ Claude: Let me check if you already have a permissions file...
 
 No existing permissions found. I'll help you create DOGMA-PERMISSIONS.md.
 
-[Uses AskUserQuestion with questions about each permission]
+[Uses AskUserQuestion with questions about each permission - 3 options each: auto/ask/deny]
 
 Based on your choices, here's your permissions file:
 [Shows content]
