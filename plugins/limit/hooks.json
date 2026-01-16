@@ -1,9 +1,0 @@
-{
-  "hooks": [
-    {
-      "type": "PostToolUse",
-      "matcher": ".*",
-      "script": "${CLAUDE_PLUGIN_ROOT}/scripts/local-usage-tracker.sh"
-    }
-  ]
-}
