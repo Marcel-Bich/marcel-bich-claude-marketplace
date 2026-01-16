@@ -4,7 +4,9 @@
 
 set -euo pipefail
 
-STATE_FILE="${HOME}/.claude/limit-local-state.json"
+# Plugin data directory (organized under marketplace name)
+PLUGIN_DATA_DIR="${HOME}/.claude/marcel-bich-claude-marketplace/limit"
+STATE_FILE="${PLUGIN_DATA_DIR}/state.json"
 CACHE_FILE="/tmp/claude-mb-limit-cache.json"
 DEVICE_ID="${CLAUDE_MB_LIMIT_DEVICE_LABEL:-$(hostname)}"
 

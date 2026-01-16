@@ -4,7 +4,12 @@
 
 set -euo pipefail
 
-STATE_FILE="${HOME}/.claude/limit-local-state.json"
+# Plugin data directory (organized under marketplace name)
+PLUGIN_DATA_DIR="${HOME}/.claude/marcel-bich-claude-marketplace/limit"
+STATE_FILE="${PLUGIN_DATA_DIR}/state.json"
+
+# Ensure directory exists
+mkdir -p "$PLUGIN_DATA_DIR" 2>/dev/null || true
 
 # Colors
 RED='\033[31m'
