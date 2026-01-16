@@ -465,71 +465,166 @@ calculate_token_cost() {
     awk "BEGIN {printf \"%.2f\", ($tokens / 1000000) * $price_per_million}"
 }
 
-# Get and update total_tokens_ever using delta calculation
-# Accumulates tokens across sessions by tracking deltas
+# Get and update totals using per-session delta tracking
+# Each session is tracked by its session_id, allowing parallel sessions to accumulate correctly
+# Also tracks cost using Claude's total_cost_usd (which is correctly calculated)
 get_total_tokens_ever() {
     local state_file="${HOME}/.claude/limit-local-state.json"
 
-    # Get current session tokens from stdin data
-    local current_input=0 current_output=0
+    # Get current session data from stdin
+    local session_id="" current_input=0 current_output=0 current_cost="0.00"
     if [[ -n "$STDIN_DATA" ]]; then
+        session_id=$(echo "$STDIN_DATA" | jq -r '.session_id // ""' 2>/dev/null) || session_id=""
         current_input=$(echo "$STDIN_DATA" | jq -r '.context_window.total_input_tokens // 0' 2>/dev/null) || current_input=0
         current_output=$(echo "$STDIN_DATA" | jq -r '.context_window.total_output_tokens // 0' 2>/dev/null) || current_output=0
+        current_cost=$(echo "$STDIN_DATA" | jq -r '.cost.total_cost_usd // 0' 2>/dev/null) || current_cost="0"
+        [[ "$session_id" == "null" ]] && session_id=""
         [[ "$current_input" == "null" ]] && current_input=0
         [[ "$current_output" == "null" ]] && current_output=0
+        [[ "$current_cost" == "null" ]] && current_cost="0"
     fi
 
-    # Read previous state
-    local last_input=0 last_output=0 total_ever=0
+    debug_log "get_total_tokens_ever: session_id=$session_id current_in=$current_input current_out=$current_output current_cost=$current_cost"
+
+    # If no session_id, fall back to simple mode
+    if [[ -z "$session_id" ]]; then
+        debug_log "No session_id available, skipping total tracking"
+        echo "0"
+        return
+    fi
+
+    # Read current state file
+    local state="{}"
+    local state_file_exists="false"
     if [[ -f "$state_file" ]]; then
-        last_input=$(jq -r '.last_session_input // 0' "$state_file" 2>/dev/null) || last_input=0
-        last_output=$(jq -r '.last_session_output // 0' "$state_file" 2>/dev/null) || last_output=0
-        total_ever=$(jq -r '.total_tokens_ever // 0' "$state_file" 2>/dev/null) || total_ever=0
-        [[ "$last_input" == "null" ]] && last_input=0
-        [[ "$last_output" == "null" ]] && last_output=0
-        [[ "$total_ever" == "null" ]] && total_ever=0
+        state=$(cat "$state_file" 2>/dev/null) || state="{}"
+        state_file_exists="true"
+        debug_log "State file exists, content length: ${#state}"
+    else
+        debug_log "State file does not exist, will create new"
     fi
 
-    # Calculate delta (handle session reset when current < last)
-    local delta_input=0 delta_output=0
+    # Check if this session already exists in state
+    local session_exists="false"
+    if [[ "$state_file_exists" == "true" ]]; then
+        local existing_session
+        existing_session=$(echo "$state" | jq -r ".sessions[\"$session_id\"] // \"null\"" 2>/dev/null)
+        if [[ "$existing_session" != "null" ]] && [[ -n "$existing_session" ]]; then
+            session_exists="true"
+        fi
+    fi
+    debug_log "Session $session_id exists in state: $session_exists"
+
+    # Get previous values for this session
+    local last_input=0 last_output=0 last_cost="0"
+    last_input=$(echo "$state" | jq -r ".sessions[\"$session_id\"].last_input // 0" 2>/dev/null) || last_input=0
+    last_output=$(echo "$state" | jq -r ".sessions[\"$session_id\"].last_output // 0" 2>/dev/null) || last_output=0
+    last_cost=$(echo "$state" | jq -r ".sessions[\"$session_id\"].last_cost // 0" 2>/dev/null) || last_cost="0"
+    [[ "$last_input" == "null" ]] && last_input=0
+    [[ "$last_output" == "null" ]] && last_output=0
+    [[ "$last_cost" == "null" ]] && last_cost="0"
+
+    debug_log "Previous values for session: last_in=$last_input last_out=$last_output last_cost=$last_cost"
+
+    # Calculate deltas for this session
+    local delta_input=0 delta_output=0 delta_cost="0"
+    local reset_detected="false"
     if [[ "$current_input" -lt "$last_input" ]] || [[ "$current_output" -lt "$last_output" ]]; then
-        # New session detected - use current as delta
+        # Session reset detected - use current values as delta
         delta_input="$current_input"
         delta_output="$current_output"
+        delta_cost="$current_cost"
+        reset_detected="true"
+        debug_log "Session reset detected (current < last), using current as delta"
     else
         delta_input=$((current_input - last_input))
         delta_output=$((current_output - last_output))
+        delta_cost=$(awk "BEGIN {printf \"%.4f\", $current_cost - $last_cost}")
     fi
 
-    # Update total
-    local delta_total=$((delta_input + delta_output))
-    total_ever=$((total_ever + delta_total))
+    debug_log "Deltas: in=$delta_input out=$delta_output cost=$delta_cost reset=$reset_detected"
 
-    # Update state file if there was a change
+    # Get current totals
+    local total_input=0 total_output=0 total_cost="0"
+    total_input=$(echo "$state" | jq -r '.totals.input_tokens // 0' 2>/dev/null) || total_input=0
+    total_output=$(echo "$state" | jq -r '.totals.output_tokens // 0' 2>/dev/null) || total_output=0
+    total_cost=$(echo "$state" | jq -r '.totals.total_cost_usd // 0' 2>/dev/null) || total_cost="0"
+    [[ "$total_input" == "null" ]] && total_input=0
+    [[ "$total_output" == "null" ]] && total_output=0
+    [[ "$total_cost" == "null" ]] && total_cost="0"
+
+    debug_log "Current totals from state: in=$total_input out=$total_output cost=$total_cost"
+
+    # Update totals with deltas
+    local new_total_input=$((total_input + delta_input))
+    local new_total_output=$((total_output + delta_output))
+    local new_total_cost
+    new_total_cost=$(awk "BEGIN {printf \"%.4f\", $total_cost + $delta_cost}")
+
+    debug_log "New totals: in=$new_total_input out=$new_total_output cost=$new_total_cost"
+
+    # Only update if there was a change
+    local delta_total=$((delta_input + delta_output))
     if [[ "$delta_total" -gt 0 ]] || [[ ! -f "$state_file" ]]; then
         mkdir -p "$(dirname "$state_file")" 2>/dev/null || true
-        # Merge with existing state (preserve start_pct values)
+
+        # Preserve start_pct values for local tracking feature
         local start_5h=-1 start_7d=-1 last_5h="" last_7d=""
-        if [[ -f "$state_file" ]]; then
-            start_5h=$(jq -r '.start_5h_pct // -1' "$state_file" 2>/dev/null) || start_5h=-1
-            start_7d=$(jq -r '.start_7d_pct // -1' "$state_file" 2>/dev/null) || start_7d=-1
-            last_5h=$(jq -r '.last_5h_reset // ""' "$state_file" 2>/dev/null) || last_5h=""
-            last_7d=$(jq -r '.last_7d_reset // ""' "$state_file" 2>/dev/null) || last_7d=""
-        fi
+        start_5h=$(echo "$state" | jq -r '.start_5h_pct // -1' 2>/dev/null) || start_5h=-1
+        start_7d=$(echo "$state" | jq -r '.start_7d_pct // -1' 2>/dev/null) || start_7d=-1
+        last_5h=$(echo "$state" | jq -r '.last_5h_reset // ""' 2>/dev/null) || last_5h=""
+        last_7d=$(echo "$state" | jq -r '.last_7d_reset // ""' 2>/dev/null) || last_7d=""
+        [[ "$start_5h" == "null" ]] && start_5h=-1
+        [[ "$start_7d" == "null" ]] && start_7d=-1
+        [[ "$last_5h" == "null" ]] && last_5h=""
+        [[ "$last_7d" == "null" ]] && last_7d=""
+
+        # Build sessions object - preserve existing sessions, update current
+        local sessions_json
+        sessions_json=$(echo "$state" | jq -r '.sessions // {}' 2>/dev/null) || sessions_json="{}"
+        sessions_json=$(echo "$sessions_json" | jq --arg sid "$session_id" \
+            --argjson inp "$current_input" \
+            --argjson out "$current_output" \
+            --arg cost "$current_cost" \
+            '.[$sid] = {"last_input": $inp, "last_output": $out, "last_cost": ($cost | tonumber)}' 2>/dev/null) || sessions_json="{}"
+
+        debug_log "Writing state file with sessions: $(echo "$sessions_json" | jq -c '.')"
+
+        # Write updated state
         cat > "$state_file" << EOF
 {
   "start_5h_pct": ${start_5h},
   "start_7d_pct": ${start_7d},
   "last_5h_reset": "${last_5h}",
   "last_7d_reset": "${last_7d}",
-  "last_session_input": ${current_input},
-  "last_session_output": ${current_output},
-  "total_tokens_ever": ${total_ever}
+  "sessions": ${sessions_json},
+  "totals": {
+    "input_tokens": ${new_total_input},
+    "output_tokens": ${new_total_output},
+    "total_cost_usd": ${new_total_cost}
+  }
 }
 EOF
+        debug_log "State file written successfully"
+    else
+        debug_log "No change detected (delta_total=$delta_total), skipping write"
     fi
 
-    echo "$total_ever"
+    # Return total tokens (input + output)
+    echo "$((new_total_input + new_total_output))"
+}
+
+# Get total accumulated cost from state file
+get_total_cost_ever() {
+    local state_file="${HOME}/.claude/limit-local-state.json"
+    if [[ -f "$state_file" ]]; then
+        local cost
+        cost=$(jq -r '.totals.total_cost_usd // 0' "$state_file" 2>/dev/null) || cost="0"
+        [[ "$cost" == "null" ]] && cost="0"
+        awk "BEGIN {printf \"%.2f\", $cost}"
+    else
+        echo "0.00"
+    fi
 }
 
 # Get context length from stdin data
@@ -984,15 +1079,27 @@ format_output() {
             needs_update=true
         fi
 
-        # Update state file if needed
+        # Update state file if needed - PRESERVE sessions and totals!
         if [[ "$needs_update" == "true" ]]; then
             mkdir -p "$(dirname "$state_file")" 2>/dev/null || true
+
+            # Read existing sessions and totals to preserve them
+            local existing_sessions="{}" existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
+            if [[ -f "$state_file" ]]; then
+                existing_sessions=$(jq -r '.sessions // {}' "$state_file" 2>/dev/null) || existing_sessions="{}"
+                existing_totals=$(jq -c '.totals // {"input_tokens":0,"output_tokens":0,"total_cost_usd":0}' "$state_file" 2>/dev/null) || existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
+                [[ "$existing_sessions" == "null" ]] && existing_sessions="{}"
+                [[ "$existing_totals" == "null" ]] && existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
+            fi
+
             cat > "$state_file" << EOF
 {
   "start_5h_pct": ${start_5h},
   "start_7d_pct": ${start_7d},
   "last_5h_reset": "${five_hour_reset:-}",
-  "last_7d_reset": "${seven_day_reset:-}"
+  "last_7d_reset": "${seven_day_reset:-}",
+  "sessions": ${existing_sessions},
+  "totals": ${existing_totals}
 }
 EOF
         fi
@@ -1102,15 +1209,16 @@ EOF
 
             local model_line="${model_name_color}${current_model}${model_color_reset}${model_color} | Style: ${style} | Cost: \$${model_color_reset}${cost_value_color}${cost}${model_color_reset}"
 
-            # Add local token stats if enabled (gray) - shows lifetime total tokens
+            # Add local token stats if enabled (gray) - shows lifetime total tokens and cost
             if [[ "$SHOW_LOCAL" == "true" ]]; then
                 local total_tokens_ever
                 total_tokens_ever=$(get_total_tokens_ever)
                 if [[ "$total_tokens_ever" -gt 0 ]]; then
-                    local formatted_tokens calculated_cost
+                    local formatted_tokens total_cost_ever
                     formatted_tokens=$(format_tokens "$total_tokens_ever")
-                    calculated_cost=$(calculate_token_cost "$total_tokens_ever" "$current_model")
-                    model_line="${model_line}${model_color} | [T:${formatted_tokens} \$${calculated_cost}]${model_color_reset}"
+                    # Use accumulated cost from Claude's total_cost_usd (correctly calculated)
+                    total_cost_ever=$(get_total_cost_ever)
+                    model_line="${model_line}${model_color} | (${LOCAL_DEVICE_LABEL} => [T:${formatted_tokens} \$${total_cost_ever}])${model_color_reset}"
                 fi
             fi
 

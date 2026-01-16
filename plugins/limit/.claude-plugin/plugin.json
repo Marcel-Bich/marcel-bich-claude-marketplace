@@ -1,6 +1,6 @@
 {
     "name": "limit",
-    "version": "1.7.1",
+    "version": "1.7.2",
     "description": "Live API usage display in Claude Code statusline - shows utilization with colored progress bars, reset times, CWD, Git, tokens, session, and context metrics",
     "keywords": ["usage", "statusline", "api", "quota", "limits", "utilization", "tokens", "context", "git", "session"],
     "license": "MIT"
