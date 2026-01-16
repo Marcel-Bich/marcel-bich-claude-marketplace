@@ -4,8 +4,8 @@
 
 set -euo pipefail
 
-# Feature toggle - only track if explicitly enabled
-if [[ "${CLAUDE_MB_LIMIT_LOCAL:-false}" != "true" ]]; then
+# Feature toggle - enabled by default, can be disabled with CLAUDE_MB_LIMIT_LOCAL=false
+if [[ "${CLAUDE_MB_LIMIT_LOCAL:-true}" != "true" ]]; then
     exit 0
 fi
 
