@@ -1,11 +1,11 @@
 #!/bin/bash
 # debug-local-usage.sh - Debug local device tracking
-# Shows usage data, tests calculator, simulates output
+# Shows state file contents and delta calculations
 
 set -euo pipefail
 
-SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
-USAGE_FILE="${HOME}/.claude/limit-local-usage.json"
+STATE_FILE="${HOME}/.claude/limit-local-state.json"
+CACHE_FILE="/tmp/claude-mb-limit-cache.json"
 DEVICE_ID="${CLAUDE_MB_LIMIT_DEVICE_LABEL:-$(hostname)}"
 
 # Colors
@@ -20,102 +20,93 @@ echo ""
 
 # 1. Check environment
 echo -e "${COLOR_YELLOW}1. Environment:${COLOR_RESET}"
-echo "   CLAUDE_MB_LIMIT_LOCAL: ${CLAUDE_MB_LIMIT_LOCAL:-not set (default: true)}"
+echo "   CLAUDE_MB_LIMIT_LOCAL: ${CLAUDE_MB_LIMIT_LOCAL:-not set (default: false)}"
 echo "   CLAUDE_MB_LIMIT_DEVICE_LABEL: ${CLAUDE_MB_LIMIT_DEVICE_LABEL:-not set}"
 echo "   Device ID: ${DEVICE_ID}"
 echo ""
 
-# 2. Check usage file
-echo -e "${COLOR_YELLOW}2. Usage File:${COLOR_RESET}"
-if [[ -f "${USAGE_FILE}" ]]; then
-    local_entries=$(wc -l < "${USAGE_FILE}")
-    file_size=$(du -h "${USAGE_FILE}" | cut -f1)
-    echo "   Path: ${USAGE_FILE}"
-    echo "   Size: ${file_size}"
-    echo "   Entries: ${local_entries}"
+# 2. Check state file
+echo -e "${COLOR_YELLOW}2. State File:${COLOR_RESET}"
+if [[ -f "${STATE_FILE}" ]]; then
+    echo "   Path: ${STATE_FILE}"
     echo ""
-    echo "   Last 5 entries:"
-    tail -5 "${USAGE_FILE}" | while read -r line; do
-        echo "     ${line}"
-    done
+    echo "   Contents:"
+    jq '.' "${STATE_FILE}" 2>/dev/null | sed 's/^/   /'
+    echo ""
+
+    # Extract values
+    start_5h=$(jq -r '.start_5h_pct // -1' "${STATE_FILE}" 2>/dev/null)
+    start_7d=$(jq -r '.start_7d_pct // -1' "${STATE_FILE}" 2>/dev/null)
+    total_tokens=$(jq -r '.total_tokens_ever // 0' "${STATE_FILE}" 2>/dev/null)
+    last_input=$(jq -r '.last_session_input // 0' "${STATE_FILE}" 2>/dev/null)
+    last_output=$(jq -r '.last_session_output // 0' "${STATE_FILE}" 2>/dev/null)
+
+    echo "   Parsed values:"
+    echo "     start_5h_pct: ${start_5h}%"
+    echo "     start_7d_pct: ${start_7d}%"
+    echo "     total_tokens_ever: ${total_tokens}"
+    echo "     last_session_input: ${last_input}"
+    echo "     last_session_output: ${last_output}"
 else
-    echo "   File does not exist: ${USAGE_FILE}"
+    echo "   File does not exist: ${STATE_FILE}"
     echo ""
-    echo -e "${COLOR_GRAY}   To create test data, run:${COLOR_RESET}"
-    echo "   echo '{\"context_window\":{\"total_input_tokens\":1000,\"total_output_tokens\":500}}' | bash ${SCRIPT_DIR}/local-usage-tracker.sh"
+    echo -e "${COLOR_GRAY}   State file will be created when CLAUDE_MB_LIMIT_LOCAL=true${COLOR_RESET}"
 fi
 echo ""
 
-# 3. Test calculator
-echo -e "${COLOR_YELLOW}3. Calculator Test:${COLOR_RESET}"
-if [[ -f "${SCRIPT_DIR}/local-usage-calculator.sh" ]]; then
-    # shellcheck source=/dev/null
-    source "${SCRIPT_DIR}/local-usage-calculator.sh" 2>/dev/null || true
+# 3. Check API cache
+echo -e "${COLOR_YELLOW}3. API Cache (current global values):${COLOR_RESET}"
+if [[ -f "${CACHE_FILE}" ]]; then
+    global_5h=$(jq -r '.five_hour.utilization // 0' "${CACHE_FILE}" 2>/dev/null | cut -d. -f1)
+    global_7d=$(jq -r '.seven_day.utilization // 0' "${CACHE_FILE}" 2>/dev/null | cut -d. -f1)
+    reset_5h=$(jq -r '.five_hour.resets_at // ""' "${CACHE_FILE}" 2>/dev/null)
+    reset_7d=$(jq -r '.seven_day.resets_at // ""' "${CACHE_FILE}" 2>/dev/null)
 
-    if type get_local_5h_percent &>/dev/null; then
-        # Simulate with 50% global usage
-        test_5h=$(get_local_5h_percent 50 2>/dev/null) || test_5h="error"
-        test_7d=$(get_local_7d_percent 50 2>/dev/null) || test_7d="error"
+    echo "   Global 5h: ${global_5h}% (resets: ${reset_5h})"
+    echo "   Global 7d: ${global_7d}% (resets: ${reset_7d})"
+else
+    echo "   No API cache found at ${CACHE_FILE}"
+    echo -e "${COLOR_GRAY}   Run Claude Code to populate cache${COLOR_RESET}"
+fi
+echo ""
 
-        echo "   With 50% global usage:"
-        echo "     Local 5h percent: ${test_5h}%"
-        echo "     Local 7d percent: ${test_7d}%"
+# 4. Delta calculation
+echo -e "${COLOR_YELLOW}4. Delta Calculation:${COLOR_RESET}"
+if [[ -f "${STATE_FILE}" ]] && [[ -f "${CACHE_FILE}" ]]; then
+    start_5h=$(jq -r '.start_5h_pct // -1' "${STATE_FILE}" 2>/dev/null)
+    start_7d=$(jq -r '.start_7d_pct // -1' "${STATE_FILE}" 2>/dev/null)
+    global_5h=$(jq -r '.five_hour.utilization // 0' "${CACHE_FILE}" 2>/dev/null | cut -d. -f1)
+    global_7d=$(jq -r '.seven_day.utilization // 0' "${CACHE_FILE}" 2>/dev/null | cut -d. -f1)
+
+    if [[ "${start_5h}" != "-1" ]]; then
+        local_5h=$((global_5h - start_5h))
+        [[ "$local_5h" -lt 0 ]] && local_5h=0
+        echo "   5h: ${global_5h}% (global) - ${start_5h}% (start) = ${local_5h}% (local)"
     else
-        echo "   Calculator functions not loaded"
+        echo "   5h: Not initialized (start_5h_pct = -1)"
+    fi
+
+    if [[ "${start_7d}" != "-1" ]]; then
+        local_7d=$((global_7d - start_7d))
+        [[ "$local_7d" -lt 0 ]] && local_7d=0
+        echo "   7d: ${global_7d}% (global) - ${start_7d}% (start) = ${local_7d}% (local)"
+    else
+        echo "   7d: Not initialized (start_7d_pct = -1)"
     fi
 else
-    echo "   Calculator script not found"
+    echo "   Cannot calculate - missing state or cache file"
 fi
 echo ""
 
-# 4. Simulate output
-echo -e "${COLOR_YELLOW}4. Simulated Output (how it would look):${COLOR_RESET}"
+# 5. Commands
+echo -e "${COLOR_YELLOW}5. Useful Commands:${COLOR_RESET}"
 echo ""
-
-# Get color based on percentage
-get_color() {
-    local pct="$1"
-    if [[ "$pct" -lt 30 ]]; then echo "$COLOR_GRAY"
-    elif [[ "$pct" -lt 50 ]]; then echo "$COLOR_GREEN"
-    elif [[ "$pct" -lt 75 ]]; then echo "$COLOR_YELLOW"
-    else echo '\033[38;5;208m'; fi
-}
-
-# Progress bar
-progress_bar() {
-    local pct="$1"
-    [[ "$pct" -lt 0 ]] && pct=0
-    [[ "$pct" -gt 100 ]] && pct=100
-    local filled=$((pct * 10 / 100))
-    local empty=$((10 - filled))
-    local bar=""
-    for ((i=0; i<filled; i++)); do bar+="="; done
-    for ((i=0; i<empty; i++)); do bar+="-"; done
-    echo "[$bar]"
-}
-
-# Simulate global 42% and local 15%
-global_pct=42
-local_pct=15
-
-global_color=$(get_color "$global_pct")
-local_color=$(get_color "$local_pct")
-global_bar=$(progress_bar "$global_pct")
-local_bar=$(progress_bar "$local_pct")
-
-echo -e "   ${global_color}5h all ${global_bar} ${global_pct}%  reset: 2026-01-16 05:00${COLOR_RESET}"
-echo -e "   ${local_color}5h all ${local_bar} ${local_pct}%  reset: 2026-01-16 05:00 (${DEVICE_ID})${COLOR_RESET}"
+echo "   Reset local tracking (start fresh):"
+echo -e "   ${COLOR_GRAY}rm ${STATE_FILE}${COLOR_RESET}"
 echo ""
-
-# 5. Manual test command
-echo -e "${COLOR_YELLOW}5. Manual Test Commands:${COLOR_RESET}"
+echo "   Enable local tracking:"
+echo -e "   ${COLOR_GRAY}export CLAUDE_MB_LIMIT_LOCAL=true${COLOR_RESET}"
 echo ""
-echo "   Add test usage entry:"
-echo -e "   ${COLOR_GRAY}echo '{\"context_window\":{\"total_input_tokens\":5000,\"total_output_tokens\":2000}}' | bash ${SCRIPT_DIR}/local-usage-tracker.sh${COLOR_RESET}"
-echo ""
-echo "   View all entries:"
-echo -e "   ${COLOR_GRAY}cat ${USAGE_FILE}${COLOR_RESET}"
-echo ""
-echo "   Clear usage data:"
-echo -e "   ${COLOR_GRAY}rm ${USAGE_FILE}${COLOR_RESET}"
+echo "   View raw state file:"
+echo -e "   ${COLOR_GRAY}cat ${STATE_FILE}${COLOR_RESET}"
 echo ""

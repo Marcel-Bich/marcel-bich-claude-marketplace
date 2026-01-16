@@ -465,17 +465,71 @@ calculate_token_cost() {
     awk "BEGIN {printf \"%.2f\", ($tokens / 1000000) * $price_per_million}"
 }
 
-# Get total_tokens_ever from local state file (never resets)
+# Get and update total_tokens_ever using delta calculation
+# Accumulates tokens across sessions by tracking deltas
 get_total_tokens_ever() {
     local state_file="${HOME}/.claude/limit-local-state.json"
-    if [[ -f "$state_file" ]]; then
-        local total
-        total=$(jq -r '.total_tokens_ever // 0' "$state_file" 2>/dev/null) || total=0
-        [[ "$total" == "null" ]] && total=0
-        echo "$total"
-    else
-        echo "0"
+
+    # Get current session tokens from stdin data
+    local current_input=0 current_output=0
+    if [[ -n "$STDIN_DATA" ]]; then
+        current_input=$(echo "$STDIN_DATA" | jq -r '.context_window.total_input_tokens // 0' 2>/dev/null) || current_input=0
+        current_output=$(echo "$STDIN_DATA" | jq -r '.context_window.total_output_tokens // 0' 2>/dev/null) || current_output=0
+        [[ "$current_input" == "null" ]] && current_input=0
+        [[ "$current_output" == "null" ]] && current_output=0
     fi
+
+    # Read previous state
+    local last_input=0 last_output=0 total_ever=0
+    if [[ -f "$state_file" ]]; then
+        last_input=$(jq -r '.last_session_input // 0' "$state_file" 2>/dev/null) || last_input=0
+        last_output=$(jq -r '.last_session_output // 0' "$state_file" 2>/dev/null) || last_output=0
+        total_ever=$(jq -r '.total_tokens_ever // 0' "$state_file" 2>/dev/null) || total_ever=0
+        [[ "$last_input" == "null" ]] && last_input=0
+        [[ "$last_output" == "null" ]] && last_output=0
+        [[ "$total_ever" == "null" ]] && total_ever=0
+    fi
+
+    # Calculate delta (handle session reset when current < last)
+    local delta_input=0 delta_output=0
+    if [[ "$current_input" -lt "$last_input" ]] || [[ "$current_output" -lt "$last_output" ]]; then
+        # New session detected - use current as delta
+        delta_input="$current_input"
+        delta_output="$current_output"
+    else
+        delta_input=$((current_input - last_input))
+        delta_output=$((current_output - last_output))
+    fi
+
+    # Update total
+    local delta_total=$((delta_input + delta_output))
+    total_ever=$((total_ever + delta_total))
+
+    # Update state file if there was a change
+    if [[ "$delta_total" -gt 0 ]] || [[ ! -f "$state_file" ]]; then
+        mkdir -p "$(dirname "$state_file")" 2>/dev/null || true
+        # Merge with existing state (preserve start_pct values)
+        local start_5h=-1 start_7d=-1 last_5h="" last_7d=""
+        if [[ -f "$state_file" ]]; then
+            start_5h=$(jq -r '.start_5h_pct // -1' "$state_file" 2>/dev/null) || start_5h=-1
+            start_7d=$(jq -r '.start_7d_pct // -1' "$state_file" 2>/dev/null) || start_7d=-1
+            last_5h=$(jq -r '.last_5h_reset // ""' "$state_file" 2>/dev/null) || last_5h=""
+            last_7d=$(jq -r '.last_7d_reset // ""' "$state_file" 2>/dev/null) || last_7d=""
+        fi
+        cat > "$state_file" << EOF
+{
+  "start_5h_pct": ${start_5h},
+  "start_7d_pct": ${start_7d},
+  "last_5h_reset": "${last_5h}",
+  "last_7d_reset": "${last_7d}",
+  "last_session_input": ${current_input},
+  "last_session_output": ${current_output},
+  "total_tokens_ever": ${total_ever}
+}
+EOF
+    fi
+
+    echo "$total_ever"
 }
 
 # Get context length from stdin data
@@ -889,18 +943,67 @@ format_output() {
         lines+=("${COLOR_BLACK}-${COLOR_RESET}")
     fi
 
-    # Source local calculator if enabled (needed for local bars below each global bar)
+    # Local tracking: Delta-based calculation (current_pct - start_pct)
     local local_5h_pct="" local_7d_pct=""
     if [[ "$SHOW_LOCAL" == "true" ]]; then
-        local script_dir
-        script_dir="$(dirname "${BASH_SOURCE[0]}")"
-        # shellcheck source=/dev/null
-        source "${script_dir}/local-usage-calculator.sh" 2>/dev/null || true
+        local state_file="${HOME}/.claude/limit-local-state.json"
 
-        # Use reset_at times for correct reset_id based calculation
-        if type get_local_percent_5h &>/dev/null; then
-            local_5h_pct=$(get_local_percent_5h "${five_pct}" "${five_hour_reset}" 2>/dev/null) || local_5h_pct=""
-            local_7d_pct=$(get_local_percent_7d "${seven_pct:-0}" "${seven_day_reset}" 2>/dev/null) || local_7d_pct=""
+        # Read current state
+        local start_5h=-1 start_7d=-1 last_5h_reset="" last_7d_reset=""
+        if [[ -f "$state_file" ]]; then
+            start_5h=$(jq -r '.start_5h_pct // -1' "$state_file" 2>/dev/null) || start_5h=-1
+            start_7d=$(jq -r '.start_7d_pct // -1' "$state_file" 2>/dev/null) || start_7d=-1
+            last_5h_reset=$(jq -r '.last_5h_reset // ""' "$state_file" 2>/dev/null) || last_5h_reset=""
+            last_7d_reset=$(jq -r '.last_7d_reset // ""' "$state_file" 2>/dev/null) || last_7d_reset=""
+            [[ "$start_5h" == "null" ]] && start_5h=-1
+            [[ "$start_7d" == "null" ]] && start_7d=-1
+            [[ "$last_5h_reset" == "null" ]] && last_5h_reset=""
+            [[ "$last_7d_reset" == "null" ]] && last_7d_reset=""
+        fi
+
+        # Initialize or reset start values
+        local needs_update=false
+
+        # First run: initialize start values
+        if [[ "$start_5h" == "-1" ]]; then
+            start_5h="$five_pct"
+            needs_update=true
+        fi
+        if [[ "$start_7d" == "-1" ]]; then
+            start_7d="${seven_pct:-0}"
+            needs_update=true
+        fi
+
+        # Reset detection: if reset_at changed, reset start_pct
+        if [[ -n "$five_hour_reset" ]] && [[ "$five_hour_reset" != "$last_5h_reset" ]] && [[ -n "$last_5h_reset" ]]; then
+            start_5h="$five_pct"
+            needs_update=true
+        fi
+        if [[ -n "$seven_day_reset" ]] && [[ "$seven_day_reset" != "$last_7d_reset" ]] && [[ -n "$last_7d_reset" ]]; then
+            start_7d="${seven_pct:-0}"
+            needs_update=true
+        fi
+
+        # Update state file if needed
+        if [[ "$needs_update" == "true" ]]; then
+            mkdir -p "$(dirname "$state_file")" 2>/dev/null || true
+            cat > "$state_file" << EOF
+{
+  "start_5h_pct": ${start_5h},
+  "start_7d_pct": ${start_7d},
+  "last_5h_reset": "${five_hour_reset:-}",
+  "last_7d_reset": "${seven_day_reset:-}"
+}
+EOF
+        fi
+
+        # Calculate delta: local = current - start
+        local_5h_pct=$((five_pct - start_5h))
+        [[ "$local_5h_pct" -lt 0 ]] && local_5h_pct=0
+
+        if [[ -n "$seven_pct" ]]; then
+            local_7d_pct=$((seven_pct - start_7d))
+            [[ "$local_7d_pct" -lt 0 ]] && local_7d_pct=0
         fi
     fi
 
@@ -999,7 +1102,7 @@ format_output() {
 
             local model_line="${model_name_color}${current_model}${model_color_reset}${model_color} | Style: ${style} | Cost: \$${model_color_reset}${cost_value_color}${cost}${model_color_reset}"
 
-            # Add local token stats if enabled (gray) - shows lifetime total tokens (never reset)
+            # Add local token stats if enabled (gray) - shows lifetime total tokens
             if [[ "$SHOW_LOCAL" == "true" ]]; then
                 local total_tokens_ever
                 total_tokens_ever=$(get_total_tokens_ever)
@@ -1007,7 +1110,7 @@ format_output() {
                     local formatted_tokens calculated_cost
                     formatted_tokens=$(format_tokens "$total_tokens_ever")
                     calculated_cost=$(calculate_token_cost "$total_tokens_ever" "$current_model")
-                    model_line="${model_line} ${model_color}(${LOCAL_DEVICE_LABEL}) [T:${formatted_tokens} \$${calculated_cost}]${model_color_reset}"
+                    model_line="${model_line}${model_color} | [T:${formatted_tokens} \$${calculated_cost}]${model_color_reset}"
                 fi
             fi
 
