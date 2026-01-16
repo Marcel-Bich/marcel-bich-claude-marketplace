@@ -598,14 +598,11 @@ get_total_tokens_ever() {
         [[ "$last_5h" == "null" ]] && last_5h=""
         [[ "$last_7d" == "null" ]] && last_7d=""
 
-        # Preserve and update calibration block for local tracking
-        # Update last_total_tokens to match new totals so local tracking stays in sync
-        local new_total=$((new_total_input + new_total_output))
+        # Preserve calibration block for local tracking
+        # NOTE: Do NOT update last_total_tokens here - that's done by local tracking at the end
         local calibration_json
         calibration_json=$(echo "$state" | jq -c '.calibration // {"estimated_max_5h":'"$DEFAULT_ESTIMATED_MAX_5H"',"estimated_max_7d":'"$DEFAULT_ESTIMATED_MAX_7D"',"last_total_tokens":0,"last_api_5h":0,"last_api_7d":0,"window_tokens_5h":0,"window_tokens_7d":0}' 2>/dev/null)
         [[ -z "$calibration_json" || "$calibration_json" == "null" ]] && calibration_json='{"estimated_max_5h":'"$DEFAULT_ESTIMATED_MAX_5H"',"estimated_max_7d":'"$DEFAULT_ESTIMATED_MAX_7D"',"last_total_tokens":0,"last_api_5h":0,"last_api_7d":0,"window_tokens_5h":0,"window_tokens_7d":0}'
-        # Update last_total_tokens in calibration to match new totals
-        calibration_json=$(echo "$calibration_json" | jq -c '.last_total_tokens = '"$new_total"'' 2>/dev/null) || calibration_json='{"estimated_max_5h":'"$DEFAULT_ESTIMATED_MAX_5H"',"estimated_max_7d":'"$DEFAULT_ESTIMATED_MAX_7D"',"last_total_tokens":'"$new_total"',"last_api_5h":0,"last_api_7d":0,"window_tokens_5h":0,"window_tokens_7d":0}'
 
         # Build sessions object - preserve existing sessions, update current
         local sessions_json
