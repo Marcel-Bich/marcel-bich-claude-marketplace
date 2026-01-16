@@ -1243,7 +1243,7 @@ EOF
                 local_5h_color=$(get_color "${local_5h_pct}")
                 local_5h_reset="${COLOR_RESET}"
             fi
-            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset" "~") ${local_5h_color}(${LOCAL_DEVICE_LABEL})${local_5h_reset}")
+            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset" "~") ${local_5h_color}(${LOCAL_DEVICE_LABEL})${local_5h_reset} [experimental]")
         fi
     fi
 
@@ -1257,7 +1257,7 @@ EOF
                 local_7d_color=$(get_color "${local_7d_pct}")
                 local_7d_reset="${COLOR_RESET}"
             fi
-            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset" "~") ${local_7d_color}(${LOCAL_DEVICE_LABEL})${local_7d_reset}")
+            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset" "~") ${local_7d_color}(${LOCAL_DEVICE_LABEL})${local_7d_reset} [experimental]")
         fi
     fi
 
