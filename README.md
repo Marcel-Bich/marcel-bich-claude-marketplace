@@ -11,9 +11,10 @@ A collection of productivity plugins for Claude Code.
 
 | Plugin | Description |
 |--------|-------------|
-| [**dogma**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Dogma-Plugin) | Opinionated rules enforcement (like Prettier for Claude Code) |
+| [**dogma**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Dogma-Plugin) | Opinionated rules enforcement for Claude Code |
 | [**signal**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Signal-Plugin) | Desktop notifications for Claude Code |
 | [**limit**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Limit-Plugin) | Live API usage display in statusline |
+| [**hydra**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Hydra-Plugin) | Git Worktree management for parallel agent execution |
 
 ### Third-Party Plugins
 
@@ -26,6 +27,9 @@ A collection of productivity plugins for Claude Code.
 ```bash
 claude plugin marketplace add Marcel-Bich/marcel-bich-claude-marketplace
 claude plugin install dogma@marcel-bich-claude-marketplace
+claude plugin install signal@marcel-bich-claude-marketplace
+claude plugin install limit@marcel-bich-claude-marketplace
+claude plugin install hydra@marcel-bich-claude-marketplace
 ```
 
 ## Documentation
@@ -49,6 +53,6 @@ MIT - See [LICENSE](LICENSE) for full terms.
 <details>
 <summary>Keywords / Tags</summary>
 
-Claude Code, Claude Code Plugin, Claude Code Extension, Claude Code Marketplace, Claude Code Plugins Collection, Anthropic CLI, Anthropic Plugin, Anthropic Extension, Anthropic Claude, Anthropic AI, AI Agent Plugins, AI Code Assistant, AI Coding, AI Programming, AI Development, Marcel Bich, marcel-bich-claude-marketplace, dogma plugin, signal plugin, limit plugin
+Claude Code, Claude Code Plugin, Claude Code Extension, Claude Code Marketplace, Claude Code Plugins Collection, Anthropic CLI, Anthropic Plugin, Anthropic Extension, Anthropic Claude, Anthropic AI, AI Agent Plugins, AI Code Assistant, AI Coding, AI Programming, AI Development, Marcel Bich, marcel-bich-claude-marketplace, dogma plugin, signal plugin, limit plugin, hydra plugin
 
 </details>
