@@ -1144,8 +1144,14 @@ format_output() {
         fi
 
         # Accumulate tokens to window counters
-        window_tokens_5h=$((window_tokens_5h + token_delta))
-        window_tokens_7d=$((window_tokens_7d + token_delta))
+        # BUT: if a reset just happened, token_delta contains tokens from the OLD window
+        # So we should NOT add it to the new window. Start fresh at 0.
+        if [[ "$reset_5h" == "false" ]]; then
+            window_tokens_5h=$((window_tokens_5h + token_delta))
+        fi
+        if [[ "$reset_7d" == "false" ]]; then
+            window_tokens_7d=$((window_tokens_7d + token_delta))
+        fi
 
         # Dynamic calibration: observe token_delta vs pct_delta
         # Only calibrate when we have positive deltas and no reset just happened
@@ -1170,18 +1176,15 @@ format_output() {
 
         # Calculate local percentage based on WINDOW tokens (not total)
         # Round UP (ceiling) - if tokens were used, show at least 1%
+        # NOTE: Do NOT modify estimated_max here - let EMA calibration handle it.
+        #       Only cap the DISPLAY value so local never exceeds global.
         if [[ "$estimated_max_5h" -gt 0 ]]; then
             local_5h_pct=$((window_tokens_5h * 100 / estimated_max_5h))
-            debug_log "Pre-correction: local_5h_pct=$local_5h_pct five_pct=$five_pct"
-            # If local > global, estimated_max is too low - correct immediately
-            if [[ "$local_5h_pct" -gt "$five_pct" && "$five_pct" -gt 0 ]]; then
-                estimated_max_5h=$((window_tokens_5h * 100 / five_pct))
-                debug_log "Corrected 5h max (local>global): new_estimate=$estimated_max_5h"
-                # Recalculate with corrected estimate
-                local_5h_pct=$((window_tokens_5h * 100 / estimated_max_5h))
-            fi
+            debug_log "Pre-cap: local_5h_pct=$local_5h_pct five_pct=$five_pct"
             # Ceiling: if tokens > 0 but pct rounds to 0, show 1%
             [[ "$window_tokens_5h" -gt 0 && "$local_5h_pct" -eq 0 ]] && local_5h_pct=1
+            # Cap at global % (local can never exceed global)
+            [[ "$local_5h_pct" -gt "$five_pct" ]] && local_5h_pct="$five_pct"
             [[ "$local_5h_pct" -gt 100 ]] && local_5h_pct=100
         else
             local_5h_pct=0
@@ -1189,15 +1192,11 @@ format_output() {
 
         if [[ -n "$seven_pct" ]] && [[ "$estimated_max_7d" -gt 0 ]]; then
             local_7d_pct=$((window_tokens_7d * 100 / estimated_max_7d))
-            # If local > global, estimated_max is too low - correct immediately
-            if [[ "$local_7d_pct" -gt "$seven_pct" && "$seven_pct" -gt 0 ]]; then
-                estimated_max_7d=$((window_tokens_7d * 100 / seven_pct))
-                debug_log "Corrected 7d max (local>global): new_estimate=$estimated_max_7d"
-                # Recalculate with corrected estimate
-                local_7d_pct=$((window_tokens_7d * 100 / estimated_max_7d))
-            fi
+            debug_log "Pre-cap: local_7d_pct=$local_7d_pct seven_pct=$seven_pct"
             # Ceiling: if tokens > 0 but pct rounds to 0, show 1%
             [[ "$window_tokens_7d" -gt 0 && "$local_7d_pct" -eq 0 ]] && local_7d_pct=1
+            # Cap at global % (local can never exceed global)
+            [[ "$local_7d_pct" -gt "$seven_pct" ]] && local_7d_pct="$seven_pct"
             [[ "$local_7d_pct" -gt 100 ]] && local_7d_pct=100
         fi
 
