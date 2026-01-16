@@ -450,6 +450,34 @@ format_tokens() {
     fi
 }
 
+# Calculate token cost based on model (input price per million tokens)
+calculate_token_cost() {
+    local tokens="$1"
+    local model="$2"
+    local price_per_million=3  # Default: Sonnet
+
+    case "${model,,}" in
+        *opus*) price_per_million=15 ;;
+        *sonnet*) price_per_million=3 ;;
+        *haiku*) price_per_million=0.25 ;;
+    esac
+
+    awk "BEGIN {printf \"%.2f\", ($tokens / 1000000) * $price_per_million}"
+}
+
+# Get total_tokens_ever from local state file (never resets)
+get_total_tokens_ever() {
+    local state_file="${HOME}/.claude/limit-local-state.json"
+    if [[ -f "$state_file" ]]; then
+        local total
+        total=$(jq -r '.total_tokens_ever // 0' "$state_file" 2>/dev/null) || total=0
+        [[ "$total" == "null" ]] && total=0
+        echo "$total"
+    else
+        echo "0"
+    fi
+}
+
 # Get context length from stdin data
 # Current context = cache_read + cache_creation + input tokens
 get_context_length() {
@@ -869,9 +897,10 @@ format_output() {
         # shellcheck source=/dev/null
         source "${script_dir}/local-usage-calculator.sh" 2>/dev/null || true
 
-        if type get_local_5h_percent &>/dev/null; then
-            local_5h_pct=$(get_local_5h_percent "${five_pct}" 2>/dev/null) || local_5h_pct=""
-            local_7d_pct=$(get_local_7d_percent "${seven_pct:-0}" 2>/dev/null) || local_7d_pct=""
+        # Use reset_at times for correct reset_id based calculation
+        if type get_local_percent_5h &>/dev/null; then
+            local_5h_pct=$(get_local_percent_5h "${five_pct}" "${five_hour_reset}" 2>/dev/null) || local_5h_pct=""
+            local_7d_pct=$(get_local_percent_7d "${seven_pct:-0}" "${seven_day_reset}" 2>/dev/null) || local_7d_pct=""
         fi
     fi
 
@@ -969,6 +998,18 @@ format_output() {
             cost=$(get_total_cost)
 
             local model_line="${model_name_color}${current_model}${model_color_reset}${model_color} | Style: ${style} | Cost: \$${model_color_reset}${cost_value_color}${cost}${model_color_reset}"
+
+            # Add local token stats if enabled (gray) - shows lifetime total tokens (never reset)
+            if [[ "$SHOW_LOCAL" == "true" ]]; then
+                local total_tokens_ever
+                total_tokens_ever=$(get_total_tokens_ever)
+                if [[ "$total_tokens_ever" -gt 0 ]]; then
+                    local formatted_tokens calculated_cost
+                    formatted_tokens=$(format_tokens "$total_tokens_ever")
+                    calculated_cost=$(calculate_token_cost "$total_tokens_ever" "$current_model")
+                    model_line="${model_line} ${model_color}(${LOCAL_DEVICE_LABEL}) [T:${formatted_tokens} \$${calculated_cost}]${model_color_reset}"
+                fi
+            fi
 
             lines+=("$model_line")
         fi
