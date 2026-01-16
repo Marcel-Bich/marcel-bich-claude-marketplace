@@ -41,9 +41,19 @@ grep -A2 "^  [a-z]" "${CLAUDE_PLUGIN_ROOT:-$(dirname $(dirname $0))}/plugin.yaml
 ```
 1. /hydra:create feature-x       # Create worktree
 2. /hydra:spawn feature-x "..."  # Agent works there
-3. /hydra:status                 # Check progress
-4. /hydra:merge feature-x        # Integrate changes
-5. /hydra:cleanup                # Clean up
+3. /hydra:watch                  # Live monitor agents
+4. /hydra:status                 # Check git status
+5. /hydra:merge feature-x        # Integrate changes
+6. /hydra:cleanup                # Clean up
+```
+
+## Parallel Workflow
+
+```
+1. /hydra:parallel feature-a:Task A | feature-b:Task B | feature-c:Task C
+2. /hydra:watch                  # Monitor all agents live
+3. /hydra:merge feature-a        # Merge when done
+4. /hydra:cleanup                # Remove merged worktrees
 ```
 
 ## More Information

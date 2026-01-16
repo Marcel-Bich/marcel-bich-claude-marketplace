@@ -10,6 +10,36 @@
 # Debug log file
 DOGMA_DEBUG_LOG="/tmp/dogma-debug.log"
 
+# Check if we're in a hydra worktree (not the main repo)
+# Worktrees are isolated - agents there can work freely
+is_hydra_worktree() {
+    # Get worktree list
+    local worktrees
+    worktrees=$(git worktree list 2>/dev/null) || return 1
+    local worktree_count
+    worktree_count=$(echo "$worktrees" | wc -l)
+
+    # Only one worktree = we're in main repo
+    if [ "$worktree_count" -le 1 ]; then
+        return 1
+    fi
+
+    # Get main worktree path (first line)
+    local main_worktree
+    main_worktree=$(echo "$worktrees" | head -1 | awk '{print $1}')
+    local current_dir
+    current_dir=$(pwd)
+
+    # If current dir starts with main worktree path, we're in main
+    if [[ "$current_dir" == "$main_worktree" ]] || [[ "$current_dir" == "$main_worktree"/* ]]; then
+        return 1  # In main repo
+    fi
+
+    # We're in a secondary worktree
+    dogma_debug_log "Detected hydra worktree: $current_dir"
+    return 0
+}
+
 # Debug logging function (like limit plugin)
 dogma_debug_log() {
     if [ "${CLAUDE_MB_DOGMA_DEBUG:-false}" = "true" ]; then

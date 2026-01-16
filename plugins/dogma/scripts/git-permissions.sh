@@ -49,6 +49,13 @@ fi
 dogma_debug_log "=== git-permissions.sh START ==="
 dogma_debug_log "PWD: $(pwd)"
 
+# === HYDRA WORKTREE CHECK ===
+# Agents in worktrees can work freely (isolated from main repo)
+if is_hydra_worktree; then
+    dogma_debug_log "In hydra worktree - permissive mode, allowing all git operations"
+    exit 0
+fi
+
 # Read JSON input from stdin
 INPUT=$(cat 2>/dev/null || true)
 

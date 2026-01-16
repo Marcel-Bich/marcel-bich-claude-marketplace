@@ -60,6 +60,13 @@ fi
 dogma_debug_log "=== file-protection.sh START ==="
 dogma_debug_log "PWD: $(pwd)"
 
+# === HYDRA WORKTREE CHECK ===
+# Agents in worktrees can work freely (isolated from main repo)
+if is_hydra_worktree; then
+    dogma_debug_log "In hydra worktree - permissive mode"
+    exit 0
+fi
+
 # Read JSON input from stdin
 INPUT=$(cat 2>/dev/null || true)
 
