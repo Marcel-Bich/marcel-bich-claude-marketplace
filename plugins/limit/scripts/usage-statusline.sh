@@ -332,6 +332,7 @@ format_limit_line() {
     local label="$1"
     local pct="$2"
     local reset_at="$3"
+    local prefix="${4:-}"  # Optional prefix (e.g., "~" for estimates)
 
     local color=""
     local color_reset=""
@@ -350,8 +351,10 @@ format_limit_line() {
         reset_str=" reset: $(format_reset_datetime "$reset_at")"
     fi
 
-    # Output varies based on toggles, e.g.: "Label [====------] 14% reset 2026-01-08 22:00"
-    printf "${color}%s%s %3s%%${reset_str}${color_reset}" "$label" "$bar" "$pct"
+    # Output varies based on toggles, e.g.: "Label [====------]  14% reset 2026-01-08 22:00"
+    # With prefix: "Label [====------] ~14% reset 2026-01-08 22:00"
+    local display_pct="${prefix}${pct}"
+    printf "${color}%s%s %4s%%${reset_str}${color_reset}" "$label" "$bar" "$display_pct"
 }
 
 # Parse integer from value (handles int, float, null, empty)
@@ -1161,9 +1164,19 @@ format_output() {
         fi
 
         # Calculate local percentage based on WINDOW tokens (not total)
+        # Round UP (ceiling) - if tokens were used, show at least 1%
         if [[ "$estimated_max_5h" -gt 0 ]]; then
             local_5h_pct=$((window_tokens_5h * 100 / estimated_max_5h))
-            [[ "$local_5h_pct" -lt 0 ]] && local_5h_pct=0
+            debug_log "Pre-correction: local_5h_pct=$local_5h_pct five_pct=$five_pct"
+            # If local > global, estimated_max is too low - correct immediately
+            if [[ "$local_5h_pct" -gt "$five_pct" && "$five_pct" -gt 0 ]]; then
+                estimated_max_5h=$((window_tokens_5h * 100 / five_pct))
+                debug_log "Corrected 5h max (local>global): new_estimate=$estimated_max_5h"
+                # Recalculate with corrected estimate
+                local_5h_pct=$((window_tokens_5h * 100 / estimated_max_5h))
+            fi
+            # Ceiling: if tokens > 0 but pct rounds to 0, show 1%
+            [[ "$window_tokens_5h" -gt 0 && "$local_5h_pct" -eq 0 ]] && local_5h_pct=1
             [[ "$local_5h_pct" -gt 100 ]] && local_5h_pct=100
         else
             local_5h_pct=0
@@ -1171,7 +1184,15 @@ format_output() {
 
         if [[ -n "$seven_pct" ]] && [[ "$estimated_max_7d" -gt 0 ]]; then
             local_7d_pct=$((window_tokens_7d * 100 / estimated_max_7d))
-            [[ "$local_7d_pct" -lt 0 ]] && local_7d_pct=0
+            # If local > global, estimated_max is too low - correct immediately
+            if [[ "$local_7d_pct" -gt "$seven_pct" && "$seven_pct" -gt 0 ]]; then
+                estimated_max_7d=$((window_tokens_7d * 100 / seven_pct))
+                debug_log "Corrected 7d max (local>global): new_estimate=$estimated_max_7d"
+                # Recalculate with corrected estimate
+                local_7d_pct=$((window_tokens_7d * 100 / estimated_max_7d))
+            fi
+            # Ceiling: if tokens > 0 but pct rounds to 0, show 1%
+            [[ "$window_tokens_7d" -gt 0 && "$local_7d_pct" -eq 0 ]] && local_7d_pct=1
             [[ "$local_7d_pct" -gt 100 ]] && local_7d_pct=100
         fi
 
@@ -1218,7 +1239,7 @@ EOF
                 local_5h_color=$(get_color "${local_5h_pct}")
                 local_5h_reset="${COLOR_RESET}"
             fi
-            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset") ${local_5h_color}(${LOCAL_DEVICE_LABEL})${local_5h_reset}")
+            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset" "~") ${local_5h_color}(${LOCAL_DEVICE_LABEL})${local_5h_reset}")
         fi
     fi
 
@@ -1232,7 +1253,7 @@ EOF
                 local_7d_color=$(get_color "${local_7d_pct}")
                 local_7d_reset="${COLOR_RESET}"
             fi
-            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset") ${local_7d_color}(${LOCAL_DEVICE_LABEL})${local_7d_reset}")
+            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset" "~") ${local_7d_color}(${LOCAL_DEVICE_LABEL})${local_7d_reset}")
         fi
     fi
 
