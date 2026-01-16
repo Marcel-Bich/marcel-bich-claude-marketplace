@@ -34,19 +34,34 @@ if [[ -f "${STATE_FILE}" ]]; then
     jq '.' "${STATE_FILE}" 2>/dev/null | sed 's/^/   /'
     echo ""
 
-    # Extract values
+    # Extract values - new structure
     start_5h=$(jq -r '.start_5h_pct // -1' "${STATE_FILE}" 2>/dev/null)
     start_7d=$(jq -r '.start_7d_pct // -1' "${STATE_FILE}" 2>/dev/null)
-    total_tokens=$(jq -r '.total_tokens_ever // 0' "${STATE_FILE}" 2>/dev/null)
-    last_input=$(jq -r '.last_session_input // 0' "${STATE_FILE}" 2>/dev/null)
-    last_output=$(jq -r '.last_session_output // 0' "${STATE_FILE}" 2>/dev/null)
+    total_input=$(jq -r '.totals.input_tokens // 0' "${STATE_FILE}" 2>/dev/null)
+    total_output=$(jq -r '.totals.output_tokens // 0' "${STATE_FILE}" 2>/dev/null)
+    total_cost=$(jq -r '.totals.total_cost_usd // 0' "${STATE_FILE}" 2>/dev/null)
+    session_count=$(jq -r '.sessions | length // 0' "${STATE_FILE}" 2>/dev/null)
 
     echo "   Parsed values:"
     echo "     start_5h_pct: ${start_5h}%"
     echo "     start_7d_pct: ${start_7d}%"
-    echo "     total_tokens_ever: ${total_tokens}"
-    echo "     last_session_input: ${last_input}"
-    echo "     last_session_output: ${last_output}"
+    echo ""
+    echo "   Totals (accumulated across all sessions):"
+    echo "     input_tokens: ${total_input}"
+    echo "     output_tokens: ${total_output}"
+    echo "     total_tokens: $((total_input + total_output))"
+    echo "     total_cost_usd: \$${total_cost}"
+    echo ""
+    echo "   Sessions tracked: ${session_count}"
+    if [[ "$session_count" -gt 0 ]]; then
+        echo "   Session IDs:"
+        jq -r '.sessions | keys[]' "${STATE_FILE}" 2>/dev/null | while read -r sid; do
+            local_in=$(jq -r ".sessions[\"$sid\"].last_input // 0" "${STATE_FILE}" 2>/dev/null)
+            local_out=$(jq -r ".sessions[\"$sid\"].last_output // 0" "${STATE_FILE}" 2>/dev/null)
+            local_cost=$(jq -r ".sessions[\"$sid\"].last_cost // 0" "${STATE_FILE}" 2>/dev/null)
+            echo "     - ${sid}: in=${local_in} out=${local_out} cost=\$${local_cost}"
+        done
+    fi
 else
     echo "   File does not exist: ${STATE_FILE}"
     echo ""
@@ -71,7 +86,7 @@ fi
 echo ""
 
 # 4. Delta calculation
-echo -e "${COLOR_YELLOW}4. Delta Calculation:${COLOR_RESET}"
+echo -e "${COLOR_YELLOW}4. Delta Calculation (local device usage):${COLOR_RESET}"
 if [[ -f "${STATE_FILE}" ]] && [[ -f "${CACHE_FILE}" ]]; then
     start_5h=$(jq -r '.start_5h_pct // -1' "${STATE_FILE}" 2>/dev/null)
     start_7d=$(jq -r '.start_7d_pct // -1' "${STATE_FILE}" 2>/dev/null)
