@@ -136,14 +136,15 @@ log_debug "Checking dangerous commands..."
 
 # Git remote commands (tokens can be embedded in URLs)
 # Catches: git remote -v, git remote --verbose, git remote show, git remote get-url
-# Also: /usr/bin/git, command git, sudo git
-if echo "$COMMAND" | grep -qE '(^|\||;|&&|\|\||\s|\$\(|\(|`)(sudo\s+)?(command\s+)?([/a-z]*\/)?git\s+remote\s+(-v|--verbose|show|get-url)'; then
+# Also: /usr/bin/git, command git, sudo git, git -C /path remote -v, git --no-pager remote -v
+# Uses broad match: git followed by anything, then remote with dangerous flags
+if echo "$COMMAND" | grep -qE '(^|\||;|&&|\|\||\s|\$\(|\(|`)(sudo\s+)?(command\s+)?([/a-z]*\/)?git\b.*\bremote\s+(-v|--verbose|show|get-url)'; then
     log_debug "BLOCKING: git remote"
     output_block "BLOCKED: 'git remote -v/--verbose/show/get-url' can expose tokens embedded in remote URLs. Use 'git remote' (without -v) to list remote names only."
 fi
 
-# Git config remote URL
-if echo "$COMMAND" | grep -qE 'git\s+config.*(remote\.|url\.)'; then
+# Git config remote URL (also handles git -C /path config, git --no-pager config, etc.)
+if echo "$COMMAND" | grep -qE 'git\b.*\bconfig.*(remote\.|url\.)'; then
     output_block "BLOCKED: 'git config' with remote/url can expose tokens embedded in remote URLs."
 fi
 
@@ -177,8 +178,8 @@ if echo "$COMMAND" | grep -qE '(cat|head|tail|less|more|bat|view)\s+.*(\~\/\.net
     output_block "BLOCKED: Command would read a credential/secrets file that may contain tokens."
 fi
 
-# Git credential helpers
-if echo "$COMMAND" | grep -qE 'git\s+credential'; then
+# Git credential helpers (also handles git -C /path credential, etc.)
+if echo "$COMMAND" | grep -qE 'git\b.*\bcredential'; then
     output_block "BLOCKED: 'git credential' commands can expose stored tokens."
 fi
 
