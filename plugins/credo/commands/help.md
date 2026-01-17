@@ -443,3 +443,11 @@ Shows gaps across all ignore locations so nothing is forgotten.
 
 - `/gsd:help` - All GSD commands
 - `/hydra:help` - Worktree management
+
+### Wiki (Fallback for Details)
+
+If information is missing or more details are needed, check the marketplace wiki:
+
+**URL:** https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki
+
+Use WebFetch to retrieve specific wiki pages when users ask for more details about a plugin or feature not fully covered here.
