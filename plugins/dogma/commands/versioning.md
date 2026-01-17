@@ -181,6 +181,94 @@ For each missing plugin:
 
 This is mandatory - a plugin without registry entry will NOT appear in `/plugin` list.
 
+## Step 4c: Check documentation consistency (Marketplaces only)
+
+**Prevents forgotten plugins in docs.** If this is a marketplace repo with README.md and/or wiki:
+
+### 4c.1: Find all plugin names
+
+```bash
+# Get list of all plugins from registry (source of truth)
+jq -r '.plugins[].name' .claude-plugin/marketplace.json 2>/dev/null | sort
+```
+
+### 4c.2: Check main README.md
+
+If `README.md` exists in root:
+
+```bash
+# Extract plugin names from Available Plugins table
+grep -oP '\*\*\K[a-z-]+(?=\*\*)' README.md 2>/dev/null | sort
+
+# Extract plugin names from Quick Start install commands
+grep -oP 'plugin install \K[a-z-]+(?=@)' README.md 2>/dev/null | sort
+
+# Extract plugin names from Tags section
+grep -oP '(?<=plugin, )[a-z-]+(?= plugin)' README.md 2>/dev/null | sort
+```
+
+Compare each extraction with the plugin list. Report discrepancies:
+
+```
+README.md consistency check:
+  Plugin table: Missing credo
+  Quick Start: Missing credo
+  Tags: Missing credo plugin
+```
+
+### 4c.3: Check wiki Home.md (if wiki exists)
+
+Search for wiki in parallel directory:
+
+```bash
+REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
+WIKI_PATH="../${REPO_NAME}.wiki"
+if [ -d "$WIKI_PATH" ]; then
+  echo "Wiki found: $WIKI_PATH"
+fi
+```
+
+If wiki exists, check `Home.md`:
+
+```bash
+# Plugin table
+grep -oP '\[.*?\]\(./Claude-Code-\K[A-Za-z-]+(?=-Plugin)' "$WIKI_PATH/Home.md" 2>/dev/null | tr '[:upper:]' '[:lower:]' | sort
+
+# Install commands
+grep -oP 'plugin install \K[a-z-]+(?=@)' "$WIKI_PATH/Home.md" 2>/dev/null | sort
+
+# Tags line
+grep "Tags:" "$WIKI_PATH/Home.md" 2>/dev/null
+```
+
+Report discrepancies.
+
+### 4c.4: Check wiki article existence
+
+For each registered plugin, verify wiki article exists:
+
+```bash
+for plugin in $(jq -r '.plugins[].name' .claude-plugin/marketplace.json); do
+  # Convert plugin name to wiki article name (e.g., dogma -> Claude-Code-Dogma-Plugin.md)
+  article="Claude-Code-$(echo $plugin | sed 's/.*/\u&/' | sed 's/-./\U&/g')-Plugin.md"
+  if [ ! -f "$WIKI_PATH/$article" ]; then
+    echo "MISSING: $article"
+  fi
+done
+```
+
+### 4c.5: Fix or report
+
+For each discrepancy found:
+
+**If auto-fixable** (adding to existing list/table):
+- Ask user: `Fix README.md plugin table? [Y/n]`
+- Apply edit if confirmed
+
+**If not auto-fixable** (missing wiki article, complex structure):
+- Report clearly: `ACTION REQUIRED: Create wiki article for credo plugin`
+- Suggest creating a TODO file if multiple items need attention
+
 ## Step 5: Summary and commit
 
 Show summary:
