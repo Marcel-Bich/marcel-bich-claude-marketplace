@@ -1,6 +1,6 @@
 name: dogma
 description: Intelligent sync of Claude instructions with enforcement hooks for security and consistency
-version: 1.28.20
+version: 1.29.0
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
@@ -32,6 +32,15 @@ commands:
   docs-update:
     description: Sync documentation across README files and wiki articles
     source: commands/docs-update.md
+  ignore:
+    description: Add ignore patterns to multiple locations at once
+    source: commands/ignore.md
+  ignore:audit:
+    description: Show which patterns are missing where
+    source: commands/ignore/audit.md
+  ignore:sync-all:
+    description: Sync patterns from sync.md to all repos
+    source: commands/ignore/sync-all.md
 
 hooks:
   # ============================================
