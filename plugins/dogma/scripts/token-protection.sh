@@ -74,7 +74,15 @@ if [ "$TOOL_NAME" = "Read" ]; then
     log_debug "Scanning file for tokens..."
 
     # Block known credential files by name
-    if echo "$FILE_PATH" | grep -qiE '(\.env|\.netrc|credentials|secrets|\.git-credentials|\.npmrc|\.pypirc|id_rsa|id_ed25519|id_ecdsa|\.pem|\.key)$'; then
+    # Pattern matches:
+    # - Files ending with: .env, .netrc, .git-credentials, .npmrc, .pypirc, .pem, .key
+    # - Files containing: credential, secret, id_rsa, id_ed25519, id_ecdsa
+    # - Hidden files like .credentials.json, .secrets.yaml
+    if echo "$FILE_PATH" | grep -qiE '(\.env|\.netrc|\.git-credentials|\.npmrc|\.pypirc|\.pem|\.key)$'; then
+        output_block "BLOCKED: Reading credential/secrets file '$FILE_PATH'. These files typically contain sensitive tokens."
+    fi
+    # Match credential/secret anywhere in filename (handles .credentials.json, secrets.yaml, etc.)
+    if echo "$FILE_PATH" | grep -qiE '(credential|secret|id_rsa|id_ed25519|id_ecdsa)'; then
         output_block "BLOCKED: Reading credential/secrets file '$FILE_PATH'. These files typically contain sensitive tokens."
     fi
 

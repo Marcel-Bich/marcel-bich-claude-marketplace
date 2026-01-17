@@ -26,6 +26,17 @@
     ],
     "PreToolUse": [
       {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/token-protection.sh",
+            "timeout": 5,
+            "description": "Block reading credential/secrets files"
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {
