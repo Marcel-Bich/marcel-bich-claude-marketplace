@@ -269,6 +269,83 @@ For each discrepancy found:
 - Report clearly: `ACTION REQUIRED: Create wiki article for credo plugin`
 - Suggest creating a TODO file if multiple items need attention
 
+## Step 4d: Check documentation consistency (Non-marketplace projects)
+
+**Fallback for any project with a wiki.** If NOT a marketplace (no `.claude-plugin/marketplace.json`) but wiki exists:
+
+### 4d.1: Detect wiki
+
+```bash
+REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
+WIKI_PATH="../${REPO_NAME}.wiki"
+if [ -d "$WIKI_PATH" ] && [ ! -f ".claude-plugin/marketplace.json" ]; then
+  echo "Wiki found (non-marketplace): $WIKI_PATH"
+fi
+```
+
+### 4d.2: Compare versions between README and wiki
+
+Extract version from main `README.md` (if present):
+
+```bash
+# Common version patterns in README
+grep -oP '(?:version|Version|VERSION)[:\s]*v?(\d+\.\d+\.\d+)' README.md 2>/dev/null | head -1
+grep -oP '(?:Current version|Latest)[:\s]*v?(\d+\.\d+\.\d+)' README.md 2>/dev/null | head -1
+```
+
+Compare with wiki `Home.md` or main wiki article:
+
+```bash
+# Check wiki for version references
+grep -oP '(?:version|Version|VERSION)[:\s]*v?(\d+\.\d+\.\d+)' "$WIKI_PATH/Home.md" 2>/dev/null | head -1
+```
+
+Report if versions differ between README and wiki.
+
+### 4d.3: Compare feature lists
+
+If README has a "Features" or "Commands" section, check if wiki has equivalent content:
+
+```bash
+# Extract section headers from README
+grep -E '^#{1,3}\s+(Features|Commands|Usage|Installation)' README.md 2>/dev/null
+
+# Compare with wiki
+grep -E '^#{1,3}\s+(Features|Commands|Usage|Installation)' "$WIKI_PATH/Home.md" 2>/dev/null
+```
+
+Flag if README has sections that wiki is missing (or vice versa).
+
+### 4d.4: Check for orphaned wiki articles
+
+List all wiki articles and verify they reference existing components:
+
+```bash
+ls "$WIKI_PATH"/*.md 2>/dev/null | xargs -I {} basename {} .md
+```
+
+For each article, check if the referenced component/feature still exists in the main repo.
+
+### 4d.5: Report discrepancies
+
+Present findings to user:
+
+```
+Wiki consistency check (non-marketplace):
+
+  Version mismatch:
+    - README.md: 2.1.0
+    - Wiki Home.md: 2.0.0
+
+  Missing in wiki:
+    - "CLI Options" section (exists in README)
+
+  Potentially orphaned wiki articles:
+    - Old-Feature-Guide.md (feature removed in v2.0)
+```
+
+Ask user which items to fix or add to TODO.
+
 ## Step 5: Summary and commit
 
 Show summary:
