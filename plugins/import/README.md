@@ -8,7 +8,7 @@ Some documentation sites (like Pimcore) block AI access via WebFetch. This plugi
 
 1. **Context7** - Check if library exists in Context7 database (fastest, structured)
 2. **WebFetch** - Direct fetch if not in Context7 (fast)
-3. **Playwright** - Headless browser if blocked (bypasses all blocks)
+3. **Playwright** - Browser automation if blocked (bypasses bot detection)
 
 User is informed at each fallback step.
 
@@ -97,7 +97,7 @@ Content...
 ## Requirements
 
 - Context7 MCP plugin (recommended, for structured docs)
-- Playwright MCP plugin (for blocked sites, runs headless)
+- Playwright MCP plugin (for blocked sites, runs visible - NOT headless to bypass bot detection)
 - WebFetch tool (built-in)
 
 ## License
