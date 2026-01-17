@@ -15,6 +15,93 @@ allowed-tools:
 
 # Credo - The Preacher's Guide
 
+## Step 0: Gather the Sacred Tools (MANDATORY)
+
+Before the faithful can walk the path, they must possess the sacred tools. Check this BEFORE proceeding.
+
+```bash
+# Verify the sacred tools are present
+ls ~/.claude/plugins/installed/dogma@marcel-bich-claude-marketplace 2>/dev/null && echo "dogma: installed" || echo "dogma: MISSING"
+ls ~/.claude/plugins/installed/get-shit-done@marcel-bich-claude-marketplace 2>/dev/null && echo "get-shit-done: MISSING" || echo "get-shit-done: installed"
+```
+
+### If Tools Are Missing
+
+The faithful cannot proceed without proper preparation. Use AskUserQuestion:
+
+```
+The preacher's teachings require sacred tools that are not yet installed:
+
+Missing: [list missing plugins]
+
+Shall the preacher summon them for you?
+- Yes, install now (Recommended)
+- No, I will gather them myself
+- Proceed without (the path will be incomplete)
+```
+
+### The Faithful Choose: "Yes, install now"
+
+Summon the missing tools:
+
+```bash
+# Only for those not yet present:
+claude plugin install dogma@marcel-bich-claude-marketplace
+claude plugin install get-shit-done@marcel-bich-claude-marketplace
+```
+
+Then speak:
+
+```
+The tools have been summoned.
+
+But they slumber until Claude awakens anew.
+
+Please:
+1. Leave this session (Ctrl+C or 'exit')
+2. Return: claude
+
+Then seek /credo:psalm once more.
+```
+
+**Halt here** - the tools must awaken before the journey continues.
+
+### The Faithful Choose: "No, I will gather them myself"
+
+Provide the incantations:
+
+```
+Gather the tools yourself with these commands:
+
+claude plugin install dogma@marcel-bich-claude-marketplace
+claude plugin install get-shit-done@marcel-bich-claude-marketplace
+
+Then restart Claude and return to /credo:psalm.
+```
+
+**Halt here** - await their return.
+
+### The Faithful Choose: "Proceed without"
+
+Warn of the incomplete path:
+
+```
+You walk an incomplete path. Many teachings will fail:
+- /dogma:* commands will not respond
+- /gsd:* commands will not respond
+- The Project Setup workflow will be broken
+
+The preacher advises returning later with proper tools.
+```
+
+Continue to the Entry Point, but the journey will be hindered.
+
+### All Tools Are Present
+
+The faithful are prepared. Continue silently to the Entry Point.
+
+---
+
 ## Entry Point
 
 If the user runs `/credo` without arguments, help them discover available topics.
