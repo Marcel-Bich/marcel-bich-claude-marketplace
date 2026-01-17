@@ -223,7 +223,7 @@ Suggestions:
 
 - Priority: Context7 -> WebFetch -> Playwright
 - User is informed at each fallback step
-- Playwright runs headless (no visible browser window)
+- Playwright runs visible (NOT headless) to bypass bot detection
 - Local paths are copied, not moved
 - Always ask for confirmation on local paths
 - Saved docs include metadata (source, method, version, import date)
