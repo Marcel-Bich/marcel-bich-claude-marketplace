@@ -34,18 +34,44 @@ if [ -f "plugins/dogma/commands/sync.md" ]; then
 fi
 ```
 
-### 1.2 Error if Not in Marketplace
+### 1.2 Not in Marketplace - Offer Help
 
 If MARKETPLACE_DETECTED is "false":
 
-```
-Fehler: /dogma:ignore:sync-all ist nur in der marketplace repo verfuegbar.
-sync.md nicht gefunden.
+**Do NOT just show an error. Instead, explain and offer to help:**
 
-Tipp: Nutze /dogma:ignore [patterns] um einzelne Patterns hinzuzufuegen.
+```
+/dogma:ignore:sync-all is designed for central pattern management in the
+marcel-bich-claude-marketplace repo. All AI-tool patterns are maintained
+in sync.md there and distributed to other repos from that location.
+
+For adding individual patterns to this repo, use:
+  /dogma:ignore .aider* .continue*
+
+This adds patterns to multiple locations at once:
+  - .gitignore (versioned, shared with team)
+  - .git/info/exclude (local only, not versioned)
+
+To audit which patterns are missing where:
+  /dogma:ignore:audit
 ```
 
-**Stop execution here.**
+Then use AskUserQuestion:
+
+```
+What were you trying to achieve?
+
+1. Add patterns to .gitignore AND .git/info/exclude -> /dogma:ignore
+2. Audit which patterns are missing where -> /dogma:ignore:audit
+3. Something else (please describe)
+```
+
+Based on user response:
+- Option 1: Guide them to use `/dogma:ignore [patterns]`
+- Option 2: Run `/dogma:ignore:audit` for them
+- Option 3: Read their description and help accordingly (maybe they want to sync from a different source, or have a custom use case)
+
+**Only stop if user explicitly cancels.**
 
 ## Step 2: Load Patterns from sync.md
 
