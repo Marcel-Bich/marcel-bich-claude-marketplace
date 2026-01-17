@@ -133,7 +133,7 @@ If URL, try methods in this order. Inform user at each step:
 
 #### Step 3: Playwright (slow, but bypasses blocks)
 
-1. Inform user: "Using Playwright browser (headless)..."
+1. Inform user: "Using Playwright browser..."
 2. Use Playwright MCP tools:
    - `browser_navigate` to the URL
    - `browser_snapshot` to get page content
@@ -145,7 +145,7 @@ If URL, try methods in this order. Inform user at each step:
    - Inform user: "All methods failed. Cannot fetch this URL."
    - Suggest: Check if URL is correct, try manual copy, check network
 
-**Note:** Playwright runs headless by default (no visible window).
+**IMPORTANT: Do NOT use headless mode.** Many sites (especially those using Cloudflare) detect and block headless browsers. The visible browser window is intentional - it allows passing bot detection and manual captcha solving if needed.
 
 ### 3. Version Detection (REQUIRED)
 
