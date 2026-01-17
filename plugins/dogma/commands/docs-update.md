@@ -311,7 +311,81 @@ ls "$WIKI_PATH"/*.md 2>/dev/null | xargs -I {} basename {} .md
 
 Verify each article references existing components in main repo.
 
-### Step 4.6: Generate Findings Report
+### Step 4.6: Check Credo Plugin References (marcel-bich-claude-marketplace only)
+
+**IMPORTANT:** This step is MANDATORY when running in the `marcel-bich-claude-marketplace` repository. Skip this step for all other repositories.
+
+```bash
+# Detection - run this check FIRST
+REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
+if [ "$REPO_NAME" != "marcel-bich-claude-marketplace" ]; then
+    echo "Not in marketplace repo - skipping Credo checks"
+    # Skip to Step 4.7
+fi
+```
+
+The `credo` plugin is the **core plugin** that orchestrates all others. It contains workflow guides (`plugins/credo/commands/psalm.md`) that reference other plugins. These references MUST stay in sync.
+
+#### 4.6.1: Find Credo's main content file
+
+```bash
+# The main workflow guide
+ls plugins/credo/commands/*.md 2>/dev/null
+```
+
+#### 4.6.2: Extract all command references from Credo
+
+```bash
+# Find all /plugin:command references in credo
+grep -ohP '/[a-z-]+:[a-z-:]+' plugins/credo/commands/*.md 2>/dev/null | sort -u
+```
+
+#### 4.6.3: Compare against actual plugin commands
+
+For each plugin in the marketplace, extract its actual commands from plugin.yaml and compare:
+
+```bash
+# Get all actual commands from all plugins
+for plugin_yaml in plugins/*/plugin.yaml; do
+    plugin_name=$(basename $(dirname "$plugin_yaml"))
+    echo "=== $plugin_name ==="
+    grep -E "^  [a-z]" "$plugin_yaml" | sed 's/:$//'
+done
+```
+
+#### 4.6.4: Identify discrepancies
+
+Report any:
+- **Missing in Credo**: Commands that exist in plugin.yaml but are not mentioned in Credo (if relevant to workflow)
+- **Outdated in Credo**: Commands mentioned in Credo that no longer exist
+- **New plugins**: Plugins in marketplace that Credo doesn't mention at all
+
+#### 4.6.5: Interactive Credo updates
+
+For each discrepancy found, ask:
+
+```
+CREDO UPDATE: Missing command reference
+
+plugins/dogma now has: /dogma:recommended:setup
+credo/commands/psalm.md does not mention it.
+
+Should this be added to credo?
+1. Yes, add to appropriate section
+2. No, skip (not relevant for workflow guide)
+3. Show me the context first
+```
+
+**Section mapping for new items:**
+
+| Item Type | Credo Section |
+|-----------|---------------|
+| Core workflow commands | Main workflow steps |
+| Setup/sync commands | Setup/Installation section |
+| Optional tools | Optional Topics section |
+| New plugins | Prerequisites + relevant topic |
+
+### Step 4.7: Generate Findings Report
 
 ```
 DOCUMENTATION SYNC REPORT
@@ -541,72 +615,6 @@ Please resolve manually:
 5. **Version accuracy** - Always use version from plugin.yaml as source of truth
 6. **Complete the job** - Don't leave uncommitted changes, either commit or report clearly
 7. **Both repos** - Remember to handle both main repo AND wiki repo
-
----
-
-## Special: marcel-bich-claude-marketplace
-
-When running in the `marcel-bich-claude-marketplace` repository, apply additional checks:
-
-### Detection
-
-```bash
-# Check if this is the marketplace repo
-REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
-if [ "$REPO_NAME" = "marcel-bich-claude-marketplace" ]; then
-    # Apply special rules
-fi
-```
-
-### Additional Checks for Credo Plugin
-
-The `credo` plugin contains workflow guides that reference other plugins. Keep these in sync:
-
-**File to check:** `plugins/credo/commands/help.md`
-
-**What to verify:**
-
-1. **Plugin Commands** - All commands mentioned in credo should exist
-   - Compare commands listed in credo against actual plugin.yaml files
-   - Check: `/dogma:*`, `/hydra:*`, `/gsd:*`, `/import:*`, `/consider:*`
-
-2. **New Plugins** - New marketplace plugins should be mentioned if relevant
-   - Check plugins/ directory for new plugins not mentioned in credo
-   - Ask user if they should be added to credo
-
-3. **Behavior Changes** - Major behavior changes should be reflected
-   - Safety guards, new features, changed defaults
-   - Check recent commits for significant changes
-
-4. **Prerequisites Table** - Keep the plugin prerequisites table current
-   - Verify required/optional status is accurate
-
-### Interactive Updates for Credo
-
-For each discrepancy found:
-
-```
-CREDO UPDATE: Missing command reference
-
-plugins/dogma now has: /dogma:recommended:setup
-credo/commands/help.md does not mention it.
-
-Should this be added to credo?
-1. Yes, add to [section suggestion based on command type]
-2. No, skip (not relevant for workflow guide)
-3. Show me the context first
-```
-
-### Credo Sections
-
-Map new items to appropriate sections:
-
-| Item Type | Credo Section |
-|-----------|---------------|
-| Core workflow commands | Step-by-step workflow (Steps 1-11) |
-| Setup/sync commands | Step 5: Sync Claude Instructions |
-| Optional tools | Plugin Showcase: Optional Topics |
-| New plugins | Prerequisites table + relevant topic |
 
 ---
 
