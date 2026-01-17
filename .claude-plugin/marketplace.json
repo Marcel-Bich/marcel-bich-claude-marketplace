@@ -10,6 +10,11 @@
   },
   "plugins": [
     {
+      "name": "credo",
+      "source": "./plugins/credo",
+      "description": "Opinionated workflow guides and best practices - the core plugin that orchestrates all others."
+    },
+    {
       "name": "dogma",
       "source": "./plugins/dogma",
       "description": "Intelligent sync of Claude instructions with enforcement hooks for security and consistency."
@@ -25,11 +30,6 @@
       "description": "Live API usage display in Claude Code statusline - shows utilization with colored progress bars and reset times."
     },
     {
-      "name": "get-shit-done",
-      "source": "./plugins/get-shit-done",
-      "description": "Meta-prompting, context engineering and spec-driven development system for Claude Code"
-    },
-    {
       "name": "hydra",
       "source": "./plugins/hydra",
       "description": "Git Worktree management for parallel agent execution - isolated working directories without Git conflicts."
@@ -40,9 +40,9 @@
       "description": "Import external documentation locally - bypass AI-blocking sites via Playwright or copy local paths."
     },
     {
-      "name": "credo",
-      "source": "./plugins/credo",
-      "description": "Opinionated workflow guides and best practices - the preacher's proven patterns for Claude Code projects."
+      "name": "get-shit-done",
+      "source": "./plugins/get-shit-done",
+      "description": "Meta-prompting, context engineering and spec-driven development system for Claude Code"
     }
   ]
 }
