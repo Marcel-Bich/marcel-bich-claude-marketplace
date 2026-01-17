@@ -276,15 +276,22 @@ done
 
 **Fallback for projects with wiki but no marketplace.** If wiki exists but no `.claude-plugin/marketplace.json`:
 
-#### 4.5.1: Compare versions
+#### 4.5.1: Compare versions (only if wiki already has versions)
+
+**Important:** Do NOT add versions to wiki articles. Only sync if wiki already contains version references.
 
 ```bash
-# README version
-grep -oP '(?:version|Version|VERSION)[:\s]*v?(\d+\.\d+\.\d+)' README.md 2>/dev/null | head -1
+# Check if wiki has any version references
+WIKI_HAS_VERSION=$(grep -lE '(?:version|Version|VERSION)[:\s]*v?[0-9]+\.[0-9]+' "$WIKI_PATH"/*.md 2>/dev/null)
 
-# Wiki version
-grep -oP '(?:version|Version|VERSION)[:\s]*v?(\d+\.\d+\.\d+)' "$WIKI_PATH/Home.md" 2>/dev/null | head -1
+if [ -n "$WIKI_HAS_VERSION" ]; then
+  # Wiki has versions - compare with README
+  grep -oP '(?:version|Version|VERSION)[:\s]*v?(\d+\.\d+\.\d+)' README.md 2>/dev/null | head -1
+  grep -oP '(?:version|Version|VERSION)[:\s]*v?(\d+\.\d+\.\d+)' "$WIKI_PATH/Home.md" 2>/dev/null | head -1
+fi
 ```
+
+If wiki has no version references, skip version comparison entirely.
 
 #### 4.5.2: Compare feature sections
 
