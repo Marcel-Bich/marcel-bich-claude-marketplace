@@ -181,170 +181,20 @@ For each missing plugin:
 
 This is mandatory - a plugin without registry entry will NOT appear in `/plugin` list.
 
-## Step 4c: Check documentation consistency (Marketplaces only)
+## Step 4c: Suggest documentation sync (optional)
 
-**Prevents forgotten plugins in docs.** If this is a marketplace repo with README.md and/or wiki:
-
-### 4c.1: Find all plugin names
-
-```bash
-# Get list of all plugins from registry (source of truth)
-jq -r '.plugins[].name' .claude-plugin/marketplace.json 2>/dev/null | sort
-```
-
-### 4c.2: Check main README.md
-
-If `README.md` exists in root:
-
-```bash
-# Extract plugin names from Available Plugins table
-grep -oP '\*\*\K[a-z-]+(?=\*\*)' README.md 2>/dev/null | sort
-
-# Extract plugin names from Quick Start install commands
-grep -oP 'plugin install \K[a-z-]+(?=@)' README.md 2>/dev/null | sort
-
-# Extract plugin names from Tags section
-grep -oP '(?<=plugin, )[a-z-]+(?= plugin)' README.md 2>/dev/null | sort
-```
-
-Compare each extraction with the plugin list. Report discrepancies:
+After version sync, ask the user:
 
 ```
-README.md consistency check:
-  Plugin table: Missing credo
-  Quick Start: Missing credo
-  Tags: Missing credo plugin
+Versions are now in sync.
+
+Would you like to also sync documentation (README, wiki)?
+This checks for missing plugins in docs, outdated descriptions, etc.
+
+Run /dogma:docs-update? [y/N]
 ```
 
-### 4c.3: Check wiki Home.md (if wiki exists)
-
-Search for wiki in parallel directory:
-
-```bash
-REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
-WIKI_PATH="../${REPO_NAME}.wiki"
-if [ -d "$WIKI_PATH" ]; then
-  echo "Wiki found: $WIKI_PATH"
-fi
-```
-
-If wiki exists, check `Home.md`:
-
-```bash
-# Plugin table
-grep -oP '\[.*?\]\(./Claude-Code-\K[A-Za-z-]+(?=-Plugin)' "$WIKI_PATH/Home.md" 2>/dev/null | tr '[:upper:]' '[:lower:]' | sort
-
-# Install commands
-grep -oP 'plugin install \K[a-z-]+(?=@)' "$WIKI_PATH/Home.md" 2>/dev/null | sort
-
-# Tags line
-grep "Tags:" "$WIKI_PATH/Home.md" 2>/dev/null
-```
-
-Report discrepancies.
-
-### 4c.4: Check wiki article existence
-
-For each registered plugin, verify wiki article exists:
-
-```bash
-for plugin in $(jq -r '.plugins[].name' .claude-plugin/marketplace.json); do
-  # Convert plugin name to wiki article name (e.g., dogma -> Claude-Code-Dogma-Plugin.md)
-  article="Claude-Code-$(echo $plugin | sed 's/.*/\u&/' | sed 's/-./\U&/g')-Plugin.md"
-  if [ ! -f "$WIKI_PATH/$article" ]; then
-    echo "MISSING: $article"
-  fi
-done
-```
-
-### 4c.5: Fix or report
-
-For each discrepancy found:
-
-**If auto-fixable** (adding to existing list/table):
-- Ask user: `Fix README.md plugin table? [Y/n]`
-- Apply edit if confirmed
-
-**If not auto-fixable** (missing wiki article, complex structure):
-- Report clearly: `ACTION REQUIRED: Create wiki article for credo plugin`
-- Suggest creating a TODO file if multiple items need attention
-
-## Step 4d: Check documentation consistency (Non-marketplace projects)
-
-**Fallback for any project with a wiki.** If NOT a marketplace (no `.claude-plugin/marketplace.json`) but wiki exists:
-
-### 4d.1: Detect wiki
-
-```bash
-REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
-WIKI_PATH="../${REPO_NAME}.wiki"
-if [ -d "$WIKI_PATH" ] && [ ! -f ".claude-plugin/marketplace.json" ]; then
-  echo "Wiki found (non-marketplace): $WIKI_PATH"
-fi
-```
-
-### 4d.2: Compare versions between README and wiki
-
-Extract version from main `README.md` (if present):
-
-```bash
-# Common version patterns in README
-grep -oP '(?:version|Version|VERSION)[:\s]*v?(\d+\.\d+\.\d+)' README.md 2>/dev/null | head -1
-grep -oP '(?:Current version|Latest)[:\s]*v?(\d+\.\d+\.\d+)' README.md 2>/dev/null | head -1
-```
-
-Compare with wiki `Home.md` or main wiki article:
-
-```bash
-# Check wiki for version references
-grep -oP '(?:version|Version|VERSION)[:\s]*v?(\d+\.\d+\.\d+)' "$WIKI_PATH/Home.md" 2>/dev/null | head -1
-```
-
-Report if versions differ between README and wiki.
-
-### 4d.3: Compare feature lists
-
-If README has a "Features" or "Commands" section, check if wiki has equivalent content:
-
-```bash
-# Extract section headers from README
-grep -E '^#{1,3}\s+(Features|Commands|Usage|Installation)' README.md 2>/dev/null
-
-# Compare with wiki
-grep -E '^#{1,3}\s+(Features|Commands|Usage|Installation)' "$WIKI_PATH/Home.md" 2>/dev/null
-```
-
-Flag if README has sections that wiki is missing (or vice versa).
-
-### 4d.4: Check for orphaned wiki articles
-
-List all wiki articles and verify they reference existing components:
-
-```bash
-ls "$WIKI_PATH"/*.md 2>/dev/null | xargs -I {} basename {} .md
-```
-
-For each article, check if the referenced component/feature still exists in the main repo.
-
-### 4d.5: Report discrepancies
-
-Present findings to user:
-
-```
-Wiki consistency check (non-marketplace):
-
-  Version mismatch:
-    - README.md: 2.1.0
-    - Wiki Home.md: 2.0.0
-
-  Missing in wiki:
-    - "CLI Options" section (exists in README)
-
-  Potentially orphaned wiki articles:
-    - Old-Feature-Guide.md (feature removed in v2.0)
-```
-
-Ask user which items to fix or add to TODO.
+If user confirms, run `/dogma:docs-update` (or suggest user runs it manually).
 
 ## Step 5: Summary and commit
 
