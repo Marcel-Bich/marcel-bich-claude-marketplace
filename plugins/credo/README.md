@@ -1,23 +1,27 @@
 # Credo
 
-Workflow templates, best practices, and guidance for Claude Code users.
+Opinionated workflow guides and best practices - the author's proven patterns for Claude Code projects.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `/credo:project:workflow` | Step-by-step guide for setting up new projects |
+| `/credo:help` | Comprehensive guide for project setup and plugin workflows |
 
 ## Purpose
 
-Credo provides structured guidance for common Claude Code workflows. Instead of remembering all the steps and commands, let Credo guide you through the process.
+Credo (Latin: "I believe") provides the author's opinionated, battle-tested workflows for Claude Code projects. These are patterns refined through daily use - a belief system for productive development.
 
-## Future Plans
+Instead of figuring out the "right" way yourself, follow these proven patterns:
+- Project setup (greenfield and brownfield)
+- Plugin integration
+- Parallel development with hydra
+- Code quality automation
+- And more
 
-- Plugin usage guides
-- Feature explanations
-- Troubleshooting workflows
-- Best practice templates
+## Philosophy
+
+This plugin represents one developer's continuously refined approach. It's opinionated by design - not trying to cover every possible workflow, but providing clear guidance for what works.
 
 ## Installation
 

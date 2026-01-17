@@ -1,10 +1,10 @@
 name: credo
-description: Workflow templates, best practices, and guidance for Claude Code users
-version: 0.1.0
+description: Opinionated workflow guides and best practices - the author's proven patterns for Claude Code projects
+version: 0.2.0
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
 commands:
-  project:workflow:
-    description: Step-by-step workflow guide for setting up new projects
-    source: commands/project/workflow.md
+  help:
+    description: Comprehensive guide for project setup and plugin workflows
+    source: commands/help.md
