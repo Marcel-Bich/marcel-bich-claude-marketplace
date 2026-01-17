@@ -1,0 +1,14 @@
+{
+  "name": "credo",
+  "version": "0.1.0",
+  "description": "Workflow templates, best practices, and guidance for Claude Code users.",
+  "keywords": [
+    "workflow",
+    "template",
+    "guide",
+    "best-practices",
+    "onboarding",
+    "help"
+  ],
+  "license": "MIT"
+}
