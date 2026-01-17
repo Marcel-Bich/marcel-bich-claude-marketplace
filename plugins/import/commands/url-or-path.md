@@ -147,13 +147,19 @@ If URL, try methods in this order. Inform user at each step:
 
 **Note:** Playwright runs headless by default (no visible window).
 
-### 3. Version Detection
+### 3. Version Detection (REQUIRED)
 
 Try to detect version from:
 1. **URL path**: `/v2/`, `/v2025.4/`, `/version/19/`
 2. **Page content**: Version selector, breadcrumb, title
-3. **Context7 metadata**: Version info in response
-4. **Default**: `latest` if no version found
+3. **Context7 metadata**: Version info in response (check for version field or version in library ID)
+
+**IMPORTANT**: Never use "latest" as version folder name. If no version can be detected:
+- Ask user: "No version detected. What version is this documentation for?"
+- User must provide version (e.g., "v2025.4", "v19", "v3.2.1")
+- Only proceed after version is confirmed
+
+Exception: For `website/` and `local/` categories, version is not required (content is not versioned).
 
 ### 4. Save Documentation
 
@@ -168,13 +174,15 @@ Format saved file:
 source: {original URL or path}
 imported: {timestamp}
 method: {context7|webfetch|playwright|local}
-version: {detected version or "latest"}
+version: {exact version - NEVER "latest"}  # omit for local/website
 ---
 
 # {Title}
 
 {Content}
 ```
+
+Note: `version` field is only required for library documentation. Omit it for `local/` and `website/` imports.
 
 ### 5. Output
 
