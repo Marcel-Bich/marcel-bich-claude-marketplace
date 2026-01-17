@@ -34,27 +34,13 @@ git status --porcelain
 **CRITICAL:** Find EVERY file that could contain a version. Do NOT skip files.
 
 ```bash
-# Find ALL potential version files recursively
-find . -type f \( \
-  -name "package.json" -o \
-  -name "plugin.json" -o \
-  -name "plugin.yaml" -o \
-  -name "plugin.yml" -o \
-  -name "marketplace.json" -o \
-  -name "pyproject.toml" -o \
-  -name "setup.py" -o \
-  -name "setup.cfg" -o \
-  -name "Cargo.toml" -o \
-  -name "version.txt" -o \
-  -name "VERSION" -o \
-  -name "version.json" -o \
-  -name "manifest.json" -o \
-  -name "composer.json" -o \
-  -name "build.gradle" -o \
-  -name "pom.xml" -o \
-  -name "*.gemspec" -o \
-  -name "mix.exs" \
-\) 2>/dev/null | grep -v node_modules | grep -v ".git/" | sort
+# Find ALL potential version files (respects .gitignore)
+git ls-files --cached --others --exclude-standard 2>/dev/null | \
+  grep -E '(package\.json|plugin\.json|plugin\.ya?ml|marketplace\.json|pyproject\.toml|setup\.(py|cfg)|Cargo\.toml|version\.(txt|json)|VERSION|manifest\.json|composer\.json|build\.gradle|pom\.xml|\.gemspec|mix\.exs)$' | \
+  sort
+
+# Fallback if not a git repo:
+# find . -type f \( -name "package.json" ... \) | grep -v node_modules | sort
 ```
 
 List ALL files found. Do not filter or assume.
@@ -64,10 +50,11 @@ List ALL files found. Do not filter or assume.
 Search for files that might contain versions but don't match known filenames:
 
 ```bash
-# Find files containing "version" that weren't caught by Step 1
-grep -rl --include="*.json" --include="*.yaml" --include="*.yml" --include="*.toml" --include="*.xml" --include="*.md" \
-  -E '"version"|'\''version'\''|version:' . 2>/dev/null | \
-  grep -v node_modules | grep -v ".git/" | sort
+# Find files containing "version" that weren't caught by Step 1 (respects .gitignore)
+git ls-files --cached --others --exclude-standard 2>/dev/null | \
+  grep -E '\.(json|ya?ml|toml|xml|md)$' | \
+  xargs grep -l -E '"version"|'\''version'\''|version:' 2>/dev/null | \
+  sort
 ```
 
 For each file found that wasn't in Step 1:
