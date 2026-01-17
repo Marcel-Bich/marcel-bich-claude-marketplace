@@ -13,6 +13,7 @@ Git Worktree management for parallel agent execution - isolated working director
 - `/hydra:delete` - Safely remove a worktree with confirmation
 - `/hydra:spawn` - Start an agent in a worktree
 - `/hydra:parallel` - Multiple agents in parallel across worktrees
+- `/hydra:watch` - Live monitoring of background agents with status table
 - `/hydra:merge` - Merge worktree branch back (merge or rebase)
 - `/hydra:cleanup` - Automatically remove already merged worktrees
 
@@ -26,14 +27,17 @@ Git Worktree management for parallel agent execution - isolated working director
 # 2. Start agents in parallel
 /hydra:parallel feature-a:Implement login | feature-b:Implement logout
 
-# 3. Check status
+# 3. Monitor agents live
+/hydra:watch
+
+# 4. Check status
 /hydra:status
 
-# 4. Merge back when done
+# 5. Merge back when done
 /hydra:merge feature-a
 /hydra:merge feature-b
 
-# 5. Clean up
+# 6. Clean up
 /hydra:cleanup
 ```
 
