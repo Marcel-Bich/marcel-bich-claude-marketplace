@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Collection of productivity plugins for Claude Code",
-    "version": "1.0.1"
+    "version": "1.0.0"
   },
   "plugins": [
     {
