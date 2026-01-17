@@ -6,7 +6,7 @@ Opinionated workflow guides and best practices - the preacher's proven patterns 
 
 | Command | Description |
 |---------|-------------|
-| `/credo:help` | Comprehensive guide for project setup and plugin workflows |
+| `/credo:psalm` | Interactive guide to available topics and workflows |
 
 ## Purpose
 
