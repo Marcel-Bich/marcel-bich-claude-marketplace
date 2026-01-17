@@ -151,6 +151,36 @@ For EACH group:
 
 If versions already match: `OK: <group> = <version>`
 
+## Step 4b: Check marketplace plugin registry (Marketplaces only)
+
+**CRITICAL for marketplace development:** New plugins are often forgotten in marketplace.json!
+
+If `.claude-plugin/marketplace.json` exists, verify ALL plugins are registered:
+
+```bash
+# Find all plugin directories
+ls -d plugins/*/ 2>/dev/null | sed 's|plugins/||g' | sed 's|/||g' | sort
+
+# Extract registered plugins from marketplace.json
+jq -r '.plugins[].name' .claude-plugin/marketplace.json 2>/dev/null | sort
+```
+
+Compare the two lists. For each plugin directory NOT in marketplace.json, **automatically fix it** (no confirmation needed - unregistered plugins are always broken):
+
+```
+FIXING: Plugin not registered in marketplace!
+
+Plugin directory exists: plugins/credo/
+Adding to: .claude-plugin/marketplace.json
+```
+
+For each missing plugin:
+1. Read the plugin's description from `plugins/<name>/plugin.yaml`
+2. Add entry to the `plugins` array in marketplace.json
+3. Bump marketplace version
+
+This is mandatory - a plugin without registry entry will NOT appear in `/plugin` list.
+
 ## Step 5: Summary and commit
 
 Show summary:
