@@ -109,8 +109,8 @@ ls README.md 2>/dev/null
 # Plugin READMEs
 find plugins -name "README.md" 2>/dev/null
 
-# Other documentation
-find . -name "*.md" -not -path "./node_modules/*" -not -path "./.git/*" | head -50
+# Other documentation (respects .gitignore)
+git ls-files --cached --others --exclude-standard '*.md' 2>/dev/null | head -50
 
 # Plugin metadata (descriptions, keywords)
 find plugins -name "plugin.yaml" -o -name "plugin.json" 2>/dev/null
