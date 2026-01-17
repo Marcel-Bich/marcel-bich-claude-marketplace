@@ -18,6 +18,7 @@ Intelligent sync of Claude instructions with enforcement hooks for security and 
 - `/dogma:ignore` - Add ignore patterns to multiple locations at once (.gitignore, .git/info/exclude)
 - `/dogma:ignore:audit` - Show which AI patterns are missing from ignore files
 - `/dogma:ignore:sync-all` - Sync AI patterns from sync.md to all local repos (marketplace only)
+- `/dogma:recommended:setup` - Check and install recommended plugins and MCP servers from a source
 
 ### Permissions System
 
