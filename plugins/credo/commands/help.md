@@ -75,7 +75,7 @@ claude update
 claude --dangerously-skip-permissions
 ```
 
-**Note:** `--dangerously-skip-permissions` is for initial setup only.
+**Warning:** `--dangerously-skip-permissions` allows Claude to execute any command without asking for permission. This includes file deletions, system modifications, and other potentially destructive operations. **Use at your own risk.** You are solely responsible for any data loss, system crashes, or other damages that may occur.
 
 ### Step 3: Update Marketplaces
 
@@ -88,6 +88,21 @@ To quickly check and install recommended plugins/MCPs from a source:
 ```
 /dogma:recommended:setup
 ```
+
+### Step 3b: Restart Claude (After Plugin Changes)
+
+**Important:** After installing new plugins, restart Claude to load them:
+
+1. Exit Claude (Ctrl+C or type `exit`)
+2. Start again:
+```bash
+claude update
+claude --dangerously-skip-permissions
+```
+
+**Warning:** See disclaimer above regarding `--dangerously-skip-permissions`.
+
+This ensures newly installed plugins are available.
 
 ### Step 4: Set Project Language
 
@@ -107,7 +122,7 @@ Document in CLAUDE.md or tell Claude directly.
 /dogma:sync
 ```
 
-When prompted for DOGMA-PERMISSIONS.md, recommended settings:
+When prompted for DOGMA-PERMISSIONS.md, the preacher's recommended settings:
 
 ```markdown
 ## Git Operations
@@ -145,7 +160,20 @@ Or disable entire plugins:
 }
 ```
 
-**Important:** Restart Claude after changing settings.
+### Step 6b: Restart Claude (After Settings Changes)
+
+**Required:** After modifying `.claude/settings.local.json`, restart Claude:
+
+1. Exit Claude (Ctrl+C or type `exit`)
+2. Start again:
+```bash
+claude update
+claude --dangerously-skip-permissions
+```
+
+**Warning:** See disclaimer above regarding `--dangerously-skip-permissions`.
+
+Settings changes only take effect after Claude restart.
 
 ### Step 7: Initialize Project with GSD
 
@@ -182,7 +210,7 @@ Review and adjust until satisfied.
 /gsd:plan-phase 1
 ```
 
-Use `/hydra` commands for parallel work if beneficial.
+The preacher recommends `/hydra` commands for parallel work when beneficial.
 
 ### Step 10: Execute Phases
 
@@ -207,9 +235,9 @@ Choose: yes / wait / adjust
 
 ---
 
-## Project is Ready
+## The Project is Blessed
 
-After completing all steps, the project is initialized and ready for work.
+After completing all steps, the project is anointed and ready to serve.
 
 ### For Development Projects
 
@@ -218,9 +246,15 @@ Use these commands as needed:
 - `/gsd:verify-work` - Manual acceptance tests
 - `/hydra:create` - Create worktree for parallel work
 
-### Tips
+### The Preacher's Tips
 
-**Worktree settings:** Customize settings per worktree:
+**Worktree settings BEFORE spawn:** When using hydra, configure `.claude/settings.json` in the worktree BEFORE spawning agents. This ensures agents start with the correct environment:
+
+1. Create worktree: `/hydra:create`
+2. Navigate to worktree and adjust `.claude/settings.json`
+3. Then spawn agent: `/hydra:spawn`
+
+Example settings to disable linting for agents that don't need it:
 ```json
 {
   "env": {
@@ -231,9 +265,45 @@ Use these commands as needed:
 }
 ```
 
-**Agent failures:** If an agent fails due to hooks, adjust settings and respawn.
+**Agent failures:** If an agent fails due to hooks, adjust settings in the worktree and respawn the agent.
 
-**Environment variables:** See `~/.claude/settings.json` for available options.
+**Environment variables:** See `~/.claude/settings.json` for available options - use as template for worktree settings.
+
+**Avoid interrupting running processes:** The preacher recommends NOT adding intermediate messages while Claude is working (even though the temptation is strong). Only add messages that REALLY contribute to the current topic in a focused way. Don't fix off-topic bugs or address unrelated issues mid-process.
+
+Instead:
+1. Open a notepad (or similar) alongside Claude
+2. Write down everything that comes to mind while waiting
+3. Once all tasks for the current topic are complete, work through your notes
+4. Use the hydra example prompt below for parallel processing of collected notes
+5. Alternative without hydra: process them one by one, ideally after `/clear`
+
+Discipline brings clarity. Chaos breeds confusion.
+
+### Hydra Example Prompt: Complete Workflow
+
+```
+Use /hydra to work on a feature in a worktree:
+
+plugin signal improvement:
+Add sound notification when user input is required, so user hears
+when they need to act (ensure cross-platform: Linux, macOS, Windows)
+
+For worktrees, adjust .claude/settings.json BEFORE spawning:
+Example if agent would be disturbed by linting:
+{
+  "env": {
+    "CLAUDE_MB_DOGMA_LINT_ON_STOP": "false",
+    "CLAUDE_MB_DOGMA_PRE_COMMIT_LINT": "false",
+    "CLAUDE_MB_DOGMA_SKIP_LINT_CHECK": "true"
+  }
+}
+
+The env variables in ~/.claude/settings.json serve as template.
+Adjust per worktree as needed (only disable what's necessary!).
+
+If agent fails due to hooks: fix settings in worktree and respawn.
+```
 
 ---
 
@@ -451,3 +521,213 @@ If information is missing or more details are needed, check the marketplace wiki
 **URL:** https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki
 
 Use WebFetch to retrieve specific wiki pages when users ask for more details about a plugin or feature not fully covered here.
+
+---
+
+## Preacher's Complete Workflow (Real-World Example)
+
+This is how the preacher handles most new projects - a complete demonstration including all repetitions like `/clear` commands. Walk this path.
+
+### New Project Setup
+
+```bash
+# Create project directory
+mkdir -p my-project
+cd my-project
+git init
+
+# Start Claude
+claude update
+claude --dangerously-skip-permissions
+```
+
+**Warning:** See disclaimer above regarding `--dangerously-skip-permissions`.
+
+### Update Marketplaces and Plugins
+
+```
+# Manually update marketplaces if needed (git pull in marketplace directories)
+# Install missing/new plugins from available marketplaces
+```
+
+### Restart Claude (Required After Plugin Changes)
+
+```bash
+# Exit Claude, then:
+claude update
+claude --dangerously-skip-permissions
+```
+
+### Set Project Language
+
+Tell Claude the main language, e.g.:
+```
+The main language of this project is German, we don't need any English at all.
+```
+
+### Sync Claude Instructions
+
+```
+/dogma:sync
+```
+
+When prompted for DOGMA-PERMISSIONS.md:
+- add: true
+- commit: true
+- rm: ask
+
+### Disable Features for This Project (Optional)
+
+**To disable PARTS of a plugin** (e.g., no linting for non-code projects):
+
+Create `.claude/settings.local.json`:
+```json
+{
+  "env": {
+    "CLAUDE_MB_DOGMA_LINT_ON_STOP": "false",
+    "CLAUDE_MB_DOGMA_PRE_COMMIT_LINT": "false",
+    "CLAUDE_MB_DOGMA_SKIP_LINT_CHECK": "true"
+  }
+}
+```
+
+**To disable ENTIRE plugins** (e.g., no dogma rules for acquisition projects - though the preacher recommends keeping dogma and just disabling hooks):
+
+```json
+{
+  "enabledPlugins": {
+    "dogma@marcel-bich-claude-marketplace": false
+  }
+}
+```
+
+### Restart Claude (Required After Settings Changes)
+
+```bash
+# Exit Claude, then:
+claude update
+claude --dangerously-skip-permissions
+```
+
+### Initialize Project with GSD
+
+```
+/gsd:new-project
+```
+
+Describe what the entire project represents (not individual tasks, but the purpose):
+
+```
+Example for an acquisition project:
+
+In this project I provide acquisition data, e.g., in the form of tickets or
+ticket comments, containing various tasks that are defined or emerge from them.
+The project serves to fulfill these tasks (mostly customer acquisition through
+analysis and assessments).
+
+The project is offline and will never be pushed.
+
+Suggested folder structure:
+./archive/ => completed/cancelled projects no longer being worked on but useful as future references
+  ./archive/completed/project-x/
+  ./archive/cancelled/project-a/
+./ => projects in progress
+  ./project-y/
+
+The structure within project folders can be designed as you see fit.
+Further project info will be conveyed through roadmaps/milestones/phases/plans.
+```
+
+### Create Roadmap
+
+```
+/gsd:create-roadmap
+```
+
+If the result doesn't fit, have it adjusted as needed.
+
+### Plan Phases
+
+Once the roadmap is satisfactory:
+
+```
+/clear
+/gsd:plan-phase 1
+```
+
+Plan all phases. Use `/hydra` commands for parallel work IF BENEFICIAL (not when worktree setup overhead exceeds the benefit). If parallel doesn't work, do it sequentially.
+
+### Execute Phases
+
+```
+/clear
+/gsd:execute-phase 1
+/clear
+/gsd:execute-phase 2
+/clear
+/gsd:execute-phase 3
+/clear
+...
+```
+
+Continue until all phases are complete.
+
+### Complete Milestone
+
+```
+/clear
+/gsd:complete-milestone
+```
+
+Choose: yes / wait / adjust
+
+---
+
+**The project is now initialized and ready for use.**
+
+### For This Acquisition Example
+
+Start working directly without needing additional skills.
+
+### For Development Projects (Code and Features)
+
+Continuously use these to extend/debug/develop code:
+
+```
+/clear
+/gsd:new-milestone   # Plan next milestone
+```
+
+or
+
+```
+/clear
+/gsd:verify-work     # Manual acceptance tests
+```
+
+### Hydra Example Prompt
+
+```
+Use /hydra to do the following in a worktree:
+
+plugin signal improvement:
+permission required signals - where user REALLY needs to act, play the same
+sound as on finish, so user hears they're up again (ensure cross-platform
+compatibility: Linux, macOS, Windows)
+
+For worktrees, adjust .claude/settings.json BEFORE spawning:
+Example if agent would be disturbed by linting:
+{
+  "env": {
+    "CLAUDE_MB_DOGMA_LINT_ON_STOP": "false",
+    "CLAUDE_MB_DOGMA_PRE_COMMIT_LINT": "false",
+    "CLAUDE_MB_DOGMA_SKIP_LINT_CHECK": "true"
+  }
+}
+
+The env variables in ~/.claude/settings.json serve as template.
+Adjust per worktree as needed (only disable what's truly necessary,
+e.g., debug or linting!).
+
+If an agent fails due to hooks: fix settings and respawn the agent.
+```

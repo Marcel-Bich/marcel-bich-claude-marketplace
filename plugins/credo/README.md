@@ -1,6 +1,6 @@
 # Credo
 
-Opinionated workflow guides and best practices - the author's proven patterns for Claude Code projects.
+Opinionated workflow guides and best practices - the preacher's proven patterns for Claude Code projects.
 
 ## Commands
 
@@ -10,9 +10,9 @@ Opinionated workflow guides and best practices - the author's proven patterns fo
 
 ## Purpose
 
-Credo (Latin: "I believe") provides the author's opinionated, battle-tested workflows for Claude Code projects. These are patterns refined through daily use - a belief system for productive development.
+Credo (Latin: "I believe") provides the preacher's opinionated, battle-tested workflows for Claude Code projects. These are patterns refined through daily use - a belief system for productive development.
 
-Instead of figuring out the "right" way yourself, follow these proven patterns:
+Instead of wandering in darkness, follow the proven path:
 - Project setup (greenfield and brownfield)
 - Plugin integration
 - Parallel development with hydra
@@ -21,7 +21,7 @@ Instead of figuring out the "right" way yourself, follow these proven patterns:
 
 ## Philosophy
 
-This plugin represents one developer's continuously refined approach. It's opinionated by design - not trying to cover every possible workflow, but providing clear guidance for what works.
+This plugin represents the preacher's continuously refined approach. It's opinionated by design - not trying to cover every possible workflow, but providing clear guidance for what works.
 
 ## Installation
 
