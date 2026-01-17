@@ -1,6 +1,6 @@
 name: dogma
 description: Intelligent sync of Claude instructions with enforcement hooks for security and consistency
-version: 1.29.2
+version: 1.29.3
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
@@ -41,6 +41,9 @@ commands:
   ignore:sync-all:
     description: Sync patterns from sync.md to all repos
     source: commands/ignore/sync-all.md
+  recommended:setup:
+    description: Check and install recommended plugins and MCP servers from a source
+    source: commands/recommended/setup.md
 
 hooks:
   # ============================================
