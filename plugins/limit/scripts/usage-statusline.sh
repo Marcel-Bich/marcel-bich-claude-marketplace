@@ -90,6 +90,8 @@ COLOR_WHITE='\033[97m'
 COLOR_SILVER='\033[38;5;250m'
 COLOR_GOLD='\033[38;5;220m'
 COLOR_SALMON='\033[38;5;210m'
+COLOR_SOFT_GREEN='\033[38;5;151m'
+COLOR_SOFT_RED='\033[38;5;181m'
 
 # Progress bar characters
 BAR_FILLED='='
@@ -881,10 +883,17 @@ format_output() {
     # Extended features (displayed first, before limits)
     # -------------------------------------------------------------------------
 
+    # Get CWD first (needed for git commands to work in correct directory)
+    local cwd
+    cwd=$(get_cwd)
+
+    # Change to cwd so git commands work correctly (especially in worktrees)
+    if [[ -n "$cwd" ]] && [[ -d "$cwd" ]]; then
+        cd "$cwd" 2>/dev/null || true
+    fi
+
     # CWD (Current Working Directory) - gray
     if [[ "$SHOW_CWD" == "true" ]]; then
-        local cwd
-        cwd=$(get_cwd)
         if [[ -n "$cwd" ]]; then
             local cwd_color=""
             local cwd_color_reset=""
@@ -916,19 +925,23 @@ format_output() {
                 git_line="${wt_color}[wt] ${worktree}${wt_color_reset}"
             fi
 
-            # Git changes (cyan) - format: (+X,-Y)
+            # Git changes - format: (+X,-Y) with colors
             local changes
             changes=$(get_git_changes)
-            local chg_color=""
-            local chg_color_reset=""
+            # Parse +X,-Y format
+            local insertions deletions
+            insertions=$(echo "$changes" | cut -d',' -f1)
+            deletions=$(echo "$changes" | cut -d',' -f2)
+            local changes_formatted
             if [[ "$SHOW_COLORS" == "true" ]]; then
-                chg_color="$COLOR_CYAN"
-                chg_color_reset="$COLOR_RESET"
+                changes_formatted="${COLOR_GRAY}(${COLOR_SOFT_GREEN}${insertions}${COLOR_GRAY},${COLOR_SOFT_RED}${deletions}${COLOR_GRAY})${COLOR_RESET}"
+            else
+                changes_formatted="(${changes})"
             fi
             if [[ -n "$git_line" ]]; then
-                git_line="${git_line} ${chg_color}(${changes})${chg_color_reset}"
+                git_line="${git_line} ${changes_formatted}"
             else
-                git_line="${chg_color}(${changes})${chg_color_reset}"
+                git_line="${changes_formatted}"
             fi
 
             # Git branch (bright cyan/light blue) - symbol: ⎇
