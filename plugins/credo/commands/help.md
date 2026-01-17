@@ -277,6 +277,24 @@ After completion:
 /hydra:cleanup
 ```
 
+**Read-only verification:** Hydra also works for parallel checking tasks:
+
+```
+Use hydra to verify in parallel (read-only):
+- Check if all tests pass
+- Verify documentation is complete
+- Confirm no TODO comments remain
+- Check for security issues
+```
+
+**Pro tip:** You don't need to run `/credo` (or any other command/skill) - just mention it in your prompt:
+
+```
+Follow the patterns from /credo to verify these requirements...
+```
+
+Claude will apply the best practices without executing the command.
+
 ### Topic: Brownfield Onboarding (gsd)
 
 Join an existing project and need context fast:
