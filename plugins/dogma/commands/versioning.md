@@ -4,91 +4,139 @@ allowed-tools:
   - Bash
   - Read
   - Edit
+  - AskUserQuestion
 ---
 
 # Dogma: Version Sync
 
-Check all version files and fix any mismatches.
+Universal version file discovery and sync. Works with any project structure.
 
-## Step 0: Bump versions for pending changes FIRST
-
-**CRITICAL:** Before syncing, check if there are uncommitted changes that require a version bump.
+## Step 0: Check for pending changes requiring version bump
 
 ```bash
 git status --porcelain
 ```
 
-**If changes exist in any plugin directory:**
+**If uncommitted changes exist:**
 
-1. **Load versioning rules** (try in order, use first that exists):
-   - `CLAUDE/CLAUDE.versioning.md` - project-specific rules
-   - `CLAUDE.versioning.md` - project-specific rules
-   - `.claude/CLAUDE.versioning.md` - project-specific rules
-   - **Fallback only if none exist:**
-     - patch (default): bugfixes, small features, improvements, refactoring
-     - minor: breaking changes, migration required, BIG new features
-     - major: groundbreaking changes, relaunch, full rewrite
+1. Load versioning rules (try in order, use first that exists):
+   - `CLAUDE/CLAUDE.versioning.md`
+   - `CLAUDE.versioning.md`
+   - `.claude/CLAUDE.versioning.md`
+   - Fallback: patch for bugfixes/features, minor for breaking changes, major for rewrites
 
-2. Identify which plugins have changes:
-   ```bash
-   git status --porcelain | grep "plugins/" | sed 's|.*plugins/\([^/]*\)/.*|\1|' | sort -u
-   ```
+2. Identify affected components and bump versions BEFORE syncing
 
-3. For EACH affected plugin:
-   - Read the current version from `plugins/<name>/plugin.yaml`
-   - Apply the versioning rules loaded in step 1
-   - Update the version in BOTH files:
-     - `plugins/<name>/plugin.yaml`
-     - `plugins/<name>/.claude-plugin/plugin.json`
+**If no pending changes:** Continue to Step 1.
 
-4. Report what was bumped:
-   ```
-   Bumped <plugin> from X.Y.Z to X.Y.(Z+1)
-   ```
+## Step 1: Discover ALL version files
 
-**If no pending changes:** Skip to Step 1.
-
-## Step 1: Find version files
+**CRITICAL:** Find EVERY file that could contain a version. Do NOT skip files.
 
 ```bash
-# Check plugin structure
-find plugins -name "plugin.yaml" -o -name "plugin.json" 2>/dev/null | head -20
-
-# Check common version files
-ls -la package.json pyproject.toml Cargo.toml setup.py version.txt VERSION 2>/dev/null || true
+# Find ALL potential version files recursively
+find . -type f \( \
+  -name "package.json" -o \
+  -name "plugin.json" -o \
+  -name "plugin.yaml" -o \
+  -name "plugin.yml" -o \
+  -name "pyproject.toml" -o \
+  -name "setup.py" -o \
+  -name "setup.cfg" -o \
+  -name "Cargo.toml" -o \
+  -name "version.txt" -o \
+  -name "VERSION" -o \
+  -name "version.json" -o \
+  -name "manifest.json" -o \
+  -name "composer.json" -o \
+  -name "build.gradle" -o \
+  -name "pom.xml" -o \
+  -name "*.gemspec" -o \
+  -name "mix.exs" \
+\) 2>/dev/null | grep -v node_modules | grep -v ".git/" | sort
 ```
 
-## Step 2: Extract versions
+List ALL files found. Do not filter or assume.
 
-For each file found, extract the version:
+## Step 2: Group version files by component
 
-**YAML files (plugin.yaml):**
+Analyze the file paths to identify logical groups:
+
+| Pattern | Grouping |
+|---------|----------|
+| `plugins/<name>/*` | All files under same plugin = one group |
+| `packages/<name>/*` | All files under same package = one group |
+| Root-level files | Project root = one group |
+| `src/<name>/*` | Subproject = one group |
+
+Example groups:
+```
+Group: plugins/hydra
+  - plugins/hydra/plugin.yaml
+  - plugins/hydra/.claude-plugin/plugin.json
+
+Group: root
+  - package.json
+  - version.txt
+```
+
+## Step 3: Extract versions from each file
+
+Use appropriate extraction for each file type:
+
+| File Type | Extraction |
+|-----------|------------|
+| `*.yaml`, `*.yml` | `grep "^version:"` or parse YAML |
+| `*.json` | `jq -r '.version'` or grep `"version":` |
+| `*.toml` | grep `version =` |
+| `Cargo.toml` | grep under `[package]` section |
+| `setup.py` | grep `version=` |
+| `version.txt`, `VERSION` | entire file content |
+
+Report in table format:
+```
+File                                    Version
+----------------------------------------
+plugins/hydra/plugin.yaml               0.1.4
+plugins/hydra/.claude-plugin/plugin.json 0.1.2   <-- MISMATCH
+plugins/dogma/plugin.yaml               1.29.1
+plugins/dogma/.claude-plugin/plugin.json 1.29.1
+package.json                            2.0.0
+```
+
+## Step 4: Detect and fix mismatches
+
+For EACH group:
+1. Compare all versions within the group
+2. If mismatch found:
+   - Identify the HIGHEST version (semantic version comparison)
+   - Update ALL other files in the group to match
+   - Report: `Fixed: <group> synced to <version>`
+
+If versions already match: `OK: <group> = <version>`
+
+## Step 5: Summary and commit
+
+Show summary:
+```
+Version Sync Complete:
+
+  Fixed:
+    - plugins/hydra: 0.1.2 -> 0.1.4 (1 file updated)
+
+  Already in sync:
+    - plugins/dogma: 1.29.1 (2 files)
+    - root: 2.0.0 (1 file)
+```
+
+If changes were made, commit:
 ```bash
-grep "^version:" plugins/*/plugin.yaml
+git add -A && git commit -m "Sync versions across all version files"
 ```
 
-**JSON files (plugin.json, package.json):**
-```bash
-grep '"version"' plugins/*/.claude-plugin/plugin.json package.json 2>/dev/null
-```
+## Notes
 
-## Step 3: Compare and fix
-
-**CRITICAL:** Each plugin has TWO version files that MUST be in sync:
-- `plugins/<name>/plugin.yaml`
-- `plugins/<name>/.claude-plugin/plugin.json`
-
-For each plugin:
-1. Compare versions between plugin.yaml and plugin.json
-2. If mismatch: Use the HIGHER version and update the other file
-3. Report: "Synced <plugin>: plugin.yaml=X.Y.Z, plugin.json=X.Y.Z"
-
-If all versions match: Report "All versions in sync"
-
-## Step 4: Commit if changes made
-
-```bash
-git add -A && git commit -m "Sync plugin version to X.Y.Z"
-```
-
-Replace X.Y.Z with the actual version.
+- NEVER skip version files - find them ALL first, then analyze
+- Different components can have different versions (that's OK)
+- Files within the SAME component must be in sync
+- When in doubt about grouping, ask the user
