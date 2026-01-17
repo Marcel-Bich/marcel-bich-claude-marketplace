@@ -452,7 +452,7 @@ When breakthrough happens or user input needed, signal plugin plays a sound.
 Need current docs for a library:
 
 ```
-/import:url https://docs.example.com/api
+/import:url-or-path https://docs.example.com/api
 ```
 
 Caches docs locally. Later:
@@ -760,3 +760,95 @@ e.g., debug or linting!).
 
 If an agent fails due to hooks: fix settings and respawn the agent.
 ```
+
+---
+
+## The Full Commandments (Wiki Reference)
+
+The preacher's guide above covers the blessed path. But the faithful may seek deeper knowledge of all available commands. Here lies the complete scripture.
+
+### Dogma - The Full Arsenal
+
+Beyond what the main workflow covers, dogma offers these additional rituals:
+
+| Command | Purpose |
+|---------|---------|
+| `/dogma:lint` | Run linting and formatting on staged files (non-interactive) |
+| `/dogma:cleanup` | Find and purge AI-typical patterns from your code |
+| `/dogma:permissions` | Create or update DOGMA-PERMISSIONS.md interactively |
+| `/dogma:force` | Apply all CLAUDE rules to your project with full control |
+| `/dogma:sanitize-git` | Cleanse git history from Claude/AI traces |
+| `/dogma:docs-update` | Synchronize documentation across README and wiki |
+| `/dogma:ignore:sync-all` | Sync ignore patterns to all local repositories (marketplace only) |
+
+**The preacher's wisdom:**
+
+```
+# After making changes, ensure code is clean
+/dogma:lint
+
+# Suspicious AI traces in your codebase? Purify it
+/dogma:cleanup src/
+
+# Setting up a new project? Create permissions first
+/dogma:permissions
+
+# Apply all rules at once with review
+/dogma:force
+
+# Before pushing to public: cleanse the history
+/dogma:sanitize-git
+```
+
+### Hydra - The Complete Spawning Ritual
+
+The parallel development section showed individual commands. Here is the full liturgy:
+
+| Command | Purpose |
+|---------|---------|
+| `/hydra:parallel` | Spawn multiple agents simultaneously across worktrees |
+| `/hydra:list` | Show all worktrees with paths and branches |
+| `/hydra:status` | Detailed status including uncommitted changes |
+
+**The preacher's preferred invocation for parallel work:**
+
+```
+# Create worktrees for each feature
+/hydra:create feature-auth
+/hydra:create feature-api
+/hydra:create feature-ui
+
+# Spawn all agents at once (the true power of hydra)
+/hydra:parallel feature-auth:Implement login | feature-api:Create endpoints | feature-ui:Build components
+
+# Monitor the congregation
+/hydra:watch
+
+# Check individual progress
+/hydra:status feature-auth
+
+# See all worktrees
+/hydra:list
+```
+
+### Import - The Complete Scrolls
+
+| Command | Purpose |
+|---------|---------|
+| `/import:url-or-path` | Import from URL or local file path |
+| `/import:list` | List all cached documentation |
+| `/import:search` | Search within cached docs |
+| `/import:update` | Re-fetch from original source |
+
+### Signal - Silent Watcher
+
+Signal has no user-invocable commands - it works through hooks that notify you when Claude needs attention or completes work. The faithful need not call upon it directly; it watches over them.
+
+### Limit - The Measure of All Things
+
+Limit displays in your statusline automatically. No commands to invoke - simply observe your API usage, tokens, and costs as you work.
+
+---
+
+**For the complete scripture of each plugin, consult the wiki:**
+https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki
