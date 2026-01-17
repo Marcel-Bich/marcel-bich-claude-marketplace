@@ -181,20 +181,16 @@ For each missing plugin:
 
 This is mandatory - a plugin without registry entry will NOT appear in `/plugin` list.
 
-## Step 4c: Suggest documentation sync (optional)
+## Step 4c: Documentation sync
 
-After version sync, ask the user:
+After version sync, use AskUserQuestion to ask the user interactively:
 
-```
-Versions are now in sync.
+**Question:** "Soll die Dokumentation (README, Wiki) auch synchronisiert werden?"
+**Options:**
+1. "Ja, /dogma:docs-update ausfuehren (Recommended)" - Checks for missing plugins in docs, outdated descriptions, etc.
+2. "Nein, ueberspringen" - Skip documentation sync
 
-Would you like to also sync documentation (README, wiki)?
-This checks for missing plugins in docs, outdated descriptions, etc.
-
-Run /dogma:docs-update? [y/N]
-```
-
-If user confirms, run `/dogma:docs-update` (or suggest user runs it manually).
+If user selects yes, run `/dogma:docs-update`.
 
 ## Step 5: Summary and commit
 
