@@ -5,7 +5,10 @@ Desktop notifications showing what Claude Code is working on - stay informed eve
 ## Features
 
 - Live status updates via desktop notifications
-- Sound alerts for task completion and attention requests
+- Sound alerts with context-aware sounds:
+  - "Complete" sound for permission prompts (requires attention)
+  - "Message" sound for general notifications
+- Configurable sound volume via environment variables
 - Optional AI summaries (using Haiku)
 - Smart filtering to prevent notification spam
 - Cross-platform: Linux and WSL2 (Windows 10/11)
