@@ -11,12 +11,12 @@ A collection of productivity plugins for Claude Code.
 
 | Plugin | Description |
 |--------|-------------|
+| [**credo**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Credo-Plugin) | Opinionated workflow guides and best practices - the core plugin |
 | [**dogma**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Dogma-Plugin) | Opinionated rules enforcement for Claude Code |
 | [**signal**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Signal-Plugin) | Desktop notifications for Claude Code |
 | [**limit**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Limit-Plugin) | Live API usage display in statusline |
 | [**hydra**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Hydra-Plugin) | Git Worktree management for parallel agent execution |
 | [**import**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Import-Plugin) | Import external docs locally (bypass AI-blocking sites) |
-| [**credo**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Credo-Plugin) | Opinionated workflow guides and best practices |
 
 ### Third-Party Plugins
 
@@ -28,12 +28,12 @@ A collection of productivity plugins for Claude Code.
 
 ```bash
 claude plugin marketplace add Marcel-Bich/marcel-bich-claude-marketplace
+claude plugin install credo@marcel-bich-claude-marketplace
 claude plugin install dogma@marcel-bich-claude-marketplace
 claude plugin install signal@marcel-bich-claude-marketplace
 claude plugin install limit@marcel-bich-claude-marketplace
 claude plugin install hydra@marcel-bich-claude-marketplace
 claude plugin install import@marcel-bich-claude-marketplace
-claude plugin install credo@marcel-bich-claude-marketplace
 claude plugin install get-shit-done@marcel-bich-claude-marketplace
 ```
 
