@@ -40,6 +40,7 @@ find . -type f \( \
   -name "plugin.json" -o \
   -name "plugin.yaml" -o \
   -name "plugin.yml" -o \
+  -name "marketplace.json" -o \
   -name "pyproject.toml" -o \
   -name "setup.py" -o \
   -name "setup.cfg" -o \
@@ -66,6 +67,7 @@ Analyze the file paths to identify logical groups:
 |---------|----------|
 | `plugins/<name>/*` | All files under same plugin = one group |
 | `packages/<name>/*` | All files under same package = one group |
+| `.claude-plugin/marketplace.json` | Marketplace root = separate group |
 | Root-level files | Project root = one group |
 | `src/<name>/*` | Subproject = one group |
 
@@ -75,10 +77,15 @@ Group: plugins/hydra
   - plugins/hydra/plugin.yaml
   - plugins/hydra/.claude-plugin/plugin.json
 
+Group: marketplace
+  - .claude-plugin/marketplace.json
+
 Group: root
   - package.json
   - version.txt
 ```
+
+**Note:** marketplace.json is a standalone group. When plugins are updated, ask user if marketplace version should also be bumped.
 
 ## Step 3: Extract versions from each file
 
@@ -88,6 +95,7 @@ Use appropriate extraction for each file type:
 |-----------|------------|
 | `*.yaml`, `*.yml` | `grep "^version:"` or parse YAML |
 | `*.json` | `jq -r '.version'` or grep `"version":` |
+| `marketplace.json` | `jq -r '.metadata.version'` (version is nested!) |
 | `*.toml` | grep `version =` |
 | `Cargo.toml` | grep under `[package]` section |
 | `setup.py` | grep `version=` |
