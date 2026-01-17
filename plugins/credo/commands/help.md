@@ -84,6 +84,11 @@ If user has custom marketplaces:
 - Run `git pull` in marketplace directories if needed
 - Install new plugins from marketplaces
 
+To quickly check and install recommended plugins/MCPs from a source:
+```
+/dogma:recommended:setup
+```
+
 ### Step 4: Set Project Language
 
 Ask user:
@@ -250,6 +255,7 @@ Which productivity topics would you like to explore?
 - Prioritization: Find what matters most with Eisenhower matrix
 - Resource Monitoring: Track tokens, costs, and rate limits
 - Custom Configuration: Per-project and per-worktree settings
+- Git Ignore Patterns: Never forget an ignore location
 - Something else: Ask your own question
 ```
 
@@ -276,6 +282,8 @@ After completion:
 /hydra:merge feature-auth
 /hydra:cleanup
 ```
+
+**Safety:** `/hydra:delete` and `/hydra:cleanup` will never accidentally delete the main worktree.
 
 **Read-only verification:** Hydra also works for parallel checking tasks:
 
@@ -408,6 +416,26 @@ Different settings per worktree (e.g., disable linting for a subagent):
 ```
 
 Respawn agent - done.
+
+### Topic: Git Ignore Patterns (dogma)
+
+Never forget an ignore location when adding patterns:
+
+```
+/dogma:ignore
+```
+
+Adds patterns to all relevant locations at once:
+- `.gitignore` (versioned, shared with team)
+- `.git/info/exclude` (local only, not versioned)
+
+To audit which patterns are missing where:
+
+```
+/dogma:ignore:audit
+```
+
+Shows gaps across all ignore locations so nothing is forgotten.
 
 ---
 

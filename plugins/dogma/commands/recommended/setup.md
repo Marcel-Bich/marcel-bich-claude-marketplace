@@ -20,7 +20,7 @@ This is a focused command that executes **only the recommendations step** from `
 
 **For the full implementation details, follow the instructions in:**
 - **File:** `commands/sync.md`
-- **Section:** `### 4.4 Recommendations (check installation status, offer to install)`
+- **Section:** Search for `Recommendations (check installation status, offer to install)`
 
 ## Quick Reference
 
@@ -28,7 +28,7 @@ This is a focused command that executes **only the recommendations step** from `
 
 The user provided: `$ARGUMENTS`
 
-**Source detection (same as sync.md Step 1):**
+**Source detection (same as sync.md "Parse Arguments" section):**
 - Starts with `http://` or `https://` = Remote Git repo
 - Starts with `~/`, `./`, `../`, `/` = Local path
 - Empty = Use DEFAULT_SOURCE from sync.md
@@ -36,25 +36,25 @@ The user provided: `$ARGUMENTS`
 ### Step 2: Fetch Source
 
 **For the fetch logic, follow sync.md:**
-- **Section:** `## Step 2: Fetch Source to Temporary Directory`
+- **Section:** Search for `Fetch Source to Temporary Directory`
 
 ### Step 3: Process Recommendations
 
 **For the complete recommendations logic, follow sync.md:**
-- **Section:** `### 4.4 Recommendations (check installation status, offer to install)`
+- **Section:** Search for `Recommendations (check installation status, offer to install)`
 
 This includes:
-- Step 4.4.1: Parse RECOMMENDATIONS.md
-- Step 4.4.2: Check installation status
-- Step 4.4.3: Present missing recommendations
-- Step 4.4.4: Install if user agrees
-- Step 4.4.5: Handle MCP installations
-- Step 4.4.6: Skip already installed
-- Step 4.4.7: Summary
+- Parse RECOMMENDATIONS.md
+- Check installation status
+- Present missing recommendations
+- Install if user agrees
+- Handle MCP installations
+- Skip already installed
+- Summary
 
 ### Step 4: Cleanup
 
-If a temp directory was created for remote repos, clean it up (same as sync.md Step 5).
+If a temp directory was created for remote repos, clean it up (same as sync.md "Cleanup" section).
 
 ## Key Points
 

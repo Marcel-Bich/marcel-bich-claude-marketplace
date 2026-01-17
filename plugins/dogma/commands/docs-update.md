@@ -448,6 +448,72 @@ Please resolve manually:
 
 ---
 
+## Special: marcel-bich-claude-marketplace
+
+When running in the `marcel-bich-claude-marketplace` repository, apply additional checks:
+
+### Detection
+
+```bash
+# Check if this is the marketplace repo
+REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
+if [ "$REPO_NAME" = "marcel-bich-claude-marketplace" ]; then
+    # Apply special rules
+fi
+```
+
+### Additional Checks for Credo Plugin
+
+The `credo` plugin contains workflow guides that reference other plugins. Keep these in sync:
+
+**File to check:** `plugins/credo/commands/help.md`
+
+**What to verify:**
+
+1. **Plugin Commands** - All commands mentioned in credo should exist
+   - Compare commands listed in credo against actual plugin.yaml files
+   - Check: `/dogma:*`, `/hydra:*`, `/gsd:*`, `/import:*`, `/consider:*`
+
+2. **New Plugins** - New marketplace plugins should be mentioned if relevant
+   - Check plugins/ directory for new plugins not mentioned in credo
+   - Ask user if they should be added to credo
+
+3. **Behavior Changes** - Major behavior changes should be reflected
+   - Safety guards, new features, changed defaults
+   - Check recent commits for significant changes
+
+4. **Prerequisites Table** - Keep the plugin prerequisites table current
+   - Verify required/optional status is accurate
+
+### Interactive Updates for Credo
+
+For each discrepancy found:
+
+```
+CREDO UPDATE: Missing command reference
+
+plugins/dogma now has: /dogma:recommended:setup
+credo/commands/help.md does not mention it.
+
+Should this be added to credo?
+1. Yes, add to [section suggestion based on command type]
+2. No, skip (not relevant for workflow guide)
+3. Show me the context first
+```
+
+### Credo Sections
+
+Map new items to appropriate sections:
+
+| Item Type | Credo Section |
+|-----------|---------------|
+| Core workflow commands | Step-by-step workflow (Steps 1-11) |
+| Setup/sync commands | Step 5: Sync Claude Instructions |
+| Optional tools | Plugin Showcase: Optional Topics |
+| New plugins | Prerequisites table + relevant topic |
+
+---
+
 ## Example Session
 
 ```
