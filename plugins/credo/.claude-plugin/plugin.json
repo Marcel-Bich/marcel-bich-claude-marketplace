@@ -1,7 +1,7 @@
 {
   "name": "credo",
-  "version": "0.1.0",
-  "description": "Workflow templates, best practices, and guidance for Claude Code users.",
+  "version": "0.2.0",
+  "description": "Opinionated workflow guides and best practices - the author's proven patterns for Claude Code projects.",
   "keywords": [
     "workflow",
     "template",
