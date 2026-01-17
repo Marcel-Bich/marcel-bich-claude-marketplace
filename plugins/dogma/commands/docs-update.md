@@ -215,7 +215,96 @@ Compare descriptions between:
 - README.md first paragraph
 - Wiki article introduction
 
-### Step 4.4: Generate Findings Report
+### Step 4.4: Check plugin list consistency (Marketplaces only)
+
+**Prevents forgotten plugins in docs.** If `.claude-plugin/marketplace.json` exists:
+
+#### 4.4.1: Get plugin list from registry (source of truth)
+
+```bash
+jq -r '.plugins[].name' .claude-plugin/marketplace.json 2>/dev/null | sort
+```
+
+#### 4.4.2: Check main README.md
+
+```bash
+# Extract plugin names from Available Plugins table
+grep -oP '\*\*\K[a-z-]+(?=\*\*)' README.md 2>/dev/null | sort
+
+# Extract plugin names from Quick Start install commands
+grep -oP 'plugin install \K[a-z-]+(?=@)' README.md 2>/dev/null | sort
+
+# Extract plugin names from Tags section
+grep -oP '(?<=plugin, )[a-z-]+(?= plugin)' README.md 2>/dev/null | sort
+```
+
+Compare each extraction with the plugin list. Report discrepancies:
+
+```
+README.md consistency check:
+  Plugin table: Missing credo
+  Quick Start: Missing credo
+  Tags: Missing credo plugin
+```
+
+#### 4.4.3: Check wiki Home.md
+
+```bash
+# Plugin table
+grep -oP '\[.*?\]\(./Claude-Code-\K[A-Za-z-]+(?=-Plugin)' "$WIKI_PATH/Home.md" 2>/dev/null | tr '[:upper:]' '[:lower:]' | sort
+
+# Install commands
+grep -oP 'plugin install \K[a-z-]+(?=@)' "$WIKI_PATH/Home.md" 2>/dev/null | sort
+
+# Tags line
+grep "Tags:" "$WIKI_PATH/Home.md" 2>/dev/null
+```
+
+#### 4.4.4: Check wiki article existence
+
+```bash
+for plugin in $(jq -r '.plugins[].name' .claude-plugin/marketplace.json); do
+  # Convert plugin name to wiki article name (e.g., dogma -> Claude-Code-Dogma-Plugin.md)
+  article="Claude-Code-$(echo $plugin | sed 's/.*/\u&/' | sed 's/-./\U&/g')-Plugin.md"
+  if [ ! -f "$WIKI_PATH/$article" ]; then
+    echo "MISSING: $article"
+  fi
+done
+```
+
+### Step 4.5: Check wiki consistency (Non-marketplace projects)
+
+**Fallback for projects with wiki but no marketplace.** If wiki exists but no `.claude-plugin/marketplace.json`:
+
+#### 4.5.1: Compare versions
+
+```bash
+# README version
+grep -oP '(?:version|Version|VERSION)[:\s]*v?(\d+\.\d+\.\d+)' README.md 2>/dev/null | head -1
+
+# Wiki version
+grep -oP '(?:version|Version|VERSION)[:\s]*v?(\d+\.\d+\.\d+)' "$WIKI_PATH/Home.md" 2>/dev/null | head -1
+```
+
+#### 4.5.2: Compare feature sections
+
+```bash
+# README sections
+grep -E '^#{1,3}\s+(Features|Commands|Usage|Installation)' README.md 2>/dev/null
+
+# Wiki sections
+grep -E '^#{1,3}\s+(Features|Commands|Usage|Installation)' "$WIKI_PATH/Home.md" 2>/dev/null
+```
+
+#### 4.5.3: Check for orphaned wiki articles
+
+```bash
+ls "$WIKI_PATH"/*.md 2>/dev/null | xargs -I {} basename {} .md
+```
+
+Verify each article references existing components in main repo.
+
+### Step 4.6: Generate Findings Report
 
 ```
 DOCUMENTATION SYNC REPORT
