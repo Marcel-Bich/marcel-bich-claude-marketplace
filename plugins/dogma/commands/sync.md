@@ -825,6 +825,10 @@ Add ALL known AI-file patterns. This protects files even if they don't exist yet
 **/[Tt][Oo]-[Dd][Oo]*
 **/[Tt][Oo]_[Dd][Oo]*
 
+# --- Import Plugin Cache ---
+**/[Mm][Aa][Bb][Ii]-[Ii][Mm][Pp][Oo][Rr][Tt]/
+**/[Mm][Aa][Bb][Ii]-[Ii][Mm][Pp][Oo][Rr][Tt]/**
+
 # --- Claude Code Local Config ---
 .[Cc][Ll][Aa][Uu][Dd][Ee]/
 
