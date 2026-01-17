@@ -98,7 +98,27 @@ Continue to the Entry Point, but the journey will be hindered.
 
 ### All Tools Are Present
 
-The faithful are prepared. Continue silently to the Entry Point.
+The faithful possess the sacred tools. But are the teachings present?
+
+Check if Claude instructions exist:
+
+```bash
+ls -d CLAUDE/ 2>/dev/null && echo "Teachings present" || echo "Teachings missing"
+```
+
+**If CLAUDE/ directory is missing:** Use AskUserQuestion:
+
+```
+The sacred tools are ready, but the teachings have not yet been received.
+
+Shall the preacher sync the teachings now?
+- Yes, run /dogma:sync (Recommended)
+- No, continue without (I will sync later)
+```
+
+**If user chooses "Yes":** Execute `/dogma:sync` via the Skill tool, then continue to Entry Point.
+
+**If user chooses "No" or CLAUDE/ exists:** Continue silently to the Entry Point.
 
 ---
 
