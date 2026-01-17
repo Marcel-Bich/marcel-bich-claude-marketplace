@@ -1,6 +1,6 @@
 name: hydra
 description: Git Worktree management for parallel agent execution - isolated working directories without Git conflicts
-version: 0.1.3
+version: 0.1.4
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
