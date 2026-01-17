@@ -881,3 +881,6 @@
 # Node.js          - https://github.com/github/gitignore/blob/main/Node.gitignore
 # Python           - https://github.com/github/gitignore/blob/main/Python.gitignore
 # Elixir           - https://github.com/github/gitignore/blob/main/Elixir.gitignore
+
+# Windows Zone.Identifier files (download metadata)
+**/*:Zone.Identifier
