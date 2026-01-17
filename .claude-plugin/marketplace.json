@@ -33,6 +33,11 @@
       "name": "hydra",
       "source": "./plugins/hydra",
       "description": "Git Worktree management for parallel agent execution - isolated working directories without Git conflicts."
+    },
+    {
+      "name": "import",
+      "source": "./plugins/import",
+      "description": "Import external documentation locally - bypass AI-blocking sites via Playwright or copy local paths."
     }
   ]
 }
