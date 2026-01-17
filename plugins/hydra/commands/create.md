@@ -52,9 +52,10 @@ If worktree exists: Show path and exit with hint.
 ### 4. Create Worktree
 
 ```bash
-# Determine path
-REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
-WORKTREE_PATH="../${REPO_NAME}-worktrees/$ARGUMENTS"
+# Determine path (always relative to repo root, not CWD)
+REPO_ROOT=$(git rev-parse --show-toplevel)
+REPO_NAME=$(basename "$REPO_ROOT")
+WORKTREE_PATH="$(dirname "$REPO_ROOT")/${REPO_NAME}-worktrees/$ARGUMENTS"
 
 # Create directory if needed
 mkdir -p "$(dirname "$WORKTREE_PATH")"

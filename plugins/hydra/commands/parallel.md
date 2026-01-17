@@ -63,9 +63,13 @@ Should I create them? (Branches will be forked from main)
 If yes, create missing worktrees:
 
 ```bash
+# Determine paths (always relative to repo root, not CWD)
+REPO_ROOT=$(git rev-parse --show-toplevel)
+REPO_NAME=$(basename "$REPO_ROOT")
+WORKTREES_DIR="$(dirname "$REPO_ROOT")/${REPO_NAME}-worktrees"
+
 for WT in feature-x feature-y; do
-  REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
-  git worktree add -b "hydra/$WT" "../${REPO_NAME}-worktrees/$WT"
+  git worktree add -b "hydra/$WT" "$WORKTREES_DIR/$WT"
 done
 ```
 
