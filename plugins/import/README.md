@@ -77,6 +77,8 @@ You will be asked to confirm and provide context for organization.
 /import:update pimcore/v2025.4 # Update specific version
 ```
 
+When a library has a new version online, the old version is preserved and a new folder is created. This keeps historical documentation available for users on older versions.
+
 ## Stored Format
 
 Imported docs include metadata:
