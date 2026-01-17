@@ -21,8 +21,17 @@ You are executing the `/hydra:delete` command. Safely remove a Git worktree with
 
 ### 1. Check if Worktree Exists
 
+**IMPORTANT:** The main worktree (first in list, usually main/master branch) must NEVER be deleted.
+When listing available worktrees, always exclude the main worktree (first line of `git worktree list`).
+
 ```bash
-git worktree list | grep -E "$ARGUMENTS|hydra/$ARGUMENTS"
+# List only secondary worktrees (skip first line = main worktree)
+git worktree list | tail -n +2 | grep -E "$ARGUMENTS|hydra/$ARGUMENTS"
+```
+
+If user tries to delete main/master:
+```
+ERROR: Cannot delete the main worktree. This is your project root.
 ```
 
 If not found:

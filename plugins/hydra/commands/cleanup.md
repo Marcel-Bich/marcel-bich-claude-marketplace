@@ -134,6 +134,7 @@ Use /hydra:merge {name} to merge worktrees.
 
 ## Safety Features
 
+- Main worktree (project root) is NEVER touched - always excluded
 - Only fully merged branches are removed
 - No force-delete (`git branch -d` not `-D`)
 - Confirmation before deletion (except dry-run)
