@@ -88,12 +88,8 @@ Run 'nvm use' to switch to this version.
 
 ```bash
 # Find all source file extensions
-find . -type f \
-  -not -path '*/node_modules/*' \
-  -not -path '*/.git/*' \
-  -not -path '*/vendor/*' \
-  -not -path '*/dist/*' \
-  -not -path '*/build/*' \
+# Respects .gitignore AND .git/info/exclude
+git ls-files --cached --others --exclude-standard 2>/dev/null \
   | sed 's/.*\.//' | sort | uniq -c | sort -rn | head -20
 ```
 
