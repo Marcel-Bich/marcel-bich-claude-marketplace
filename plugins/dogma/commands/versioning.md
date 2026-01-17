@@ -59,6 +59,47 @@ find . -type f \( \
 
 List ALL files found. Do not filter or assume.
 
+## Step 1b: Discover ADDITIONAL files containing version strings
+
+Search for files that might contain versions but don't match known filenames:
+
+```bash
+# Find files containing "version" that weren't caught by Step 1
+grep -rl --include="*.json" --include="*.yaml" --include="*.yml" --include="*.toml" --include="*.xml" --include="*.md" \
+  -E '"version"|'\''version'\''|version:' . 2>/dev/null | \
+  grep -v node_modules | grep -v ".git/" | sort
+```
+
+For each file found that wasn't in Step 1:
+
+1. **Quick assessment:** Read the file and check if the version field is:
+   - A project/package version (RELEVANT)
+   - A dependency version (NOT relevant - managed separately)
+   - A schema/spec version (NOT relevant)
+   - An API version in documentation (NOT relevant)
+
+2. **Present to user with recommendation:**
+
+```
+ADDITIONAL FILE: .claude-plugin/marketplace.json
+Contains: "version": "1.0.0" (in metadata section)
+Assessment: Project version - RELEVANT
+Recommendation: Include in version sync
+
+Include this file? [Y/n]
+```
+
+```
+ADDITIONAL FILE: docs/api-spec.yaml
+Contains: version: "2.0"
+Assessment: API specification version - NOT a package version
+Recommendation: Skip (different versioning scope)
+
+Include this file? [y/N]
+```
+
+Only include files the user confirms. Add confirmed files to the list from Step 1.
+
 ## Step 2: Group version files by component
 
 Analyze the file paths to identify logical groups:
