@@ -15,6 +15,9 @@ Intelligent sync of Claude instructions with enforcement hooks for security and 
 - `/dogma:force` - Interactively collect and apply CLAUDE rules to the project
 - `/dogma:sanitize-git` - Sanitize git history from Claude/AI traces and fix tracking issues
 - `/dogma:docs-update` - Sync documentation across README files and wiki articles
+- `/dogma:ignore` - Add ignore patterns to multiple locations at once (.gitignore, .git/info/exclude)
+- `/dogma:ignore:audit` - Show which AI patterns are missing from ignore files
+- `/dogma:ignore:sync-all` - Sync AI patterns from sync.md to all local repos (marketplace only)
 
 ### Permissions System
 
