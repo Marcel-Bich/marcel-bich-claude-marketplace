@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Collection of productivity plugins for Claude Code",
-    "version": "1.0.0"
+    "version": "1.0.1"
   },
   "plugins": [
     {
@@ -38,6 +38,11 @@
       "name": "import",
       "source": "./plugins/import",
       "description": "Import external documentation locally - bypass AI-blocking sites via Playwright or copy local paths."
+    },
+    {
+      "name": "credo",
+      "source": "./plugins/credo",
+      "description": "Opinionated workflow guides and best practices - the preacher's proven patterns for Claude Code projects."
     }
   ]
 }
