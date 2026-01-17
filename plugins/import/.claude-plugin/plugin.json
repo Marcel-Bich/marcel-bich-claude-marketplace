@@ -1,0 +1,14 @@
+{
+  "name": "import",
+  "version": "0.1.0",
+  "description": "Import external documentation locally - bypass AI-blocking sites via Playwright or copy local paths.",
+  "keywords": [
+    "docs",
+    "documentation",
+    "import",
+    "playwright",
+    "cache",
+    "offline"
+  ],
+  "license": "MIT"
+}

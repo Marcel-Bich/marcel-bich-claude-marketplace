@@ -1,0 +1,19 @@
+name: import
+description: Import external documentation locally - bypass AI-blocking sites via Playwright or copy local paths
+version: 0.1.0
+author: Marcel Bich
+repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
+
+commands:
+  url-or-path:
+    description: import - Fetch URL (via Playwright if blocked) or copy local path to docs/
+    source: commands/url-or-path.md
+  list:
+    description: import - List all cached documentation
+    source: commands/list.md
+  search:
+    description: import - Search within cached documentation
+    source: commands/search.md
+  update:
+    description: import - Update cached documentation
+    source: commands/update.md
