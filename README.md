@@ -16,6 +16,7 @@ A collection of productivity plugins for Claude Code.
 | [**limit**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Limit-Plugin) | Live API usage display in statusline |
 | [**hydra**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Hydra-Plugin) | Git Worktree management for parallel agent execution |
 | [**import**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Import-Plugin) | Import external docs locally (bypass AI-blocking sites) |
+| [**credo**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Credo-Plugin) | Opinionated workflow guides and best practices |
 
 ### Third-Party Plugins
 
@@ -32,6 +33,8 @@ claude plugin install signal@marcel-bich-claude-marketplace
 claude plugin install limit@marcel-bich-claude-marketplace
 claude plugin install hydra@marcel-bich-claude-marketplace
 claude plugin install import@marcel-bich-claude-marketplace
+claude plugin install credo@marcel-bich-claude-marketplace
+claude plugin install get-shit-done@marcel-bich-claude-marketplace
 ```
 
 ## Documentation
@@ -55,6 +58,6 @@ MIT - See [LICENSE](LICENSE) for full terms.
 <details>
 <summary>Keywords / Tags</summary>
 
-Claude Code, Claude Code Plugin, Claude Code Extension, Claude Code Marketplace, Claude Code Plugins Collection, Anthropic CLI, Anthropic Plugin, Anthropic Extension, Anthropic Claude, Anthropic AI, AI Agent Plugins, AI Code Assistant, AI Coding, AI Programming, AI Development, statusline, Statusline, Status Bar, API Usage, Desktop Notifications, Git Worktree, Parallel Agents, Documentation Import, Context7, Playwright, Rules Enforcement, Marcel Bich, marcel-bich-claude-marketplace, dogma plugin, signal plugin, limit plugin, hydra plugin, import plugin
+Claude Code, Claude Code Plugin, Claude Code Extension, Claude Code Marketplace, Claude Code Plugins Collection, Anthropic CLI, Anthropic Plugin, Anthropic Extension, Anthropic Claude, Anthropic AI, AI Agent Plugins, AI Code Assistant, AI Coding, AI Programming, AI Development, statusline, Statusline, Status Bar, API Usage, Desktop Notifications, Git Worktree, Parallel Agents, Documentation Import, Context7, Playwright, Rules Enforcement, Workflow Guides, Best Practices, Marcel Bich, marcel-bich-claude-marketplace, dogma plugin, signal plugin, limit plugin, hydra plugin, import plugin, credo plugin, get-shit-done plugin
 
 </details>
