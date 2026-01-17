@@ -37,7 +37,9 @@ git status --porcelain
 3. For EACH affected plugin:
    - Read the current version from `plugins/<name>/plugin.yaml`
    - Apply the versioning rules loaded in step 1
-   - Update the version in `plugins/<name>/plugin.yaml`
+   - Update the version in BOTH files:
+     - `plugins/<name>/plugin.yaml`
+     - `plugins/<name>/.claude-plugin/plugin.json`
 
 4. Report what was bumped:
    ```
@@ -72,11 +74,16 @@ grep '"version"' plugins/*/.claude-plugin/plugin.json package.json 2>/dev/null
 
 ## Step 3: Compare and fix
 
-1. If all versions match: Report "All versions in sync: X.Y.Z"
-2. If mismatch found:
-   - Identify the highest version
-   - Update all files to that version
-   - Report which files were updated
+**CRITICAL:** Each plugin has TWO version files that MUST be in sync:
+- `plugins/<name>/plugin.yaml`
+- `plugins/<name>/.claude-plugin/plugin.json`
+
+For each plugin:
+1. Compare versions between plugin.yaml and plugin.json
+2. If mismatch: Use the HIGHER version and update the other file
+3. Report: "Synced <plugin>: plugin.yaml=X.Y.Z, plugin.json=X.Y.Z"
+
+If all versions match: Report "All versions in sync"
 
 ## Step 4: Commit if changes made
 
