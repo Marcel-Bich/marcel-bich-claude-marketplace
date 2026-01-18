@@ -104,19 +104,55 @@ Continue to the Entry Point, but the journey will be hindered.
 
 ### All Tools Are Present
 
-**If directories.claude is false:** Use AskUserQuestion:
+**Check if setup is already complete:**
+
+First, check the setup state from the script output:
+- `directories.claude = true` means dogma is already configured
+- `directories.codebase_map = true` OR `files.roadmap = true` means gsd is already configured
+
+**If BOTH dogma AND gsd are already set up:** Skip silently to Entry Point. Do NOT ask about updates - the user can run `/dogma:sync` or `/gsd:map-codebase` themselves if needed.
+
+**If directories.claude is false (dogma NOT configured):**
+
+Use AskUserQuestion to ask the user BEFORE executing anything:
 
 ```
 The sacred tools are ready, but the teachings have not yet been received.
 
-Shall the preacher sync the teachings now?
-- Yes, run /dogma:sync (Recommended)
-- No, continue without (I will sync later)
+Would you like to set up dogma now?
+- Yes, run /dogma:sync (Recommended) - Syncs Claude instructions to this project
+- No, skip for now - I will set it up later with /dogma:sync
 ```
 
-**If user chooses "Yes":** Execute `/dogma:sync` via the Skill tool, then continue to Entry Point.
+**IMPORTANT:** Only execute `/dogma:sync` via the Skill tool if the user explicitly chooses "Yes". Never auto-execute.
 
-**If user chooses "No" or directories.claude is true:** Continue silently to the Entry Point.
+**If directories.claude is true (dogma already configured):** Continue to gsd check.
+
+**If gsd NOT configured** (project.is_greenfield = true AND no PROJECT.md, OR project.is_greenfield = false AND directories.codebase_map = false):
+
+Use AskUserQuestion to ask the user BEFORE executing anything:
+
+For greenfield projects:
+```
+The project directory appears to be new.
+
+Would you like to initialize it with GSD?
+- Yes, run /gsd:new-project (Recommended) - Creates PROJECT.md with project context
+- No, skip for now - I will set it up later with /gsd:new-project
+```
+
+For brownfield projects (existing code, no mapping):
+```
+I detected existing code that hasn't been mapped yet.
+
+Would you like to map the codebase?
+- Yes, run /gsd:map-codebase (Recommended) - Analyzes codebase and creates documentation
+- No, skip for now - I will map it later with /gsd:map-codebase
+```
+
+**IMPORTANT:** Only execute the gsd command if the user explicitly chooses "Yes". Never auto-execute.
+
+**If gsd is already configured:** Continue silently to the Entry Point.
 
 ---
 
