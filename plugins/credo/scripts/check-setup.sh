@@ -2,6 +2,11 @@
 # Credo Setup Check Script
 # Runs all setup checks at once and outputs structured results
 
+# System requirements check
+JQ_INSTALLED=$(command -v jq >/dev/null 2>&1 && echo "true" || echo "false")
+CURL_INSTALLED=$(command -v curl >/dev/null 2>&1 && echo "true" || echo "false")
+GIT_INSTALLED=$(command -v git >/dev/null 2>&1 && echo "true" || echo "false")
+
 # Plugin checks
 DOGMA_INSTALLED=$(claude plugin list 2>/dev/null | grep -q "dogma@marcel-bich-claude-marketplace" && echo "true" || echo "false")
 GSD_INSTALLED=$(claude plugin list 2>/dev/null | grep -q "get-shit-done@marcel-bich-claude-marketplace" && echo "true" || echo "false")
@@ -40,10 +45,23 @@ else
     PROJECT_STATE="ready"
 fi
 
+# Build missing requirements warnings
+MISSING_WARNINGS=""
+if [ "$JQ_INSTALLED" = "false" ]; then
+    MISSING_WARNINGS="${MISSING_WARNINGS}  - jq: dogma, limit, signal (install: sudo apt install jq)\n"
+fi
+if [ "$GIT_INSTALLED" = "false" ]; then
+    MISSING_WARNINGS="${MISSING_WARNINGS}  - git: all plugins (install: sudo apt install git)\n"
+fi
+
 # Output structured results
 cat <<EOF
 CREDO_SETUP_CHECK_V1
 ====================
+system_requirements:
+  jq: $JQ_INSTALLED
+  curl: $CURL_INSTALLED
+  git: $GIT_INSTALLED
 plugins:
   dogma: $DOGMA_INSTALLED
   gsd: $GSD_INSTALLED
@@ -61,3 +79,9 @@ project:
   is_greenfield: $IS_GREENFIELD
   state: $PROJECT_STATE
 EOF
+
+# Output warnings for missing requirements
+if [ -n "$MISSING_WARNINGS" ]; then
+    echo "missing_requirements:"
+    echo -e "$MISSING_WARNINGS"
+fi
