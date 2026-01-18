@@ -162,6 +162,35 @@ set_window_tokens() {
     fi
 }
 
+# Normalize reset time to hour (round to nearest hour)
+# API sometimes returns :59:59, sometimes :00:00 for same reset
+# This function extracts YYYY-MM-DD HH for comparison
+# Usage: normalize_reset_hour <reset_time>
+normalize_reset_hour() {
+    local reset_time="${1:-}"
+
+    if [[ -z "${reset_time}" ]] || [[ "${reset_time}" == "null" ]]; then
+        echo ""
+        return
+    fi
+
+    # Extract date and hour from ISO timestamp (e.g., 2026-01-19T12:00:00.123+00:00 -> 2026-01-19T12)
+    # Handle both :59:59 and :00:00 by rounding: add 30 minutes then truncate to hour
+    local epoch_seconds
+    if date --version >/dev/null 2>&1; then
+        # GNU date (Linux)
+        epoch_seconds=$(date -d "${reset_time} + 30 minutes" "+%s" 2>/dev/null) || { echo "${reset_time:0:13}"; return; }
+        date -d "@${epoch_seconds}" "+%Y-%m-%dT%H" 2>/dev/null || echo "${reset_time:0:13}"
+    else
+        # BSD date (macOS)
+        local clean_time="${reset_time%%.*}"
+        clean_time="${clean_time%%+*}"
+        epoch_seconds=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${clean_time}" "+%s" 2>/dev/null) || { echo "${reset_time:0:13}"; return; }
+        epoch_seconds=$((epoch_seconds + 1800))
+        date -r "${epoch_seconds}" "+%Y-%m-%dT%H" 2>/dev/null || echo "${reset_time:0:13}"
+    fi
+}
+
 # Check if window has reset and reset tokens if needed
 # Usage: check_reset <window> <new_reset_time>
 # Returns: 0 if reset detected (tokens reset to 0), 1 if no reset
@@ -185,8 +214,14 @@ check_reset() {
     local last_reset
     last_reset=$(jq -r ".${last_reset_key} // \"\"" "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
 
-    # If reset time changed, window has reset
-    if [[ "${new_reset_time}" != "${last_reset}" ]]; then
+    # Normalize both times to hour for comparison
+    # This prevents false resets when API returns :59:59 vs :00:00
+    local new_hour last_hour
+    new_hour=$(normalize_reset_hour "${new_reset_time}")
+    last_hour=$(normalize_reset_hour "${last_reset}")
+
+    # If normalized hour changed, window has actually reset
+    if [[ "${new_hour}" != "${last_hour}" ]]; then
         local tmp_file
         tmp_file=$(mktemp)
 
