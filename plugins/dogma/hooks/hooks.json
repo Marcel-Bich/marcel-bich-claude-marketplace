@@ -74,6 +74,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/pre-commit-lint.sh",
             "timeout": 5,
             "description": "Block git commit until /dogma:lint has been run (ENV: CLAUDE_MB_DOGMA_PRE_COMMIT_LINT=true)"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/git-pull-before-push.sh",
+            "timeout": 15,
+            "description": "Block git push if local branch is behind remote (ENV: CLAUDE_MB_DOGMA_PULL_BEFORE_PUSH=true)"
           }
         ]
       },
