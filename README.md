@@ -51,7 +51,13 @@ MIT - See [LICENSE](LICENSE) for full terms.
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Marcel-Bich/marcel-bich-claude-marketplace&type=Date)](https://star-history.com/#Marcel-Bich/marcel-bich-claude-marketplace&Date)
+<a href="https://www.star-history.com/#Marcel-Bich/marcel-bich-claude-marketplace&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Marcel-Bich/marcel-bich-claude-marketplace&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Marcel-Bich/marcel-bich-claude-marketplace&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Marcel-Bich/marcel-bich-claude-marketplace&type=date&legend=top-left" />
+ </picture>
+</a>
 
 ---
 
