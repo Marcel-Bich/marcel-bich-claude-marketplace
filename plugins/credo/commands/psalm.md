@@ -984,7 +984,13 @@ Signal has no user-invocable commands - it works through hooks that notify you w
 
 ### Limit - The Measure of All Things
 
-Limit displays in your statusline automatically. No commands to invoke - simply observe your API usage, tokens, and costs as you work.
+Limit displays in your statusline automatically. One command available:
+
+| Command | Purpose |
+|---------|---------|
+| `/limit:highscore` | Display all highscores and LimitAt achievements |
+
+Observe your API usage, tokens, costs, and track your personal highscores.
 
 ---
 
