@@ -1,6 +1,6 @@
 ---
 name: limit:highscore
-description: Display all highscores for all plans
+description: limit - Display all highscores for all plans
 model: haiku
 ---
 
