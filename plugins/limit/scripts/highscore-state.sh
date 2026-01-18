@@ -2,6 +2,7 @@
 # highscore-state.sh - Highscore state management for limit plugin
 # Tracks highest token usage per plan (max20, max5, pro, unknown)
 # 5h and 7d windows are tracked separately
+# shellcheck disable=SC2250
 
 set -euo pipefail
 
@@ -31,7 +32,7 @@ declare -A DEFAULT_HIGHSCORES_7D=(
 # Initialize state file with defaults if it doesn't exist
 # Usage: init_state
 init_state() {
-    if [[ -f "$HIGHSCORE_STATE_FILE" ]]; then
+    if [[ -f "${HIGHSCORE_STATE_FILE}" ]]; then
         return 0
     fi
 
@@ -44,7 +45,7 @@ init_state() {
     fi
 
     # Create state file with default values
-    cat > "$HIGHSCORE_STATE_FILE" << EOF
+    cat > "${HIGHSCORE_STATE_FILE}" << EOF
 {
   "plan": "${current_plan}",
   "highscores": {
@@ -78,23 +79,23 @@ get_highscore() {
     init_state
 
     local highscore
-    highscore=$(jq -r ".highscores[\"${plan}\"][\"${window}\"] // 0" "$HIGHSCORE_STATE_FILE" 2>/dev/null)
+    highscore=$(jq -r ".highscores[\"${plan}\"][\"${window}\"] // 0" "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
 
     # If plan not found, fall back to unknown
-    if [[ "$highscore" == "null" ]] || [[ -z "$highscore" ]]; then
-        highscore=$(jq -r ".highscores[\"unknown\"][\"${window}\"] // 0" "$HIGHSCORE_STATE_FILE" 2>/dev/null)
+    if [[ "${highscore}" == "null" ]] || [[ -z "${highscore}" ]]; then
+        highscore=$(jq -r ".highscores[\"unknown\"][\"${window}\"] // 0" "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
     fi
 
     # If still null, return default
-    if [[ "$highscore" == "null" ]] || [[ -z "$highscore" ]]; then
-        if [[ "$window" == "5h" ]]; then
+    if [[ "${highscore}" == "null" ]] || [[ -z "${highscore}" ]]; then
+        if [[ "${window}" == "5h" ]]; then
             highscore="${DEFAULT_HIGHSCORES_5H[unknown]}"
         else
             highscore="${DEFAULT_HIGHSCORES_7D[unknown]}"
         fi
     fi
 
-    echo "$highscore"
+    echo "${highscore}"
 }
 
 # Update highscore - only if new value is higher
@@ -108,15 +109,15 @@ update_highscore() {
     init_state
 
     local current_highscore
-    current_highscore=$(get_highscore "$plan" "$window")
+    current_highscore=$(get_highscore "${plan}" "${window}")
 
     # Only update if tokens > current highscore
-    if [[ "$tokens" -gt "$current_highscore" ]]; then
+    if [[ "${tokens}" -gt "${current_highscore}" ]]; then
         # Update the highscore in state file
         local tmp_file
         tmp_file=$(mktemp)
-        jq ".highscores[\"${plan}\"][\"${window}\"] = ${tokens}" "$HIGHSCORE_STATE_FILE" > "$tmp_file" && \
-            mv "$tmp_file" "$HIGHSCORE_STATE_FILE"
+        jq ".highscores[\"${plan}\"][\"${window}\"] = ${tokens}" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
+            mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
         return 0
     fi
 
@@ -131,14 +132,14 @@ get_window_tokens() {
     init_state
 
     local tokens
-    if [[ "$window" == "5h" ]]; then
-        tokens=$(jq -r '.window_tokens_5h // 0' "$HIGHSCORE_STATE_FILE" 2>/dev/null)
+    if [[ "${window}" == "5h" ]]; then
+        tokens=$(jq -r '.window_tokens_5h // 0' "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
     else
-        tokens=$(jq -r '.window_tokens_7d // 0' "$HIGHSCORE_STATE_FILE" 2>/dev/null)
+        tokens=$(jq -r '.window_tokens_7d // 0' "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
     fi
 
-    [[ "$tokens" == "null" ]] && tokens=0
-    echo "$tokens"
+    [[ "${tokens}" == "null" ]] && tokens=0
+    echo "${tokens}"
 }
 
 # Set window tokens
@@ -152,12 +153,12 @@ set_window_tokens() {
     local tmp_file
     tmp_file=$(mktemp)
 
-    if [[ "$window" == "5h" ]]; then
-        jq ".window_tokens_5h = ${tokens}" "$HIGHSCORE_STATE_FILE" > "$tmp_file" && \
-            mv "$tmp_file" "$HIGHSCORE_STATE_FILE"
+    if [[ "${window}" == "5h" ]]; then
+        jq ".window_tokens_5h = ${tokens}" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
+            mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
     else
-        jq ".window_tokens_7d = ${tokens}" "$HIGHSCORE_STATE_FILE" > "$tmp_file" && \
-            mv "$tmp_file" "$HIGHSCORE_STATE_FILE"
+        jq ".window_tokens_7d = ${tokens}" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
+            mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
     fi
 }
 
@@ -170,32 +171,32 @@ check_reset() {
 
     init_state
 
-    if [[ -z "$new_reset_time" ]] || [[ "$new_reset_time" == "null" ]]; then
+    if [[ -z "${new_reset_time}" ]] || [[ "${new_reset_time}" == "null" ]]; then
         return 1
     fi
 
     local last_reset_key
-    if [[ "$window" == "5h" ]]; then
+    if [[ "${window}" == "5h" ]]; then
         last_reset_key="last_5h_reset"
     else
         last_reset_key="last_7d_reset"
     fi
 
     local last_reset
-    last_reset=$(jq -r ".${last_reset_key} // \"\"" "$HIGHSCORE_STATE_FILE" 2>/dev/null)
+    last_reset=$(jq -r ".${last_reset_key} // \"\"" "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
 
     # If reset time changed, window has reset
-    if [[ "$new_reset_time" != "$last_reset" ]]; then
+    if [[ "${new_reset_time}" != "${last_reset}" ]]; then
         local tmp_file
         tmp_file=$(mktemp)
 
         # Update last reset time and reset window tokens to 0
-        if [[ "$window" == "5h" ]]; then
-            jq ".last_5h_reset = \"${new_reset_time}\" | .window_tokens_5h = 0" "$HIGHSCORE_STATE_FILE" > "$tmp_file" && \
-                mv "$tmp_file" "$HIGHSCORE_STATE_FILE"
+        if [[ "${window}" == "5h" ]]; then
+            jq ".last_5h_reset = \"${new_reset_time}\" | .window_tokens_5h = 0" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
+                mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
         else
-            jq ".last_7d_reset = \"${new_reset_time}\" | .window_tokens_7d = 0" "$HIGHSCORE_STATE_FILE" > "$tmp_file" && \
-                mv "$tmp_file" "$HIGHSCORE_STATE_FILE"
+            jq ".last_7d_reset = \"${new_reset_time}\" | .window_tokens_7d = 0" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
+                mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
         fi
         return 0
     fi
@@ -212,8 +213,8 @@ set_current_plan() {
 
     local tmp_file
     tmp_file=$(mktemp)
-    jq ".plan = \"${plan}\"" "$HIGHSCORE_STATE_FILE" > "$tmp_file" && \
-        mv "$tmp_file" "$HIGHSCORE_STATE_FILE"
+    jq ".plan = \"${plan}\"" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
+        mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
 }
 
 # Get current plan from state
@@ -222,9 +223,9 @@ get_current_plan() {
     init_state
 
     local plan
-    plan=$(jq -r '.plan // "unknown"' "$HIGHSCORE_STATE_FILE" 2>/dev/null)
-    [[ "$plan" == "null" ]] && plan="unknown"
-    echo "$plan"
+    plan=$(jq -r '.plan // "unknown"' "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
+    [[ "${plan}" == "null" ]] && plan="unknown"
+    echo "${plan}"
 }
 
 # Update limit_at value (when user hits 100% on API)
@@ -238,8 +239,8 @@ set_limit_at() {
 
     local tmp_file
     tmp_file=$(mktemp)
-    jq ".limits_at[\"${plan}\"][\"${window}\"] = ${tokens}" "$HIGHSCORE_STATE_FILE" > "$tmp_file" && \
-        mv "$tmp_file" "$HIGHSCORE_STATE_FILE"
+    jq ".limits_at[\"${plan}\"][\"${window}\"] = ${tokens}" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
+        mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
 }
 
 # Get limit_at value
@@ -251,8 +252,8 @@ get_limit_at() {
     init_state
 
     local limit
-    limit=$(jq -r ".limits_at[\"${plan}\"][\"${window}\"] // null" "$HIGHSCORE_STATE_FILE" 2>/dev/null)
-    echo "$limit"
+    limit=$(jq -r ".limits_at[\"${plan}\"][\"${window}\"] // null" "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
+    echo "${limit}"
 }
 
 # =============================================================================
@@ -264,7 +265,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     case "${1:-}" in
         init)
             init_state
-            echo "State file initialized: $HIGHSCORE_STATE_FILE"
+            echo "State file initialized: ${HIGHSCORE_STATE_FILE}"
             ;;
         get-highscore)
             get_highscore "${2:-unknown}" "${3:-5h}"
@@ -298,7 +299,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             echo "Plan set to ${2:-unknown}"
             ;;
         show)
-            cat "$HIGHSCORE_STATE_FILE" 2>/dev/null | jq .
+            jq . < "${HIGHSCORE_STATE_FILE}" 2>/dev/null
             ;;
         *)
             echo "Usage: $0 <command> [args]"
