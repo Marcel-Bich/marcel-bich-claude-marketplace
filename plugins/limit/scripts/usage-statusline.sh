@@ -23,6 +23,10 @@ STATE_FILE="${PLUGIN_DATA_DIR}/state.json"
 DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-false}"
 DEBUG_LOG="/tmp/claude-mb-limit-debug.log"
 
+# Plan detection - determine subscription type for plan-specific highscores
+SCRIPT_DIR="$(dirname "$0")"
+CURRENT_PLAN=$("${SCRIPT_DIR}/plan-detect.sh" 2>/dev/null || echo "unknown")
+
 # Ensure plugin data directory exists
 ensure_plugin_dir() {
     if [[ ! -d "$PLUGIN_DATA_DIR" ]]; then
@@ -623,6 +627,7 @@ get_total_tokens_ever() {
         # Write updated state (preserving calibration block)
         cat > "$STATE_FILE" << EOF
 {
+  "current_plan": "${CURRENT_PLAN}",
   "last_5h_reset": "${last_5h}",
   "last_7d_reset": "${last_7d}",
   "sessions": ${sessions_json},
@@ -1261,6 +1266,7 @@ format_output() {
         # Write updated state with calibration
         cat > "$STATE_FILE" << EOF
 {
+  "current_plan": "${CURRENT_PLAN}",
   "last_5h_reset": "${five_hour_reset:-}",
   "last_7d_reset": "${seven_day_reset:-}",
   "sessions": ${existing_sessions},
