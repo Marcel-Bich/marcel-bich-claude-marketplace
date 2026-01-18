@@ -1,0 +1,36 @@
+#!/bin/bash
+# Pre-commit hook: Check version mismatch between plugin.yaml and plugin.json
+#
+# Activate with: git config core.hooksPath .githooks
+
+ERRORS=0
+
+for plugin in plugins/*/; do
+    [ -d "$plugin" ] || continue
+
+    name=$(basename "$plugin")
+    yaml_file="$plugin/plugin.yaml"
+    json_file="$plugin/.claude-plugin/plugin.json"
+
+    # Skip if either file missing
+    [ -f "$yaml_file" ] || continue
+    [ -f "$json_file" ] || continue
+
+    yaml_ver=$(grep "^version:" "$yaml_file" 2>/dev/null | sed 's/version: *//')
+    json_ver=$(jq -r '.version // empty' "$json_file" 2>/dev/null)
+
+    if [ -n "$yaml_ver" ] && [ -n "$json_ver" ] && [ "$yaml_ver" != "$json_ver" ]; then
+        echo "VERSION MISMATCH: $name"
+        echo "  plugin.yaml:                $yaml_ver"
+        echo "  .claude-plugin/plugin.json: $json_ver"
+        echo ""
+        ERRORS=$((ERRORS + 1))
+    fi
+done
+
+if [ $ERRORS -gt 0 ]; then
+    echo "Fix with: /dogma:versioning"
+    exit 1
+fi
+
+exit 0
