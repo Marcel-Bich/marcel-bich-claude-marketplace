@@ -24,6 +24,12 @@ A collection of productivity plugins for Claude Code.
 |--------|--------|-------------|
 | [**get-shit-done**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Get-Shit-Done-Plugin) | [TÂCHES](https://github.com/glittercowboy) | Meta-prompting and spec-driven development system |
 
+## Requirements
+
+All plugins require:
+
+- `jq` - JSON processor (install: `sudo apt install jq`)
+
 ## Quick Start
 
 ```bash
