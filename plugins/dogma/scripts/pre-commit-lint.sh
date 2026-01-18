@@ -39,7 +39,7 @@ if [ "$ENABLED" != "true" ]; then
     exit 0
 fi
 
-# === SKIP CHECK ===
+# === SKIP CHECK (env var) ===
 # Claude sets this after running /dogma:lint successfully
 if [ "${CLAUDE_MB_DOGMA_SKIP_LINT_CHECK:-false}" = "true" ]; then
     exit 0
@@ -59,6 +59,13 @@ fi
 
 # Only trigger on git commit
 if ! echo "$TOOL_INPUT" | grep -qE '(^|\s|;|&&|\||\|\||\$\(|\(|`)git\s+commit(\s|$)'; then
+    exit 0
+fi
+
+# === SKIP CHECK (in command) ===
+# Also check if variable is set as prefix in the command itself
+# (e.g.: CLAUDE_MB_DOGMA_SKIP_LINT_CHECK=true git commit ...)
+if echo "$TOOL_INPUT" | grep -qE '(^|;|&&|\|\|)\s*CLAUDE_MB_DOGMA_SKIP_LINT_CHECK=true\s'; then
     exit 0
 fi
 
