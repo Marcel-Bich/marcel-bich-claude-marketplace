@@ -43,6 +43,11 @@
       "name": "get-shit-done",
       "source": "./plugins/get-shit-done",
       "description": "Meta-prompting, context engineering and spec-driven development system for Claude Code"
+    },
+    {
+      "name": "marketplace",
+      "source": "./plugins/marketplace",
+      "description": "Development tools for Claude Code plugins - local testing without pushing."
     }
   ]
 }

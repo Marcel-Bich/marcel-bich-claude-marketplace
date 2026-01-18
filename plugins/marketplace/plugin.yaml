@@ -1,0 +1,13 @@
+name: marketplace
+description: Development tools for Claude Code plugins - local testing without pushing
+version: 1.0.0
+author: Marcel Bich
+repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
+
+commands:
+  local-copy:
+    description: marketplace - Install local plugin version for testing (backup original)
+    source: commands/local-copy.md
+  local-cleanup:
+    description: marketplace - Restore original plugin version from backup
+    source: commands/local-cleanup.md
