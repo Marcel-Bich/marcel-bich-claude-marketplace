@@ -2,6 +2,7 @@
     "name": "marcel-bich-claude-marketplace",
     "private": true,
     "scripts": {
+        "postinstall": "git config core.hooksPath .githooks 2>/dev/null || true",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "lint:sh": "find . -name '*.sh' -not -path './node_modules/*' -exec shellcheck {} +"

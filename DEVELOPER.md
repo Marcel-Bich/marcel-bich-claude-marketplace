@@ -4,7 +4,9 @@ Instructions for developers working on this marketplace.
 
 ## Activate Git Hooks
 
-Run once after cloning:
+**Automatic:** Hooks are activated automatically when running `npm install`.
+
+**Manual:** If not using npm, run once after cloning:
 
 ```bash
 git config core.hooksPath .githooks
