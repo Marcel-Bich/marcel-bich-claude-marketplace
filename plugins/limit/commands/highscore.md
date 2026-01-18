@@ -1,31 +1,31 @@
 ---
-name: highscore
-description: Zeigt alle Highscores fuer alle Plaene
+name: limit:highscore
+description: Display all highscores for all plans
 model: haiku
 ---
 
 <objective>
-Zeige den aktuellen Highscore-State schoen aufbereitet.
+Display the current highscore state in a formatted view.
 </objective>
 
 <instructions>
-1. Lies die State-Datei:
+1. Read the state file:
    ```bash
    cat ~/.claude/limit-highscore-state.json 2>/dev/null
    ```
 
-2. Falls die Datei nicht existiert, teile dem User mit:
-   > Noch keine Highscore-Daten vorhanden.
-   > Aktiviere das Highscore-Feature mit: `export CLAUDE_MB_LIMIT_LOCAL=true`
-   > Die Daten werden waehrend der normalen Plugin-Nutzung gesammelt.
+2. If the file does not exist, inform the user:
+   > No highscore data available yet.
+   > Enable the highscore feature with: `export CLAUDE_MB_LIMIT_LOCAL=true`
+   > Data will be collected during normal plugin usage.
 
-3. Falls Daten vorhanden, formatiere die Ausgabe wie folgt:
+3. If data exists, format the output as follows:
 
 ## Highscore Status
 
-**Aktueller Plan:** {plan}
+**Current Plan:** {plan}
 
-### Highscores (alle Plaene)
+### Highscores (all plans)
 
 | Plan | 5h Highest | 7d Highest |
 |------|-----------|-----------|
@@ -33,33 +33,33 @@ Zeige den aktuellen Highscore-State schoen aufbereitet.
 | max5 | {highscores.max5.5h formatted} | {highscores.max5.7d formatted} |
 | pro | {highscores.pro.5h formatted} | {highscores.pro.7d formatted} |
 
-Formatiere Zahlen als: 5.2M (Millionen), 500.0K (Tausend), 1.5B (Milliarden)
+Format numbers as: 5.2M (millions), 500.0K (thousands), 1.5B (billions)
 
 ### LimitAt Achievements
 
-Falls `limits_at` Werte ungleich null vorhanden sind:
+If `limits_at` values are non-null:
 
 | Plan | 5h LimitAt | 7d LimitAt |
 |------|-----------|-----------|
-| {plan} | {limits_at.{plan}.5h oder "-"} | {limits_at.{plan}.7d oder "-"} |
+| {plan} | {limits_at.{plan}.5h or "-"} | {limits_at.{plan}.7d or "-"} |
 
-Falls keine LimitAt-Werte vorhanden: "Noch keine Achievements freigeschaltet."
+If no LimitAt values exist: "No achievements unlocked yet."
 
-### Aktuelles Window
+### Current Window
 
 - 5h: {window_tokens_5h formatted} Tokens
 - 7d: {window_tokens_7d formatted} Tokens
-- Device: {CLAUDE_MB_LIMIT_DEVICE_LABEL oder hostname}
+- Device: {CLAUDE_MB_LIMIT_DEVICE_LABEL or hostname}
 
-4. Erklaere kurz das Konzept am Ende:
+4. Briefly explain the concept at the end:
 
-> **Wie funktioniert Highscore-Tracking?**
+> **How does Highscore Tracking work?**
 >
-> Highscores koennen nur steigen, nie sinken. Je mehr du arbeitest,
-> desto hoeher wird dein Rekord. Wenn du es schaffst, das API-Limit
-> zu erreichen (>95% Auslastung), entdeckst du das echte Limit deines
-> Plans - quasi ein Achievement!
+> Highscores can only increase, never decrease. The more you work,
+> the higher your record gets. If you manage to reach the API limit
+> (>95% utilization), you discover the real limit of your plan -
+> like an achievement!
 >
-> Die Highscores sind pro Plan gespeichert, damit ein Planwechsel
-> (z.B. von Max20 zu Pro) die Rekorde nicht durcheinander bringt.
+> Highscores are stored per plan so that a plan change
+> (e.g., from Max20 to Pro) doesn't mix up the records.
 </instructions>
