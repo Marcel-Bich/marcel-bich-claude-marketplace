@@ -1126,9 +1126,11 @@ format_output() {
     # - Highscores can only INCREASE, never decrease
     # - Converges to true limit over time
     # - local_pct = window_tokens * 100 / highscore
+    # - LimitAt: When highscore is broken at >95% API utilization, we've found the real limit!
     local local_5h_pct="" local_7d_pct=""
     local highscore_5h=0 highscore_7d=0
     local window_tokens_5h=0 window_tokens_7d=0
+    local limit_at_5h="" limit_at_7d=""
 
     if [[ "$SHOW_LOCAL" == "true" ]]; then
         # Initialize highscore state if needed
@@ -1185,10 +1187,24 @@ format_output() {
         if update_highscore "$CURRENT_PLAN" "5h" "$window_tokens_5h"; then
             highscore_5h="$window_tokens_5h"
             debug_log "New 5h highscore for $CURRENT_PLAN: $highscore_5h"
+
+            # LimitAt Easter-Egg: If new highscore AND API utilization >= 95%,
+            # we've found the real user limit!
+            if [[ "$five_pct" -ge 95 ]] && [[ "$five_pct" -le 100 ]]; then
+                set_limit_at "$CURRENT_PLAN" "5h" "$window_tokens_5h"
+                debug_log "LimitAt 5h discovered for $CURRENT_PLAN: $window_tokens_5h at ${five_pct}% API"
+            fi
         fi
         if update_highscore "$CURRENT_PLAN" "7d" "$window_tokens_7d"; then
             highscore_7d="$window_tokens_7d"
             debug_log "New 7d highscore for $CURRENT_PLAN: $highscore_7d"
+
+            # LimitAt Easter-Egg: If new highscore AND API utilization >= 95%,
+            # we've found the real user limit!
+            if [[ -n "$seven_pct" ]] && [[ "$seven_pct" -ge 95 ]] && [[ "$seven_pct" -le 100 ]]; then
+                set_limit_at "$CURRENT_PLAN" "7d" "$window_tokens_7d"
+                debug_log "LimitAt 7d discovered for $CURRENT_PLAN: $window_tokens_7d at ${seven_pct}% API"
+            fi
         fi
 
         # Calculate local percentage: window_tokens * 100 / highscore
@@ -1211,6 +1227,11 @@ format_output() {
             # Cap at 100%
             [[ "$local_7d_pct" -gt 100 ]] && local_7d_pct=100
         fi
+
+        # Retrieve LimitAt values (Easter-Egg: discovered when hitting >95% API)
+        limit_at_5h=$(get_limit_at "$CURRENT_PLAN" "5h")
+        limit_at_7d=$(get_limit_at "$CURRENT_PLAN" "7d")
+        debug_log "LimitAt: 5h=$limit_at_5h 7d=$limit_at_7d"
 
         # Update legacy state file with last_total_tokens for delta calculation
         ensure_plugin_dir
@@ -1240,7 +1261,15 @@ EOF
 
     # 5-hour limit (if enabled) - all models
     if [[ "$SHOW_5H" == "true" ]]; then
-        lines+=("$(format_limit_line "5h all" "$five_pct" "$five_hour_reset")")
+        # Global 5h line - append [LimitAt:X.XM] Easter-Egg if discovered
+        local global_5h_line
+        global_5h_line="$(format_limit_line "5h all" "$five_pct" "$five_hour_reset")"
+        if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "$limit_at_5h" ]] && [[ "$limit_at_5h" != "null" ]]; then
+            local limit_at_5h_fmt
+            limit_at_5h_fmt=$(format_highscore "$limit_at_5h")
+            global_5h_line="${global_5h_line} [LimitAt:${limit_at_5h_fmt}]"
+        fi
+        lines+=("$global_5h_line")
         # Local 5h directly below global 5h - shows highscore-based percentage
         if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "${local_5h_pct}" ]]; then
             local local_5h_color="" local_5h_color_reset=""
@@ -1257,7 +1286,15 @@ EOF
 
     # 7-day limit (if enabled and available) - all models
     if [[ "$SHOW_7D" == "true" ]] && [[ -n "$seven_pct" ]]; then
-        lines+=("$(format_limit_line "7d all" "$seven_pct" "$seven_day_reset")")
+        # Global 7d line - append [LimitAt:X.XM] Easter-Egg if discovered
+        local global_7d_line
+        global_7d_line="$(format_limit_line "7d all" "$seven_pct" "$seven_day_reset")"
+        if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "$limit_at_7d" ]] && [[ "$limit_at_7d" != "null" ]]; then
+            local limit_at_7d_fmt
+            limit_at_7d_fmt=$(format_highscore "$limit_at_7d")
+            global_7d_line="${global_7d_line} [LimitAt:${limit_at_7d_fmt}]"
+        fi
+        lines+=("$global_7d_line")
         # Local 7d directly below global 7d - shows highscore-based percentage
         if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "${local_7d_pct}" ]]; then
             local local_7d_color="" local_7d_color_reset=""
