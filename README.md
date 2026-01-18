@@ -29,6 +29,7 @@ A collection of productivity plugins for Claude Code.
 All plugins require:
 
 - `jq` - JSON processor (install: `sudo apt install jq`)
+- **Windows:** WSL2 required (native Windows/PowerShell not supported)
 
 ## Quick Start
 
