@@ -2,10 +2,9 @@
 # Credo Setup Check Script
 # Runs all setup checks at once and outputs structured results
 
-# System requirements check
+# System requirements check (git not checked - claude/plugins won't work without it anyway)
 JQ_INSTALLED=$(command -v jq >/dev/null 2>&1 && echo "true" || echo "false")
 CURL_INSTALLED=$(command -v curl >/dev/null 2>&1 && echo "true" || echo "false")
-GIT_INSTALLED=$(command -v git >/dev/null 2>&1 && echo "true" || echo "false")
 
 # Plugin checks
 DOGMA_INSTALLED=$(claude plugin list 2>/dev/null | grep -q "dogma@marcel-bich-claude-marketplace" && echo "true" || echo "false")
@@ -50,8 +49,8 @@ MISSING_WARNINGS=""
 if [ "$JQ_INSTALLED" = "false" ]; then
     MISSING_WARNINGS="${MISSING_WARNINGS}  - jq: dogma, limit, signal (install: sudo apt install jq)\n"
 fi
-if [ "$GIT_INSTALLED" = "false" ]; then
-    MISSING_WARNINGS="${MISSING_WARNINGS}  - git: all plugins (install: sudo apt install git)\n"
+if [ "$CURL_INSTALLED" = "false" ]; then
+    MISSING_WARNINGS="${MISSING_WARNINGS}  - curl: limit (install: sudo apt install curl)\n"
 fi
 
 # Output structured results
@@ -61,7 +60,6 @@ CREDO_SETUP_CHECK_V1
 system_requirements:
   jq: $JQ_INSTALLED
   curl: $CURL_INSTALLED
-  git: $GIT_INSTALLED
 plugins:
   dogma: $DOGMA_INSTALLED
   gsd: $GSD_INSTALLED
