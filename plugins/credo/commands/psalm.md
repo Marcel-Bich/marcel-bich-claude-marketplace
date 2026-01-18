@@ -126,12 +126,31 @@ Shall the preacher sync the teachings now?
 
 If the user runs `/credo` without arguments, help them discover available topics.
 
-**If no arguments provided:** Use AskUserQuestion to ask:
+**IMPORTANT: Smart Detection First**
+
+Before showing options, silently run these checks to determine project state:
+
+```bash
+# Check project state (run all, don't show output to user)
+ls -d CLAUDE/ 2>/dev/null && echo "CLAUDE_EXISTS" || echo "CLAUDE_MISSING"
+ls -d .planning/codebase/ 2>/dev/null && echo "CODEBASE_MAPPED" || echo "CODEBASE_NOT_MAPPED"
+ls -d .planning/ROADMAP.md 2>/dev/null && echo "ROADMAP_EXISTS" || echo "ROADMAP_MISSING"
+git rev-parse --is-inside-work-tree 2>/dev/null && echo "GIT_INIT" || echo "NO_GIT"
+find . -maxdepth 2 -type f \( -name "*.ts" -o -name "*.js" -o -name "*.py" -o -name "*.go" -o -name "*.rs" \) 2>/dev/null | head -1 | grep -q . && echo "HAS_CODE" || echo "NO_CODE"
+```
+
+**Decision Logic:**
+
+1. **If CLAUDE_MISSING:** Project needs setup - offer `/dogma:sync` first
+2. **If CLAUDE_EXISTS + CODEBASE_NOT_MAPPED + HAS_CODE:** Suggest `/gsd:map-codebase`
+3. **If CLAUDE_EXISTS + CODEBASE_MAPPED + ROADMAP_MISSING:** Suggest `/gsd:create-roadmap`
+4. **If everything exists:** Project is set up - go directly to topics
+
+**If project is already set up:** Skip "Project Setup" in the options and go directly to topic selection:
 
 ```
 What would you like to explore?
 
-- Project Setup: Step-by-step workflow for new or existing projects (Recommended)
 - Parallel Development: Run multiple features simultaneously with hydra
 - Code Quality: Automatic linting and formatting
 - Debugging: Systematic debugging methodology
@@ -139,7 +158,19 @@ What would you like to explore?
 - Something else: Ask your own question
 ```
 
-**Based on selection:** Navigate to the relevant section below.
+**If project needs setup:** Show what's missing and offer to fix it:
+
+```
+I detected the following:
+- [x] Git initialized
+- [x] CLAUDE/ instructions present
+- [ ] Codebase not yet mapped
+
+Would you like to:
+- Run /gsd:map-codebase now (Recommended)
+- Skip and explore topics
+- Full setup walkthrough
+```
 
 **If arguments provided:** The user already has a question. Answer it directly using this guide's best practices, or navigate to the most relevant section.
 
@@ -148,6 +179,28 @@ What would you like to explore?
 # Project Setup Workflow
 
 Guide users through setting up Claude Code for new or existing projects.
+
+**IMPORTANT: This section is only for projects that actually need setup. If the project already has CLAUDE/, .planning/, etc., skip directly to the topics section.**
+
+## Smart Detection (MANDATORY)
+
+Before ANY setup steps, automatically detect project state:
+
+```bash
+# Detect project type and state - run silently
+HAS_FILES=$(find . -maxdepth 2 -type f ! -path "./.git/*" 2>/dev/null | head -5 | wc -l)
+HAS_GIT=$(git rev-parse --is-inside-work-tree 2>/dev/null && echo "yes" || echo "no")
+HAS_CLAUDE=$(ls -d CLAUDE/ 2>/dev/null && echo "yes" || echo "no")
+HAS_PLANNING=$(ls -d .planning/ 2>/dev/null && echo "yes" || echo "no")
+HAS_CODEBASE_MAP=$(ls -d .planning/codebase/ 2>/dev/null && echo "yes" || echo "no")
+HAS_LANGUAGE=$(ls CLAUDE/CLAUDE.language.md 2>/dev/null && echo "yes" || echo "no")
+```
+
+**Auto-detect Greenfield vs Brownfield:**
+- `HAS_FILES > 0` AND `HAS_GIT = yes` = **Brownfield** (existing project)
+- `HAS_FILES = 0` OR `HAS_GIT = no` = **Greenfield** (new project)
+
+**NEVER ask the user if this is greenfield or brownfield - detect it automatically.**
 
 ## Prerequisites
 
@@ -164,27 +217,12 @@ This workflow requires plugins from marcel-bich-claude-marketplace:
 
 ## How to Use
 
-Present each step as a checklist. After each step:
-1. Ask user if step is complete or needs help
-2. Offer to execute commands if applicable
-3. Move to next step only after confirmation
+**Skip steps that are already complete.** Only show steps that actually need action.
 
-## Step 0: Check Prerequisites
-
-First, verify required plugins are installed:
-- Check if `/gsd:help` works (get-shit-done)
-- Check if `/dogma:sync` works (dogma)
-
-If plugins are missing, install them from the marketplace first.
-
-## Step 1: Determine Project Type
-
-Ask user first:
-```
-Is this a new project (greenfield) or an existing project (brownfield)?
-- New project: Start from scratch
-- Existing project: Add Claude Code to existing codebase
-```
+For each incomplete step:
+1. Explain what needs to be done
+2. Offer to execute it
+3. Move to next incomplete step
 
 ## Workflow Steps
 
@@ -213,44 +251,24 @@ claude --dangerously-skip-permissions
 
 **Warning:** `--dangerously-skip-permissions` allows Claude to execute any command without asking for permission. This includes file deletions, system modifications, and other potentially destructive operations. **Use at your own risk.** You are solely responsible for any data loss, system crashes, or other damages that may occur.
 
-### Step 3: Update Marketplaces
+### Step 3: Install Recommended Plugins (Optional)
 
-If user has custom marketplaces:
-- Check `~/.claude/settings.json` for marketplace paths
-- Run `git pull` in marketplace directories if needed
-- Install new plugins from marketplaces
+**Skip if:** User already has all needed plugins installed.
 
-To quickly check and install recommended plugins/MCPs from a source:
+To check and install recommended plugins/MCPs:
 ```
 /dogma:recommended:setup
 ```
 
-### Step 3b: Restart Claude (After Plugin Changes)
-
-**Important:** After installing new plugins, restart Claude to load them:
-
-1. Exit Claude (Ctrl+C or type `exit`)
-2. Start again:
-```bash
-claude update
-claude --dangerously-skip-permissions
-```
-
-**Warning:** See disclaimer above regarding `--dangerously-skip-permissions`.
-
-This ensures newly installed plugins are available.
+**After installing new plugins:** Restart Claude (Ctrl+C, then `claude`) to load them.
 
 ### Step 4: Set Project Language
 
-Ask user:
-```
-What is the main language for this project?
-- German (no English needed)
-- English (no German needed)
-- Bilingual (both languages)
-```
+**Skip if:** `CLAUDE/CLAUDE.language.md` already exists (language is already configured).
 
-Document in CLAUDE.md or tell Claude directly.
+**Only ask if CLAUDE.language.md is missing AND /dogma:sync won't create it:**
+
+The language setting comes automatically through `/dogma:sync`. Only ask about language if the user is NOT using dogma sync.
 
 ### Step 5: Sync Claude Instructions
 
@@ -313,7 +331,9 @@ Settings changes only take effect after Claude restart.
 
 ### Step 7: Initialize Project with GSD
 
-**For NEW projects:**
+**Skip if:** `.planning/codebase/` already exists (codebase is already mapped) or `.planning/PROJECT.md` exists (project is already initialized).
+
+**For NEW projects (auto-detected as greenfield):**
 ```
 /gsd:new-project
 ```
@@ -324,7 +344,14 @@ Describe what the project is about:
 - Offline/online (push to remote?)
 - Suggested folder structure
 
-**For EXISTING projects (brownfield):**
+**For EXISTING projects (auto-detected as brownfield):**
+
+Check first:
+```bash
+ls -d .planning/codebase/ 2>/dev/null && echo "Already mapped - skip" || echo "Needs mapping"
+```
+
+If not yet mapped:
 ```
 /gsd:map-codebase
 ```
@@ -333,6 +360,14 @@ Claude analyzes the codebase and creates documentation in `.planning/codebase/`.
 
 ### Step 8: Create Roadmap
 
+**Skip if:** `.planning/ROADMAP.md` already exists.
+
+Check first:
+```bash
+ls .planning/ROADMAP.md 2>/dev/null && echo "Roadmap exists - skip" || echo "Needs roadmap"
+```
+
+If no roadmap yet:
 ```
 /gsd:create-roadmap
 ```
