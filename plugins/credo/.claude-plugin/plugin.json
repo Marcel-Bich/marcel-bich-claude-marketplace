@@ -1,7 +1,14 @@
 {
-    "name": "credo",
-    "version": "0.2.13",
-    "description": "Opinionated workflow guides and best practices - the preacher's proven patterns for Claude Code projects.",
-    "keywords": ["workflow", "template", "guide", "best-practices", "onboarding", "help"],
-    "license": "MIT"
+  "name": "credo",
+  "version": "0.2.14",
+  "description": "Opinionated workflow guides and best practices - the preacher's proven patterns for Claude Code projects.",
+  "keywords": [
+    "workflow",
+    "template",
+    "guide",
+    "best-practices",
+    "onboarding",
+    "help"
+  ],
+  "license": "MIT"
 }
