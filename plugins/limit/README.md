@@ -30,7 +30,10 @@ Live API usage display in Claude Code statusline - shows your utilization with c
 ## Commands
 
 - `/limit:highscore` - Display all highscores and LimitAt achievements
-- `/limit:setup` - Configure statusline settings
+
+## Requirements
+
+- `jq` - JSON processor (install: `sudo apt install jq`)
 
 ## Installation
 

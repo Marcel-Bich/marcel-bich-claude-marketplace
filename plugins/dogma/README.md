@@ -63,6 +63,10 @@ Run `/dogma:permissions` to configure interactively.
 
 The enforcement hooks increase token consumption significantly. Recommended for Claude Max 20x (or minimum Max 5x). For sync-only usage without hooks, any plan works.
 
+## Requirements
+
+- `jq` - JSON processor (install: `sudo apt install jq`)
+
 ## Installation
 
 ```bash
