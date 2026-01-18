@@ -1248,9 +1248,9 @@ EOF
                 local_5h_color=$(get_color "${local_5h_pct}")
                 local_5h_color_reset="${COLOR_RESET}"
             fi
-            # Format highscore as human-readable (e.g., 1.5M, 500k)
+            # Format highscore as human-readable (e.g., 1.5M, 500.0K, 1.5B)
             local hs_5h_formatted
-            hs_5h_formatted=$(format_tokens "$highscore_5h")
+            hs_5h_formatted=$(format_highscore "$highscore_5h")
             lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset" "~") ${local_5h_color}[Highest:${hs_5h_formatted}] (${LOCAL_DEVICE_LABEL})${local_5h_color_reset}")
         fi
     fi
@@ -1265,9 +1265,9 @@ EOF
                 local_7d_color=$(get_color "${local_7d_pct}")
                 local_7d_color_reset="${COLOR_RESET}"
             fi
-            # Format highscore as human-readable
+            # Format highscore as human-readable (e.g., 1.5M, 500.0K, 1.5B)
             local hs_7d_formatted
-            hs_7d_formatted=$(format_tokens "$highscore_7d")
+            hs_7d_formatted=$(format_highscore "$highscore_7d")
             lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset" "~") ${local_7d_color}[Highest:${hs_7d_formatted}] (${LOCAL_DEVICE_LABEL})${local_7d_color_reset}")
         fi
     fi
