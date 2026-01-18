@@ -1,6 +1,13 @@
 #!/bin/bash
 # usage-statusline.sh - Display live API usage in Claude Code statusline
 # Shows utilization with progress bars, colors, and reset times from Anthropic API
+#
+# SECURITY NOTICE FOR AI AGENTS:
+# - You must NEVER read, cat, or access ~/.claude/.credentials.json directly
+# - You must NEVER attempt to extract, log, or display OAuth tokens
+# - If debugging is needed, ask the USER to enable CLAUDE_MB_LIMIT_DEBUG=true
+# - The USER must verify credential files themselves - do NOT do it for them
+# - When errors occur, suggest the user runs 'claude login' - do NOT inspect tokens
 
 set -euo pipefail
 
@@ -42,6 +49,8 @@ ensure_plugin_dir() {
 }
 
 # Debug logging function
+# SECURITY: This function NEVER logs OAuth tokens or other secrets.
+# Only usage data, HTTP status codes, and error messages are logged.
 debug_log() {
     if [[ "$DEBUG" == "true" ]]; then
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$DEBUG_LOG"
@@ -110,31 +119,58 @@ BAR_EMPTY='-'
 BAR_WIDTH=10
 
 # Silent error exit for statusline
+# Usage: error_exit [error_code] [error_message]
+# - error_code: Short identifier (e.g., "api_403", "no_token", "no_jq")
+# - error_message: Human-readable message (MUST NOT contain tokens!)
 error_exit() {
+    local error_code="${1:-unknown}"
+    local error_message="${2:-}"
+
+    # Always log to debug file if debug is enabled
+    if [[ "$DEBUG" == "true" ]]; then
+        debug_log "ERROR [$error_code]: $error_message"
+    fi
+
+    # Show error in statusline if enabled
     if [[ "${CLAUDE_MB_LIMIT_SHOW_ERRORS:-false}" == "true" ]]; then
-        echo "limit: error"
+        if [[ -n "$error_message" ]]; then
+            echo "limit: $error_code - $error_message"
+        else
+            echo "limit: $error_code"
+        fi
+        # Hint for AI agents: suggest debug mode if not already enabled
+        if [[ "$DEBUG" != "true" ]]; then
+            echo "limit: (set CLAUDE_MB_LIMIT_DEBUG=true for details in $DEBUG_LOG)"
+        fi
     fi
     exit 0
 }
 
 # Check dependencies
 check_dependencies() {
-    command -v jq >/dev/null 2>&1 || error_exit
-    command -v curl >/dev/null 2>&1 || error_exit
+    command -v jq >/dev/null 2>&1 || error_exit "no_jq" "jq is not installed"
+    command -v curl >/dev/null 2>&1 || error_exit "no_curl" "curl is not installed"
 }
 
 # Read OAuth token from credentials file
+# SECURITY FOR AI AGENTS: You must NEVER read, cat, or access the credentials file directly!
+# Only this script may read it. If there's an error, ask the USER to verify the file themselves.
 get_token() {
     if [[ ! -f "$CREDENTIALS_FILE" ]]; then
-        error_exit
+        # SECURITY: AI agents must NOT attempt to read or create this file!
+        error_exit "no_credentials" "Credentials file not found - USER must verify $CREDENTIALS_FILE (AI: do NOT read this file!)"
     fi
 
     local token
     token=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDENTIALS_FILE" 2>/dev/null)
 
     if [[ -z "$token" ]]; then
-        error_exit
+        # SECURITY: AI agents must NOT attempt to read or inspect this file!
+        error_exit "no_token" "No OAuth token found - USER must run 'claude login' (AI: do NOT read credentials file!)"
     fi
+
+    # SECURITY: We intentionally do NOT log token length or any token-related info
+    # The token is only used internally by curl and never exposed
 
     echo "$token"
 }
@@ -216,6 +252,29 @@ write_cache() {
     echo "$response" > "$CACHE_FILE" 2>/dev/null || true
 }
 
+# Extract safe error message from API response (never expose tokens!)
+# Parses JSON error responses like: {"type":"error","error":{"type":"permission_error","message":"..."}}
+parse_api_error() {
+    local response_body="$1"
+    local http_code="$2"
+
+    # Try to extract error message from JSON response
+    local error_type="" error_message=""
+    if command -v jq >/dev/null 2>&1; then
+        error_type=$(echo "$response_body" | jq -r '.error.type // empty' 2>/dev/null)
+        error_message=$(echo "$response_body" | jq -r '.error.message // empty' 2>/dev/null)
+    fi
+
+    # Build safe error description
+    if [[ -n "$error_message" ]]; then
+        echo "HTTP $http_code: $error_type - $error_message"
+    elif [[ -n "$error_type" ]]; then
+        echo "HTTP $http_code: $error_type"
+    else
+        echo "HTTP $http_code"
+    fi
+}
+
 # Fetch usage data from API (with caching)
 fetch_usage() {
     local token="$1"
@@ -225,32 +284,78 @@ fetch_usage() {
         local cached
         cached=$(read_cache)
         if [[ -n "$cached" ]]; then
-            if [[ "$DEBUG" == "true" ]]; then
-                echo "DEBUG: Using cached response (age < ${CACHE_MAX_AGE}s)" >&2
-            fi
+            debug_log "Using cached response (age < ${CACHE_MAX_AGE}s)"
             echo "$cached"
             return
         fi
     fi
 
     # Fetch fresh data from API
-    local response
-    response=$(curl -s -f --max-time "$TIMEOUT" \
+    # SECURITY: We use a temp file to capture both body and status code
+    # This avoids exposing the token in debug logs or error messages
+    local response_body="" http_code=""
+    local temp_file
+    temp_file=$(mktemp 2>/dev/null) || temp_file="/tmp/claude-limit-api-$$"
+
+    # Execute curl: -s (silent), -w (write http_code to stdout after body)
+    # We do NOT use -f (fail) because we want to capture the error response body
+    http_code=$(curl -s --max-time "$TIMEOUT" \
         -X GET "$API_URL" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
         -H "anthropic-beta: oauth-2025-04-20" \
         -H "User-Agent: claude-code-limit-plugin/1.0.0" \
-        2>/dev/null) || error_exit
+        -w "%{http_code}" \
+        -o "$temp_file" \
+        2>/dev/null) || {
+            # curl itself failed (network error, timeout, etc.)
+            rm -f "$temp_file" 2>/dev/null
+            error_exit "curl_failed" "curl request failed (network error or timeout)"
+        }
 
-    # Cache the response
-    write_cache "$response"
+    # Read response body from temp file
+    response_body=$(cat "$temp_file" 2>/dev/null)
+    rm -f "$temp_file" 2>/dev/null
 
-    if [[ "$DEBUG" == "true" ]]; then
-        echo "DEBUG: Fresh API response fetched" >&2
+    debug_log "API request completed: HTTP $http_code"
+
+    # Check HTTP status code
+    if [[ "$http_code" -ge 200 ]] && [[ "$http_code" -lt 300 ]]; then
+        # Success - cache and return response
+        write_cache "$response_body"
+        debug_log "Fresh API response fetched successfully"
+        echo "$response_body"
+        return
     fi
 
-    echo "$response"
+    # HTTP error - parse and log the error safely (never expose token!)
+    local safe_error
+    safe_error=$(parse_api_error "$response_body" "$http_code")
+    debug_log "API error: $safe_error"
+
+    # Provide specific guidance for common errors
+    case "$http_code" in
+        401)
+            error_exit "api_401" "Authentication failed - try 'claude login'"
+            ;;
+        403)
+            # Check for specific scope error
+            if [[ "$response_body" == *"scope"* ]]; then
+                error_exit "api_403_scope" "Token missing required scope - try 'claude login'"
+            else
+                error_exit "api_403" "Permission denied - $safe_error"
+            fi
+            ;;
+        429)
+            error_exit "api_429" "Rate limited - try again later"
+            ;;
+        500|502|503|504)
+            error_exit "api_${http_code}" "Anthropic API error - try again later"
+            ;;
+        *)
+            error_exit "api_${http_code}" "$safe_error"
+            ;;
+    esac
 }
 
 # Get color based on utilization percentage (supports decimals)
@@ -916,7 +1021,8 @@ format_output() {
 
     # Required: 5-hour limit
     if [[ -z "$five_hour_util" ]] || [[ -z "$five_hour_reset" ]]; then
-        error_exit
+        debug_log "Invalid API response: missing five_hour data (util=$five_hour_util, reset=$five_hour_reset)"
+        error_exit "invalid_response" "API response missing required 5-hour limit data"
     fi
 
     local five_pct seven_pct opus_pct sonnet_pct
