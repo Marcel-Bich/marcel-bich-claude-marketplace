@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+# Force C locale for numeric operations (prevents issues with de_DE locale expecting comma)
+export LC_NUMERIC=C
+
 # Configuration
 CREDENTIALS_FILE="${HOME}/.claude/.credentials.json"
 API_URL="https://api.anthropic.com/api/oauth/usage"
