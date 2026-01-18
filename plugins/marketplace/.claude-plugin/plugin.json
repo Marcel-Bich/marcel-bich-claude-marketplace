@@ -1,0 +1,13 @@
+{
+  "name": "marketplace",
+  "version": "1.0.0",
+  "description": "Development tools for Claude Code plugins - local testing without pushing",
+  "keywords": [
+    "development",
+    "testing",
+    "local",
+    "plugin",
+    "marketplace"
+  ],
+  "license": "MIT"
+}
