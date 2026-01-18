@@ -486,6 +486,27 @@ format_tokens() {
     fi
 }
 
+# Format highscore as human-readable with B/M/K suffixes
+# Uses bc for precise decimal calculations
+# Example: 7500000 -> "7.5M", 1500000000 -> "1.5B", 500000 -> "500.0K"
+format_highscore() {
+    local tokens="$1"
+    if [[ -z "$tokens" ]] || [[ "$tokens" == "null" ]] || [[ "$tokens" -eq 0 ]]; then
+        echo "0"
+        return
+    fi
+
+    if [[ "$tokens" -ge 1000000000 ]]; then
+        printf "%.1fB" "$(echo "scale=1; $tokens/1000000000" | bc)"
+    elif [[ "$tokens" -ge 1000000 ]]; then
+        printf "%.1fM" "$(echo "scale=1; $tokens/1000000" | bc)"
+    elif [[ "$tokens" -ge 1000 ]]; then
+        printf "%.1fK" "$(echo "scale=1; $tokens/1000" | bc)"
+    else
+        echo "$tokens"
+    fi
+}
+
 # Calculate token cost based on model (input price per million tokens)
 calculate_token_cost() {
     local tokens="$1"
