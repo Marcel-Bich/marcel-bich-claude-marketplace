@@ -13,6 +13,10 @@ Desktop notifications showing what Claude Code is working on - stay informed eve
 - Smart filtering to prevent notification spam
 - Cross-platform: Linux and WSL2 (Windows 10/11)
 
+## Requirements
+
+- `jq` - JSON processor (install: `sudo apt install jq`)
+
 ## Installation
 
 ```bash
