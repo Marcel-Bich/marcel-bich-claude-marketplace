@@ -1,9 +1,16 @@
 #!/bin/bash
-# Pre-commit hook: Check version mismatch between plugin.yaml and plugin.json
+# Pre-commit hook: Auto-fix version mismatch between plugin.yaml and plugin.json
 #
 # Activate with: git config core.hooksPath .githooks
+#
+# Behavior: If versions differ, the higher version wins and the other file is updated.
 
-ERRORS=0
+FIXED=0
+
+# Compare semver: returns 0 if $1 > $2, 1 otherwise
+semver_gt() {
+    [ "$(printf '%s\n%s' "$1" "$2" | sort -V | tail -n1)" = "$1" ] && [ "$1" != "$2" ]
+}
 
 for plugin in plugins/*/; do
     [ -d "$plugin" ] || continue
@@ -19,18 +26,31 @@ for plugin in plugins/*/; do
     yaml_ver=$(grep "^version:" "$yaml_file" 2>/dev/null | sed 's/version: *//')
     json_ver=$(jq -r '.version // empty' "$json_file" 2>/dev/null)
 
-    if [ -n "$yaml_ver" ] && [ -n "$json_ver" ] && [ "$yaml_ver" != "$json_ver" ]; then
-        echo "VERSION MISMATCH: $name"
-        echo "  plugin.yaml:                $yaml_ver"
-        echo "  .claude-plugin/plugin.json: $json_ver"
-        echo ""
-        ERRORS=$((ERRORS + 1))
+    # Skip if versions match or either is empty
+    [ -z "$yaml_ver" ] || [ -z "$json_ver" ] && continue
+    [ "$yaml_ver" = "$json_ver" ] && continue
+
+    # Determine higher version
+    if semver_gt "$yaml_ver" "$json_ver"; then
+        higher="$yaml_ver"
+        # Update json
+        jq --arg v "$higher" '.version = $v' "$json_file" > "$json_file.tmp" && mv "$json_file.tmp" "$json_file"
+        echo "FIXED: $name -> $higher (updated plugin.json)"
+    else
+        higher="$json_ver"
+        # Update yaml
+        sed -i "s/^version: .*/version: $higher/" "$yaml_file"
+        echo "FIXED: $name -> $higher (updated plugin.yaml)"
     fi
+
+    # Stage the fixed file
+    git add "$yaml_file" "$json_file"
+    FIXED=$((FIXED + 1))
 done
 
-if [ $ERRORS -gt 0 ]; then
-    echo "Fix with: /dogma:versioning"
-    exit 1
+if [ $FIXED -gt 0 ]; then
+    echo ""
+    echo "Auto-fixed $FIXED version mismatch(es). Files staged."
 fi
 
 exit 0
