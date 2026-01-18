@@ -9,12 +9,13 @@ Display the current highscore state in a formatted view.
 </objective>
 
 <instructions>
-1. Read the state file:
+1. Read the state file and hostname:
    ```bash
    cat ~/.claude/limit-highscore-state.json 2>/dev/null
+   hostname
    ```
 
-2. If the file does not exist, inform the user:
+2. If the state file does not exist, inform the user:
    > No highscore data available yet.
    > Enable the highscore feature with: `export CLAUDE_MB_LIMIT_LOCAL=true`
    > Data will be collected during normal plugin usage.
@@ -35,30 +36,18 @@ Display the current highscore state in a formatted view.
 
 Format numbers as: 5.2M (millions), 500.0K (thousands), 1.5B (billions)
 
-### LimitAt Achievements
-
-If `limits_at` values are non-null:
-
-| Plan | 5h LimitAt | 7d LimitAt |
-|------|-----------|-----------|
-| {plan} | {limits_at.{plan}.5h or "-"} | {limits_at.{plan}.7d or "-"} |
-
-If no LimitAt values exist: "No achievements unlocked yet."
-
 ### Current Window
 
 - 5h: {window_tokens_5h formatted} Tokens
 - 7d: {window_tokens_7d formatted} Tokens
-- Device: {CLAUDE_MB_LIMIT_DEVICE_LABEL or hostname}
+- Device: {hostname from bash output}
 
 4. Briefly explain the concept at the end:
 
 > **How does Highscore Tracking work?**
 >
 > Highscores can only increase, never decrease. The more you work,
-> the higher your record gets. If you manage to reach the API limit
-> (>95% utilization), you discover the real limit of your plan -
-> like an achievement!
+> the higher your record gets.
 >
 > Highscores are stored per plan so that a plan change
 > (e.g., from Max20 to Pro) doesn't mix up the records.
