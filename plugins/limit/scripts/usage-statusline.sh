@@ -394,13 +394,25 @@ get_color() {
 }
 
 # Generate ASCII progress bar (supports decimals)
-# Usage: progress_bar <percentage> <width>
+# Usage: progress_bar <percentage> [width] [highscore_mode]
+# If highscore_mode=1 and percentage>=100, shows [HIGHSCORE!] instead of filled bar
 progress_bar() {
     local pct="$1"
     local width="${2:-$BAR_WIDTH}"
+    local highscore_mode="${3:-0}"
 
     if [[ -z "$pct" ]] || [[ "$pct" == "-" ]]; then
         pct=0
+    fi
+
+    # Special display at 100% for highscore lines only
+    if [[ "$highscore_mode" -eq 1 ]]; then
+        local is_100
+        is_100=$(awk "BEGIN {print ($pct >= 100) ? 1 : 0}")
+        if [[ "$is_100" -eq 1 ]]; then
+            echo "[HIGHSCORE!]"
+            return
+        fi
     fi
 
     # Use awk for decimal handling, clamp to 0-100, round to integer for bar calculation
@@ -451,12 +463,14 @@ format_reset_datetime() {
 }
 
 # Format a single limit line with color, progress bar, percentage, and reset time
-# Usage: format_limit_line <label> <percentage> <reset_at>
+# Usage: format_limit_line <label> <percentage> <reset_at> [highscore_mode]
 # Supports decimal percentages (e.g., 12.3%, 0.1%)
+# If highscore_mode=1, shows [HIGHSCORE!] at 100%
 format_limit_line() {
     local label="$1"
     local pct="$2"
     local reset_at="$3"
+    local highscore_mode="${4:-0}"
 
     local color=""
     local color_reset=""
@@ -467,7 +481,7 @@ format_limit_line() {
 
     local bar=""
     if [[ "$SHOW_PROGRESS" == "true" ]]; then
-        bar=" $(progress_bar "$pct")"
+        bar=" $(progress_bar "$pct" "$BAR_WIDTH" "$highscore_mode")"
     fi
 
     local reset_str=""
@@ -1405,7 +1419,7 @@ EOF
             local window_5h_formatted hs_5h_formatted
             window_5h_formatted=$(format_highscore "$window_tokens_5h")
             hs_5h_formatted=$(format_highscore "$highscore_5h")
-            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset") ${local_5h_color}[Highest:${window_5h_formatted}/${hs_5h_formatted}] (${LOCAL_DEVICE_LABEL})${local_5h_color_reset}")
+            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset" 1) ${local_5h_color}[Highest:${window_5h_formatted}/${hs_5h_formatted}] (${LOCAL_DEVICE_LABEL})${local_5h_color_reset}")
         fi
     fi
 
@@ -1432,7 +1446,7 @@ EOF
             local window_7d_formatted hs_7d_formatted
             window_7d_formatted=$(format_highscore "$window_tokens_7d")
             hs_7d_formatted=$(format_highscore "$highscore_7d")
-            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset") ${local_7d_color}[Highest:${window_7d_formatted}/${hs_7d_formatted}] (${LOCAL_DEVICE_LABEL})${local_7d_color_reset}")
+            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset" 1) ${local_7d_color}[Highest:${window_7d_formatted}/${hs_7d_formatted}] (${LOCAL_DEVICE_LABEL})${local_7d_color_reset}")
         fi
     fi
 
