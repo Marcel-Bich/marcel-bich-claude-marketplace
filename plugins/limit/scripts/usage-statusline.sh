@@ -253,7 +253,7 @@ fetch_usage() {
     echo "$response"
 }
 
-# Get color based on utilization percentage
+# Get color based on utilization percentage (supports decimals)
 # <30% gray, <50% green, <75% yellow, <90% orange, >=90% red
 get_color() {
     local pct="$1"
@@ -269,20 +269,26 @@ get_color() {
         return
     fi
 
-    if [[ "$pct" -lt 30 ]]; then
-        echo "$COLOR_GRAY"
-    elif [[ "$pct" -lt 50 ]]; then
-        echo "$COLOR_GREEN"
-    elif [[ "$pct" -lt 75 ]]; then
-        echo "$COLOR_YELLOW"
-    elif [[ "$pct" -lt 90 ]]; then
-        echo "$COLOR_ORANGE"
-    else
-        echo "$COLOR_RED"
-    fi
+    # Use awk for decimal comparisons
+    local threshold
+    threshold=$(awk "BEGIN {
+        if ($pct < 30) print 0
+        else if ($pct < 50) print 1
+        else if ($pct < 75) print 2
+        else if ($pct < 90) print 3
+        else print 4
+    }")
+
+    case "$threshold" in
+        0) echo "$COLOR_GRAY" ;;
+        1) echo "$COLOR_GREEN" ;;
+        2) echo "$COLOR_YELLOW" ;;
+        3) echo "$COLOR_ORANGE" ;;
+        *) echo "$COLOR_RED" ;;
+    esac
 }
 
-# Generate ASCII progress bar
+# Generate ASCII progress bar (supports decimals)
 # Usage: progress_bar <percentage> <width>
 progress_bar() {
     local pct="$1"
@@ -292,15 +298,15 @@ progress_bar() {
         pct=0
     fi
 
-    # Clamp percentage to 0-100
-    if [[ "$pct" -lt 0 ]]; then
-        pct=0
-    elif [[ "$pct" -gt 100 ]]; then
-        pct=100
-    fi
-
-    local filled=$((pct * width / 100))
-    local empty=$((width - filled))
+    # Use awk for decimal handling, clamp to 0-100, round to integer for bar calculation
+    local filled empty
+    filled=$(awk "BEGIN {
+        p = $pct
+        if (p < 0) p = 0
+        if (p > 100) p = 100
+        printf \"%d\", int(p * $width / 100 + 0.5)
+    }")
+    empty=$((width - filled))
 
     local bar=""
     for ((i=0; i<filled; i++)); do
@@ -341,11 +347,11 @@ format_reset_datetime() {
 
 # Format a single limit line with color, progress bar, percentage, and reset time
 # Usage: format_limit_line <label> <percentage> <reset_at>
+# Supports decimal percentages (e.g., 12.3%, 0.1%)
 format_limit_line() {
     local label="$1"
     local pct="$2"
     local reset_at="$3"
-    local prefix="${4:-}"  # Optional prefix (e.g., "~" for estimates)
 
     local color=""
     local color_reset=""
@@ -364,14 +370,13 @@ format_limit_line() {
         reset_str=" reset: $(format_reset_datetime "$reset_at")"
     fi
 
-    # Output varies based on toggles, e.g.: "Label [====------]  14% reset 2026-01-08 22:00"
-    # With prefix: "Label [====------] ~14% reset 2026-01-08 22:00"
-    local display_pct="${prefix}${pct}"
-    printf "${color}%s%s %4s%%${reset_str}${color_reset}" "$label" "$bar" "$display_pct"
+    # Output varies based on toggles, e.g.: "Label [====------]  14.0% reset 2026-01-08 22:00"
+    printf "${color}%s%s %6s%%${reset_str}${color_reset}" "$label" "$bar" "$pct"
 }
 
-# Parse integer from value (handles int, float, null, empty)
-parse_int() {
+# Parse decimal from value with one decimal place (handles int, float, null, empty)
+# Uses commercial rounding (0.44 -> 0.4, 0.45 -> 0.5)
+parse_decimal() {
     local val="$1"
 
     if [[ -z "$val" ]] || [[ "$val" == "null" ]]; then
@@ -379,12 +384,22 @@ parse_int() {
         return
     fi
 
-    # Try printf for floats, fallback to raw value
-    local result
-    result=$(printf "%.0f" "$val" 2>/dev/null || echo "$val")
-    result="${result%%.*}"
+    # Use awk for proper decimal formatting with commercial rounding
+    awk "BEGIN {printf \"%.1f\", $val}"
+}
 
-    echo "$result"
+# Cap decimal value at max (e.g., 100.0)
+# Usage: cap_decimal <value> <max>
+cap_decimal() {
+    local val="$1"
+    local max="${2:-100}"
+
+    if [[ -z "$val" ]] || [[ "$val" == "" ]]; then
+        echo ""
+        return
+    fi
+
+    awk "BEGIN {v = $val; if (v > $max) v = $max; printf \"%.1f\", v}"
 }
 
 # =============================================================================
@@ -467,6 +482,7 @@ get_git_branch() {
 }
 
 # Format tokens as human-readable (e.g., 1500000 -> 1.5M, 18600 -> 18.6k)
+# Uses SI prefixes: k (kilo, 10^3), M (mega, 10^6), G (giga, 10^9)
 format_tokens() {
     local tokens="$1"
     if [[ -z "$tokens" ]] || [[ "$tokens" == "null" ]]; then
@@ -474,13 +490,18 @@ format_tokens() {
         return
     fi
 
-    if [[ "$tokens" -ge 1000000 ]]; then
-        # Millions
+    if [[ "$tokens" -ge 1000000000 ]]; then
+        # Giga (10^9)
+        local g_val
+        g_val=$(awk "BEGIN {printf \"%.1f\", $tokens/1000000000}")
+        echo "${g_val}G"
+    elif [[ "$tokens" -ge 1000000 ]]; then
+        # Mega (10^6)
         local m_val
         m_val=$(awk "BEGIN {printf \"%.1f\", $tokens/1000000}")
         echo "${m_val}M"
     elif [[ "$tokens" -ge 1000 ]]; then
-        # Thousands
+        # Kilo (10^3)
         local k_val
         k_val=$(awk "BEGIN {printf \"%.1f\", $tokens/1000}")
         echo "${k_val}k"
@@ -489,9 +510,9 @@ format_tokens() {
     fi
 }
 
-# Format highscore as human-readable with B/M/K suffixes
-# Uses bc for precise decimal calculations
-# Example: 7500000 -> "7.5M", 1500000000 -> "1.5B", 500000 -> "500.0K"
+# Format highscore as human-readable with SI prefixes
+# Uses SI prefixes: k (kilo, 10^3), M (mega, 10^6), G (giga, 10^9)
+# Example: 7500000 -> "7.5M", 1500000000 -> "1.5G", 500000 -> "500.0k"
 format_highscore() {
     local tokens="$1"
     if [[ -z "$tokens" ]] || [[ "$tokens" == "null" ]] || [[ "$tokens" -eq 0 ]]; then
@@ -500,11 +521,11 @@ format_highscore() {
     fi
 
     if [[ "$tokens" -ge 1000000000 ]]; then
-        printf "%.1fB" "$(echo "scale=1; $tokens/1000000000" | bc)"
+        printf "%.1fG" "$(echo "scale=1; $tokens/1000000000" | bc)"
     elif [[ "$tokens" -ge 1000000 ]]; then
         printf "%.1fM" "$(echo "scale=1; $tokens/1000000" | bc)"
     elif [[ "$tokens" -ge 1000 ]]; then
-        printf "%.1fK" "$(echo "scale=1; $tokens/1000" | bc)"
+        printf "%.1fk" "$(echo "scale=1; $tokens/1000" | bc)"
     else
         echo "$tokens"
     fi
@@ -899,15 +920,15 @@ format_output() {
     fi
 
     local five_pct seven_pct opus_pct sonnet_pct
-    five_pct=$(parse_int "$five_hour_util")
-    seven_pct=$(parse_int "$seven_day_util")
-    opus_pct=$(parse_int "$opus_util")
-    sonnet_pct=$(parse_int "$sonnet_util")
-    # Cap all percentages at 100 max
-    [[ "$five_pct" -gt 100 ]] && five_pct=100
-    [[ -n "$seven_pct" && "$seven_pct" -gt 100 ]] && seven_pct=100
-    [[ -n "$opus_pct" && "$opus_pct" -gt 100 ]] && opus_pct=100
-    [[ -n "$sonnet_pct" && "$sonnet_pct" -gt 100 ]] && sonnet_pct=100
+    five_pct=$(parse_decimal "$five_hour_util")
+    seven_pct=$(parse_decimal "$seven_day_util")
+    opus_pct=$(parse_decimal "$opus_util")
+    sonnet_pct=$(parse_decimal "$sonnet_util")
+    # Cap all percentages at 100.0 max
+    [[ -n "$five_pct" ]] && five_pct=$(cap_decimal "$five_pct" 100)
+    [[ -n "$seven_pct" ]] && seven_pct=$(cap_decimal "$seven_pct" 100)
+    [[ -n "$opus_pct" ]] && opus_pct=$(cap_decimal "$opus_pct" 100)
+    [[ -n "$sonnet_pct" ]] && sonnet_pct=$(cap_decimal "$sonnet_pct" 100)
 
     # Build output lines
     local lines=()
@@ -1211,24 +1232,17 @@ format_output() {
         fi
 
         # Calculate local percentage: window_tokens * 100 / highscore
+        # Uses decimal with one digit precision and commercial rounding
         if [[ "$highscore_5h" -gt 0 ]]; then
-            local_5h_pct=$((window_tokens_5h * 100 / highscore_5h))
+            local_5h_pct=$(awk "BEGIN {pct = ($window_tokens_5h * 100) / $highscore_5h; if (pct > 100) pct = 100; printf \"%.1f\", pct}")
             debug_log "5h: window=$window_tokens_5h highscore=$highscore_5h pct=$local_5h_pct"
-            # Ceiling: if tokens > 0 but pct rounds to 0, show 1%
-            [[ "$window_tokens_5h" -gt 0 && "$local_5h_pct" -eq 0 ]] && local_5h_pct=1
-            # Cap at 100% (local can be at most 100% of highscore)
-            [[ "$local_5h_pct" -gt 100 ]] && local_5h_pct=100
         else
-            local_5h_pct=0
+            local_5h_pct="0.0"
         fi
 
         if [[ -n "$seven_pct" ]] && [[ "$highscore_7d" -gt 0 ]]; then
-            local_7d_pct=$((window_tokens_7d * 100 / highscore_7d))
+            local_7d_pct=$(awk "BEGIN {pct = ($window_tokens_7d * 100) / $highscore_7d; if (pct > 100) pct = 100; printf \"%.1f\", pct}")
             debug_log "7d: window=$window_tokens_7d highscore=$highscore_7d pct=$local_7d_pct"
-            # Ceiling: if tokens > 0 but pct rounds to 0, show 1%
-            [[ "$window_tokens_7d" -gt 0 && "$local_7d_pct" -eq 0 ]] && local_7d_pct=1
-            # Cap at 100%
-            [[ "$local_7d_pct" -gt 100 ]] && local_7d_pct=100
         fi
 
         # Retrieve LimitAt values (Easter-Egg: discovered when hitting >95% API)
@@ -1268,9 +1282,10 @@ EOF
         local global_5h_line
         global_5h_line="$(format_limit_line "5h all" "$five_pct" "$five_hour_reset")"
         if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "$limit_at_5h" ]] && [[ "$limit_at_5h" != "null" ]]; then
-            local limit_at_5h_fmt
+            local limit_at_5h_fmt window_5h_limit_fmt
             limit_at_5h_fmt=$(format_highscore "$limit_at_5h")
-            global_5h_line="${global_5h_line} [LimitAt:${limit_at_5h_fmt}]"
+            window_5h_limit_fmt=$(format_highscore "$window_tokens_5h")
+            global_5h_line="${global_5h_line} [LimitAt:${window_5h_limit_fmt}/${limit_at_5h_fmt}]"
         fi
         lines+=("$global_5h_line")
         # Local 5h directly below global 5h - shows highscore-based percentage
@@ -1280,10 +1295,11 @@ EOF
                 local_5h_color=$(get_color "${local_5h_pct}")
                 local_5h_color_reset="${COLOR_RESET}"
             fi
-            # Format highscore as human-readable (e.g., 1.5M, 500.0K, 1.5B)
-            local hs_5h_formatted
+            # Format current window tokens and highscore (e.g., 150.0k/1.5M)
+            local window_5h_formatted hs_5h_formatted
+            window_5h_formatted=$(format_highscore "$window_tokens_5h")
             hs_5h_formatted=$(format_highscore "$highscore_5h")
-            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset" "~") ${local_5h_color}[Highest:${hs_5h_formatted}] (${LOCAL_DEVICE_LABEL})${local_5h_color_reset}")
+            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset") ${local_5h_color}[Highest:${window_5h_formatted}/${hs_5h_formatted}] (${LOCAL_DEVICE_LABEL})${local_5h_color_reset}")
         fi
     fi
 
@@ -1293,9 +1309,10 @@ EOF
         local global_7d_line
         global_7d_line="$(format_limit_line "7d all" "$seven_pct" "$seven_day_reset")"
         if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "$limit_at_7d" ]] && [[ "$limit_at_7d" != "null" ]]; then
-            local limit_at_7d_fmt
+            local limit_at_7d_fmt window_7d_limit_fmt
             limit_at_7d_fmt=$(format_highscore "$limit_at_7d")
-            global_7d_line="${global_7d_line} [LimitAt:${limit_at_7d_fmt}]"
+            window_7d_limit_fmt=$(format_highscore "$window_tokens_7d")
+            global_7d_line="${global_7d_line} [LimitAt:${window_7d_limit_fmt}/${limit_at_7d_fmt}]"
         fi
         lines+=("$global_7d_line")
         # Local 7d directly below global 7d - shows highscore-based percentage
@@ -1305,10 +1322,11 @@ EOF
                 local_7d_color=$(get_color "${local_7d_pct}")
                 local_7d_color_reset="${COLOR_RESET}"
             fi
-            # Format highscore as human-readable (e.g., 1.5M, 500.0K, 1.5B)
-            local hs_7d_formatted
+            # Format current window tokens and highscore (e.g., 150.0k/1.5M)
+            local window_7d_formatted hs_7d_formatted
+            window_7d_formatted=$(format_highscore "$window_tokens_7d")
             hs_7d_formatted=$(format_highscore "$highscore_7d")
-            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset" "~") ${local_7d_color}[Highest:${hs_7d_formatted}] (${LOCAL_DEVICE_LABEL})${local_7d_color_reset}")
+            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset") ${local_7d_color}[Highest:${window_7d_formatted}/${hs_7d_formatted}] (${LOCAL_DEVICE_LABEL})${local_7d_color_reset}")
         fi
     fi
 
