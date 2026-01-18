@@ -1,38 +1,44 @@
 ---
 description: credo - Interactive guide to available topics and workflows
 arguments:
-  - name: question
-    description: Optional question or topic to explore
-    required: false
+    - name: question
+      description: Optional question or topic to explore
+      required: false
 allowed-tools:
-  - Bash
-  - Read
-  - Write
-  - Edit
-  - AskUserQuestion
-  - Skill
+    - Bash
+    - Read
+    - Write
+    - Edit
+    - AskUserQuestion
+    - Skill
 ---
 
 # Credo - The Preacher's Guide
 
-## Step 0: Gather the Sacred Tools (MANDATORY)
+## Step 0: Run Setup Check (MANDATORY)
 
-Before the faithful can walk the path, they must possess the sacred tools. Check this BEFORE proceeding.
+Before the faithful can walk the path, run the setup check script to gather all information at once:
 
 ```bash
-# Verify the sacred tools are present
-claude plugin list 2>/dev/null | grep -q "dogma@marcel-bich-claude-marketplace" && echo "dogma: installed" || echo "dogma: MISSING"
-claude plugin list 2>/dev/null | grep -q "get-shit-done@marcel-bich-claude-marketplace" && echo "get-shit-done: installed" || echo "get-shit-done: MISSING"
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-setup.sh"
 ```
 
-### If Tools Are Missing
+This outputs structured results for all checks. Parse the output to determine:
 
-The faithful cannot proceed without proper preparation. Use AskUserQuestion:
+- `plugins.dogma` / `plugins.gsd` - Are required plugins installed?
+- `directories.claude` - Are Claude instructions present?
+- `project.state` - Overall project state (needs_setup, needs_mapping, needs_roadmap, ready)
+
+### Interpreting Results
+
+**If plugins are missing (dogma: false OR gsd: false):**
+
+Use AskUserQuestion:
 
 ```
 The preacher's teachings require sacred tools that are not yet installed:
 
-Missing: [list missing plugins]
+Missing: [list missing plugins based on check output]
 
 Shall the preacher summon them for you?
 - Yes, install now (Recommended)
@@ -40,7 +46,7 @@ Shall the preacher summon them for you?
 - Proceed without (the path will be incomplete)
 ```
 
-### The Faithful Choose: "Yes, install now"
+**The Faithful Choose: "Yes, install now"**
 
 Summon the missing tools:
 
@@ -66,7 +72,7 @@ Then seek /credo:psalm once more.
 
 **Halt here** - the tools must awaken before the journey continues.
 
-### The Faithful Choose: "No, I will gather them myself"
+**The Faithful Choose: "No, I will gather them myself"**
 
 Provide the incantations:
 
@@ -81,7 +87,7 @@ Then restart Claude and return to /credo:psalm.
 
 **Halt here** - await their return.
 
-### The Faithful Choose: "Proceed without"
+**The Faithful Choose: "Proceed without"**
 
 Warn of the incomplete path:
 
@@ -98,15 +104,7 @@ Continue to the Entry Point, but the journey will be hindered.
 
 ### All Tools Are Present
 
-The faithful possess the sacred tools. But are the teachings present?
-
-Check if Claude instructions exist:
-
-```bash
-ls -d CLAUDE/ 2>/dev/null && echo "Teachings present" || echo "Teachings missing"
-```
-
-**If CLAUDE/ directory is missing:** Use AskUserQuestion:
+**If directories.claude is false:** Use AskUserQuestion:
 
 ```
 The sacred tools are ready, but the teachings have not yet been received.
@@ -118,7 +116,7 @@ Shall the preacher sync the teachings now?
 
 **If user chooses "Yes":** Execute `/dogma:sync` via the Skill tool, then continue to Entry Point.
 
-**If user chooses "No" or CLAUDE/ exists:** Continue silently to the Entry Point.
+**If user chooses "No" or directories.claude is true:** Continue silently to the Entry Point.
 
 ---
 
@@ -126,25 +124,14 @@ Shall the preacher sync the teachings now?
 
 If the user runs `/credo` without arguments, help them discover available topics.
 
-**IMPORTANT: Smart Detection First**
+**IMPORTANT:** The setup check from Step 0 already provides all needed information. Use the `project.state` field to determine what to show:
 
-Before showing options, silently run these checks to determine project state:
+**Decision Logic (based on project.state):**
 
-```bash
-# Check project state (run all, don't show output to user)
-ls -d CLAUDE/ 2>/dev/null && echo "CLAUDE_EXISTS" || echo "CLAUDE_MISSING"
-ls -d .planning/codebase/ 2>/dev/null && echo "CODEBASE_MAPPED" || echo "CODEBASE_NOT_MAPPED"
-ls -d .planning/ROADMAP.md 2>/dev/null && echo "ROADMAP_EXISTS" || echo "ROADMAP_MISSING"
-git rev-parse --is-inside-work-tree 2>/dev/null && echo "GIT_INIT" || echo "NO_GIT"
-find . -maxdepth 2 -type f \( -name "*.ts" -o -name "*.js" -o -name "*.py" -o -name "*.go" -o -name "*.rs" \) 2>/dev/null | head -1 | grep -q . && echo "HAS_CODE" || echo "NO_CODE"
-```
-
-**Decision Logic:**
-
-1. **If CLAUDE_MISSING:** Project needs setup - offer `/dogma:sync` first
-2. **If CLAUDE_EXISTS + CODEBASE_NOT_MAPPED + HAS_CODE:** Suggest `/gsd:map-codebase`
-3. **If CLAUDE_EXISTS + CODEBASE_MAPPED + ROADMAP_MISSING:** Suggest `/gsd:create-roadmap`
-4. **If everything exists:** Project is set up - go directly to topics
+1. **state = needs_setup:** Project needs setup - offer `/dogma:sync` first
+2. **state = needs_mapping:** Suggest `/gsd:map-codebase`
+3. **state = needs_roadmap:** Suggest `/gsd:create-roadmap`
+4. **state = ready:** Project is set up - go directly to topics
 
 **If project is already set up:** Skip "Project Setup" in the options and go directly to topic selection:
 
@@ -184,21 +171,16 @@ Guide users through setting up Claude Code for new or existing projects.
 
 ## Smart Detection (MANDATORY)
 
-Before ANY setup steps, automatically detect project state:
+**NOTE:** If you already ran the setup check in Step 0, reuse those results. Otherwise run it now:
 
 ```bash
-# Detect project type and state - run silently
-HAS_FILES=$(find . -maxdepth 2 -type f ! -path "./.git/*" 2>/dev/null | head -5 | wc -l)
-HAS_GIT=$(git rev-parse --is-inside-work-tree 2>/dev/null && echo "yes" || echo "no")
-HAS_CLAUDE=$(ls -d CLAUDE/ 2>/dev/null && echo "yes" || echo "no")
-HAS_PLANNING=$(ls -d .planning/ 2>/dev/null && echo "yes" || echo "no")
-HAS_CODEBASE_MAP=$(ls -d .planning/codebase/ 2>/dev/null && echo "yes" || echo "no")
-HAS_LANGUAGE=$(ls CLAUDE/CLAUDE.language.md 2>/dev/null && echo "yes" || echo "no")
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-setup.sh"
 ```
 
-**Auto-detect Greenfield vs Brownfield:**
-- `HAS_FILES > 0` AND `HAS_GIT = yes` = **Brownfield** (existing project)
-- `HAS_FILES = 0` OR `HAS_GIT = no` = **Greenfield** (new project)
+**Auto-detect Greenfield vs Brownfield (from script output):**
+
+- `project.is_greenfield = false` = **Brownfield** (existing project)
+- `project.is_greenfield = true` = **Greenfield** (new project)
 
 **NEVER ask the user if this is greenfield or brownfield - detect it automatically.**
 
@@ -206,12 +188,12 @@ HAS_LANGUAGE=$(ls CLAUDE/CLAUDE.language.md 2>/dev/null && echo "yes" || echo "n
 
 This workflow requires plugins from marcel-bich-claude-marketplace:
 
-| Plugin | Purpose | Required |
-|--------|---------|----------|
-| **get-shit-done** (Taches) | Project planning, roadmaps, phases | Yes |
-| **dogma** | Claude instructions sync, linting hooks | Yes |
-| **hydra** | Parallel worktree execution | Optional |
-| **credo** | This workflow guide | Yes |
+| Plugin                     | Purpose                                 | Required |
+| -------------------------- | --------------------------------------- | -------- |
+| **get-shit-done** (Taches) | Project planning, roadmaps, phases      | Yes      |
+| **dogma**                  | Claude instructions sync, linting hooks | Yes      |
+| **hydra**                  | Parallel worktree execution             | Optional |
+| **credo**                  | This workflow guide                     | Yes      |
 
 **If plugins are missing:** Install them from marcel-bich-claude-marketplace.
 
@@ -220,6 +202,7 @@ This workflow requires plugins from marcel-bich-claude-marketplace:
 **Skip steps that are already complete.** Only show steps that actually need action.
 
 For each incomplete step:
+
 1. Explain what needs to be done
 2. Offer to execute it
 3. Move to next incomplete step
@@ -229,6 +212,7 @@ For each incomplete step:
 ### Step 1: Project Directory
 
 **For NEW projects (greenfield):**
+
 ```bash
 mkdir -p <project-name>
 cd <project-name>
@@ -236,6 +220,7 @@ git init
 ```
 
 **For EXISTING projects (brownfield):**
+
 ```bash
 cd <existing-project-path>
 ```
@@ -256,6 +241,7 @@ claude --dangerously-skip-permissions
 **Skip if:** User already has all needed plugins installed.
 
 To check and install recommended plugins/MCPs:
+
 ```
 /dogma:recommended:setup
 ```
@@ -280,11 +266,13 @@ When prompted for DOGMA-PERMISSIONS.md, the preacher's recommended settings:
 
 ```markdown
 ## Git Operations
+
 - [x] May run `git add` autonomously
 - [x] May run `git commit` autonomously
 - [?] May run `git push` autonomously
 
 ## File Operations
+
 - [?] May delete files autonomously (rm, unlink, git clean)
 ```
 
@@ -295,22 +283,24 @@ Legend: `[x]` = auto, `[?]` = ask, `[ ]` = deny
 If project doesn't need certain features (e.g., no code = no linting):
 
 Create `.claude/settings.local.json`:
+
 ```json
 {
-  "env": {
-    "CLAUDE_MB_DOGMA_LINT_ON_STOP": "false",
-    "CLAUDE_MB_DOGMA_PRE_COMMIT_LINT": "false",
-    "CLAUDE_MB_DOGMA_SKIP_LINT_CHECK": "true"
-  }
+    "env": {
+        "CLAUDE_MB_DOGMA_LINT_ON_STOP": "false",
+        "CLAUDE_MB_DOGMA_PRE_COMMIT_LINT": "false",
+        "CLAUDE_MB_DOGMA_SKIP_LINT_CHECK": "true"
+    }
 }
 ```
 
 Or disable entire plugins:
+
 ```json
 {
-  "enabledPlugins": {
-    "dogma@marcel-bich-claude-marketplace": false
-  }
+    "enabledPlugins": {
+        "dogma@marcel-bich-claude-marketplace": false
+    }
 }
 ```
 
@@ -320,6 +310,7 @@ Or disable entire plugins:
 
 1. Exit Claude (Ctrl+C or type `exit`)
 2. Start again:
+
 ```bash
 claude update
 claude --dangerously-skip-permissions
@@ -331,27 +322,27 @@ Settings changes only take effect after Claude restart.
 
 ### Step 7: Initialize Project with GSD
 
-**Skip if:** `.planning/codebase/` already exists (codebase is already mapped) or `.planning/PROJECT.md` exists (project is already initialized).
+**Skip if:** `directories.codebase_map = true` (codebase is already mapped) or `.planning/PROJECT.md` exists (project is already initialized).
 
-**For NEW projects (auto-detected as greenfield):**
+**For NEW projects (project.is_greenfield = true):**
+
 ```
 /gsd:new-project
 ```
 
 Describe what the project is about:
+
 - Purpose and goals
 - Target audience
 - Offline/online (push to remote?)
 - Suggested folder structure
 
-**For EXISTING projects (auto-detected as brownfield):**
+**For EXISTING projects (project.is_greenfield = false):**
 
-Check first:
-```bash
-ls -d .planning/codebase/ 2>/dev/null && echo "Already mapped - skip" || echo "Needs mapping"
-```
+**Skip if:** `directories.codebase_map = true`
 
-If not yet mapped:
+If not yet mapped (`directories.codebase_map = false`):
+
 ```
 /gsd:map-codebase
 ```
@@ -360,14 +351,10 @@ Claude analyzes the codebase and creates documentation in `.planning/codebase/`.
 
 ### Step 8: Create Roadmap
 
-**Skip if:** `.planning/ROADMAP.md` already exists.
+**Skip if:** `files.roadmap = true`
 
-Check first:
-```bash
-ls .planning/ROADMAP.md 2>/dev/null && echo "Roadmap exists - skip" || echo "Needs roadmap"
-```
+If no roadmap yet (`files.roadmap = false`):
 
-If no roadmap yet:
 ```
 /gsd:create-roadmap
 ```
@@ -413,6 +400,7 @@ After completing all steps, the project is anointed and ready to serve.
 ### For Development Projects
 
 Use these commands as needed:
+
 - `/gsd:new-milestone` - Plan next milestone
 - `/gsd:verify-work` - Manual acceptance tests
 - `/hydra:create` - Create worktree for parallel work
@@ -426,13 +414,14 @@ Use these commands as needed:
 3. Then spawn agent: `/hydra:spawn`
 
 Example settings to disable linting for agents that don't need it:
+
 ```json
 {
-  "env": {
-    "CLAUDE_MB_DOGMA_LINT_ON_STOP": "false",
-    "CLAUDE_MB_DOGMA_PRE_COMMIT_LINT": "false",
-    "CLAUDE_MB_DOGMA_SKIP_LINT_CHECK": "true"
-  }
+    "env": {
+        "CLAUDE_MB_DOGMA_LINT_ON_STOP": "false",
+        "CLAUDE_MB_DOGMA_PRE_COMMIT_LINT": "false",
+        "CLAUDE_MB_DOGMA_SKIP_LINT_CHECK": "true"
+    }
 }
 ```
 
@@ -443,6 +432,7 @@ Example settings to disable linting for agents that don't need it:
 **Avoid interrupting running processes:** The preacher recommends NOT adding intermediate messages while Claude is working (even though the temptation is strong). Only add messages that REALLY contribute to the current topic in a focused way. Don't fix off-topic bugs or address unrelated issues mid-process.
 
 Instead:
+
 1. Open a notepad (or similar) alongside Claude
 2. Write down everything that comes to mind while waiting
 3. Once all tasks for the current topic are complete, work through your notes
@@ -519,6 +509,7 @@ as parallel as possible. Use as many subagents as makes sense
 Hydra handles worktree creation, agent spawning, and cleanup automatically.
 
 After completion:
+
 ```
 /hydra:merge feature-auth
 /hydra:cleanup
@@ -637,6 +628,7 @@ Multiple agents running in parallel:
 Live table with status of all worktree agents.
 
 In the status line (limit plugin) you see:
+
 - Token usage
 - Rate limits
 - Costs
@@ -648,11 +640,11 @@ Different settings per worktree (e.g., disable linting for a subagent):
 ```json
 // In worktree .claude/settings.local.json:
 {
-  "env": {
-    "CLAUDE_MB_DOGMA_LINT_ON_STOP": "false",
-    "CLAUDE_MB_DOGMA_PRE_COMMIT_LINT": "false",
-    "CLAUDE_MB_DOGMA_SKIP_LINT_CHECK": "true"
-  }
+    "env": {
+        "CLAUDE_MB_DOGMA_LINT_ON_STOP": "false",
+        "CLAUDE_MB_DOGMA_PRE_COMMIT_LINT": "false",
+        "CLAUDE_MB_DOGMA_SKIP_LINT_CHECK": "true"
+    }
 }
 ```
 
@@ -667,6 +659,7 @@ Never forget an ignore location when adding patterns:
 ```
 
 Adds patterns to all relevant locations at once:
+
 - `.gitignore` (versioned, shared with team)
 - `.git/info/exclude` (local only, not versioned)
 
@@ -732,6 +725,7 @@ claude --dangerously-skip-permissions
 ### Set Project Language
 
 Tell Claude the main language, e.g.:
+
 ```
 The main language of this project is German, we don't need any English at all.
 ```
@@ -743,6 +737,7 @@ The main language of this project is German, we don't need any English at all.
 ```
 
 When prompted for DOGMA-PERMISSIONS.md:
+
 - add: true
 - commit: true
 - rm: ask
@@ -752,13 +747,14 @@ When prompted for DOGMA-PERMISSIONS.md:
 **To disable PARTS of a plugin** (e.g., no linting for non-code projects):
 
 Create `.claude/settings.local.json`:
+
 ```json
 {
-  "env": {
-    "CLAUDE_MB_DOGMA_LINT_ON_STOP": "false",
-    "CLAUDE_MB_DOGMA_PRE_COMMIT_LINT": "false",
-    "CLAUDE_MB_DOGMA_SKIP_LINT_CHECK": "true"
-  }
+    "env": {
+        "CLAUDE_MB_DOGMA_LINT_ON_STOP": "false",
+        "CLAUDE_MB_DOGMA_PRE_COMMIT_LINT": "false",
+        "CLAUDE_MB_DOGMA_SKIP_LINT_CHECK": "true"
+    }
 }
 ```
 
@@ -766,9 +762,9 @@ Create `.claude/settings.local.json`:
 
 ```json
 {
-  "enabledPlugins": {
-    "dogma@marcel-bich-claude-marketplace": false
-  }
+    "enabledPlugins": {
+        "dogma@marcel-bich-claude-marketplace": false
+    }
 }
 ```
 
@@ -913,14 +909,14 @@ The preacher's guide above covers the blessed path. But the faithful may seek de
 
 Beyond what the main workflow covers, dogma offers these additional rituals:
 
-| Command | Purpose |
-|---------|---------|
-| `/dogma:lint` | Run linting and formatting on staged files (non-interactive) |
-| `/dogma:cleanup` | Find and purge AI-typical patterns from your code |
-| `/dogma:permissions` | Create or update DOGMA-PERMISSIONS.md interactively |
-| `/dogma:force` | Apply all CLAUDE rules to your project with full control |
-| `/dogma:sanitize-git` | Cleanse git history from Claude/AI traces |
-| `/dogma:docs-update` | Synchronize documentation across README and wiki |
+| Command                  | Purpose                                                           |
+| ------------------------ | ----------------------------------------------------------------- |
+| `/dogma:lint`            | Run linting and formatting on staged files (non-interactive)      |
+| `/dogma:cleanup`         | Find and purge AI-typical patterns from your code                 |
+| `/dogma:permissions`     | Create or update DOGMA-PERMISSIONS.md interactively               |
+| `/dogma:force`           | Apply all CLAUDE rules to your project with full control          |
+| `/dogma:sanitize-git`    | Cleanse git history from Claude/AI traces                         |
+| `/dogma:docs-update`     | Synchronize documentation across README and wiki                  |
 | `/dogma:ignore:sync-all` | Sync ignore patterns to all local repositories (marketplace only) |
 
 **The preacher's wisdom:**
@@ -946,11 +942,11 @@ Beyond what the main workflow covers, dogma offers these additional rituals:
 
 The parallel development section showed individual commands. Here is the full liturgy:
 
-| Command | Purpose |
-|---------|---------|
+| Command           | Purpose                                               |
+| ----------------- | ----------------------------------------------------- |
 | `/hydra:parallel` | Spawn multiple agents simultaneously across worktrees |
-| `/hydra:list` | Show all worktrees with paths and branches |
-| `/hydra:status` | Detailed status including uncommitted changes |
+| `/hydra:list`     | Show all worktrees with paths and branches            |
+| `/hydra:status`   | Detailed status including uncommitted changes         |
 
 **The preacher's preferred invocation for parallel work:**
 
@@ -975,12 +971,12 @@ The parallel development section showed individual commands. Here is the full li
 
 ### Import - The Complete Scrolls
 
-| Command | Purpose |
-|---------|---------|
+| Command               | Purpose                            |
+| --------------------- | ---------------------------------- |
 | `/import:url-or-path` | Import from URL or local file path |
-| `/import:list` | List all cached documentation |
-| `/import:search` | Search within cached docs |
-| `/import:update` | Re-fetch from original source |
+| `/import:list`        | List all cached documentation      |
+| `/import:search`      | Search within cached docs          |
+| `/import:update`      | Re-fetch from original source      |
 
 ### Signal - Silent Watcher
 
