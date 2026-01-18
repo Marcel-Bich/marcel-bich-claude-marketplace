@@ -27,6 +27,10 @@ DEBUG_LOG="/tmp/claude-mb-limit-debug.log"
 SCRIPT_DIR="$(dirname "$0")"
 CURRENT_PLAN=$("${SCRIPT_DIR}/plan-detect.sh" 2>/dev/null || echo "unknown")
 
+# Source highscore state management functions
+# shellcheck source=highscore-state.sh
+source "${SCRIPT_DIR}/highscore-state.sh"
+
 # Ensure plugin data directory exists
 ensure_plugin_dir() {
     if [[ ! -d "$PLUGIN_DATA_DIR" ]]; then
@@ -1088,21 +1092,31 @@ format_output() {
     fi
 
     # IMPORTANT: Call get_total_tokens_ever FIRST to update state file totals
-    # This ensures calibration.last_total_tokens is synced before local tracking reads it
+    # This ensures window tokens can be calculated from session totals
     local _total_tokens_sync=""
     if [[ "$SHOW_LOCAL" == "true" ]]; then
         _total_tokens_sync=$(get_total_tokens_ever)
-        debug_log "Synced totals before local tracking: $_total_tokens_sync"
+        debug_log "Synced totals before highscore tracking: $_total_tokens_sync"
     fi
 
-    # Local tracking: Token-based calculation with dynamic calibration
-    # Tracks tokens per window (5h/7d) separately, resets when API % drops
-    # Calculates local_pct = window_tokens / estimated_max_tokens * 100
+    # Highscore-based local tracking:
+    # - Tracks highest token usage per plan (max20, max5, pro, unknown)
+    # - 5h and 7d are SEPARATE highscores
+    # - Highscores can only INCREASE, never decrease
+    # - Converges to true limit over time
+    # - local_pct = window_tokens * 100 / highscore
     local local_5h_pct="" local_7d_pct=""
-    if [[ "$SHOW_LOCAL" == "true" ]]; then
-        ensure_plugin_dir
+    local highscore_5h=0 highscore_7d=0
+    local window_tokens_5h=0 window_tokens_7d=0
 
-        # Get current total local tokens from totals (already tracked by get_total_tokens_ever)
+    if [[ "$SHOW_LOCAL" == "true" ]]; then
+        # Initialize highscore state if needed
+        init_state
+
+        # Update current plan in highscore state
+        set_current_plan "$CURRENT_PLAN"
+
+        # Get current total tokens from session tracking
         local current_total_tokens=0
         if [[ -f "$STATE_FILE" ]]; then
             local in_tok out_tok
@@ -1113,148 +1127,72 @@ format_output() {
             current_total_tokens=$((in_tok + out_tok))
         fi
 
-        # Read calibration state (includes window-specific token counts)
-        local estimated_max_5h="$DEFAULT_ESTIMATED_MAX_5H"
-        local estimated_max_7d="$DEFAULT_ESTIMATED_MAX_7D"
-        local backup_max_5h="$DEFAULT_ESTIMATED_MAX_5H"
-        local backup_max_7d="$DEFAULT_ESTIMATED_MAX_7D"
-        local last_total_tokens=0 last_api_5h=0 last_api_7d=0
-        local window_tokens_5h=0 window_tokens_7d=0
-
-        if [[ -f "$STATE_FILE" ]]; then
-            estimated_max_5h=$(jq -r '.calibration.estimated_max_5h // '"$DEFAULT_ESTIMATED_MAX_5H"'' "$STATE_FILE" 2>/dev/null) || estimated_max_5h="$DEFAULT_ESTIMATED_MAX_5H"
-            estimated_max_7d=$(jq -r '.calibration.estimated_max_7d // '"$DEFAULT_ESTIMATED_MAX_7D"'' "$STATE_FILE" 2>/dev/null) || estimated_max_7d="$DEFAULT_ESTIMATED_MAX_7D"
-            backup_max_5h=$(jq -r '.calibration.backup_max_5h // '"$DEFAULT_ESTIMATED_MAX_5H"'' "$STATE_FILE" 2>/dev/null) || backup_max_5h="$DEFAULT_ESTIMATED_MAX_5H"
-            backup_max_7d=$(jq -r '.calibration.backup_max_7d // '"$DEFAULT_ESTIMATED_MAX_7D"'' "$STATE_FILE" 2>/dev/null) || backup_max_7d="$DEFAULT_ESTIMATED_MAX_7D"
-            last_total_tokens=$(jq -r '.calibration.last_total_tokens // 0' "$STATE_FILE" 2>/dev/null) || last_total_tokens=0
-            last_api_5h=$(jq -r '.calibration.last_api_5h // 0' "$STATE_FILE" 2>/dev/null) || last_api_5h=0
-            last_api_7d=$(jq -r '.calibration.last_api_7d // 0' "$STATE_FILE" 2>/dev/null) || last_api_7d=0
-            window_tokens_5h=$(jq -r '.calibration.window_tokens_5h // 0' "$STATE_FILE" 2>/dev/null) || window_tokens_5h=0
-            window_tokens_7d=$(jq -r '.calibration.window_tokens_7d // 0' "$STATE_FILE" 2>/dev/null) || window_tokens_7d=0
-
-            [[ "$estimated_max_5h" == "null" ]] && estimated_max_5h="$DEFAULT_ESTIMATED_MAX_5H"
-            [[ "$estimated_max_7d" == "null" ]] && estimated_max_7d="$DEFAULT_ESTIMATED_MAX_7D"
-            [[ "$backup_max_5h" == "null" ]] && backup_max_5h="$DEFAULT_ESTIMATED_MAX_5H"
-            [[ "$backup_max_7d" == "null" ]] && backup_max_7d="$DEFAULT_ESTIMATED_MAX_7D"
-            [[ "$last_total_tokens" == "null" ]] && last_total_tokens=0
-            [[ "$last_api_5h" == "null" ]] && last_api_5h=0
-            [[ "$last_api_7d" == "null" ]] && last_api_7d=0
-            [[ "$window_tokens_5h" == "null" ]] && window_tokens_5h=0
-            [[ "$window_tokens_7d" == "null" ]] && window_tokens_7d=0
+        # Reset detection: check if API reset times have changed
+        # If reset time changed, window tokens are reset to 0
+        check_reset "5h" "$five_hour_reset" || true
+        if [[ -n "$seven_day_reset" ]]; then
+            check_reset "7d" "$seven_day_reset" || true
         fi
 
+        # Get current window tokens from highscore state
+        window_tokens_5h=$(get_window_tokens "5h")
+        window_tokens_7d=$(get_window_tokens "7d")
+
         # Calculate token delta since last update
+        local last_total_tokens=0
+        if [[ -f "$STATE_FILE" ]]; then
+            last_total_tokens=$(jq -r '.calibration.last_total_tokens // 0' "$STATE_FILE" 2>/dev/null) || last_total_tokens=0
+            [[ "$last_total_tokens" == "null" ]] && last_total_tokens=0
+        fi
         local token_delta=$((current_total_tokens - last_total_tokens))
         [[ "$token_delta" -lt 0 ]] && token_delta=0
 
-        # Calculate API % deltas
-        local pct_delta_5h=$((five_pct - last_api_5h))
-        local pct_delta_7d=0
-        if [[ -n "$seven_pct" ]]; then
-            pct_delta_7d=$((seven_pct - last_api_7d))
-        fi
-
-        # Reset detection: if API % dropped, new window started
-        local reset_5h=false reset_7d=false
-        if [[ "$five_pct" -lt "$last_api_5h" ]]; then
-            reset_5h=true
-            window_tokens_5h=0
-            debug_log "5h window reset detected: $five_pct < $last_api_5h, resetting window_tokens_5h"
-        fi
-        if [[ -n "$seven_pct" ]] && [[ "$seven_pct" -lt "$last_api_7d" ]]; then
-            reset_7d=true
-            window_tokens_7d=0
-            debug_log "7d window reset detected: $seven_pct < $last_api_7d, resetting window_tokens_7d"
-        fi
-
         # Accumulate tokens to window counters
-        # BUT: if a reset just happened, token_delta contains tokens from the OLD window
-        # So we should NOT add it to the new window. Start fresh at 0.
-        if [[ "$reset_5h" == "false" ]]; then
-            window_tokens_5h=$((window_tokens_5h + token_delta))
-        fi
-        if [[ "$reset_7d" == "false" ]]; then
-            window_tokens_7d=$((window_tokens_7d + token_delta))
-        fi
+        window_tokens_5h=$((window_tokens_5h + token_delta))
+        window_tokens_7d=$((window_tokens_7d + token_delta))
 
-        # Dynamic calibration: observe token_delta vs pct_delta
-        # Only calibrate when we have positive deltas and no reset just happened
-        # Sanity check: if jump > 50% of old value, revert to backup
-        local CALIBRATION_THRESHOLD=50  # percent
+        # Update window tokens in highscore state
+        set_window_tokens "5h" "$window_tokens_5h"
+        set_window_tokens "7d" "$window_tokens_7d"
 
-        if [[ "$token_delta" -gt 1000 ]] && [[ "$pct_delta_5h" -gt 0 ]] && [[ "$reset_5h" == "false" ]]; then
-            # observed_max = token_delta * 100 / pct_delta
-            local observed_max_5h=$((token_delta * 100 / pct_delta_5h))
-            # Sanity check: ignore extreme outliers (other PCs working simultaneously)
-            if [[ "$observed_max_5h" -gt 50000 ]] && [[ "$observed_max_5h" -lt 2000000 ]]; then
-                local old_max_5h="$estimated_max_5h"
-                # Exponential moving average: 80% old + 20% new
-                local new_max_5h=$(awk "BEGIN {printf \"%.0f\", 0.8 * $estimated_max_5h + 0.2 * $observed_max_5h}")
-                # Check if jump is too large (> threshold % of old value)
-                local jump_5h=$((new_max_5h > old_max_5h ? new_max_5h - old_max_5h : old_max_5h - new_max_5h))
-                local threshold_5h=$((old_max_5h * CALIBRATION_THRESHOLD / 100))
-                if [[ "$jump_5h" -gt "$threshold_5h" ]]; then
-                    # Jump too large - revert to backup
-                    estimated_max_5h="$backup_max_5h"
-                    debug_log "Calibration 5h rejected (jump $jump_5h > threshold $threshold_5h), reverted to backup $backup_max_5h"
-                else
-                    # Jump acceptable - update backup and apply new value
-                    backup_max_5h="$old_max_5h"
-                    estimated_max_5h="$new_max_5h"
-                    debug_log "Calibrated 5h max: observed=$observed_max_5h new_estimate=$estimated_max_5h"
-                fi
-            fi
+        # Get highscores for current plan
+        highscore_5h=$(get_highscore "$CURRENT_PLAN" "5h")
+        highscore_7d=$(get_highscore "$CURRENT_PLAN" "7d")
+
+        # Update highscores if window_tokens exceed current highscore
+        # Highscores can only increase, never decrease
+        if update_highscore "$CURRENT_PLAN" "5h" "$window_tokens_5h"; then
+            highscore_5h="$window_tokens_5h"
+            debug_log "New 5h highscore for $CURRENT_PLAN: $highscore_5h"
+        fi
+        if update_highscore "$CURRENT_PLAN" "7d" "$window_tokens_7d"; then
+            highscore_7d="$window_tokens_7d"
+            debug_log "New 7d highscore for $CURRENT_PLAN: $highscore_7d"
         fi
 
-        if [[ "$token_delta" -gt 1000 ]] && [[ "$pct_delta_7d" -gt 0 ]] && [[ "$reset_7d" == "false" ]]; then
-            local observed_max_7d=$((token_delta * 100 / pct_delta_7d))
-            if [[ "$observed_max_7d" -gt 500000 ]] && [[ "$observed_max_7d" -lt 50000000 ]]; then
-                local old_max_7d="$estimated_max_7d"
-                local new_max_7d=$(awk "BEGIN {printf \"%.0f\", 0.8 * $estimated_max_7d + 0.2 * $observed_max_7d}")
-                # Check if jump is too large
-                local jump_7d=$((new_max_7d > old_max_7d ? new_max_7d - old_max_7d : old_max_7d - new_max_7d))
-                local threshold_7d=$((old_max_7d * CALIBRATION_THRESHOLD / 100))
-                if [[ "$jump_7d" -gt "$threshold_7d" ]]; then
-                    estimated_max_7d="$backup_max_7d"
-                    debug_log "Calibration 7d rejected (jump $jump_7d > threshold $threshold_7d), reverted to backup $backup_max_7d"
-                else
-                    backup_max_7d="$old_max_7d"
-                    estimated_max_7d="$new_max_7d"
-                    debug_log "Calibrated 7d max: observed=$observed_max_7d new_estimate=$estimated_max_7d"
-                fi
-            fi
-        fi
-
-        # Calculate local percentage based on WINDOW tokens (not total)
-        # Round UP (ceiling) - if tokens were used, show at least 1%
-        # NOTE: Do NOT modify estimated_max here - let EMA calibration handle it.
-        #       Only cap the DISPLAY value so local never exceeds global.
-        if [[ "$estimated_max_5h" -gt 0 ]]; then
-            local_5h_pct=$((window_tokens_5h * 100 / estimated_max_5h))
-            debug_log "Pre-cap: local_5h_pct=$local_5h_pct five_pct=$five_pct"
+        # Calculate local percentage: window_tokens * 100 / highscore
+        if [[ "$highscore_5h" -gt 0 ]]; then
+            local_5h_pct=$((window_tokens_5h * 100 / highscore_5h))
+            debug_log "5h: window=$window_tokens_5h highscore=$highscore_5h pct=$local_5h_pct"
             # Ceiling: if tokens > 0 but pct rounds to 0, show 1%
             [[ "$window_tokens_5h" -gt 0 && "$local_5h_pct" -eq 0 ]] && local_5h_pct=1
-            # Cap at global % (local can never exceed global)
-            [[ "$local_5h_pct" -gt "$five_pct" ]] && local_5h_pct="$five_pct"
+            # Cap at 100% (local can be at most 100% of highscore)
             [[ "$local_5h_pct" -gt 100 ]] && local_5h_pct=100
         else
             local_5h_pct=0
         fi
 
-        if [[ -n "$seven_pct" ]] && [[ "$estimated_max_7d" -gt 0 ]]; then
-            local_7d_pct=$((window_tokens_7d * 100 / estimated_max_7d))
-            debug_log "Pre-cap: local_7d_pct=$local_7d_pct seven_pct=$seven_pct"
+        if [[ -n "$seven_pct" ]] && [[ "$highscore_7d" -gt 0 ]]; then
+            local_7d_pct=$((window_tokens_7d * 100 / highscore_7d))
+            debug_log "7d: window=$window_tokens_7d highscore=$highscore_7d pct=$local_7d_pct"
             # Ceiling: if tokens > 0 but pct rounds to 0, show 1%
             [[ "$window_tokens_7d" -gt 0 && "$local_7d_pct" -eq 0 ]] && local_7d_pct=1
-            # Cap at global % (local can never exceed global)
-            [[ "$local_7d_pct" -gt "$seven_pct" ]] && local_7d_pct="$seven_pct"
+            # Cap at 100%
             [[ "$local_7d_pct" -gt 100 ]] && local_7d_pct=100
         fi
 
-        # Always update state file with calibration data
+        # Update legacy state file with last_total_tokens for delta calculation
         ensure_plugin_dir
-
-        # Read existing data to preserve
         local existing_sessions="{}" existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
         if [[ -f "$STATE_FILE" ]]; then
             existing_sessions=$(jq -r '.sessions // {}' "$STATE_FILE" 2>/dev/null) || existing_sessions="{}"
@@ -1263,7 +1201,7 @@ format_output() {
             [[ "$existing_totals" == "null" ]] && existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
         fi
 
-        # Write updated state with calibration
+        # Write minimal state for session tracking (highscores are in separate file)
         cat > "$STATE_FILE" << EOF
 {
   "current_plan": "${CURRENT_PLAN}",
@@ -1272,46 +1210,44 @@ format_output() {
   "sessions": ${existing_sessions},
   "totals": ${existing_totals},
   "calibration": {
-    "estimated_max_5h": ${estimated_max_5h},
-    "estimated_max_7d": ${estimated_max_7d},
-    "backup_max_5h": ${backup_max_5h},
-    "backup_max_7d": ${backup_max_7d},
-    "last_total_tokens": ${current_total_tokens},
-    "last_api_5h": ${five_pct},
-    "last_api_7d": ${seven_pct:-0},
-    "window_tokens_5h": ${window_tokens_5h},
-    "window_tokens_7d": ${window_tokens_7d}
+    "last_total_tokens": ${current_total_tokens}
   }
 }
 EOF
-        debug_log "Local tracking: window_5h=$window_tokens_5h window_7d=$window_tokens_7d est_max_5h=$estimated_max_5h local_5h_pct=$local_5h_pct local_7d_pct=$local_7d_pct"
+        debug_log "Highscore tracking: plan=$CURRENT_PLAN window_5h=$window_tokens_5h window_7d=$window_tokens_7d hs_5h=$highscore_5h hs_7d=$highscore_7d local_5h_pct=$local_5h_pct local_7d_pct=$local_7d_pct"
     fi
 
     # 5-hour limit (if enabled) - all models
     if [[ "$SHOW_5H" == "true" ]]; then
         lines+=("$(format_limit_line "5h all" "$five_pct" "$five_hour_reset")")
-        # Local 5h directly below global 5h
+        # Local 5h directly below global 5h - shows highscore-based percentage
         if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "${local_5h_pct}" ]]; then
-            local local_5h_color="" local_5h_reset=""
+            local local_5h_color="" local_5h_color_reset=""
             if [[ "$SHOW_COLORS" == "true" ]]; then
                 local_5h_color=$(get_color "${local_5h_pct}")
-                local_5h_reset="${COLOR_RESET}"
+                local_5h_color_reset="${COLOR_RESET}"
             fi
-            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset" "~") ${local_5h_color}(${LOCAL_DEVICE_LABEL})${local_5h_reset} [experimental]")
+            # Format highscore as human-readable (e.g., 1.5M, 500k)
+            local hs_5h_formatted
+            hs_5h_formatted=$(format_tokens "$highscore_5h")
+            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset" "~") ${local_5h_color}[Highest:${hs_5h_formatted}] (${LOCAL_DEVICE_LABEL})${local_5h_color_reset}")
         fi
     fi
 
     # 7-day limit (if enabled and available) - all models
     if [[ "$SHOW_7D" == "true" ]] && [[ -n "$seven_pct" ]]; then
         lines+=("$(format_limit_line "7d all" "$seven_pct" "$seven_day_reset")")
-        # Local 7d directly below global 7d
+        # Local 7d directly below global 7d - shows highscore-based percentage
         if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "${local_7d_pct}" ]]; then
-            local local_7d_color="" local_7d_reset=""
+            local local_7d_color="" local_7d_color_reset=""
             if [[ "$SHOW_COLORS" == "true" ]]; then
                 local_7d_color=$(get_color "${local_7d_pct}")
-                local_7d_reset="${COLOR_RESET}"
+                local_7d_color_reset="${COLOR_RESET}"
             fi
-            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset" "~") ${local_7d_color}(${LOCAL_DEVICE_LABEL})${local_7d_reset} [experimental]")
+            # Format highscore as human-readable
+            local hs_7d_formatted
+            hs_7d_formatted=$(format_tokens "$highscore_7d")
+            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset" "~") ${local_7d_color}[Highest:${hs_7d_formatted}] (${LOCAL_DEVICE_LABEL})${local_7d_color_reset}")
         fi
     fi
 
