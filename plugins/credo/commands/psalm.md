@@ -21,8 +21,8 @@ Before the faithful can walk the path, they must possess the sacred tools. Check
 
 ```bash
 # Verify the sacred tools are present
-ls ~/.claude/plugins/installed/dogma@marcel-bich-claude-marketplace 2>/dev/null && echo "dogma: installed" || echo "dogma: MISSING"
-ls ~/.claude/plugins/installed/get-shit-done@marcel-bich-claude-marketplace 2>/dev/null && echo "get-shit-done: MISSING" || echo "get-shit-done: installed"
+claude plugin list 2>/dev/null | grep -q "dogma@marcel-bich-claude-marketplace" && echo "dogma: installed" || echo "dogma: MISSING"
+claude plugin list 2>/dev/null | grep -q "get-shit-done@marcel-bich-claude-marketplace" && echo "get-shit-done: installed" || echo "get-shit-done: MISSING"
 ```
 
 ### If Tools Are Missing
