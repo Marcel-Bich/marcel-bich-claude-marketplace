@@ -119,7 +119,7 @@ output_warning() {
     # Escape message for JSON (replace newlines with \n, escape quotes)
     local escaped_message=$(echo "$message" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
     cat <<EOF
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"<dogma-subagent-warning>\\n${escaped_message}\\n</dogma-subagent-warning>"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"<dogma-subagent-warning>\\n${escaped_message}\\n</dogma-subagent-warning>"}}
 EOF
 }
 
