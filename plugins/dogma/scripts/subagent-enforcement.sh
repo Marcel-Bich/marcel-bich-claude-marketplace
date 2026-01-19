@@ -173,16 +173,16 @@ if [ "$HYDRA_ENABLED" = "true" ]; then
             # Only warn once per session
             if [ ! -f "$STATE_FILE.hydra-warned" ]; then
                 touch "$STATE_FILE.hydra-warned" 2>/dev/null || true
-                output_warning "Subagent-First Reminder: Direkte Operation ohne Subagent.
+                output_warning "Subagent-First Reminder: Direct operation without subagent.
 
-Vor JEDER Aktion pruefen (siehe @CLAUDE/CLAUDE.subagents.md):
-1. Braucht das User-Interaktion? -> Main Agent OK
-2. Gibt es einen spezialisierten Agent? -> Nutzen!
-3. Kein passender Agent? -> general-purpose Subagent
+Before EVERY action, check (see @CLAUDE/CLAUDE.subagents.md):
+1. Does this need user interaction? -> Main Agent OK
+2. Is there a specialized agent? -> Use it!
+3. No fitting agent? -> general-purpose subagent
 
-Bei 2+ unabhaengigen Tasks: /hydra:parallel nutzen
+For 2+ independent tasks: use /hydra:parallel
 
-Falls bewusst direkt: Warnung ignorieren."
+If intentionally direct: ignore this warning."
             fi
         fi
     fi
@@ -212,16 +212,16 @@ if [ "$SUBAGENT_FALLBACK_ENABLED" = "true" ]; then
                     # Only warn once per session
                     if [ ! -f "$STATE_FILE.fallback-warned" ]; then
                         touch "$STATE_FILE.fallback-warned" 2>/dev/null || true
-                        output_warning "Subagent-Fallback: Keine Tests gefunden, aber Verifikation laeuft.
+                        output_warning "Subagent-Fallback: No tests found, but verification running.
 
-DOGMA-PERMISSIONS.md sagt: [x] spawn subagent for verification (wenn keine Tests)
+DOGMA-PERMISSIONS.md says: [x] spawn subagent for verification (when no tests)
 
-Empfehlung:
-- Task Tool mit code-reviewer spawnen
-- Oder silent-failure-hunter fuer Fehlersuche
-- Oder manuell verifizieren und bestaetigen
+Recommendation:
+- Spawn code-reviewer via Task tool
+- Or silent-failure-hunter for error detection
+- Or verify manually and confirm
 
-Falls bewusst ohne Subagent: Warnung ignorieren."
+If intentionally without subagent: ignore this warning."
                     fi
                 fi
             fi

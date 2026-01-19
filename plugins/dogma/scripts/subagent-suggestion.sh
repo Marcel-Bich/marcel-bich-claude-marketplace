@@ -55,6 +55,19 @@ elif [ -f ".claude/DOGMA-PERMISSIONS.md" ]; then
     PERMISSIONS_FILE=".claude/DOGMA-PERMISSIONS.md"
 fi
 
+# Check delegation settings from DOGMA-PERMISSIONS.md
+SKILL_DELEGATION="false"
+TASK_DELEGATION="false"
+if [ -n "$PERMISSIONS_FILE" ]; then
+    PERMS_CONTENT=$(cat "$PERMISSIONS_FILE" 2>/dev/null || true)
+    if echo "$PERMS_CONTENT" | grep -qiE '^\s*-\s*\[x\].*Skill tool.*counts as delegation'; then
+        SKILL_DELEGATION="true"
+    fi
+    if echo "$PERMS_CONTENT" | grep -qiE '^\s*-\s*\[x\].*Task tool.*counts as delegation'; then
+        TASK_DELEGATION="true"
+    fi
+fi
+
 # Check if tests exist (for TDD rule)
 TESTS_EXIST="false"
 if [ -d "tests" ] || [ -d "test" ] || [ -d "__tests__" ] || [ -d "spec" ]; then
@@ -93,6 +106,18 @@ echo ""
 echo "FORBIDDEN without Task first: Bash, Write, Edit for implementation"
 echo "ALLOWED without Task: Read, Glob, Grep (research), user questions"
 echo ""
+# Show delegation rules based on checkbox settings
+if [ "$SKILL_DELEGATION" = "true" ] || [ "$TASK_DELEGATION" = "true" ]; then
+    echo "== DELEGATION PERMISSIONS (from DOGMA-PERMISSIONS.md) =="
+    if [ "$SKILL_DELEGATION" = "true" ]; then
+        echo "- [x] Skill tool counts as delegation -> Execute skills DIRECTLY (NO subagent!)"
+        echo "      /skill-name call -> use Skill tool -> execute yourself"
+    fi
+    if [ "$TASK_DELEGATION" = "true" ]; then
+        echo "- [x] Task tool counts as delegation -> Task calls count as delegation"
+    fi
+    echo ""
+fi
 echo "== STEP 2: ANALYSIS =="
 echo "a) Tests exist in project? -> TDD is MANDATORY"
 echo "b) Multiple independent tasks? -> Hydra is MANDATORY"
@@ -122,7 +147,7 @@ echo "  4. User accepts -> spawn checklist-manager"
 echo ""
 echo "== SUBAGENT CONTEXT RULES =="
 echo "When spawning Task, ALWAYS include in prompt:"
-echo "  0. ANNOUNCE before spawning: '**Spawne:** [agent] **Auftrag:** [summary]'"
+echo "  0. ANNOUNCE before spawning: '**Spawning:** [agent] **Task:** [summary]'"
 echo "  1. User's goal/intent (WHY this task)"
 echo "  2. What is TEST/temporary vs REAL work"
 echo "  3. What should NOT be committed"
