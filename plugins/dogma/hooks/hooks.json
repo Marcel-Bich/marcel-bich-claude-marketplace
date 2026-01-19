@@ -47,6 +47,12 @@
         "hooks": [
           {
             "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh",
+            "timeout": 5,
+            "description": "Track direct work and warn if Hydra/subagent should be used (MUST be first - reads stdin)"
+          },
+          {
+            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/token-protection.sh",
             "timeout": 5,
             "description": "Block commands that could expose tokens/credentials (env, git remote -v, etc.)"
@@ -86,12 +92,6 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/git-pull-before-push.sh",
             "timeout": 15,
             "description": "Block git push if local branch is behind remote (ENV: CLAUDE_MB_DOGMA_PULL_BEFORE_PUSH=true)"
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh",
-            "timeout": 5,
-            "description": "Track direct work and warn if Hydra/subagent should be used"
           }
         ]
       },
@@ -100,6 +100,12 @@
         "hooks": [
           {
             "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh",
+            "timeout": 5,
+            "description": "Track direct work and warn if Hydra/subagent should be used (MUST be first - reads stdin)"
+          },
+          {
+            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/secrets-detection.sh",
             "timeout": 5,
             "description": "Block writing secrets (API keys, tokens, passwords) to files"
@@ -109,12 +115,6 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/write-edit-reminder.sh",
             "timeout": 5,
             "description": "Remind of language and AI-traces rules with @-references"
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh",
-            "timeout": 5,
-            "description": "Track direct work and warn if Hydra/subagent should be used"
           }
         ]
       },
@@ -123,6 +123,12 @@
         "hooks": [
           {
             "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh",
+            "timeout": 5,
+            "description": "Track direct work and warn if Hydra/subagent should be used (MUST be first - reads stdin)"
+          },
+          {
+            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/secrets-detection.sh",
             "timeout": 5,
             "description": "Block writing secrets (API keys, tokens, passwords) to files"
@@ -132,12 +138,6 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/write-edit-reminder.sh",
             "timeout": 5,
             "description": "Remind of language and AI-traces rules with @-references"
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh",
-            "timeout": 5,
-            "description": "Track direct work and warn if Hydra/subagent should be used"
           }
         ]
       },
