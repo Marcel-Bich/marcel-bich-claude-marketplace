@@ -133,22 +133,22 @@ SUBAGENT_TOOLS="Task|Skill|hydra"
 if [ "$HYDRA_ENABLED" = "true" ]; then
     DIRECT_COUNT=$(count_direct_work)
 
-    # After 3+ direct operations, warn if no Task tool was used
-    if [ "$DIRECT_COUNT" -ge 3 ]; then
+    # After first direct operation without Task/Skill, remind about subagent-first
+    if [ "$DIRECT_COUNT" -ge 1 ]; then
         if ! was_tool_used "Task" && ! was_tool_used "Skill"; then
             # Only warn once per session
             if [ ! -f "$STATE_FILE.hydra-warned" ]; then
                 touch "$STATE_FILE.hydra-warned" 2>/dev/null || true
-                output_warning "Hydra-First: $DIRECT_COUNT direkte Operationen ohne Subagent.
+                output_warning "Subagent-First Reminder: Direkte Operation ohne Subagent.
 
-DOGMA-PERMISSIONS.md sagt: [x] use Hydra for 2+ independent tasks
+Vor JEDER Aktion pruefen (siehe @CLAUDE/CLAUDE.subagents.md):
+1. Braucht das User-Interaktion? -> Main Agent OK
+2. Gibt es einen spezialisierten Agent? -> Nutzen!
+3. Kein passender Agent? -> general-purpose Subagent
 
-Pruefen:
-- Sind das unabhaengige Tasks? -> /hydra:parallel nutzen
-- Braucht Task Kontext vom vorherigen? -> Sequentiell OK
-- Nur ein einzelner Task? -> Main Agent OK
+Bei 2+ unabhaengigen Tasks: /hydra:parallel nutzen
 
-Falls das hier bewusst sequentiell ist: Warnung ignorieren."
+Falls bewusst direkt: Warnung ignorieren."
             fi
         fi
     fi
