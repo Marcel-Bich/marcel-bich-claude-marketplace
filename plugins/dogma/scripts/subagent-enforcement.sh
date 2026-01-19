@@ -45,14 +45,17 @@ if is_hydra_worktree; then
     exit 0
 fi
 
-# Read JSON input from stdin
-INPUT=$(cat 2>/dev/null || true)
-
-# Extract tool info
-TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
-TOOL_INPUT=$(echo "$INPUT" | jq -r '.tool_input // {}')
-
-dogma_debug_log "Tool: $TOOL_NAME"
+# Get tool name - prefer argument (passed from hooks.json) over stdin
+# This avoids consuming stdin that other hooks need!
+if [ -n "$1" ]; then
+    TOOL_NAME="$1"
+    dogma_debug_log "Tool from arg: $TOOL_NAME"
+else
+    # Fallback: read from stdin (but this consumes it for other hooks)
+    INPUT=$(cat 2>/dev/null || true)
+    TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
+    dogma_debug_log "Tool from stdin: $TOOL_NAME"
+fi
 
 # Find permissions file
 PERMS_FILE=$(find_permissions_file)
