@@ -10,7 +10,7 @@ Live API usage display in Claude Code statusline - shows your utilization with c
 - Multiple limits: 5-hour, 7-day, Opus, Sonnet, Extra Credits
 - Reset times for each limit (rounded to nearest hour)
 
-**Highscore Tracking** (optional, enable with `CLAUDE_MB_LIMIT_LOCAL=true`)
+**Highscore Tracking** (enabled by default, disable with `CLAUDE_MB_LIMIT_LOCAL=false`)
 - Tracks highest token usage per plan (max20, max5, pro)
 - Separate highscores for 5h and 7d windows
 - Automatic plan detection from credentials
@@ -78,11 +78,11 @@ All features can be toggled via environment variables. Export them in your shell
 | `CLAUDE_MB_LIMIT_RESET` | true | Show reset times |
 | `CLAUDE_MB_LIMIT_SEPARATORS` | true | Show visual separators |
 
-**Highscore Settings** (requires `CLAUDE_MB_LIMIT_LOCAL=true`):
+**Highscore Settings** (enabled by default):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLAUDE_MB_LIMIT_LOCAL` | false | Enable highscore tracking |
+| `CLAUDE_MB_LIMIT_LOCAL` | true | Enable highscore tracking |
 | `CLAUDE_MB_LIMIT_DEVICE_LABEL` | hostname | Custom device label for display |
 
 **Other Settings**:
