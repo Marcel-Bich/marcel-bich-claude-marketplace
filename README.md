@@ -17,6 +17,7 @@ A collection of productivity plugins for Claude Code.
 | [**limit**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Limit-Plugin) | Live API usage display in statusline |
 | [**hydra**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Hydra-Plugin) | Git Worktree management for parallel agent execution |
 | [**import**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Import-Plugin) | Import external docs locally (bypass AI-blocking sites) |
+| [**marketplace**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Marketplace-Plugin) | Development tools for local plugin testing |
 
 ### Third-Party Plugins
 
