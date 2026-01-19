@@ -4,6 +4,21 @@
 # 5h and 7d windows are tracked separately
 # shellcheck disable=SC2250
 
+# =============================================================================
+# Theoretical Token Limits (User Calculation - 2026-01-19)
+# =============================================================================
+# Based on user's calculation:
+# - max20 in 5h window: ~12.5M tokens (theoretical maximum)
+# - 20% of 5h = 2.5M tokens
+# - 1% of 5h = 125k tokens
+#
+# This could be extrapolated to:
+# - max5: proportionally lower
+# - pro: even lower
+#
+# TODO: Verify these calculations and potentially update DEFAULT_HIGHSCORES
+# =============================================================================
+
 set -euo pipefail
 
 # State file location
