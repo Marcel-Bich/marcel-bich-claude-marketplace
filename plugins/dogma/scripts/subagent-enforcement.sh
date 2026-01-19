@@ -106,9 +106,16 @@ fi
 
 # === STATE FILE FOR TRACKING ===
 # Track what's happening in this session
+# Use session ID if available, otherwise fall back to PWD hash
 STATE_DIR="/tmp/dogma-subagent-state"
 mkdir -p "$STATE_DIR" 2>/dev/null || true
-STATE_FILE="$STATE_DIR/$(pwd | md5sum | cut -d' ' -f1)"
+PWD_HASH="$(pwd | md5sum | cut -d' ' -f1)"
+SESSION_ID="${CLAUDE_SESSION_ID:-}"
+if [ -n "$SESSION_ID" ]; then
+    STATE_FILE="$STATE_DIR/${PWD_HASH}-${SESSION_ID}"
+else
+    STATE_FILE="$STATE_DIR/${PWD_HASH}"
+fi
 
 # Helper: Track tool usage
 track_tool() {

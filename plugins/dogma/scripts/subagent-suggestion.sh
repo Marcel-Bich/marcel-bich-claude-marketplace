@@ -93,7 +93,7 @@ if [ -n "$PERMISSIONS_FILE" ]; then
 fi
 echo "</dogma-subagent-instruction>"
 
-# === RESET SUBAGENT WARNING EVERY N PROMPTS ===
+# === RESET SUBAGENT STATE EVERY N PROMPTS ===
 # This ensures the subagent-first warning triggers again periodically
 STATE_DIR="/tmp/dogma-subagent-state"
 COUNTER_FILE="$STATE_DIR/prompt-counter"
@@ -108,12 +108,15 @@ if [ -d "$STATE_DIR" ]; then
     COUNTER=$((COUNTER + 1))
     echo "$COUNTER" > "$COUNTER_FILE" 2>/dev/null || true
 
-    # Reset warning flag every N prompts
+    # Reset ALL state every N prompts (not just warning flags)
     if [ $((COUNTER % RESET_INTERVAL)) -eq 0 ]; then
-        # Find and delete all .hydra-warned flags
+        # Delete warning flags
         find "$STATE_DIR" -name "*.hydra-warned" -delete 2>/dev/null || true
+        find "$STATE_DIR" -name "*.fallback-warned" -delete 2>/dev/null || true
+        # Delete state files (tool tracking) - but keep counter
+        find "$STATE_DIR" -type f ! -name "prompt-counter" -delete 2>/dev/null || true
         if [ "$DEBUG" = "true" ]; then
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Reset subagent warning flags (prompt $COUNTER)" >> /tmp/dogma-debug.log
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Reset ALL subagent state (prompt $COUNTER)" >> /tmp/dogma-debug.log
         fi
     fi
 fi
