@@ -41,10 +41,104 @@ CURRENT_PLAN=$("${SCRIPT_DIR}/plan-detect.sh" 2>/dev/null || echo "unknown")
 # shellcheck source=highscore-state.sh
 source "${SCRIPT_DIR}/highscore-state.sh"
 
+# Source subagent token tracking functions
+# shellcheck source=subagent-tokens.sh
+source "${SCRIPT_DIR}/subagent-tokens.sh"
+
 # Ensure plugin data directory exists
 ensure_plugin_dir() {
     if [[ ! -d "$PLUGIN_DATA_DIR" ]]; then
         mkdir -p "$PLUGIN_DATA_DIR" 2>/dev/null || true
+    fi
+}
+
+# =============================================================================
+# Session compaction - prevents state.json from growing indefinitely
+# =============================================================================
+
+# Compaction thresholds
+SESSION_COMPACT_THRESHOLD=50
+SESSION_COMPACT_COUNT=25
+
+# Compact sessions in state.json when threshold exceeded
+# Archives oldest sessions to _archived entry, preserving totals
+# Called automatically during state file updates
+compact_sessions() {
+    if [[ ! -f "$STATE_FILE" ]]; then
+        return 0
+    fi
+
+    # Check session count
+    local session_count
+    session_count=$(jq '.sessions | length' "$STATE_FILE" 2>/dev/null) || return 0
+    [[ "$session_count" == "null" ]] && return 0
+
+    if [[ "$session_count" -le "$SESSION_COMPACT_THRESHOLD" ]]; then
+        debug_log "Session compaction not needed: $session_count <= $SESSION_COMPACT_THRESHOLD"
+        return 0
+    fi
+
+    debug_log "Session compaction triggered: $session_count > $SESSION_COMPACT_THRESHOLD"
+
+    # Use jq to:
+    # 1. Sort sessions by last_cost (proxy for activity/age - lower = older/less active)
+    # 2. Take oldest SESSION_COMPACT_COUNT sessions
+    # 3. Sum their tokens and costs to _archived
+    # 4. Remove them from sessions
+    local tmp_file
+    tmp_file=$(mktemp)
+
+    jq --argjson count "$SESSION_COMPACT_COUNT" '
+        # Capture original object for final update
+        . as $orig |
+
+        # Get existing _archived values or defaults
+        .sessions["_archived"] as $existing_archived |
+        ($existing_archived.input_tokens // 0) as $arch_input |
+        ($existing_archived.output_tokens // 0) as $arch_output |
+        ($existing_archived.cost // 0) as $arch_cost |
+        ($existing_archived.session_count // 0) as $arch_count |
+
+        # Get sessions excluding _archived, convert to array with keys
+        # Use "| not" instead of != for shell compatibility
+        [.sessions | to_entries[] | select(.key == "_archived" | not)] |
+
+        # Sort by last_cost ascending (lower cost = older/less active sessions)
+        sort_by(.value.last_cost // 0) |
+
+        # Split into sessions to archive and sessions to keep
+        (.[0:$count]) as $to_archive |
+        (.[$count:]) as $to_keep |
+
+        # Calculate sums from sessions to archive
+        ($to_archive | map(.value.last_input // 0) | add // 0) as $sum_input |
+        ($to_archive | map(.value.last_output // 0) | add // 0) as $sum_output |
+        ($to_archive | map(.value.last_cost // 0) | add // 0) as $sum_cost |
+        ($to_archive | length) as $archived_count |
+
+        # Build new sessions object from kept sessions
+        ($to_keep | from_entries) as $kept_sessions |
+
+        # Add updated _archived entry
+        ($kept_sessions + {
+            "_archived": {
+                "input_tokens": ($arch_input + $sum_input),
+                "output_tokens": ($arch_output + $sum_output),
+                "cost": ($arch_cost + $sum_cost),
+                "session_count": ($arch_count + $archived_count)
+            }
+        }) as $new_sessions |
+
+        # Return updated state with new sessions
+        $orig | .sessions = $new_sessions
+    ' "$STATE_FILE" > "$tmp_file" 2>/dev/null
+
+    if [[ $? -eq 0 ]] && [[ -s "$tmp_file" ]]; then
+        mv "$tmp_file" "$STATE_FILE"
+        debug_log "Session compaction complete: archived $SESSION_COMPACT_COUNT sessions"
+    else
+        rm -f "$tmp_file" 2>/dev/null
+        debug_log "Session compaction failed, state unchanged"
     fi
 }
 
@@ -808,6 +902,9 @@ get_total_tokens_ever() {
 }
 EOF
         debug_log "State file written successfully"
+
+        # Run compaction if needed (non-blocking, runs only when threshold exceeded)
+        compact_sessions
     else
         debug_log "No change detected (delta_total=$delta_total), skipping write"
     fi
@@ -1296,16 +1393,54 @@ format_output() {
 
         # Reset detection: check if API reset times have changed
         # If reset time changed, window tokens are reset to 0
-        check_reset "5h" "$five_hour_reset" || true
-        if [[ -n "$seven_day_reset" ]]; then
-            check_reset "7d" "$seven_day_reset" || true
+        # Also save subagent token baseline at reset time
+        local reset_5h_detected=false reset_7d_detected=false
+        if check_reset "5h" "$five_hour_reset"; then
+            reset_5h_detected=true
         fi
+        if [[ -n "$seven_day_reset" ]]; then
+            if check_reset "7d" "$seven_day_reset"; then
+                reset_7d_detected=true
+            fi
+        fi
+
+        # Get subagent tokens (incremental scan with caching)
+        local subagent_tokens_total=0
+        subagent_tokens_total=$(get_subagent_tokens 2>/dev/null) || subagent_tokens_total=0
+        [[ "$subagent_tokens_total" == "null" ]] && subagent_tokens_total=0
+        debug_log "Subagent tokens total: $subagent_tokens_total"
+
+        # Get subagent baseline from state (saved at last reset)
+        local subagent_baseline_5h=0 subagent_baseline_7d=0
+        if [[ -f "$STATE_FILE" ]]; then
+            subagent_baseline_5h=$(jq -r '.calibration.subagent_baseline_5h // 0' "$STATE_FILE" 2>/dev/null) || subagent_baseline_5h=0
+            subagent_baseline_7d=$(jq -r '.calibration.subagent_baseline_7d // 0' "$STATE_FILE" 2>/dev/null) || subagent_baseline_7d=0
+            [[ "$subagent_baseline_5h" == "null" ]] && subagent_baseline_5h=0
+            [[ "$subagent_baseline_7d" == "null" ]] && subagent_baseline_7d=0
+        fi
+
+        # On reset, update baseline to current subagent total
+        if [[ "$reset_5h_detected" == "true" ]]; then
+            subagent_baseline_5h="$subagent_tokens_total"
+            debug_log "5h reset: new subagent baseline = $subagent_baseline_5h"
+        fi
+        if [[ "$reset_7d_detected" == "true" ]]; then
+            subagent_baseline_7d="$subagent_tokens_total"
+            debug_log "7d reset: new subagent baseline = $subagent_baseline_7d"
+        fi
+
+        # Calculate subagent window tokens (tokens since last reset)
+        local subagent_window_5h=$((subagent_tokens_total - subagent_baseline_5h))
+        local subagent_window_7d=$((subagent_tokens_total - subagent_baseline_7d))
+        [[ "$subagent_window_5h" -lt 0 ]] && subagent_window_5h=0
+        [[ "$subagent_window_7d" -lt 0 ]] && subagent_window_7d=0
+        debug_log "Subagent window tokens: 5h=$subagent_window_5h 7d=$subagent_window_7d"
 
         # Get current window tokens from highscore state
         window_tokens_5h=$(get_window_tokens "5h")
         window_tokens_7d=$(get_window_tokens "7d")
 
-        # Calculate token delta since last update
+        # Calculate token delta since last update (main agent only)
         local last_total_tokens=0
         if [[ -f "$STATE_FILE" ]]; then
             last_total_tokens=$(jq -r '.calibration.last_total_tokens // 0' "$STATE_FILE" 2>/dev/null) || last_total_tokens=0
@@ -1314,13 +1449,20 @@ format_output() {
         local token_delta=$((current_total_tokens - last_total_tokens))
         [[ "$token_delta" -lt 0 ]] && token_delta=0
 
-        # Accumulate tokens to window counters
+        # Accumulate main agent tokens to window counters
         window_tokens_5h=$((window_tokens_5h + token_delta))
         window_tokens_7d=$((window_tokens_7d + token_delta))
 
-        # Update window tokens in highscore state
+        # Update window tokens in highscore state (main agent only, before adding subagent)
         set_window_tokens "5h" "$window_tokens_5h"
         set_window_tokens "7d" "$window_tokens_7d"
+
+        # Add subagent window tokens to display totals
+        # These are already relative to the baseline at reset time
+        window_tokens_5h=$((window_tokens_5h + subagent_window_5h))
+        window_tokens_7d=$((window_tokens_7d + subagent_window_7d))
+        debug_log "Window tokens with subagents: 5h=$window_tokens_5h 7d=$window_tokens_7d"
+
 
         # Get highscores for current plan
         highscore_5h=$(get_highscore "$CURRENT_PLAN" "5h")
@@ -1389,7 +1531,9 @@ format_output() {
   "sessions": ${existing_sessions},
   "totals": ${existing_totals},
   "calibration": {
-    "last_total_tokens": ${current_total_tokens}
+    "last_total_tokens": ${current_total_tokens},
+    "subagent_baseline_5h": ${subagent_baseline_5h},
+    "subagent_baseline_7d": ${subagent_baseline_7d}
   }
 }
 EOF

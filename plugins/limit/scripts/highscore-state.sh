@@ -16,7 +16,13 @@
 # - max5: proportionally lower
 # - pro: even lower
 #
-# TODO: Verify these calculations and potentially update DEFAULT_HIGHSCORES
+# WARNING: These calculations are likely INCORRECT because subagent/Task tool
+# tokens were NOT included in the measurement when these numbers were derived.
+# Subagents (spawned via Task tool) run in separate sessions and their tokens
+# are stored in agent-*.jsonl files, not in the main session's STDIN_DATA.
+# The actual limits may be significantly higher than estimated here.
+#
+# TODO: Re-measure limits with subagent tokens included
 # =============================================================================
 
 set -euo pipefail
