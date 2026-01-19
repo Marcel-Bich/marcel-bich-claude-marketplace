@@ -5,7 +5,7 @@ model: haiku
 ---
 
 <objective>
-Display the current highscore state in a formatted view.
+Display the current highscore state in a formatted view, including subagent token tracking.
 </objective>
 
 <instructions>
@@ -13,6 +13,7 @@ Display the current highscore state in a formatted view.
    ```bash
    cat ~/.claude/limit-highscore-state.json 2>/dev/null
    cat ~/.claude/marcel-bich-claude-marketplace/limit/state.json 2>/dev/null
+   cat ~/.claude/marcel-bich-claude-marketplace/limit/subagent-state.json 2>/dev/null
    hostname
    ```
 
@@ -43,10 +44,22 @@ Format numbers as: 5.2M (millions), 500.0k (thousands), 1.5B (billions)
 - 7d: {window_tokens_7d formatted} Tokens
 - Device: {hostname from bash output}
 
-### Lifetime Totals (from state.json)
+> **Note:** These values show Main Agent tokens only.
+> The statusline displays combined totals (Main + Subagents) in real-time.
 
-- Total Tokens: {totals.input_tokens + totals.output_tokens formatted}
-- Total Cost: ${totals.total_cost_usd formatted with 2 decimals}
+### Lifetime Totals
+
+**Main Agent** (from state.json):
+- Tokens: {totals.input_tokens + totals.output_tokens formatted}
+- Cost: ${totals.total_cost_usd formatted with 2 decimals}
+
+**Subagents** (from subagent-state.json):
+- Input Tokens: {total_input_tokens formatted}
+- Output Tokens: {total_output_tokens formatted}
+- Cache Read Tokens: {total_cache_read_tokens formatted}
+- Subagent Total: {total_input_tokens + total_output_tokens + total_cache_read_tokens formatted}
+
+**Combined Total:** {main_total + subagent_total formatted} Tokens
 
 4. Briefly explain the concept at the end:
 
@@ -58,6 +71,5 @@ Format numbers as: 5.2M (millions), 500.0k (thousands), 1.5B (billions)
 > Highscores are stored per plan so that a plan change
 > (e.g., from Max20 to Pro) doesn't mix up the records.
 >
-> **Note:** Lifetime Totals only count Main Agent tokens.
-> Subagent tokens are tracked separately (v1.10.0+).
+> Highscores include both Main Agent and Subagent tokens (v1.10.0+).
 </instructions>
