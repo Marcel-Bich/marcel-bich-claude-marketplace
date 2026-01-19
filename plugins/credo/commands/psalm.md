@@ -120,9 +120,12 @@ Use AskUserQuestion to ask the user BEFORE executing anything:
 The sacred tools are ready, but the teachings have not yet been received.
 
 Would you like to set up dogma now?
-- Yes, run /dogma:sync (Recommended) - Syncs Claude instructions to this project
+- Yes, run /dogma:sync (Recommended) - Syncs Claude instructions from the official Marcel-Bich dogma repo
+- Use custom source - Provide your own repo URL or local path as source
 - No, skip for now - I will set it up later with /dogma:sync
 ```
+
+**If user chooses "Use custom source":** Ask for the repo URL or local path, then run `/dogma:sync <provided-source>`.
 
 **IMPORTANT:** Only execute `/dogma:sync` via the Skill tool if the user explicitly chooses "Yes". Never auto-execute.
 
