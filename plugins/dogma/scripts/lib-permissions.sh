@@ -108,9 +108,17 @@ check_permission() {
     return 0
 }
 
-# Get permission mode (3-state: auto/ask/deny)
-# Returns: "auto", "ask", or "deny"
+# Get permission mode (extended states: auto/ask/deny/one/all)
+# Returns: "auto", "ask", "deny", "one", or "all"
 # If pattern not found, returns "auto" (allow by default)
+#
+# Checkbox states:
+#   [x] = auto (all relevant)
+#   [?] = ask (prompt user)
+#   [ ] = deny/disabled
+#   [1] = one (only one at a time)
+#   [a] = all (everything, not just relevant)
+#   [0] = deny/disabled (same as [ ])
 get_permission_mode() {
     local perms_section="$1"
     local pattern="$2"
@@ -142,6 +150,27 @@ get_permission_mode() {
         return
     fi
 
+    # Check for [1] (one - only one at a time)
+    if echo "$perms_section" | grep -qE "^\s*-\s*\[1\].*$pattern"; then
+        dogma_debug_log "Permission mode one for: $pattern"
+        echo "one"
+        return
+    fi
+
+    # Check for [a] (all - everything, not just relevant)
+    if echo "$perms_section" | grep -qE "^\s*-\s*\[a\].*$pattern"; then
+        dogma_debug_log "Permission mode all for: $pattern"
+        echo "all"
+        return
+    fi
+
+    # Check for [0] (deny - same as [ ])
+    if echo "$perms_section" | grep -qE "^\s*-\s*\[0\].*$pattern"; then
+        dogma_debug_log "Permission mode deny for: $pattern"
+        echo "deny"
+        return
+    fi
+
     # Pattern not found - auto by default
     dogma_debug_log "Permission pattern not found: $pattern - auto by default"
     echo "auto"
@@ -165,6 +194,6 @@ Use /dogma:permissions to interactively create it, or create manually:
 </permissions>
 ```
 
-Mark [x] for auto, [?] for ask, [ ] for deny.
+Checkbox states: [x]=auto, [?]=ask, [ ]=deny, [1]=one, [a]=all, [0]=deny
 EOF
 }
