@@ -77,8 +77,8 @@ SHOW_SESSION="${CLAUDE_MB_LIMIT_SESSION:-true}"
 SHOW_SESSION_ID="${CLAUDE_MB_LIMIT_SESSION_ID:-true}"
 SHOW_SEPARATORS="${CLAUDE_MB_LIMIT_SEPARATORS:-true}"
 
-# Local device tracking (default false - feature in development)
-SHOW_LOCAL="${CLAUDE_MB_LIMIT_LOCAL:-false}"
+# Local device tracking (default true - highscore-based tracking enabled for all)
+SHOW_LOCAL="${CLAUDE_MB_LIMIT_LOCAL:-true}"
 LOCAL_DEVICE_LABEL="${CLAUDE_MB_LIMIT_DEVICE_LABEL:-$(hostname)}"
 
 # Default estimated max tokens (can be overridden, will be calibrated dynamically)

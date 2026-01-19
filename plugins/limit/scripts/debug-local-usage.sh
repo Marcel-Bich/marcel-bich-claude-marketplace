@@ -22,7 +22,7 @@ echo ""
 
 # 1. Check environment
 echo -e "${COLOR_YELLOW}1. Environment:${COLOR_RESET}"
-echo "   CLAUDE_MB_LIMIT_LOCAL: ${CLAUDE_MB_LIMIT_LOCAL:-not set (default: false)}"
+echo "   CLAUDE_MB_LIMIT_LOCAL: ${CLAUDE_MB_LIMIT_LOCAL:-not set (default: true)}"
 echo "   CLAUDE_MB_LIMIT_DEVICE_LABEL: ${CLAUDE_MB_LIMIT_DEVICE_LABEL:-not set}"
 echo "   Device ID: ${DEVICE_ID}"
 echo ""
@@ -67,7 +67,7 @@ if [[ -f "${STATE_FILE}" ]]; then
 else
     echo "   File does not exist: ${STATE_FILE}"
     echo ""
-    echo -e "${COLOR_GRAY}   State file will be created when CLAUDE_MB_LIMIT_LOCAL=true${COLOR_RESET}"
+    echo -e "${COLOR_GRAY}   State file will be created automatically (CLAUDE_MB_LIMIT_LOCAL defaults to true)${COLOR_RESET}"
 fi
 echo ""
 
@@ -121,8 +121,8 @@ echo ""
 echo "   Reset local tracking (start fresh):"
 echo -e "   ${COLOR_GRAY}rm ${STATE_FILE}${COLOR_RESET}"
 echo ""
-echo "   Enable local tracking:"
-echo -e "   ${COLOR_GRAY}export CLAUDE_MB_LIMIT_LOCAL=true${COLOR_RESET}"
+echo "   Disable local tracking:"
+echo -e "   ${COLOR_GRAY}export CLAUDE_MB_LIMIT_LOCAL=false${COLOR_RESET}"
 echo ""
 echo "   View raw state file:"
 echo -e "   ${COLOR_GRAY}cat ${STATE_FILE}${COLOR_RESET}"

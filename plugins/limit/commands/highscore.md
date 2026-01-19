@@ -17,7 +17,7 @@ Display the current highscore state in a formatted view.
 
 2. If the state file does not exist, inform the user:
    > No highscore data available yet.
-   > Enable the highscore feature with: `export CLAUDE_MB_LIMIT_LOCAL=true`
+   > Highscore tracking is enabled by default (v1.9.0+).
    > Data will be collected during normal plugin usage.
 
 3. If data exists, format the output as follows:
