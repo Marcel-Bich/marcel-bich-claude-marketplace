@@ -1,6 +1,6 @@
 name: dogma
 description: Intelligent sync of Claude instructions with enforcement hooks for security and consistency
-version: 1.29.18
+version: 1.29.19
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
@@ -21,7 +21,7 @@ commands:
     description: Check and fix version mismatches across all version files
     source: commands/versioning.md
   permissions:
-    description: Create or update DOGMA-PERMISSIONS.md interactively
+    description: Create or update DOGMA-PERMISSIONS.md interactively (Git, File, and Workflow permissions)
     source: commands/permissions.md
   force:
     description: Interactively collect and apply CLAUDE rules to the project
@@ -63,6 +63,10 @@ hooks:
       args:
         - -c
         - "cat | {{pluginPath}}/scripts/checklist-tracking.sh"
+    - command: bash
+      args:
+        - -c
+        - "cat | {{pluginPath}}/scripts/subagent-suggestion.sh"
 
   # ============================================
   # PreToolUse Hooks - Run BEFORE tool execution
@@ -144,6 +148,17 @@ hooks:
       args:
         - -c
         - "cat | {{pluginPath}}/scripts/post-write-validate.sh"
+    # Trigger review reminder when configured
+    - matcher: Write
+      command: bash
+      args:
+        - -c
+        - "cat | {{pluginPath}}/scripts/review-trigger.sh"
+    - matcher: Edit
+      command: bash
+      args:
+        - -c
+        - "cat | {{pluginPath}}/scripts/review-trigger.sh"
 
     # Detect prompt injection in fetched content
     - matcher: WebFetch
@@ -170,3 +185,7 @@ hooks:
       args:
         - -c
         - "cat | {{pluginPath}}/scripts/lint-on-stop.sh"
+    - command: bash
+      args:
+        - -c
+        - "cat | {{pluginPath}}/scripts/checklist-reminder.sh"
