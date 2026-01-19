@@ -119,9 +119,67 @@ check_permission() {
 #   [1] = one (only one at a time)
 #   [a] = all (everything, not just relevant)
 #   [0] = deny/disabled (same as [ ])
+#
+# Usage:
+#   get_permission_mode "pattern" [permissions_file] [section]
+#   - If permissions_file is empty/missing: uses first arg as perms_section (legacy)
+#   - If section is empty: searches entire <permissions> block
+#   - If section is set: searches only within that section
+#     - "### Subsection Name" -> extracts until next ## or ### or </permissions>
+#     - "## Section Name" -> extracts until next ## or </permissions> (includes ### subsections)
 get_permission_mode() {
-    local perms_section="$1"
-    local pattern="$2"
+    local arg1="$1"
+    local arg2="${2:-}"
+    local section="${3:-}"
+    local perms_section=""
+    local pattern=""
+
+    # Detect usage mode: new (pattern, file, section) vs legacy (perms_section, pattern)
+    # If arg2 is a file path, use new mode
+    if [ -n "$arg2" ] && [ -f "$arg2" ]; then
+        # New mode: get_permission_mode(pattern, file, section)
+        pattern="$arg1"
+        local permissions_file="$arg2"
+
+        if [ -n "$section" ]; then
+            # Get the entire permissions block first
+            local full_perms
+            full_perms=$(sed -n '/<permissions>/,/<\/permissions>/p' "$permissions_file" 2>/dev/null)
+
+            # Try to find as ### Subsection first
+            # Subsection starts with "### Section Name" and ends at next ## or ### or </permissions>
+            perms_section=$(echo "$full_perms" | \
+                sed -n "/^### $section\$/,/^##/p" | \
+                sed '1d' | \
+                sed '/^##/d')
+
+            # If not found as subsection, try as ## Section
+            if [ -z "$perms_section" ]; then
+                # Section starts with "## Section Name" and ends at next "##" or "</permissions>"
+                # This includes all ### subsections within it
+                perms_section=$(echo "$full_perms" | \
+                    sed -n "/^## $section\$/,/^## [^#]/p" | \
+                    sed '1d' | \
+                    sed '/^## [^#]/d')
+
+                # If still empty, section might be last one (no following ##)
+                if [ -z "$perms_section" ]; then
+                    perms_section=$(echo "$full_perms" | \
+                        sed -n "/^## $section\$/,/<\/permissions>/p" | \
+                        sed '1d' | \
+                        sed '/<\/permissions>/d')
+                fi
+            fi
+            dogma_debug_log "Extracted section '$section': $perms_section"
+        else
+            # No section - search entire permissions block
+            perms_section=$(sed -n '/<permissions>/,/<\/permissions>/p' "$permissions_file" 2>/dev/null)
+        fi
+    else
+        # Legacy mode: get_permission_mode(perms_section, pattern)
+        perms_section="$arg1"
+        pattern="$arg2"
+    fi
 
     if [ -z "$perms_section" ]; then
         dogma_debug_log "No permissions section - auto by default"
