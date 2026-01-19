@@ -9,13 +9,14 @@ Display the current highscore state in a formatted view.
 </objective>
 
 <instructions>
-1. Read the state file and hostname:
+1. Read the state files and hostname:
    ```bash
    cat ~/.claude/limit-highscore-state.json 2>/dev/null
+   cat ~/.claude/marcel-bich-claude-marketplace/limit/state.json 2>/dev/null
    hostname
    ```
 
-2. If the state file does not exist, inform the user:
+2. If the highscore state file does not exist, inform the user:
    > No highscore data available yet.
    > Highscore tracking is enabled by default (v1.9.0+).
    > Data will be collected during normal plugin usage.
@@ -34,13 +35,18 @@ Display the current highscore state in a formatted view.
 | max5 | {highscores.max5.5h formatted} | {highscores.max5.7d formatted} |
 | pro | {highscores.pro.5h formatted} | {highscores.pro.7d formatted} |
 
-Format numbers as: 5.2M (millions), 500.0K (thousands), 1.5B (billions)
+Format numbers as: 5.2M (millions), 500.0k (thousands), 1.5B (billions)
 
 ### Current Window
 
 - 5h: {window_tokens_5h formatted} Tokens
 - 7d: {window_tokens_7d formatted} Tokens
 - Device: {hostname from bash output}
+
+### Lifetime Totals (from state.json)
+
+- Total Tokens: {totals.input_tokens + totals.output_tokens formatted}
+- Total Cost: ${totals.total_cost_usd formatted with 2 decimals}
 
 4. Briefly explain the concept at the end:
 
@@ -51,4 +57,7 @@ Format numbers as: 5.2M (millions), 500.0K (thousands), 1.5B (billions)
 >
 > Highscores are stored per plan so that a plan change
 > (e.g., from Max20 to Pro) doesn't mix up the records.
+>
+> **Note:** Lifetime Totals only count Main Agent tokens.
+> Subagent tokens are tracked separately (v1.10.0+).
 </instructions>
