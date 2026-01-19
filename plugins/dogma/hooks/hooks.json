@@ -20,6 +20,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/checklist-tracking.sh",
             "timeout": 5,
             "description": "Scan for open checklists in PLAN.md, TODO.md, etc."
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-suggestion.sh",
+            "timeout": 5,
+            "description": "Suggest using subagents based on DOGMA-PERMISSIONS.md workflow settings"
           }
         ]
       }
@@ -80,6 +86,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/git-pull-before-push.sh",
             "timeout": 15,
             "description": "Block git push if local branch is behind remote (ENV: CLAUDE_MB_DOGMA_PULL_BEFORE_PUSH=true)"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh",
+            "timeout": 5,
+            "description": "Track direct work and warn if Hydra/subagent should be used"
           }
         ]
       },
@@ -97,6 +109,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/write-edit-reminder.sh",
             "timeout": 5,
             "description": "Remind of language and AI-traces rules with @-references"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh",
+            "timeout": 5,
+            "description": "Track direct work and warn if Hydra/subagent should be used"
           }
         ]
       },
@@ -114,6 +132,34 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/write-edit-reminder.sh",
             "timeout": 5,
             "description": "Remind of language and AI-traces rules with @-references"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh",
+            "timeout": 5,
+            "description": "Track direct work and warn if Hydra/subagent should be used"
+          }
+        ]
+      },
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh",
+            "timeout": 5,
+            "description": "Track subagent usage to reset direct work warning"
+          }
+        ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh",
+            "timeout": 5,
+            "description": "Track skill usage to reset direct work warning"
           }
         ]
       }
@@ -178,6 +224,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/lint-on-stop.sh",
             "timeout": 30,
             "description": "Run prettier check when task completes (ENV: CLAUDE_MB_DOGMA_LINT_ON_STOP=true)"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/checklist-reminder.sh",
+            "timeout": 5,
+            "description": "Remind about incomplete checklist items before stopping"
           }
         ]
       }
