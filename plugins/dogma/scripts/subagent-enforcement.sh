@@ -83,6 +83,21 @@ if echo "$PERMS_CONTENT" | grep -qiE '^\s*-\s*\[x\].*spawn subagent.*verificatio
     dogma_debug_log "Subagent fallback enforcement enabled"
 fi
 
+# === CHECK DELEGATION SETTINGS ===
+# Pattern: [x] Task tool usage counts as delegation
+TASK_COUNTS_AS_DELEGATION="false"
+if echo "$PERMS_CONTENT" | grep -qiE '^\s*-\s*\[x\].*Task tool.*counts as delegation'; then
+    TASK_COUNTS_AS_DELEGATION="true"
+    dogma_debug_log "Task counts as delegation"
+fi
+
+# Pattern: [x] Skill tool usage counts as delegation
+SKILL_COUNTS_AS_DELEGATION="false"
+if echo "$PERMS_CONTENT" | grep -qiE '^\s*-\s*\[x\].*Skill tool.*counts as delegation'; then
+    SKILL_COUNTS_AS_DELEGATION="true"
+    dogma_debug_log "Skill counts as delegation"
+fi
+
 # Exit early if neither permission is set
 if [ "$HYDRA_ENABLED" != "true" ] && [ "$SUBAGENT_FALLBACK_ENABLED" != "true" ]; then
     dogma_debug_log "No subagent enforcement permissions set"
@@ -112,14 +127,14 @@ count_direct_work() {
     grep -cE '^(Write|Edit|Bash)$' "$STATE_FILE" 2>/dev/null || echo "0"
 }
 
-# === OUTPUT WARNING (PostToolUse - non-blocking) ===
-# PostToolUse hooks use plain echo, not JSON
+# === OUTPUT WARNING (PreToolUse - blocking with deny) ===
+# Only blocks if no Task/Skill was used before
 output_warning() {
     local message="$1"
-    echo ""
-    echo "<dogma-subagent-warning>"
-    echo "$message"
-    echo "</dogma-subagent-warning>"
+    local escaped_message=$(echo "$message" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+    cat <<EOF
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"<dogma-subagent-warning>\\n${escaped_message}\\n</dogma-subagent-warning>"}}
+EOF
 }
 
 # === TRACK CURRENT TOOL ===
@@ -130,13 +145,24 @@ track_tool "$TOOL_NAME"
 SUBAGENT_TOOLS="Task|Skill|hydra"
 
 # === LOGIC: HYDRA CHECK ===
-# If Hydra is enabled and we see multiple direct work operations without Task/Hydra
+# If Hydra is enabled and we see multiple direct work operations without delegation
 if [ "$HYDRA_ENABLED" = "true" ]; then
     DIRECT_COUNT=$(count_direct_work)
 
-    # After first direct operation without Task/Skill, remind about subagent-first
+    # Check if delegation happened (based on checkbox settings)
+    DELEGATED="false"
+    if [ "$TASK_COUNTS_AS_DELEGATION" = "true" ] && was_tool_used "Task"; then
+        DELEGATED="true"
+        dogma_debug_log "Delegated via Task"
+    fi
+    if [ "$SKILL_COUNTS_AS_DELEGATION" = "true" ] && was_tool_used "Skill"; then
+        DELEGATED="true"
+        dogma_debug_log "Delegated via Skill"
+    fi
+
+    # After first direct operation without delegation, remind about subagent-first
     if [ "$DIRECT_COUNT" -ge 1 ]; then
-        if ! was_tool_used "Task" && ! was_tool_used "Skill"; then
+        if [ "$DELEGATED" != "true" ]; then
             # Only warn once per session
             if [ ! -f "$STATE_FILE.hydra-warned" ]; then
                 touch "$STATE_FILE.hydra-warned" 2>/dev/null || true

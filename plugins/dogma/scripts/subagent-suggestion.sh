@@ -65,27 +65,57 @@ if ls *.test.* *.spec.* 2>/dev/null | head -1 >/dev/null 2>&1; then
     TESTS_EXIST="true"
 fi
 
-# Output compact reminder
+# Output MANDATORY instruction (not just a reminder)
 echo ""
-echo "<dogma-subagent-reminder>"
-echo "Subagent-First: Check before EVERY action if a specialized agent exists."
+echo "<dogma-subagent-instruction>"
+echo "MANDATORY: Before your FIRST action, you MUST check for subagent delegation."
 echo ""
-echo "Available agents:"
-echo "- Code Analysis: code-reviewer, code-architect, code-explorer"
-echo "- Development: agent-creator, plugin-validator, skill-reviewer"
-echo "- Auditing: skill-auditor, slash-command-auditor, subagent-auditor"
-echo "- Built-in: Explore, Plan, general-purpose"
+echo "Decision flow:"
+echo "1. Does this need user interaction? -> You may act directly"
+echo "2. Does a specialized agent exist? -> USE Task tool with that agent"
+echo "3. No specialized agent? -> USE Task tool with general-purpose"
+echo "4. 2+ independent tasks? -> USE Hydra (/hydra:parallel)"
 echo ""
-echo "Rules:"
-echo "- 2+ independent tasks -> use Hydra"
+echo "Available agents: code-reviewer, code-architect, code-explorer, agent-creator,"
+echo "plugin-validator, skill-reviewer, skill-auditor, slash-command-auditor,"
+echo "subagent-auditor, Explore, Plan, general-purpose"
+echo ""
+echo "FORBIDDEN without Task first: Bash, Write, Edit for implementation work"
+echo "ALLOWED without Task: Read, Glob, Grep (research), user questions"
 if [ "$TESTS_EXIST" = "true" ]; then
-    echo "- Tests exist -> TDD is mandatory"
+    echo ""
+    echo "TDD MANDATORY: Tests exist - write test first, then implementation"
 fi
 echo ""
-echo "See @${SUBAGENTS_FILE}"
+echo "Reference: @${SUBAGENTS_FILE}"
 if [ -n "$PERMISSIONS_FILE" ]; then
     echo "Permissions: @${PERMISSIONS_FILE}"
 fi
-echo "</dogma-subagent-reminder>"
+echo "</dogma-subagent-instruction>"
+
+# === RESET SUBAGENT WARNING EVERY N PROMPTS ===
+# This ensures the subagent-first warning triggers again periodically
+STATE_DIR="/tmp/dogma-subagent-state"
+COUNTER_FILE="$STATE_DIR/prompt-counter"
+RESET_INTERVAL=2  # Reset every N prompts
+
+if [ -d "$STATE_DIR" ]; then
+    # Read and increment counter
+    COUNTER=0
+    if [ -f "$COUNTER_FILE" ]; then
+        COUNTER=$(cat "$COUNTER_FILE" 2>/dev/null || echo "0")
+    fi
+    COUNTER=$((COUNTER + 1))
+    echo "$COUNTER" > "$COUNTER_FILE" 2>/dev/null || true
+
+    # Reset warning flag every N prompts
+    if [ $((COUNTER % RESET_INTERVAL)) -eq 0 ]; then
+        # Find and delete all .hydra-warned flags
+        find "$STATE_DIR" -name "*.hydra-warned" -delete 2>/dev/null || true
+        if [ "$DEBUG" = "true" ]; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Reset subagent warning flags (prompt $COUNTER)" >> /tmp/dogma-debug.log
+        fi
+    fi
+fi
 
 exit 0
