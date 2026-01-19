@@ -1,6 +1,6 @@
 name: credo
 description: Opinionated workflow guides and best practices - the preacher's proven patterns for Claude Code projects
-version: 0.2.16
+version: 0.2.17
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
