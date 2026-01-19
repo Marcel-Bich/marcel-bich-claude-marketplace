@@ -113,12 +113,14 @@ count_direct_work() {
 }
 
 # === OUTPUT WARNING (not blocking) ===
+# Use JSON format that Claude Code understands for PreToolUse hooks
 output_warning() {
     local message="$1"
-    echo ""
-    echo "<dogma-subagent-warning>"
-    echo "$message"
-    echo "</dogma-subagent-warning>"
+    # Escape message for JSON (replace newlines with \n, escape quotes)
+    local escaped_message=$(echo "$message" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+    cat <<EOF
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"<dogma-subagent-warning>\\n${escaped_message}\\n</dogma-subagent-warning>"}}
+EOF
 }
 
 # === TRACK CURRENT TOOL ===
