@@ -86,12 +86,6 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/git-pull-before-push.sh",
             "timeout": 15,
             "description": "Block git push if local branch is behind remote (ENV: CLAUDE_MB_DOGMA_PULL_BEFORE_PUSH=true)"
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh Bash",
-            "timeout": 5,
-            "description": "Track direct work and warn if Hydra/subagent should be used"
           }
         ]
       },
@@ -109,12 +103,6 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/write-edit-reminder.sh",
             "timeout": 5,
             "description": "Remind of language and AI-traces rules with @-references"
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh Write",
-            "timeout": 5,
-            "description": "Track direct work and warn if Hydra/subagent should be used"
           }
         ]
       },
@@ -132,12 +120,6 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/write-edit-reminder.sh",
             "timeout": 5,
             "description": "Remind of language and AI-traces rules with @-references"
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh Edit",
-            "timeout": 5,
-            "description": "Track direct work and warn if Hydra/subagent should be used"
           }
         ]
       },
@@ -166,6 +148,17 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh Bash",
+            "timeout": 5,
+            "description": "Warn if direct work without subagent delegation"
+          }
+        ]
+      },
+      {
         "matcher": "Write",
         "hooks": [
           {
@@ -173,6 +166,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/post-write-validate.sh",
             "timeout": 5,
             "description": "Validate written content for AI traces (curly quotes, em-dashes, etc.)"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh Write",
+            "timeout": 5,
+            "description": "Warn if direct work without subagent delegation"
           }
         ]
       },
@@ -184,6 +183,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/post-write-validate.sh",
             "timeout": 5,
             "description": "Validate written content for AI traces (curly quotes, em-dashes, etc.)"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh Edit",
+            "timeout": 5,
+            "description": "Warn if direct work without subagent delegation"
           }
         ]
       },

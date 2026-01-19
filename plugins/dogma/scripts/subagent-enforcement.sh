@@ -112,15 +112,14 @@ count_direct_work() {
     grep -cE '^(Write|Edit|Bash)$' "$STATE_FILE" 2>/dev/null || echo "0"
 }
 
-# === OUTPUT WARNING (not blocking) ===
-# Use JSON format that Claude Code understands for PreToolUse hooks
+# === OUTPUT WARNING (PostToolUse - non-blocking) ===
+# PostToolUse hooks use plain echo, not JSON
 output_warning() {
     local message="$1"
-    # Escape message for JSON (replace newlines with \n, escape quotes)
-    local escaped_message=$(echo "$message" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
-    cat <<EOF
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"<dogma-subagent-warning>\\n${escaped_message}\\n</dogma-subagent-warning>"}}
-EOF
+    echo ""
+    echo "<dogma-subagent-warning>"
+    echo "$message"
+    echo "</dogma-subagent-warning>"
 }
 
 # === TRACK CURRENT TOOL ===
