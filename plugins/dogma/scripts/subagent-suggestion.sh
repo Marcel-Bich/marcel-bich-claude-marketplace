@@ -143,6 +143,10 @@ if [ -d "$STATE_DIR" ]; then
         COUNTER=$(cat "$COUNTER_FILE" 2>/dev/null || echo "0")
     fi
     COUNTER=$((COUNTER + 1))
+    # Reset counter if too large to prevent infinite growth
+    if [ "$COUNTER" -gt 100 ]; then
+        COUNTER=1
+    fi
     echo "$COUNTER" > "$COUNTER_FILE" 2>/dev/null || true
 
     # Reset ALL state every N prompts (not just warning flags)
