@@ -149,6 +149,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh Task",
             "timeout": 5,
             "description": "Track subagent usage to reset direct work warning"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-context.sh",
+            "timeout": 5,
+            "description": "Remind about subagent context rules (CLAUDE.md, no push, etc.)"
           }
         ]
       },
