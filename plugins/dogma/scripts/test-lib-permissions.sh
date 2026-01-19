@@ -183,6 +183,138 @@ run_exit_test "check_permission empty section exits 0 (allow)" 0 "" "git push"
 echo ""
 
 # ============================================================================
+# Test 5: Section-specific permissions (3rd parameter)
+# ============================================================================
+echo "--- Section-Specific Permissions ---"
+
+# Create test permissions file with sections
+PERMS_FILE_SECTIONS="$TEST_TMP_DIR/permissions-sections.md"
+cat > "$PERMS_FILE_SECTIONS" << 'EOF'
+# Permissions
+
+<permissions>
+## Development Phase
+- [x] run tests
+- [x] check lint
+- [ ] deploy to production
+
+## Final Verification
+- [a] run tests
+- [a] check lint
+- [?] deploy to production
+
+## Cleanup
+- [1] delete temp files
+</permissions>
+EOF
+
+# Test 5.1: Section "Development Phase" with [x] run tests -> "auto"
+result=$(get_permission_mode "run tests" "$PERMS_FILE_SECTIONS" "Development Phase")
+run_test "Section 'Development Phase': run tests [x] returns 'auto'" "auto" "$result"
+
+# Test 5.2: Section "Final Verification" with [a] run tests -> "all"
+result=$(get_permission_mode "run tests" "$PERMS_FILE_SECTIONS" "Final Verification")
+run_test "Section 'Final Verification': run tests [a] returns 'all'" "all" "$result"
+
+# Test 5.3: Same pattern, different sections -> different results
+result_dev=$(get_permission_mode "check lint" "$PERMS_FILE_SECTIONS" "Development Phase")
+result_final=$(get_permission_mode "check lint" "$PERMS_FILE_SECTIONS" "Final Verification")
+run_test "Same pattern 'check lint' in 'Development Phase' returns 'auto'" "auto" "$result_dev"
+run_test "Same pattern 'check lint' in 'Final Verification' returns 'all'" "all" "$result_final"
+
+# Verify they are actually different
+if [ "$result_dev" != "$result_final" ]; then
+    echo "[PASS] Different sections return different results for same pattern"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo "[FAIL] Different sections should return different results"
+    echo "       Development Phase: '$result_dev'"
+    echo "       Final Verification: '$result_final'"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+TESTS_TOTAL=$((TESTS_TOTAL + 1))
+
+# Test 5.4: Non-existent section -> default "auto"
+result=$(get_permission_mode "run tests" "$PERMS_FILE_SECTIONS" "Non Existent Section")
+run_test "Non-existent section returns 'auto' (default)" "auto" "$result"
+
+# Test 5.5: Without section parameter -> backwards compatible (searches entire block)
+# When no section given, "run tests" appears multiple times, should find first match [x]
+result=$(get_permission_mode "run tests" "$PERMS_FILE_SECTIONS")
+run_test "Without section parameter: backwards compatible (finds first match)" "auto" "$result"
+
+# Test 5.6: Pattern only in specific section, searched in wrong section -> default
+result=$(get_permission_mode "delete temp files" "$PERMS_FILE_SECTIONS" "Development Phase")
+run_test "Pattern not in searched section returns 'auto' (default)" "auto" "$result"
+
+# Test 5.7: Pattern only in specific section, searched correctly -> correct result
+result=$(get_permission_mode "delete temp files" "$PERMS_FILE_SECTIONS" "Cleanup")
+run_test "Pattern in correct section 'Cleanup' returns 'one'" "one" "$result"
+
+# Test 5.8: deploy to production - different states in different sections
+result_dev=$(get_permission_mode "deploy to production" "$PERMS_FILE_SECTIONS" "Development Phase")
+result_final=$(get_permission_mode "deploy to production" "$PERMS_FILE_SECTIONS" "Final Verification")
+run_test "deploy to production in 'Development Phase' returns 'deny'" "deny" "$result_dev"
+run_test "deploy to production in 'Final Verification' returns 'ask'" "ask" "$result_final"
+
+echo ""
+
+# ============================================================================
+# Test 6: Subsection support with ### (nested under ## sections)
+# ============================================================================
+echo "--- Subsection Support (### Subsections) ---"
+
+# Create test permissions file with ### subsections
+PERMS_FILE_SUBSECTIONS="$TEST_TMP_DIR/permissions-subsections.md"
+cat > "$PERMS_FILE_SUBSECTIONS" << 'EOF'
+# Permissions
+
+<permissions>
+## Workflow Permissions
+
+### Testing
+- [x] run relevant tests
+- [x] silent-failure check
+
+### Review
+- [x] review changed code
+- [ ] review architecture
+
+### Final Verification
+- [a] run ALL tests
+- [x] check build
+</permissions>
+EOF
+
+# Test 6.1: ### Section "Testing" with "run relevant tests" -> "auto"
+result=$(get_permission_mode "run relevant tests" "$PERMS_FILE_SUBSECTIONS" "Testing")
+run_test "Subsection 'Testing': run relevant tests [x] returns 'auto'" "auto" "$result"
+
+# Test 6.2: ### Section "Final Verification" with "run ALL tests" -> "all"
+result=$(get_permission_mode "run ALL tests" "$PERMS_FILE_SUBSECTIONS" "Final Verification")
+run_test "Subsection 'Final Verification': run ALL tests [a] returns 'all'" "all" "$result"
+
+# Test 6.3: ### Section "Review" with "review architecture" -> "deny"
+result=$(get_permission_mode "review architecture" "$PERMS_FILE_SUBSECTIONS" "Review")
+run_test "Subsection 'Review': review architecture [ ] returns 'deny'" "deny" "$result"
+
+# Test 6.4: ## Section "Workflow Permissions" should find items in all ### subsections
+result=$(get_permission_mode "run relevant tests" "$PERMS_FILE_SUBSECTIONS" "Workflow Permissions")
+run_test "Parent section 'Workflow Permissions' finds 'run relevant tests' in subsection" "auto" "$result"
+
+result=$(get_permission_mode "run ALL tests" "$PERMS_FILE_SUBSECTIONS" "Workflow Permissions")
+run_test "Parent section 'Workflow Permissions' finds 'run ALL tests' in subsection" "all" "$result"
+
+result=$(get_permission_mode "review architecture" "$PERMS_FILE_SUBSECTIONS" "Workflow Permissions")
+run_test "Parent section 'Workflow Permissions' finds 'review architecture' in subsection" "deny" "$result"
+
+# Test 6.5: Non-existent ### subsection -> "auto" (default)
+result=$(get_permission_mode "run relevant tests" "$PERMS_FILE_SUBSECTIONS" "Non Existent Subsection")
+run_test "Non-existent subsection returns 'auto' (default)" "auto" "$result"
+
+echo ""
+
+# ============================================================================
 # Results
 # ============================================================================
 echo "============================================"
