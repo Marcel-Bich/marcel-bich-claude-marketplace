@@ -1,0 +1,69 @@
+#!/bin/bash
+# Commit-msg hook: Block if commit message version doesn't match file version
+#
+# Checks if commit message starts with vX.Y.Z: and validates against plugin.yaml
+# Activate with: git config core.hooksPath .githooks
+
+COMMIT_MSG_FILE="$1"
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+# Extract version from commit message (format: vX.Y.Z: ...)
+MSG_VERSION=$(echo "$COMMIT_MSG" | head -1 | grep -oE '^v[0-9]+\.[0-9]+\.[0-9]+' | sed 's/^v//')
+
+# No version prefix in commit message - allow
+if [ -z "$MSG_VERSION" ]; then
+    exit 0
+fi
+
+# Find which plugin was modified (check staged files)
+STAGED_PLUGINS=$(git diff --cached --name-only | grep -oE '^plugins/[^/]+' | sort -u)
+
+if [ -z "$STAGED_PLUGINS" ]; then
+    # No plugin files staged, but version prefix used - might be root package.json
+    if [ -f "package.json" ]; then
+        FILE_VERSION=$(jq -r '.version // empty' package.json 2>/dev/null)
+        if [ -n "$FILE_VERSION" ] && [ "$FILE_VERSION" != "$MSG_VERSION" ]; then
+            echo ""
+            echo "ERROR: Version mismatch!"
+            echo "  Commit message: v$MSG_VERSION"
+            echo "  package.json:   $FILE_VERSION"
+            echo ""
+            echo "Bump version first with /dogma:versioning or fix commit message."
+            exit 1
+        fi
+    fi
+    exit 0
+fi
+
+# Check each staged plugin
+MISMATCH=0
+for PLUGIN_PATH in $STAGED_PLUGINS; do
+    PLUGIN_NAME=$(basename "$PLUGIN_PATH")
+    YAML_FILE="$PLUGIN_PATH/plugin.yaml"
+
+    if [ ! -f "$YAML_FILE" ]; then
+        continue
+    fi
+
+    FILE_VERSION=$(grep "^version:" "$YAML_FILE" 2>/dev/null | sed 's/version: *//')
+
+    if [ -z "$FILE_VERSION" ]; then
+        continue
+    fi
+
+    if [ "$FILE_VERSION" != "$MSG_VERSION" ]; then
+        echo ""
+        echo "ERROR: Version mismatch for plugin '$PLUGIN_NAME'!"
+        echo "  Commit message: v$MSG_VERSION"
+        echo "  $YAML_FILE: $FILE_VERSION"
+        echo ""
+        MISMATCH=1
+    fi
+done
+
+if [ "$MISMATCH" -eq 1 ]; then
+    echo "Bump version first with /dogma:versioning or fix commit message."
+    exit 1
+fi
+
+exit 0
