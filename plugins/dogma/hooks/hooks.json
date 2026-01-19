@@ -5,6 +5,12 @@
         "hooks": [
           {
             "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-suggestion.sh",
+            "timeout": 5,
+            "description": "Suggest using subagents based on DOGMA-PERMISSIONS.md workflow settings"
+          },
+          {
+            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/user-prompt-submit.sh",
             "timeout": 5,
             "description": "Remind of rules at every prompt (Honesty, Planning, Philosophy, Language)"
@@ -20,12 +26,6 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/checklist-tracking.sh",
             "timeout": 5,
             "description": "Scan for open checklists in PLAN.md, TODO.md, etc."
-          },
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-suggestion.sh",
-            "timeout": 5,
-            "description": "Suggest using subagents based on DOGMA-PERMISSIONS.md workflow settings"
           }
         ]
       }
