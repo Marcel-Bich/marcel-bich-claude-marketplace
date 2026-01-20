@@ -184,20 +184,17 @@ Build list of packages to install:
 - `prettier` (always required)
 - Plugins based on detected file types (Step 2)
 
-<!-- TODO: Find better security tools - socket.dev API is problematic
+<!-- TBD: Security check for EACH package before installation
 ### 3.3 Security check for EACH package
 
 **CRITICAL: Follow @CLAUDE/CLAUDE.security.md**
 
 For each package, before installation:
 
-1. Check package on socket.dev or npm:
+1. Check package on security scanning tool (TBD):
 ```bash
-# Check socket.dev (preferred)
-curl -s "https://socket.dev/api/npm/package/@prettier/plugin-php/0.22.2" 2>/dev/null | head -5
-
-# Fallback: npm view
-npm view @prettier/plugin-php@0.22.2 --json 2>/dev/null | head -20
+# TBD: Find alternative security scanning tool
+# npm view @prettier/plugin-php@0.22.2 --json 2>/dev/null | head -20
 ```
 
 2. Present to user:
