@@ -20,11 +20,14 @@ This command is ONLY available in the marketplace repository where sync.md exist
 ### 1.1 Detection
 
 ```bash
+# Script directory for token-safe utilities
+SCRIPT_DIR="${CLAUDE_PLUGIN_ROOT:-$(dirname "$(dirname "$(realpath "$0")")")}/scripts"
+
 # Check if this is the marketplace repo
 MARKETPLACE_DETECTED="false"
 
-# Method 1: Check git remote
-if git remote -v 2>/dev/null | grep -q "marcel-bich-claude-marketplace"; then
+# Method 1: Check git remote (token-safe)
+if "$SCRIPT_DIR/git-remote-safe.sh" url 2>/dev/null | grep -q "marcel-bich-claude-marketplace"; then
     MARKETPLACE_DETECTED="true"
 fi
 

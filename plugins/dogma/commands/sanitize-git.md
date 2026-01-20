@@ -144,14 +144,17 @@ Always check for these patterns regardless of CLAUDE.git.md:
 Run these checks:
 
 ```bash
+# Script directory for token-safe helpers
+SCRIPT_DIR="${CLAUDE_PLUGIN_ROOT:-$(dirname "$(dirname "$(realpath "$0")")")}/scripts"
+
 # Check if we're in a git repository
 git rev-parse --git-dir 2>/dev/null
 
 # Check if there are uncommitted changes (warn user)
 git status --porcelain
 
-# Check if there's a remote
-git remote -v
+# Check if there's a remote (token-safe)
+"$SCRIPT_DIR/git-remote-safe.sh" url
 
 # Get current branch
 git branch --show-current

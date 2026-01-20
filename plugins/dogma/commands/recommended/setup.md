@@ -56,6 +56,16 @@ This includes:
 
 If a temp directory was created for remote repos, clean it up (same as sync.md "Cleanup" section).
 
+### Step 5: Git Host Security (Optional)
+
+**For the complete security setup logic, follow sync.md:**
+- **Section:** Search for "Git Host Security Setup"
+
+This includes:
+- Detect git host (GitHub, GitLab, Bitbucket)
+- Show security feature recommendations
+- Provide settings URL for manual configuration
+
 ## Key Points
 
 - This command does NOT sync any files

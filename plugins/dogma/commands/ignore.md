@@ -119,8 +119,11 @@ Add to results: `[--] .gitignore (uebersprungen)`
 **Detection chain (ALL must fail before skipping):**
 
 ```bash
-# Check 1: Remote name contains marketplace
-git remote -v 2>/dev/null | grep -q "marcel-bich-claude-marketplace"
+# Script directory for token-safe git operations
+SCRIPT_DIR="${CLAUDE_PLUGIN_ROOT:-$(dirname "$(dirname "$(realpath "$0")")")}/scripts"
+
+# Check 1: Remote URL contains marketplace (token-safe)
+"$SCRIPT_DIR/git-remote-safe.sh" url 2>/dev/null | grep -q "marcel-bich-claude-marketplace"
 REMOTE_CHECK=$?
 
 # Check 2: File exists

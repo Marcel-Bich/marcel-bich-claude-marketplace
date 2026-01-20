@@ -986,9 +986,8 @@ fi
 
 | Tool | Compatible When |
 |------|-----------------|
-<!-- TODO: Find better security tools - these are problematic
-| socket.dev CLI | Node.js project with external dependencies |
-| snyk CLI | Any project with external dependencies (npm, pip, cargo, etc.) |
+<!-- TBD: Security scanning tools
+| (TBD) Security CLI | Node.js project with external dependencies |
 -->
 | Prettier | Node.js project (any) |
 | ESLint | Node.js project (any) |
@@ -1003,12 +1002,11 @@ fi
 
 For each tool, check **BOTH global AND local** installation:
 
-<!-- TODO: Find better security tools - these are problematic
+<!-- TBD: Security Tools
 **Security Tools:**
 | Tool | Global Detection | Local Detection | Scope |
 |------|------------------|-----------------|-------|
-| socket.dev CLI | `command -v socket` | package.json devDeps | Global recommended |
-| snyk CLI | `command -v snyk` | package.json devDeps | Global recommended |
+| (TBD) Security CLI | `command -v (tbd)` | package.json devDeps | Global recommended |
 -->
 
 **JavaScript/TypeScript:**
@@ -1054,10 +1052,6 @@ check_global_cli() {
         echo "NOT_FOUND"
     fi
 }
-
-# Security tools - disabled, need better alternatives
-# SOCKET_STATUS=$(check_global_cli "socket")
-# SNYK_STATUS=$(check_global_cli "snyk")
 
 # Python tools
 RUFF_STATUS=$(check_global_cli "ruff")
@@ -1131,11 +1125,11 @@ check_composer_dep() {
 
 ### 6.5 Present Items with Intelligent Status
 
-<!-- TODO: Find better security tools - these are problematic
-**For Global CLI tools (socket, snyk):**
+<!-- TBD: Global CLI tools presentation
+**For Global CLI tools (security scanners):**
 
 ```
-[CLAUDE.security.md] socket.dev CLI
+[CLAUDE.security.md] (TBD) Security CLI
 
 Status: GLOBAL v1.2.3 installed
 No action needed.
@@ -1144,7 +1138,7 @@ No action needed.
 OR if not installed:
 
 ```
-[CLAUDE.security.md] socket.dev CLI
+[CLAUDE.security.md] (TBD) Security CLI
 
 Status: NOT INSTALLED
 
@@ -1155,10 +1149,10 @@ Purpose: Dependency security scanning before npm install
 
 Installation options:
 1. Install globally (recommended) - Available in all projects
-   npm install -g @socketsecurity/cli
+   npm install -g (tbd-package)
 
 2. Install locally - Only this project, versioned in package.json
-   npm install -D @socketsecurity/cli
+   npm install -D (tbd-package)
 
 3. Skip - Don't install
 
@@ -1215,14 +1209,11 @@ If user chooses "Yes, find alternative":
 
 ### 6.7 Installation Actions
 
-<!-- TODO: Find better security tools - these are problematic
+<!-- TBD: Global CLI tools installation
 **Global CLI tools:**
 ```bash
-# socket.dev - always global
-npm install -g @socketsecurity/cli
-
-# snyk - always global
-npm install -g snyk
+# (TBD) Security scanner - always global
+npm install -g (tbd-package)
 ```
 -->
 
@@ -1253,9 +1244,10 @@ Skipping security scanners: No external dependencies to scan.
 ```
 Setup-Tour Complete
 
+<!-- TBD: Global security tools
 ALREADY INSTALLED (GLOBAL):
-= socket.dev CLI v1.2.3
-= snyk CLI v2.1.0
+= (TBD) Security CLI v1.2.3
+-->
 
 ALREADY INSTALLED (LOCAL):
 = Prettier v3.2.5 (in package.json)
@@ -1270,7 +1262,54 @@ NOT APPLICABLE:
 - Security scanners (no external dependencies)
 ```
 
-### 6.10 Skip Option
+### 6.10 Git Host Security Setup
+
+**Check if git repository with remote:**
+
+```bash
+SCRIPT_DIR="${CLAUDE_PLUGIN_ROOT}/scripts"
+REMOTE_URL=$("$SCRIPT_DIR/git-remote-safe.sh" url 2>/dev/null)
+
+if [ -z "$REMOTE_URL" ]; then
+    echo "No git remote configured - skipping security setup"
+    # Skip to Step 7
+fi
+
+OWNER_REPO=$("$SCRIPT_DIR/git-remote-safe.sh" owner-repo)
+HOST=$("$SCRIPT_DIR/git-remote-safe.sh" host)
+```
+
+**Ask user about security setup:**
+
+Use AskUserQuestion to present options based on detected host:
+
+```
+Git Host Security Setup
+
+Detected: $HOST
+Repository: $OWNER_REPO
+
+Would you like to configure security settings?
+
+1. Open settings page in browser
+2. Show recommendations only
+3. Skip
+```
+
+**For option 1:** Provide the appropriate URL based on host:
+- GitHub: `https://github.com/$OWNER_REPO/settings/security_analysis`
+- GitLab: `https://gitlab.com/$OWNER_REPO/-/settings/security_and_compliance`
+- Bitbucket: `https://bitbucket.org/$OWNER_REPO/admin/security`
+
+**For option 2:** Show the recommendations from RECOMMENDATIONS.md (Git Host Security Settings section), differentiating between public and private repos for GitHub.
+
+**Key points:**
+- Use token-safe URL extraction (never expose tokens)
+- Auto-detect host from URL
+- User confirms before any action
+- Show different recommendations for public vs private repos
+
+### 6.11 Skip Option
 
 Allow user to skip the entire Setup-Tour:
 

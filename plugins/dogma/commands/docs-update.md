@@ -83,9 +83,11 @@ cd .. && git clone <URL>
 
 Once found/cloned:
 ```bash
+SCRIPT_DIR="${CLAUDE_PLUGIN_ROOT:-$(dirname "$(dirname "$(realpath "$0")")")}/scripts"
+
 cd <wiki-path>
 git rev-parse --git-dir  # Verify it's a git repo
-git remote -v            # Show remote URL
+"$SCRIPT_DIR/git-remote-safe.sh" url  # Show remote URL (token-safe)
 ls -la                   # List wiki files
 ```
 
