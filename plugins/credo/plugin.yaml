@@ -1,6 +1,6 @@
 name: credo
 description: Opinionated workflow guides and best practices - the preacher's proven patterns for Claude Code projects
-version: 0.2.18
+version: 0.2.19
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
@@ -8,3 +8,6 @@ commands:
   psalm:
     description: Interactive guide to available topics and workflows
     source: commands/psalm.md
+  session-init:
+    description: Initialize session with main agent workflow instructions
+    source: commands/session-init.md
