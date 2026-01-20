@@ -167,11 +167,17 @@ SUBAGENT_TOOLS="Task|Skill|hydra"
 # === READ-ONLY BASH WHITELIST ===
 # These commands are always allowed - they're research, not implementation
 # Pattern matches the START of the command
+#
+# NOTE: Commands excluded because Claude has better tools or output can be large:
+# - cat/head/tail -> use Read tool
+# - grep -> use Grep tool
+# - find -> use Glob tool
+# - git show, du, env, printenv, ps, free, top -> output can be very large
 READ_ONLY_WHITELIST=(
+    # Git commands (typically short output)
     "git diff"
     "git status"
     "git log"
-    "git show"
     "git branch"
     "git worktree list"
     "git remote"
@@ -179,34 +185,23 @@ READ_ONLY_WHITELIST=(
     "git rev-parse"
     "git config --get"
     "git ls-files"
+    # File info (always short)
     "ls"
-    "cat "
-    "head "
-    "tail "
-    "grep "
-    "find "
     "pwd"
-    "echo "
-    "which "
-    "type "
-    "file "
-    "stat "
-    "wc "
     "basename"
     "dirname"
     "realpath"
     "readlink"
-    "env"
-    "printenv"
+    "stat "
+    "wc "
+    "file "
+    "which "
+    "type "
+    # System info (short output)
     "uname"
     "whoami"
     "id"
     "date"
-    "df "
-    "du "
-    "free"
-    "ps "
-    "top -"
     "node -v"
     "npm -v"
     "nvm "
