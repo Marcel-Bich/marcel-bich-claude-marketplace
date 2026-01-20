@@ -406,107 +406,95 @@ Apply these changes?
 - Each setting change requires confirmation
 - Existing settings not in source are preserved
 
-### 4.1.4 Special: DOGMA-PERMISSIONS.md (Migration from CLAUDE.git.md)
+### 4.1.4 Special: DOGMA-PERMISSIONS.md
 
-When syncing, check if the project needs permission migration:
+**Principle:** Sync does NOT handle permissions logic. All permissions work is delegated to `/dogma:permissions`.
 
 **Detection logic:**
 
 ```bash
 # Check current state
-HAS_DOGMA_PERMS=$([ -f "DOGMA-PERMISSIONS.md" ] && echo "true" || echo "false")
-HAS_CLAUDE_GIT=$([ -f "CLAUDE/CLAUDE.git.md" ] || [ -f "CLAUDE.git.md" ] && echo "true" || echo "false")
+HAS_PROJECT_PERMS=$([ -f "DOGMA-PERMISSIONS.md" ] && echo "true" || echo "false")
+HAS_SOURCE_PERMS=$([ -f "$SOURCE_DIR/DOGMA-PERMISSIONS.md" ] && echo "true" || echo "false")
 
-# Check if CLAUDE.git.md has <permissions> section
-if [ "$HAS_CLAUDE_GIT" = "true" ]; then
-    CLAUDE_GIT_FILE=$([ -f "CLAUDE/CLAUDE.git.md" ] && echo "CLAUDE/CLAUDE.git.md" || echo "CLAUDE.git.md")
-    HAS_PERMS_SECTION=$(grep -q "<permissions>" "$CLAUDE_GIT_FILE" && echo "true" || echo "false")
+# Check for old structure (permissions in CLAUDE.git.md)
+HAS_OLD_PERMS="false"
+for f in "CLAUDE/CLAUDE.git.md" "CLAUDE.git.md"; do
+    if [ -f "$f" ] && grep -q "<permissions>" "$f"; then
+        HAS_OLD_PERMS="true"
+        break
+    fi
+done
+```
+
+**Decision tree:**
+
+**1. Source has DOGMA-PERMISSIONS.md AND project has DOGMA-PERMISSIONS.md:**
+
+```bash
+# Compare both files
+if diff -q "DOGMA-PERMISSIONS.md" "$SOURCE_DIR/DOGMA-PERMISSIONS.md" > /dev/null 2>&1; then
+    echo "Permissions identical - no changes needed"
+else
+    # Show differences for user awareness
+    echo "Permissions differ between source and project:"
+    diff "DOGMA-PERMISSIONS.md" "$SOURCE_DIR/DOGMA-PERMISSIONS.md"
 fi
 ```
 
-**Scenario 1: No DOGMA-PERMISSIONS.md, but CLAUDE.git.md has permissions**
-
+If different, show:
 ```
-Migration opportunity detected:
+DOGMA-PERMISSIONS.md differs from source.
 
-Your project has permissions in CLAUDE.git.md but no DOGMA-PERMISSIONS.md.
-Dogma now uses DOGMA-PERMISSIONS.md as the dedicated permissions file.
-
-Current permissions in CLAUDE.git.md:
-- [x] May run `git add` autonomously
-- [x] May run `git commit` autonomously
-- [ ] May run `git push` autonomously
-- [ ] May delete files autonomously
-
-Would you like to migrate?
-1. Yes, create DOGMA-PERMISSIONS.md and remove <permissions> from CLAUDE.git.md
-2. No, keep permissions in CLAUDE.git.md (not recommended - will stop working)
-3. Show me what will change
+Would you like to review and configure permissions?
+1. Yes, run /dogma:permissions (Recommended)
+2. Skip permissions for now
 ```
 
-**If user chooses "Yes":**
-
-1. Create DOGMA-PERMISSIONS.md with the extracted permissions
-2. Remove the `<permissions>...</permissions>` section from CLAUDE.git.md
-3. Add reference `@DOGMA-PERMISSIONS.md` to CLAUDE.git.md
-
-```bash
-# Extract permissions section
-PERMS=$(sed -n '/<permissions>/,/<\/permissions>/p' "$CLAUDE_GIT_FILE")
-
-# Create DOGMA-PERMISSIONS.md
-cat > DOGMA-PERMISSIONS.md << 'EOF'
-# Dogma Permissions
-
-$PERMS
-EOF
-
-# Remove permissions from CLAUDE.git.md and add reference
-# (use sed or similar to modify in place)
-```
-
-**Scenario 2: No DOGMA-PERMISSIONS.md and no permissions in CLAUDE.git.md**
+**2. Source has DOGMA-PERMISSIONS.md, project has none:**
 
 ```
-No permissions file found.
+Source has permissions configuration.
 
-Would you like to create DOGMA-PERMISSIONS.md?
-1. Yes, with restrictive defaults (recommended for new projects)
-2. Yes, with permissive defaults (allows git operations)
-3. No, skip (all operations allowed by default)
+Would you like to configure permissions for this project?
+1. Yes, run /dogma:permissions (Recommended)
+2. Skip permissions for now
 ```
 
-**Restrictive defaults (all false):**
-```markdown
-# Dogma Permissions
+**3. Project has old structure (permissions in CLAUDE.git.md):**
 
-<permissions>
-- [ ] May run `git add` autonomously
-- [ ] May run `git commit` autonomously
-- [ ] May run `git push` autonomously
-- [ ] May delete files autonomously (rm, unlink, git clean)
-- [ ] Ask before deleting (instead of logging to TO-DELETE.md)
-</permissions>
+```
+Found permissions in old location (CLAUDE.git.md).
+
+Would you like to migrate to the new permissions structure?
+1. Yes, run /dogma:permissions (Recommended)
+2. Skip permissions for now
 ```
 
-**Permissive defaults (git ops true, delete false):**
-```markdown
-# Dogma Permissions
+**4. No permissions in source or project:**
 
-<permissions>
-- [x] May run `git add` autonomously
-- [x] May run `git commit` autonomously
-- [x] May run `git push` autonomously
-- [ ] May delete files autonomously (rm, unlink, git clean)
-- [ ] Ask before deleting (instead of logging to TO-DELETE.md)
-</permissions>
 ```
+No permissions configured.
+
+Would you like to set up permissions?
+1. Yes, run /dogma:permissions (Recommended)
+2. Skip permissions for now
+```
+
+**For all cases - if user chooses option 1:**
+
+```
+Will invoke /dogma:permissions after sync completes.
+```
+
+Set flag: `INVOKE_PERMISSIONS_AFTER_SYNC=true`
 
 **Key points:**
-- Always check for migration opportunity at start of sync
-- Preserve existing permission values during migration
-- Remove permissions from CLAUDE.git.md after migration
-- Add @DOGMA-PERMISSIONS.md reference to CLAUDE.git.md
+- Sync handles NO permissions logic itself
+- All permissions work delegated to /dogma:permissions
+- Comparison only to show user what differs
+- Actual configuration always via /dogma:permissions
+- Flag triggers Skill invocation at end of sync (Step 8)
 
 ### 4.2 File EXISTS in Project - Granular Rule-by-Rule Merge
 
@@ -1353,6 +1341,20 @@ Changes made:
 
 Note: Files are untracked. Run 'git status' to see them.
 ```
+
+### 8.1 Invoke Pending Permissions Setup
+
+After displaying the summary, check if permissions setup was requested:
+
+```bash
+if [ "$INVOKE_PERMISSIONS_AFTER_SYNC" = "true" ]; then
+    echo ""
+    echo "Now invoking /dogma:permissions as requested..."
+    # Invoke Skill tool with skill: "dogma:permissions"
+fi
+```
+
+This ensures the user can configure permissions interactively after the sync is complete.
 
 ## Important Rules
 
