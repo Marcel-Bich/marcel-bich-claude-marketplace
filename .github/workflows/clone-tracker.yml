@@ -14,7 +14,7 @@ jobs:
 
       - name: Update clone stats
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.CLONE_TOKEN }}
         run: |
           # Get clone data (per day for last 14 days)
           CLONE_DATA=$(gh api repos/${{ github.repository }}/traffic/clones)
