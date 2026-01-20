@@ -96,9 +96,9 @@ All plugins require:
 claude plugin marketplace add Marcel-Bich/marcel-bich-claude-marketplace
 claude plugin install credo@marcel-bich-claude-marketplace
 claude plugin install dogma@marcel-bich-claude-marketplace
+claude plugin install hydra@marcel-bich-claude-marketplace
 claude plugin install signal@marcel-bich-claude-marketplace
 claude plugin install limit@marcel-bich-claude-marketplace
-claude plugin install hydra@marcel-bich-claude-marketplace
 claude plugin install import@marcel-bich-claude-marketplace
 claude plugin install get-shit-done@marcel-bich-claude-marketplace
 ```
