@@ -44,8 +44,7 @@ Format numbers as: 5.2M (millions), 500.0k (thousands), 1.5B (billions)
 - 7d: {window_tokens_7d formatted} Tokens
 - Device: {hostname from bash output}
 
-> **Note:** These values show Main Agent tokens only.
-> The statusline displays combined totals (Main + Subagents) in real-time.
+> **Note:** Current Window shows Main Agent only. See Lifetime Totals for combined Main + Subagent.
 
 ### Lifetime Totals
 

@@ -1670,6 +1670,11 @@ EOF
                 else
                     total_tokens_ever=$(get_total_tokens_ever)
                 fi
+                # Add subagent tokens to lifetime total
+                local subagent_total=0
+                subagent_total=$(get_subagent_tokens 2>/dev/null) || subagent_total=0
+                [[ "$subagent_total" == "null" ]] && subagent_total=0
+                total_tokens_ever=$((total_tokens_ever + subagent_total))
                 if [[ "$total_tokens_ever" -gt 0 ]]; then
                     local formatted_tokens total_cost_ever
                     formatted_tokens=$(format_tokens "$total_tokens_ever")
