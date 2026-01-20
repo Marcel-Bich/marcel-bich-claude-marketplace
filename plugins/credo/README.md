@@ -7,6 +7,7 @@ Opinionated workflow guides and best practices - the preacher's proven patterns 
 | Command | Description |
 |---------|-------------|
 | `/credo:psalm` | Interactive guide to available topics and workflows |
+| `/credo:session-init` | Initialize session with main agent workflow instructions |
 
 ## Purpose
 
