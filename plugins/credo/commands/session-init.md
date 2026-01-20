@@ -52,6 +52,7 @@ When spawning Task, ALWAYS include:
 4. What should NOT be committed
 5. "Read CLAUDE.md first for project rules"
 6. "NO git push - report back to main agent"
+7. "NEVER add/commit .gitignore-d files - they are ignored intentionally"
 
 ### Rule 4: Handoff Chain
 
