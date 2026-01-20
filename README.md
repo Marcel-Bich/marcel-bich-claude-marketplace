@@ -8,7 +8,7 @@
   <a href="https://github.com/Marcel-Bich/marcel-bich-claude-marketplace"><img src="https://img.shields.io/badge/Claude_Code_Marketplace-da6c49?style=for-the-badge" alt="Claude Code Marketplace"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-2ea44f?style=for-the-badge" alt="License"></a>
   <a href="https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/stargazers"><img src="https://img.shields.io/github/stars/Marcel-Bich/marcel-bich-claude-marketplace?style=for-the-badge&logo=github" alt="GitHub Stars"></a>
-  <a href="#"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FMarcel-Bich%2Fmarcel-bich-claude-marketplace%2Fmain%2F.github%2Fclone-stats.json&query=%24.total_clones&label=Clones&style=for-the-badge&logo=github" alt="Total Clones"></a>
+  <a href="#"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FMarcel-Bich%2Fmarcel-bich-claude-marketplace%2Fmain%2F.github%2Fclone-stats.json&query=%24.total_clones&label=Clones/Installs&style=for-the-badge&logo=github" alt="Total Clones"></a>
 </p>
 
 <p align="center">
