@@ -1419,6 +1419,17 @@ format_output() {
             [[ "$subagent_baseline_7d" == "null" ]] && subagent_baseline_7d=0
         fi
 
+        # Initialize baseline to current total on first run (prevents historical tokens in window)
+        # This ensures that only tokens since plugin install count toward the window
+        if [[ "$subagent_baseline_5h" -eq 0 ]] && [[ "$subagent_tokens_total" -gt 0 ]]; then
+            subagent_baseline_5h="$subagent_tokens_total"
+            debug_log "Initialized 5h subagent baseline to current total: $subagent_baseline_5h"
+        fi
+        if [[ "$subagent_baseline_7d" -eq 0 ]] && [[ "$subagent_tokens_total" -gt 0 ]]; then
+            subagent_baseline_7d="$subagent_tokens_total"
+            debug_log "Initialized 7d subagent baseline to current total: $subagent_baseline_7d"
+        fi
+
         # On reset, update baseline to current subagent total
         if [[ "$reset_5h_detected" == "true" ]]; then
             subagent_baseline_5h="$subagent_tokens_total"
