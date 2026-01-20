@@ -6,6 +6,9 @@
 # - [x] use Hydra for 2+ independent tasks -> warn if no Task/Hydra tool
 # - [x] spawn subagent for verification -> warn if no subagent for verification
 #
+# Read-only Bash commands (git diff, ls, cat, etc.) are whitelisted and never blocked.
+# These are research commands, not implementation actions.
+#
 # This hook warns but does NOT block, as subagent usage is sometimes optional.
 #
 # ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch
@@ -55,6 +58,16 @@ else
     INPUT=$(cat 2>/dev/null || true)
     TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
     dogma_debug_log "Tool from stdin: $TOOL_NAME"
+fi
+
+# === GET BASH COMMAND FOR WHITELIST CHECK ===
+BASH_COMMAND=""
+if [ "$TOOL_NAME" = "Bash" ]; then
+    # Try to get command from stdin input if available
+    if [ -n "$INPUT" ]; then
+        BASH_COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
+    fi
+    dogma_debug_log "Bash command: $BASH_COMMAND"
 fi
 
 # Find permissions file
@@ -150,6 +163,76 @@ track_tool "$TOOL_NAME"
 # === SUBAGENT TOOLS ===
 # These are tools that indicate proper delegation
 SUBAGENT_TOOLS="Task|Skill|hydra"
+
+# === READ-ONLY BASH WHITELIST ===
+# These commands are always allowed - they're research, not implementation
+# Pattern matches the START of the command
+READ_ONLY_WHITELIST=(
+    "git diff"
+    "git status"
+    "git log"
+    "git show"
+    "git branch"
+    "git worktree list"
+    "git remote"
+    "git fetch"
+    "git rev-parse"
+    "git config --get"
+    "git ls-files"
+    "ls"
+    "cat "
+    "head "
+    "tail "
+    "grep "
+    "find "
+    "pwd"
+    "echo "
+    "which "
+    "type "
+    "file "
+    "stat "
+    "wc "
+    "basename"
+    "dirname"
+    "realpath"
+    "readlink"
+    "env"
+    "printenv"
+    "uname"
+    "whoami"
+    "id"
+    "date"
+    "df "
+    "du "
+    "free"
+    "ps "
+    "top -"
+    "node -v"
+    "npm -v"
+    "nvm "
+    "python --version"
+    "pip --version"
+)
+
+# Check if Bash command is read-only (whitelisted)
+is_readonly_bash() {
+    local cmd="$1"
+    [ -z "$cmd" ] && return 1
+
+    for pattern in "${READ_ONLY_WHITELIST[@]}"; do
+        if [[ "$cmd" == "$pattern"* ]]; then
+            dogma_debug_log "Whitelisted read-only command: $pattern"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Skip enforcement for read-only Bash commands
+if [ "$TOOL_NAME" = "Bash" ] && is_readonly_bash "$BASH_COMMAND"; then
+    dogma_debug_log "Read-only Bash command - skip enforcement"
+    exit 0
+fi
 
 # === LOGIC: HYDRA CHECK ===
 # If Hydra is enabled and we see multiple direct work operations without delegation
