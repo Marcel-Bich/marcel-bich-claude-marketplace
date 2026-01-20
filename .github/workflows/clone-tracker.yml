@@ -1,0 +1,52 @@
+name: Clone Tracker
+on:
+  schedule:
+    - cron: '0 5 1 * *'  # Monthly on 1st at 05:00 UTC
+  workflow_dispatch:      # Manual trigger
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update clone stats
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get clone data (per day for last 14 days)
+          CLONE_DATA=$(gh api repos/${{ github.repository }}/traffic/clones)
+
+          # Read stored last date
+          LAST_DATE=$(jq -r '.last_recorded_date // "1970-01-01"' .github/clone-stats.json)
+          CURRENT_TOTAL=$(jq -r '.total_clones // 0' .github/clone-stats.json)
+
+          # Sum only clones AFTER the last recorded date
+          NEW_CLONES=$(echo "$CLONE_DATA" | jq --arg last "$LAST_DATE" '
+            .clones | map(select(.timestamp > ($last + "T00:00:00Z"))) | map(.count) | add // 0
+          ')
+
+          # Find the newest date in the data
+          NEWEST_DATE=$(echo "$CLONE_DATA" | jq -r '.clones | map(.timestamp) | max // empty | split("T")[0]')
+
+          # Calculate new total
+          NEW_TOTAL=$((CURRENT_TOTAL + NEW_CLONES))
+
+          # Update JSON (only if there is new data)
+          if [ -n "$NEWEST_DATE" ] && [ "$NEWEST_DATE" != "$LAST_DATE" ]; then
+            jq --argjson total "$NEW_TOTAL" \
+               --arg date "$NEWEST_DATE" \
+               --arg updated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+               '.total_clones = $total | .last_recorded_date = $date | .last_updated = $updated' \
+               .github/clone-stats.json > tmp.json && mv tmp.json .github/clone-stats.json
+          fi
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/clone-stats.json
+          git diff --staged --quiet || git commit -m "chore: update clone stats"
+          git push
