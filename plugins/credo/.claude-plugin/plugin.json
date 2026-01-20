@@ -1,6 +1,6 @@
 {
   "name": "credo",
-  "version": "0.2.17",
+  "version": "0.2.18",
   "description": "Opinionated workflow guides and best practices - the preacher's proven patterns for Claude Code projects.",
   "keywords": [
     "workflow",
