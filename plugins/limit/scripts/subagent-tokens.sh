@@ -195,62 +195,81 @@ get_subagent_state_value() {
 # Token extraction from JSONL files
 # =============================================================================
 
-# Extract total tokens from a single JSONL file
+# Extract total tokens from a single JSONL file with cost calculation
 # Usage: extract_tokens_from_file <filepath>
-# Returns: input_tokens output_tokens cache_read_tokens cache_creation_tokens (space separated)
+# Returns: input_tokens output_tokens cache_read_tokens cache_creation_tokens cost (space separated)
 extract_tokens_from_file() {
     local filepath="${1:-}"
 
     if [[ ! -f "${filepath}" ]]; then
-        echo "0 0 0 0"
+        echo "0 0 0 0 0.000000"
         return
     fi
 
-    # Use jq to sum all token values from assistant messages with usage data
-    # Fields: input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens
+    # Use jq to extract tokens grouped by model and calculate cost in single pass
+    # Note: Use select(.message.usage) instead of != null to avoid shell escaping issues
     local result
-    result=$(jq -s '
-        [.[] | select(.message.usage != null) | .message.usage] |
+    result=$(jq -rs '
+        # Pricing tables (per MTok) - embedded in jq for single-pass processing
+        def price_input:
+            {"opus-4-5": 5.00, "sonnet-4-5": 3.00, "haiku-4-5": 1.00,
+             "opus-4": 15.00, "opus-4-1": 15.00, "sonnet-4": 3.00,
+             "haiku-4": 1.00, "haiku-3": 0.25, "default": 15.00};
+        def price_output:
+            {"opus-4-5": 25.00, "sonnet-4-5": 15.00, "haiku-4-5": 5.00,
+             "opus-4": 75.00, "opus-4-1": 75.00, "sonnet-4": 15.00,
+             "haiku-4": 5.00, "haiku-3": 1.25, "default": 75.00};
+
+        # Extract model key from model ID (claude-haiku-4-5-20251001 -> haiku-4-5)
+        def get_price_key:
+            gsub("^claude-"; "") | gsub("-[0-9]{8}$"; "") |
+            if price_input[.] then . else "default" end;
+
+        # Cache pricing multipliers
+        0.1 as $cache_r_mult | 1.25 as $cache_c_mult |
+        1000000 as $mtok |
+
+        # Group by model and sum tokens
+        [.[] | select(.message.usage and .message.model) |
+            {
+                model: .message.model,
+                input: (.message.usage.input_tokens // 0),
+                output: (.message.usage.output_tokens // 0),
+                cache_read: (.message.usage.cache_read_input_tokens // 0),
+                cache_creation: (.message.usage.cache_creation_input_tokens // 0)
+            }
+        ] |
+        group_by(.model) |
+        map({
+            model: .[0].model,
+            input: (map(.input) | add),
+            output: (map(.output) | add),
+            cache_read: (map(.cache_read) | add),
+            cache_creation: (map(.cache_creation) | add)
+        }) |
+
+        # Calculate totals and cost
         {
-            input: (map(.input_tokens // 0) | add // 0),
-            output: (map(.output_tokens // 0) | add // 0),
-            cache_read: (map(.cache_read_input_tokens // 0) | add // 0),
-            cache_creation: (map(.cache_creation_input_tokens // 0) | add // 0)
+            total_input: (map(.input) | add // 0),
+            total_output: (map(.output) | add // 0),
+            total_cache_read: (map(.cache_read) | add // 0),
+            total_cache_creation: (map(.cache_creation) | add // 0),
+            total_cost: (map(
+                (.model | get_price_key) as $key |
+                (price_input[$key] // price_input["default"]) as $inp_price |
+                (price_output[$key] // price_output["default"]) as $out_price |
+                ((.input / $mtok) * $inp_price) +
+                ((.output / $mtok) * $out_price) +
+                ((.cache_read / $mtok) * $inp_price * $cache_r_mult) +
+                ((.cache_creation / $mtok) * $inp_price * $cache_c_mult)
+            ) | add // 0)
         } |
-        "\(.input) \(.output) \(.cache_read) \(.cache_creation)"
-    ' "${filepath}" 2>/dev/null) || result="0 0 0 0"
+        "\(.total_input) \(.total_output) \(.total_cache_read) \(.total_cache_creation) \(.total_cost | . * 1000000 | floor / 1000000)"
+    ' "${filepath}" 2>/dev/null) || result="0 0 0 0 0.000000"
 
     # Remove quotes if present
     result="${result//\"/}"
     echo "${result}"
-}
-
-# Extract tokens with model breakdown from a single JSONL file
-# Usage: extract_tokens_with_model <filepath>
-# Returns: JSON object with model-keyed token counts
-extract_tokens_with_model() {
-    local filepath="${1:-}"
-
-    if [[ ! -f "${filepath}" ]]; then
-        echo "{}"
-        return
-    fi
-
-    # Extract tokens grouped by model
-    jq -s '
-        [.[] | select(.message.usage != null and .message.model != null)] |
-        group_by(.message.model) |
-        map({
-            key: .[0].message.model,
-            value: {
-                input: (map(.message.usage.input_tokens // 0) | add // 0),
-                output: (map(.message.usage.output_tokens // 0) | add // 0),
-                cache_read: (map(.message.usage.cache_read_input_tokens // 0) | add // 0),
-                cache_creation: (map(.message.usage.cache_creation_input_tokens // 0) | add // 0)
-            }
-        }) |
-        from_entries
-    ' "${filepath}" 2>/dev/null || echo "{}"
 }
 
 # =============================================================================
@@ -366,15 +385,17 @@ get_subagent_tokens() {
     fi
 
     # Get current totals
-    local total_input total_output total_cache_read total_cache_creation
+    local total_input total_output total_cache_read total_cache_creation total_cost
     total_input=$(get_subagent_state_value "total_input_tokens")
     total_output=$(get_subagent_state_value "total_output_tokens")
     total_cache_read=$(get_subagent_state_value "total_cache_read_tokens")
     total_cache_creation=$(get_subagent_state_value "total_cache_creation_tokens")
+    total_cost=$(get_subagent_state_value "total_cost_usd")
     [[ "${total_input}" == "null" ]] && total_input=0
     [[ "${total_output}" == "null" ]] && total_output=0
     [[ "${total_cache_read}" == "null" ]] && total_cache_read=0
     [[ "${total_cache_creation}" == "null" ]] && total_cache_creation=0
+    [[ "${total_cost}" == "null" ]] && total_cost="0"
 
     # Read processed files for lookup
     local processed_json
@@ -382,20 +403,21 @@ get_subagent_tokens() {
 
     # Process each new file
     local new_processed=()
-    local file_input file_output file_cache file_cache_creation tokens_line
+    local file_input file_output file_cache file_cache_creation file_cost tokens_line
 
     while IFS= read -r filepath; do
         [[ -z "${filepath}" ]] && continue
 
-        # Extract tokens from file
+        # Extract tokens and cost from file (now returns 5 values)
         tokens_line=$(extract_tokens_from_file "${filepath}")
-        read -r file_input file_output file_cache file_cache_creation <<< "${tokens_line}"
+        read -r file_input file_output file_cache file_cache_creation file_cost <<< "${tokens_line}"
 
         # Add to totals
         total_input=$((total_input + file_input))
         total_output=$((total_output + file_output))
         total_cache_read=$((total_cache_read + file_cache))
         total_cache_creation=$((total_cache_creation + file_cache_creation))
+        total_cost=$(awk -v a="${total_cost}" -v b="${file_cost}" 'BEGIN { printf "%.6f", a + b }')
 
         # Mark file as processed
         new_processed+=("\"${filepath}\"")
@@ -412,7 +434,7 @@ get_subagent_tokens() {
         updated_processed_json="${processed_json}"
     fi
 
-    # Write updated state
+    # Write updated state (including accumulated cost)
     cat > "${SUBAGENT_STATE_FILE}" << EOF
 {
   "last_scan_timestamp": ${current_time},
@@ -422,7 +444,7 @@ get_subagent_tokens() {
   "total_output_tokens": ${total_output},
   "total_cache_read_tokens": ${total_cache_read},
   "total_cache_creation_tokens": ${total_cache_creation},
-  "total_cost_usd": 0
+  "total_cost_usd": ${total_cost}
 }
 EOF
 
@@ -452,123 +474,43 @@ get_subagent_tokens_breakdown() {
     echo "${input} ${output} ${cache_read} ${cache_creation}"
 }
 
-# Scan subagent files with cost calculation
-# Uses model-specific pricing for accurate cost estimation
+# Get subagent tokens with cost (reads from state, no full rescan)
+# Cost is now calculated incrementally during token scanning
 # Returns: total_tokens total_cost_usd (space separated)
 get_subagent_tokens_with_cost() {
-    # Check if projects directory exists
-    if [[ ! -d "${CLAUDE_PROJECTS_DIR}" ]]; then
-        echo "0 0.000000"
-        return
-    fi
+    # Update state via incremental scan (cost is calculated during scan)
+    get_subagent_tokens >/dev/null
 
-    init_subagent_state
+    # Read totals from state
+    local input output cache_read cache_creation cost
+    input=$(get_subagent_state_value "total_input_tokens")
+    output=$(get_subagent_state_value "total_output_tokens")
+    cache_read=$(get_subagent_state_value "total_cache_read_tokens")
+    cache_creation=$(get_subagent_state_value "total_cache_creation_tokens")
+    cost=$(get_subagent_state_value "total_cost_usd")
 
-    # Check cache: if last scan was recent, return cached value
-    local last_cache_time current_time cache_age
-    last_cache_time=$(get_subagent_state_value "last_cache_time")
-    [[ "${last_cache_time}" == "null" ]] && last_cache_time=0
-    current_time=$(date +%s)
-    cache_age=$((current_time - last_cache_time))
+    [[ "${input}" == "null" ]] && input=0
+    [[ "${output}" == "null" ]] && output=0
+    [[ "${cache_read}" == "null" ]] && cache_read=0
+    [[ "${cache_creation}" == "null" ]] && cache_creation=0
+    [[ "${cost}" == "null" || "${cost}" == "0" ]] && cost="0.000000"
 
-    if [[ "${cache_age}" -lt "${SUBAGENT_CACHE_MAX_AGE}" ]]; then
-        # Return cached totals
-        local cached_input cached_output cached_cache_read cached_cache_creation cached_cost
-        cached_input=$(get_subagent_state_value "total_input_tokens")
-        cached_output=$(get_subagent_state_value "total_output_tokens")
-        cached_cache_read=$(get_subagent_state_value "total_cache_read_tokens")
-        cached_cache_creation=$(get_subagent_state_value "total_cache_creation_tokens")
-        cached_cost=$(get_subagent_state_value "total_cost_usd")
-        [[ "${cached_input}" == "null" ]] && cached_input=0
-        [[ "${cached_output}" == "null" ]] && cached_output=0
-        [[ "${cached_cache_read}" == "null" ]] && cached_cache_read=0
-        [[ "${cached_cache_creation}" == "null" ]] && cached_cache_creation=0
-        [[ "${cached_cost}" == "null" || "${cached_cost}" == "0" ]] && cached_cost="0.000000"
-        local total_tokens=$((cached_input + cached_output + cached_cache_read + cached_cache_creation))
-        echo "${total_tokens} ${cached_cost}"
-        return
-    fi
-
-    # Get all JSONL files (for cost calculation we need to scan all files with model info)
-    local all_files
-    all_files=$(find "${CLAUDE_PROJECTS_DIR}" -name "agent-*.jsonl" -type f 2>/dev/null)
-
-    if [[ -z "${all_files}" ]]; then
-        echo "0 0.000000"
-        return
-    fi
-
-    # Accumulate tokens by model
-    local total_cost="0"
-    local total_input=0 total_output=0 total_cache_read=0 total_cache_creation=0
-
-    while IFS= read -r filepath; do
-        [[ -z "${filepath}" ]] && continue
-
-        # Extract tokens grouped by model
-        local model_data
-        model_data=$(extract_tokens_with_model "${filepath}")
-
-        # Process each model's tokens
-        while IFS= read -r line; do
-            [[ -z "${line}" || "${line}" == "{}" ]] && continue
-
-            local model_id input output cache_read cache_creation
-            model_id=$(echo "${line}" | jq -r '.key // empty')
-            [[ -z "${model_id}" ]] && continue
-
-            input=$(echo "${line}" | jq -r '.value.input // 0')
-            output=$(echo "${line}" | jq -r '.value.output // 0')
-            cache_read=$(echo "${line}" | jq -r '.value.cache_read // 0')
-            cache_creation=$(echo "${line}" | jq -r '.value.cache_creation // 0')
-
-            # Get pricing key for this model
-            local price_key
-            price_key=$(get_model_price_key "${model_id}")
-
-            # Calculate cost for this model's tokens
-            local model_cost
-            model_cost=$(calculate_token_cost "${price_key}" "${input}" "${output}" "${cache_read}" "${cache_creation}")
-
-            # Accumulate totals
-            total_input=$((total_input + input))
-            total_output=$((total_output + output))
-            total_cache_read=$((total_cache_read + cache_read))
-            total_cache_creation=$((total_cache_creation + cache_creation))
-            total_cost=$(awk -v a="${total_cost}" -v b="${model_cost}" 'BEGIN { printf "%.6f", a + b }')
-
-        done < <(echo "${model_data}" | jq -c 'to_entries[]' 2>/dev/null)
-
-    done <<< "${all_files}"
-
-    # Update state file with cost
-    local processed_json
-    processed_json=$(jq -c '.processed_files // []' "${SUBAGENT_STATE_FILE}" 2>/dev/null) || processed_json="[]"
-
-    cat > "${SUBAGENT_STATE_FILE}" << EOF
-{
-  "last_scan_timestamp": ${current_time},
-  "last_cache_time": ${current_time},
-  "processed_files": ${processed_json},
-  "total_input_tokens": ${total_input},
-  "total_output_tokens": ${total_output},
-  "total_cache_read_tokens": ${total_cache_read},
-  "total_cache_creation_tokens": ${total_cache_creation},
-  "total_cost_usd": ${total_cost}
-}
-EOF
-
-    local total_tokens=$((total_input + total_output + total_cache_read + total_cache_creation))
-    echo "${total_tokens} ${total_cost}"
+    local total_tokens=$((input + output + cache_read + cache_creation))
+    echo "${total_tokens} ${cost}"
 }
 
 # Get only the total cost (convenience wrapper)
 # Usage: get_subagent_cost
 # Returns: cost in USD (decimal)
 get_subagent_cost() {
-    local result
-    result=$(get_subagent_tokens_with_cost)
-    echo "${result}" | awk '{print $2}'
+    # Update state via incremental scan
+    get_subagent_tokens >/dev/null
+
+    # Read cost from state
+    local cost
+    cost=$(get_subagent_state_value "total_cost_usd")
+    [[ "${cost}" == "null" || "${cost}" == "0" ]] && cost="0.000000"
+    echo "${cost}"
 }
 
 # Reset subagent state (for testing or manual reset)
