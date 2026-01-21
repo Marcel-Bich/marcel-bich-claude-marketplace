@@ -1282,8 +1282,10 @@ format_output() {
         fi
 
         ctx_col1_str="Ctx: ${formatted_len}"
-        ctx_col2_str="Ctx: ${total_pct}%"
-        ctx_col3_str="Ctx(usable): ${usable_pct}%"
+        ctx_col2_str="Ctx/Max: ${total_pct}%"
+        local usable_bar
+        usable_bar=$(progress_bar "$usable_pct")
+        ctx_col3_str="${usable_bar} ${usable_pct}%"
     fi
 
     # Session values
