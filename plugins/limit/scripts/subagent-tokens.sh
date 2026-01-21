@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # subagent-tokens.sh - Incremental subagent token tracking for limit plugin
 # Scans ~/.claude/projects/*/subagents/agent-*.jsonl files for token usage
-# Uses incremental scanning with timestamp tracking for performance
+# Uses file-offset tracking for efficient append handling
+# Tracks tokens per model (haiku, sonnet, opus) with accurate pricing
 # shellcheck disable=SC2250
 
 set -euo pipefail
@@ -19,91 +20,116 @@ CLAUDE_PROJECTS_DIR="${HOME}/.claude/projects"
 # Cache duration for subagent scan (same as API cache, default 120s)
 SUBAGENT_CACHE_MAX_AGE="${CLAUDE_MB_LIMIT_CACHE_AGE:-120}"
 
-# =============================================================================
-# Pricing Configuration (per Million Tokens)
-# =============================================================================
+# Retention period for file offsets (30 days in seconds)
+FILE_OFFSET_RETENTION_DAYS=30
+FILE_OFFSET_RETENTION_SECONDS=$((FILE_OFFSET_RETENTION_DAYS * 86400))
 
-# Input token prices per MTok
-declare -A PRICE_INPUT=(
-    ["opus-4-5"]=5.00
-    ["sonnet-4-5"]=3.00
-    ["haiku-4-5"]=1.00
-    # Legacy
-    ["opus-4"]=15.00
-    ["opus-4-1"]=15.00
-    ["sonnet-4"]=3.00
-    ["haiku-4"]=1.00
-    ["haiku-3"]=0.25
-    # Default fallback
-    ["default"]=15.00
-)
+# Current schema version - bump on breaking changes to trigger reset
+SUBAGENT_SCHEMA_VERSION=2
 
-# Output token prices per MTok
-declare -A PRICE_OUTPUT=(
-    ["opus-4-5"]=25.00
-    ["sonnet-4-5"]=15.00
-    ["haiku-4-5"]=5.00
-    # Legacy
-    ["opus-4"]=75.00
-    ["opus-4-1"]=75.00
-    ["sonnet-4"]=15.00
-    ["haiku-4"]=5.00
-    ["haiku-3"]=1.25
-    # Default fallback
-    ["default"]=75.00
-)
+# Debug logging
+SUBAGENT_DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-0}"
+SUBAGENT_LOG_FILE="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}/subagent-debug.log"
 
-# Cache pricing multipliers
-CACHE_READ_MULTIPLIER=0.1      # 90% discount
-CACHE_WRITE_5M_MULTIPLIER=1.25 # 25% surcharge
-CACHE_WRITE_1H_MULTIPLIER=2.0  # 100% surcharge
-
-# =============================================================================
-# Model pricing helpers
-# =============================================================================
-
-# Map model ID to pricing key
-# Usage: get_model_price_key "claude-haiku-4-5-20251001"
-# Returns: haiku-4-5
-get_model_price_key() {
-    local model_id="$1"
-    # Extract model name without date: claude-haiku-4-5-20251001 -> haiku-4-5
-    local key
-    key=$(echo "$model_id" | sed -E 's/claude-([a-z]+)-([0-9]+-[0-9]+)-[0-9]+/\1-\2/' | sed 's/-$//')
-    # Fallback if not found
-    if [[ -z "${PRICE_INPUT[$key]:-}" ]]; then
-        key="default"
+subagent_log() {
+    if [[ "$SUBAGENT_DEBUG" == "1" ]]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$SUBAGENT_LOG_FILE"
     fi
-    echo "$key"
 }
 
-# Calculate cost for tokens
-# Usage: calculate_token_cost <model_key> <input_tokens> <output_tokens> <cache_read_tokens> <cache_creation_tokens>
+# =============================================================================
+# Pricing Configuration (per Million Tokens) - Claude 4.5
+# =============================================================================
+
+# Haiku 4.5 pricing
+HAIKU_INPUT_PRICE=1.00
+HAIKU_OUTPUT_PRICE=5.00
+HAIKU_CACHE_READ_PRICE=0.10      # 90% discount
+HAIKU_CACHE_WRITE_PRICE=1.25     # 25% surcharge
+
+# Sonnet 4.5 pricing
+SONNET_INPUT_PRICE=3.00
+SONNET_OUTPUT_PRICE=15.00
+SONNET_CACHE_READ_PRICE=0.30
+SONNET_CACHE_WRITE_PRICE=3.75
+
+# Opus 4.5 pricing
+OPUS_INPUT_PRICE=5.00
+OPUS_OUTPUT_PRICE=25.00
+OPUS_CACHE_READ_PRICE=0.50
+OPUS_CACHE_WRITE_PRICE=6.25
+
+# =============================================================================
+# Model classification
+# =============================================================================
+
+# Map model ID to category (haiku, sonnet, opus)
+# Usage: get_model_category "claude-haiku-4-5-20251001"
+# Returns: haiku, sonnet, or opus
+get_model_category() {
+    local model_id="$1"
+
+    case "$model_id" in
+        *haiku*)
+            echo "haiku"
+            ;;
+        *sonnet*)
+            echo "sonnet"
+            ;;
+        *opus*)
+            echo "opus"
+            ;;
+        *)
+            # Default to opus (most expensive) for unknown models
+            echo "opus"
+            ;;
+    esac
+}
+
+# Calculate cost for a specific model category
+# Usage: calculate_model_cost <category> <input> <output> <cache_read> <cache_creation>
 # Returns: cost in USD (decimal)
-calculate_token_cost() {
-    local model_key="$1"
-    local input_tokens="${2:-0}"
-    local output_tokens="${3:-0}"
-    local cache_read_tokens="${4:-0}"
-    local cache_creation_tokens="${5:-0}"
+calculate_model_cost() {
+    local category="$1"
+    local input="${2:-0}"
+    local output="${3:-0}"
+    local cache_read="${4:-0}"
+    local cache_creation="${5:-0}"
 
-    local input_price="${PRICE_INPUT[$model_key]:-${PRICE_INPUT[default]}}"
-    local output_price="${PRICE_OUTPUT[$model_key]:-${PRICE_OUTPUT[default]}}"
+    local inp_price out_price cache_r_price cache_w_price
 
-    # Calculate costs (prices are per MTok, so divide by 1000000)
-    # Using awk for floating point math
-    awk -v inp="$input_tokens" -v out="$output_tokens" \
-        -v cache_r="$cache_read_tokens" -v cache_c="$cache_creation_tokens" \
-        -v inp_price="$input_price" -v out_price="$output_price" \
-        -v cache_r_mult="$CACHE_READ_MULTIPLIER" -v cache_c_mult="$CACHE_WRITE_5M_MULTIPLIER" \
+    case "$category" in
+        haiku)
+            inp_price="$HAIKU_INPUT_PRICE"
+            out_price="$HAIKU_OUTPUT_PRICE"
+            cache_r_price="$HAIKU_CACHE_READ_PRICE"
+            cache_w_price="$HAIKU_CACHE_WRITE_PRICE"
+            ;;
+        sonnet)
+            inp_price="$SONNET_INPUT_PRICE"
+            out_price="$SONNET_OUTPUT_PRICE"
+            cache_r_price="$SONNET_CACHE_READ_PRICE"
+            cache_w_price="$SONNET_CACHE_WRITE_PRICE"
+            ;;
+        *)  # opus or unknown
+            inp_price="$OPUS_INPUT_PRICE"
+            out_price="$OPUS_OUTPUT_PRICE"
+            cache_r_price="$OPUS_CACHE_READ_PRICE"
+            cache_w_price="$OPUS_CACHE_WRITE_PRICE"
+            ;;
+    esac
+
+    awk -v inp="$input" -v out="$output" \
+        -v cache_r="$cache_read" -v cache_c="$cache_creation" \
+        -v inp_price="$inp_price" -v out_price="$out_price" \
+        -v cache_r_price="$cache_r_price" -v cache_w_price="$cache_w_price" \
         'BEGIN {
             mtok = 1000000
-            input_cost = (inp / mtok) * inp_price
-            output_cost = (out / mtok) * out_price
-            cache_read_cost = (cache_r / mtok) * inp_price * cache_r_mult
-            cache_creation_cost = (cache_c / mtok) * inp_price * cache_c_mult
-            total = input_cost + output_cost + cache_read_cost + cache_creation_cost
-            printf "%.6f", total
+            cost = (inp / mtok) * inp_price + \
+                   (out / mtok) * out_price + \
+                   (cache_r / mtok) * cache_r_price + \
+                   (cache_c / mtok) * cache_w_price
+            printf "%.6f", cost
         }'
 }
 
@@ -111,53 +137,11 @@ calculate_token_cost() {
 SUBAGENT_TIMESTAMP_FILE="/tmp/claude-mb-limit-subagent-timestamp"
 
 # =============================================================================
-# Compaction configuration
-# =============================================================================
-
-# Compaction thresholds for processed_files array
-SUBAGENT_COMPACT_THRESHOLD=500
-SUBAGENT_COMPACT_COUNT=250
-
-# =============================================================================
 # State file operations
 # =============================================================================
 
-# Compact processed_files array when threshold exceeded
-# Since files are tracked by mtime, we only need recent entries
-# Older files will be re-scanned if modified (which is fine)
-compact_processed_files() {
-    if [[ ! -f "${SUBAGENT_STATE_FILE}" ]]; then
-        return 0
-    fi
-
-    # Check array length
-    local file_count
-    file_count=$(jq '.processed_files | length' "${SUBAGENT_STATE_FILE}" 2>/dev/null) || return 0
-    [[ "${file_count}" == "null" ]] && return 0
-
-    if [[ "${file_count}" -le "${SUBAGENT_COMPACT_THRESHOLD}" ]]; then
-        return 0
-    fi
-
-    # Keep only the last (newest) entries, remove oldest
-    # Since we append new files, oldest are at the beginning
-    local keep_count=$((file_count - SUBAGENT_COMPACT_COUNT))
-
-    local tmp_file
-    tmp_file=$(mktemp)
-
-    jq --argjson keep "${keep_count}" '
-        .processed_files = .processed_files[-$keep:]
-    ' "${SUBAGENT_STATE_FILE}" > "${tmp_file}" 2>/dev/null
-
-    if [[ $? -eq 0 ]] && [[ -s "${tmp_file}" ]]; then
-        mv "${tmp_file}" "${SUBAGENT_STATE_FILE}"
-    else
-        rm -f "${tmp_file}" 2>/dev/null
-    fi
-}
-
 # Initialize subagent state file if it does not exist
+# New v2 schema with file_offsets and per-model tracking
 init_subagent_state() {
     local state_dir
     state_dir=$(dirname "${SUBAGENT_STATE_FILE}")
@@ -169,16 +153,74 @@ init_subagent_state() {
     if [[ ! -f "${SUBAGENT_STATE_FILE}" ]]; then
         cat > "${SUBAGENT_STATE_FILE}" << 'EOF'
 {
+  "schema_version": 2,
   "last_scan_timestamp": 0,
   "last_cache_time": 0,
-  "processed_files": [],
-  "total_input_tokens": 0,
-  "total_output_tokens": 0,
-  "total_cache_read_tokens": 0,
-  "total_cache_creation_tokens": 0,
-  "total_cost_usd": 0
+  "file_offsets": {},
+  "haiku": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": 0
+  },
+  "sonnet": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": 0
+  },
+  "opus": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": 0
+  },
+  "total_tokens": 0,
+  "total_price": 0
 }
 EOF
+    fi
+}
+
+# Reset state if schema version mismatch (no migration, clean reset)
+reset_state_if_incompatible() {
+    if [[ ! -f "${SUBAGENT_STATE_FILE}" ]]; then
+        return 0
+    fi
+
+    local file_version
+    file_version=$(jq -r '.schema_version // 0' "${SUBAGENT_STATE_FILE}" 2>/dev/null) || file_version=0
+
+    if [[ "$file_version" != "$SUBAGENT_SCHEMA_VERSION" ]]; then
+        subagent_log "Schema mismatch: file=$file_version current=$SUBAGENT_SCHEMA_VERSION - resetting state"
+        # Backup old state (single backup, overwrites previous)
+        cp "${SUBAGENT_STATE_FILE}" "${SUBAGENT_STATE_FILE}.bak" 2>/dev/null || true
+        rm -f "${SUBAGENT_STATE_FILE}"
+        subagent_log "Old state backed up to ${SUBAGENT_STATE_FILE}.bak"
+    fi
+}
+
+# Cleanup old file offsets (older than 30 days)
+cleanup_old_offsets() {
+    if [[ ! -f "${SUBAGENT_STATE_FILE}" ]]; then
+        return 0
+    fi
+
+    local current_time
+    current_time=$(date +%s)
+    local cutoff_time=$((current_time - FILE_OFFSET_RETENTION_SECONDS))
+
+    local tmp_file
+    tmp_file=$(mktemp)
+
+    jq --argjson cutoff "$cutoff_time" '
+        .file_offsets = (.file_offsets // {} | with_entries(select(.value.ts >= $cutoff)))
+    ' "${SUBAGENT_STATE_FILE}" > "${tmp_file}" 2>/dev/null
+
+    if [[ $? -eq 0 ]] && [[ -s "${tmp_file}" ]]; then
+        mv "${tmp_file}" "${SUBAGENT_STATE_FILE}"
+    else
+        rm -f "${tmp_file}" 2>/dev/null
     fi
 }
 
@@ -192,84 +234,153 @@ get_subagent_state_value() {
 }
 
 # =============================================================================
-# Token extraction from JSONL files
+# File offset operations
 # =============================================================================
 
-# Extract total tokens from a single JSONL file with cost calculation
-# Usage: extract_tokens_from_file <filepath>
-# Returns: input_tokens output_tokens cache_read_tokens cache_creation_tokens cost (space separated)
-extract_tokens_from_file() {
-    local filepath="${1:-}"
+# Get stored byte offset for a file
+# Usage: get_file_offset <filepath>
+# Returns: byte offset (0 if not tracked)
+get_file_offset() {
+    local filepath="$1"
 
-    if [[ ! -f "${filepath}" ]]; then
-        echo "0 0 0 0 0.000000"
+    if [[ ! -f "${SUBAGENT_STATE_FILE}" ]]; then
+        echo "0"
         return
     fi
 
-    # Use jq to extract tokens grouped by model and calculate cost in single pass
-    # Note: Use select(.message.usage) instead of != null to avoid shell escaping issues
-    local result
-    result=$(jq -rs '
-        # Pricing tables (per MTok) - embedded in jq for single-pass processing
-        def price_input:
-            {"opus-4-5": 5.00, "sonnet-4-5": 3.00, "haiku-4-5": 1.00,
-             "opus-4": 15.00, "opus-4-1": 15.00, "sonnet-4": 3.00,
-             "haiku-4": 1.00, "haiku-3": 0.25, "default": 15.00};
-        def price_output:
-            {"opus-4-5": 25.00, "sonnet-4-5": 15.00, "haiku-4-5": 5.00,
-             "opus-4": 75.00, "opus-4-1": 75.00, "sonnet-4": 15.00,
-             "haiku-4": 5.00, "haiku-3": 1.25, "default": 75.00};
+    local offset
+    offset=$(jq -r --arg path "$filepath" '.file_offsets[$path].bytes // 0' "${SUBAGENT_STATE_FILE}" 2>/dev/null) || offset=0
+    [[ "$offset" == "null" ]] && offset=0
+    echo "$offset"
+}
 
-        # Extract model key from model ID (claude-haiku-4-5-20251001 -> haiku-4-5)
-        def get_price_key:
-            gsub("^claude-"; "") | gsub("-[0-9]{8}$"; "") |
-            if price_input[.] then . else "default" end;
+# Read file content starting from byte offset
+# Usage: read_file_from_offset <filepath> <offset>
+# Returns: file content from offset to end
+read_file_from_offset() {
+    local filepath="$1"
+    local offset="${2:-0}"
 
-        # Cache pricing multipliers
-        0.1 as $cache_r_mult | 1.25 as $cache_c_mult |
-        1000000 as $mtok |
+    if [[ ! -f "$filepath" ]]; then
+        return
+    fi
 
-        # Group by model and sum tokens
+    if [[ "$offset" -eq 0 ]]; then
+        cat "$filepath"
+    else
+        # tail -c +N reads from byte N to end (1-indexed, so add 1)
+        tail -c +$((offset + 1)) "$filepath" 2>/dev/null || cat "$filepath"
+    fi
+}
+
+# Get current file size in bytes
+# Usage: get_file_size <filepath>
+get_file_size() {
+    local filepath="$1"
+
+    if [[ ! -f "$filepath" ]]; then
+        echo "0"
+        return
+    fi
+
+    # Cross-platform file size
+    if stat --version >/dev/null 2>&1; then
+        # GNU stat
+        stat -c %s "$filepath" 2>/dev/null || echo "0"
+    else
+        # BSD stat (macOS)
+        stat -f %z "$filepath" 2>/dev/null || echo "0"
+    fi
+}
+
+# =============================================================================
+# Token extraction from JSONL files
+# =============================================================================
+
+# Extract tokens from JSONL content with per-model breakdown
+# Usage: extract_tokens_from_content <content>
+# Returns JSON: {"haiku":{...},"sonnet":{...},"opus":{...}}
+extract_tokens_per_model() {
+    local content="$1"
+
+    if [[ -z "$content" ]]; then
+        echo '{"haiku":{"input":0,"output":0,"cache_read":0,"cache_creation":0},"sonnet":{"input":0,"output":0,"cache_read":0,"cache_creation":0},"opus":{"input":0,"output":0,"cache_read":0,"cache_creation":0}}'
+        return
+    fi
+
+    # Use jq to extract tokens grouped by model category (haiku/sonnet/opus)
+    echo "$content" | jq -rs '
+        # Map model ID to category
+        def get_category:
+            if test("haiku"; "i") then "haiku"
+            elif test("sonnet"; "i") then "sonnet"
+            else "opus"
+            end;
+
+        # Extract and categorize tokens
         [.[] | select(.message.usage and .message.model) |
             {
-                model: .message.model,
+                category: (.message.model | get_category),
                 input: (.message.usage.input_tokens // 0),
                 output: (.message.usage.output_tokens // 0),
                 cache_read: (.message.usage.cache_read_input_tokens // 0),
                 cache_creation: (.message.usage.cache_creation_input_tokens // 0)
             }
         ] |
-        group_by(.model) |
+
+        # Group by category and sum
+        group_by(.category) |
         map({
-            model: .[0].model,
-            input: (map(.input) | add),
-            output: (map(.output) | add),
-            cache_read: (map(.cache_read) | add),
-            cache_creation: (map(.cache_creation) | add)
-        }) |
+            key: .[0].category,
+            value: {
+                input: (map(.input) | add // 0),
+                output: (map(.output) | add // 0),
+                cache_read: (map(.cache_read) | add // 0),
+                cache_creation: (map(.cache_creation) | add // 0)
+            }
+        }) | from_entries |
 
-        # Calculate totals and cost
+        # Ensure all categories exist
         {
-            total_input: (map(.input) | add // 0),
-            total_output: (map(.output) | add // 0),
-            total_cache_read: (map(.cache_read) | add // 0),
-            total_cache_creation: (map(.cache_creation) | add // 0),
-            total_cost: (map(
-                (.model | get_price_key) as $key |
-                (price_input[$key] // price_input["default"]) as $inp_price |
-                (price_output[$key] // price_output["default"]) as $out_price |
-                ((.input / $mtok) * $inp_price) +
-                ((.output / $mtok) * $out_price) +
-                ((.cache_read / $mtok) * $inp_price * $cache_r_mult) +
-                ((.cache_creation / $mtok) * $inp_price * $cache_c_mult)
-            ) | add // 0)
-        } |
-        "\(.total_input) \(.total_output) \(.total_cache_read) \(.total_cache_creation) \(.total_cost | . * 1000000 | floor / 1000000)"
-    ' "${filepath}" 2>/dev/null) || result="0 0 0 0 0.000000"
+            haiku: (.haiku // {input:0, output:0, cache_read:0, cache_creation:0}),
+            sonnet: (.sonnet // {input:0, output:0, cache_read:0, cache_creation:0}),
+            opus: (.opus // {input:0, output:0, cache_read:0, cache_creation:0})
+        }
+    ' 2>/dev/null || echo '{"haiku":{"input":0,"output":0,"cache_read":0,"cache_creation":0},"sonnet":{"input":0,"output":0,"cache_read":0,"cache_creation":0},"opus":{"input":0,"output":0,"cache_read":0,"cache_creation":0}}'
+}
 
-    # Remove quotes if present
-    result="${result//\"/}"
-    echo "${result}"
+# Extract tokens from a file starting at offset, return per-model breakdown
+# Usage: extract_tokens_from_file_offset <filepath> <offset>
+# Returns JSON: {"haiku":{...},"sonnet":{...},"opus":{...},"new_offset":<bytes>}
+extract_tokens_from_file_offset() {
+    local filepath="$1"
+    local offset="${2:-0}"
+
+    if [[ ! -f "$filepath" ]]; then
+        echo '{"haiku":{"input":0,"output":0,"cache_read":0,"cache_creation":0},"sonnet":{"input":0,"output":0,"cache_read":0,"cache_creation":0},"opus":{"input":0,"output":0,"cache_read":0,"cache_creation":0},"new_offset":0}'
+        return
+    fi
+
+    local current_size
+    current_size=$(get_file_size "$filepath")
+
+    # Skip if file hasn't grown
+    if [[ "$offset" -ge "$current_size" ]]; then
+        echo "{\"haiku\":{\"input\":0,\"output\":0,\"cache_read\":0,\"cache_creation\":0},\"sonnet\":{\"input\":0,\"output\":0,\"cache_read\":0,\"cache_creation\":0},\"opus\":{\"input\":0,\"output\":0,\"cache_read\":0,\"cache_creation\":0},\"new_offset\":$current_size}"
+        return
+    fi
+
+    # Read new content from offset
+    local content
+    content=$(read_file_from_offset "$filepath" "$offset")
+
+    # Extract per-model tokens
+    local tokens_json
+    tokens_json=$(extract_tokens_per_model "$content")
+
+    # Add new_offset to result
+    echo "$tokens_json" | jq --argjson offset "$current_size" '. + {new_offset: $offset}' 2>/dev/null || \
+        echo "{\"haiku\":{\"input\":0,\"output\":0,\"cache_read\":0,\"cache_creation\":0},\"sonnet\":{\"input\":0,\"output\":0,\"cache_read\":0,\"cache_creation\":0},\"opus\":{\"input\":0,\"output\":0,\"cache_read\":0,\"cache_creation\":0},\"new_offset\":$current_size}"
 }
 
 # =============================================================================
@@ -325,8 +436,9 @@ find_new_jsonl_files() {
 # =============================================================================
 
 # Scan subagent files and update totals
-# Uses caching: only rescans if cache expired
-# Returns: total_tokens (input + output + cache_read + cache_creation)
+# Uses file-offset tracking for efficient append handling
+# Tracks tokens per model (haiku, sonnet, opus)
+# Returns: total_tokens (all models combined)
 get_subagent_tokens() {
     # Check if projects directory exists
     if [[ ! -d "${CLAUDE_PROJECTS_DIR}" ]]; then
@@ -334,168 +446,263 @@ get_subagent_tokens() {
         return
     fi
 
+    reset_state_if_incompatible
     init_subagent_state
+    subagent_log "get_subagent_tokens: starting scan"
+
+    local current_time
+    current_time=$(date +%s)
 
     # Check cache: if last scan was recent, return cached value
-    local last_cache_time current_time cache_age
+    local last_cache_time cache_age
     last_cache_time=$(get_subagent_state_value "last_cache_time")
     [[ "${last_cache_time}" == "null" ]] && last_cache_time=0
-    current_time=$(date +%s)
     cache_age=$((current_time - last_cache_time))
 
     if [[ "${cache_age}" -lt "${SUBAGENT_CACHE_MAX_AGE}" ]]; then
-        # Return cached totals
-        local cached_input cached_output cached_cache_read cached_cache_creation
-        cached_input=$(get_subagent_state_value "total_input_tokens")
-        cached_output=$(get_subagent_state_value "total_output_tokens")
-        cached_cache_read=$(get_subagent_state_value "total_cache_read_tokens")
-        cached_cache_creation=$(get_subagent_state_value "total_cache_creation_tokens")
-        [[ "${cached_input}" == "null" ]] && cached_input=0
-        [[ "${cached_output}" == "null" ]] && cached_output=0
-        [[ "${cached_cache_read}" == "null" ]] && cached_cache_read=0
-        [[ "${cached_cache_creation}" == "null" ]] && cached_cache_creation=0
-        echo "$((cached_input + cached_output + cached_cache_read + cached_cache_creation))"
+        # Return cached total
+        local cached_total
+        cached_total=$(get_subagent_state_value "total_tokens")
+        [[ "${cached_total}" == "null" ]] && cached_total=0
+        echo "${cached_total}"
         return
     fi
 
-    # Find new files to process
-    local new_files
-    new_files=$(find_new_jsonl_files)
+    # Find files to process (modified since last scan)
+    local files_to_scan
+    files_to_scan=$(find_new_jsonl_files)
 
-    # If no new files and we have cached data, return cached
-    if [[ -z "${new_files}" ]]; then
-        local cached_input cached_output cached_cache_read cached_cache_creation
-        cached_input=$(get_subagent_state_value "total_input_tokens")
-        cached_output=$(get_subagent_state_value "total_output_tokens")
-        cached_cache_read=$(get_subagent_state_value "total_cache_read_tokens")
-        cached_cache_creation=$(get_subagent_state_value "total_cache_creation_tokens")
-        [[ "${cached_input}" == "null" ]] && cached_input=0
-        [[ "${cached_output}" == "null" ]] && cached_output=0
-        [[ "${cached_cache_read}" == "null" ]] && cached_cache_read=0
-        [[ "${cached_cache_creation}" == "null" ]] && cached_cache_creation=0
+    # If no modified files, just update cache time and return
+    if [[ -z "${files_to_scan}" ]]; then
+        local cached_total
+        cached_total=$(get_subagent_state_value "total_tokens")
+        [[ "${cached_total}" == "null" ]] && cached_total=0
 
-        # Update cache time even if no new files
+        # Update cache time
         local tmp_file
         tmp_file=$(mktemp)
         jq ".last_cache_time = ${current_time}" "${SUBAGENT_STATE_FILE}" > "${tmp_file}" && \
             mv "${tmp_file}" "${SUBAGENT_STATE_FILE}"
 
-        echo "$((cached_input + cached_output + cached_cache_read + cached_cache_creation))"
+        echo "${cached_total}"
         return
     fi
 
-    # Get current totals
-    local total_input total_output total_cache_read total_cache_creation total_cost
-    total_input=$(get_subagent_state_value "total_input_tokens")
-    total_output=$(get_subagent_state_value "total_output_tokens")
-    total_cache_read=$(get_subagent_state_value "total_cache_read_tokens")
-    total_cache_creation=$(get_subagent_state_value "total_cache_creation_tokens")
-    total_cost=$(get_subagent_state_value "total_cost_usd")
-    [[ "${total_input}" == "null" ]] && total_input=0
-    [[ "${total_output}" == "null" ]] && total_output=0
-    [[ "${total_cache_read}" == "null" ]] && total_cache_read=0
-    [[ "${total_cache_creation}" == "null" ]] && total_cache_creation=0
-    [[ "${total_cost}" == "null" ]] && total_cost="0"
+    # Read current state for accumulation
+    local state_json
+    state_json=$(cat "${SUBAGENT_STATE_FILE}" 2>/dev/null) || state_json="{}"
 
-    # Read processed files for lookup
-    local processed_json
-    processed_json=$(jq -c '.processed_files // []' "${SUBAGENT_STATE_FILE}" 2>/dev/null) || processed_json="[]"
+    # Initialize delta accumulators per model
+    local haiku_inp=0 haiku_out=0 haiku_cr=0 haiku_cc=0
+    local sonnet_inp=0 sonnet_out=0 sonnet_cr=0 sonnet_cc=0
+    local opus_inp=0 opus_out=0 opus_cr=0 opus_cc=0
 
-    # Process each new file
-    local new_processed=()
-    local file_input file_output file_cache file_cache_creation file_cost tokens_line
+    # Track file offsets to update
+    local file_offsets_updates=""
 
+    # Process each file with offset tracking
     while IFS= read -r filepath; do
         [[ -z "${filepath}" ]] && continue
 
-        # Extract tokens and cost from file (now returns 5 values)
-        tokens_line=$(extract_tokens_from_file "${filepath}")
-        read -r file_input file_output file_cache file_cache_creation file_cost <<< "${tokens_line}"
+        # Get stored offset for this file
+        local stored_offset
+        stored_offset=$(echo "$state_json" | jq -r --arg p "$filepath" '.file_offsets[$p].bytes // 0' 2>/dev/null) || stored_offset=0
+        [[ "$stored_offset" == "null" ]] && stored_offset=0
 
-        # Add to totals
-        total_input=$((total_input + file_input))
-        total_output=$((total_output + file_output))
-        total_cache_read=$((total_cache_read + file_cache))
-        total_cache_creation=$((total_cache_creation + file_cache_creation))
-        total_cost=$(awk -v a="${total_cost}" -v b="${file_cost}" 'BEGIN { printf "%.6f", a + b }')
+        # Extract tokens from new content only
+        local result_json
+        result_json=$(extract_tokens_from_file_offset "$filepath" "$stored_offset")
 
-        # Mark file as processed
-        new_processed+=("\"${filepath}\"")
+        # Parse per-model deltas
+        local h_inp h_out h_cr h_cc
+        local s_inp s_out s_cr s_cc
+        local o_inp o_out o_cr o_cc
+        local new_offset
 
-    done <<< "${new_files}"
+        h_inp=$(echo "$result_json" | jq -r '.haiku.input // 0') || h_inp=0
+        h_out=$(echo "$result_json" | jq -r '.haiku.output // 0') || h_out=0
+        h_cr=$(echo "$result_json" | jq -r '.haiku.cache_read // 0') || h_cr=0
+        h_cc=$(echo "$result_json" | jq -r '.haiku.cache_creation // 0') || h_cc=0
 
-    # Build updated processed files array
-    local updated_processed_json
-    if [[ ${#new_processed[@]} -gt 0 ]]; then
-        local new_files_json
-        new_files_json=$(printf '%s\n' "${new_processed[@]}" | jq -s '.')
-        updated_processed_json=$(echo "${processed_json}" | jq --argjson new "${new_files_json}" '. + $new | unique')
-    else
-        updated_processed_json="${processed_json}"
-    fi
+        s_inp=$(echo "$result_json" | jq -r '.sonnet.input // 0') || s_inp=0
+        s_out=$(echo "$result_json" | jq -r '.sonnet.output // 0') || s_out=0
+        s_cr=$(echo "$result_json" | jq -r '.sonnet.cache_read // 0') || s_cr=0
+        s_cc=$(echo "$result_json" | jq -r '.sonnet.cache_creation // 0') || s_cc=0
 
-    # Write updated state (including accumulated cost)
-    cat > "${SUBAGENT_STATE_FILE}" << EOF
+        o_inp=$(echo "$result_json" | jq -r '.opus.input // 0') || o_inp=0
+        o_out=$(echo "$result_json" | jq -r '.opus.output // 0') || o_out=0
+        o_cr=$(echo "$result_json" | jq -r '.opus.cache_read // 0') || o_cr=0
+        o_cc=$(echo "$result_json" | jq -r '.opus.cache_creation // 0') || o_cc=0
+
+        new_offset=$(echo "$result_json" | jq -r '.new_offset // 0') || new_offset=0
+
+        # Accumulate deltas
+        haiku_inp=$((haiku_inp + h_inp))
+        haiku_out=$((haiku_out + h_out))
+        haiku_cr=$((haiku_cr + h_cr))
+        haiku_cc=$((haiku_cc + h_cc))
+
+        sonnet_inp=$((sonnet_inp + s_inp))
+        sonnet_out=$((sonnet_out + s_out))
+        sonnet_cr=$((sonnet_cr + s_cr))
+        sonnet_cc=$((sonnet_cc + s_cc))
+
+        opus_inp=$((opus_inp + o_inp))
+        opus_out=$((opus_out + o_out))
+        opus_cr=$((opus_cr + o_cr))
+        opus_cc=$((opus_cc + o_cc))
+
+        # Build file offset update entry
+        file_offsets_updates="${file_offsets_updates}\"${filepath}\":{\"bytes\":${new_offset},\"ts\":${current_time}},"
+
+    done <<< "${files_to_scan}"
+
+    # Remove trailing comma from file_offsets_updates
+    file_offsets_updates="${file_offsets_updates%,}"
+
+    # Get current totals per model from state
+    local cur_haiku_inp cur_haiku_out cur_haiku_cr cur_haiku_cc
+    local cur_sonnet_inp cur_sonnet_out cur_sonnet_cr cur_sonnet_cc
+    local cur_opus_inp cur_opus_out cur_opus_cr cur_opus_cc
+
+    cur_haiku_inp=$(echo "$state_json" | jq -r '.haiku.input_tokens // 0') || cur_haiku_inp=0
+    cur_haiku_out=$(echo "$state_json" | jq -r '.haiku.output_tokens // 0') || cur_haiku_out=0
+    cur_haiku_cr=$(echo "$state_json" | jq -r '.haiku.cache_read_tokens // 0') || cur_haiku_cr=0
+    cur_haiku_cc=$(echo "$state_json" | jq -r '.haiku.cache_creation_tokens // 0') || cur_haiku_cc=0
+
+    cur_sonnet_inp=$(echo "$state_json" | jq -r '.sonnet.input_tokens // 0') || cur_sonnet_inp=0
+    cur_sonnet_out=$(echo "$state_json" | jq -r '.sonnet.output_tokens // 0') || cur_sonnet_out=0
+    cur_sonnet_cr=$(echo "$state_json" | jq -r '.sonnet.cache_read_tokens // 0') || cur_sonnet_cr=0
+    cur_sonnet_cc=$(echo "$state_json" | jq -r '.sonnet.cache_creation_tokens // 0') || cur_sonnet_cc=0
+
+    cur_opus_inp=$(echo "$state_json" | jq -r '.opus.input_tokens // 0') || cur_opus_inp=0
+    cur_opus_out=$(echo "$state_json" | jq -r '.opus.output_tokens // 0') || cur_opus_out=0
+    cur_opus_cr=$(echo "$state_json" | jq -r '.opus.cache_read_tokens // 0') || cur_opus_cr=0
+    cur_opus_cc=$(echo "$state_json" | jq -r '.opus.cache_creation_tokens // 0') || cur_opus_cc=0
+
+    # Calculate new totals per model
+    local new_haiku_inp=$((cur_haiku_inp + haiku_inp))
+    local new_haiku_out=$((cur_haiku_out + haiku_out))
+    local new_haiku_cr=$((cur_haiku_cr + haiku_cr))
+    local new_haiku_cc=$((cur_haiku_cc + haiku_cc))
+
+    local new_sonnet_inp=$((cur_sonnet_inp + sonnet_inp))
+    local new_sonnet_out=$((cur_sonnet_out + sonnet_out))
+    local new_sonnet_cr=$((cur_sonnet_cr + sonnet_cr))
+    local new_sonnet_cc=$((cur_sonnet_cc + sonnet_cc))
+
+    local new_opus_inp=$((cur_opus_inp + opus_inp))
+    local new_opus_out=$((cur_opus_out + opus_out))
+    local new_opus_cr=$((cur_opus_cr + opus_cr))
+    local new_opus_cc=$((cur_opus_cc + opus_cc))
+
+    # Calculate total tokens (all models)
+    local total_tokens=$((
+        new_haiku_inp + new_haiku_out + new_haiku_cr + new_haiku_cc +
+        new_sonnet_inp + new_sonnet_out + new_sonnet_cr + new_sonnet_cc +
+        new_opus_inp + new_opus_out + new_opus_cr + new_opus_cc
+    ))
+
+    # Calculate total price using per-model pricing
+    local haiku_price sonnet_price opus_price total_price
+    haiku_price=$(calculate_model_cost "haiku" "$new_haiku_inp" "$new_haiku_out" "$new_haiku_cr" "$new_haiku_cc")
+    sonnet_price=$(calculate_model_cost "sonnet" "$new_sonnet_inp" "$new_sonnet_out" "$new_sonnet_cr" "$new_sonnet_cc")
+    opus_price=$(calculate_model_cost "opus" "$new_opus_inp" "$new_opus_out" "$new_opus_cr" "$new_opus_cc")
+    total_price=$(awk -v h="$haiku_price" -v s="$sonnet_price" -v o="$opus_price" 'BEGIN { printf "%.6f", h + s + o }')
+
+    # Get existing file_offsets and merge with updates
+    local existing_offsets
+    existing_offsets=$(echo "$state_json" | jq -c '.file_offsets // {}') || existing_offsets="{}"
+
+    # Write updated state with v2 schema
+    local tmp_file
+    tmp_file=$(mktemp)
+
+    cat > "${tmp_file}" << EOF
 {
+  "schema_version": 2,
   "last_scan_timestamp": ${current_time},
   "last_cache_time": ${current_time},
-  "processed_files": ${updated_processed_json},
-  "total_input_tokens": ${total_input},
-  "total_output_tokens": ${total_output},
-  "total_cache_read_tokens": ${total_cache_read},
-  "total_cache_creation_tokens": ${total_cache_creation},
-  "total_cost_usd": ${total_cost}
+  "file_offsets": ${existing_offsets},
+  "haiku": {
+    "input_tokens": ${new_haiku_inp},
+    "output_tokens": ${new_haiku_out},
+    "cache_read_tokens": ${new_haiku_cr},
+    "cache_creation_tokens": ${new_haiku_cc}
+  },
+  "sonnet": {
+    "input_tokens": ${new_sonnet_inp},
+    "output_tokens": ${new_sonnet_out},
+    "cache_read_tokens": ${new_sonnet_cr},
+    "cache_creation_tokens": ${new_sonnet_cc}
+  },
+  "opus": {
+    "input_tokens": ${new_opus_inp},
+    "output_tokens": ${new_opus_out},
+    "cache_read_tokens": ${new_opus_cr},
+    "cache_creation_tokens": ${new_opus_cc}
+  },
+  "total_tokens": ${total_tokens},
+  "total_price": ${total_price}
 }
 EOF
 
-    # Run compaction if needed (non-blocking, runs only when threshold exceeded)
-    compact_processed_files
+    # Merge file offset updates into state
+    if [[ -n "$file_offsets_updates" ]]; then
+        jq --argjson updates "{${file_offsets_updates}}" '.file_offsets = (.file_offsets + $updates)' "${tmp_file}" > "${tmp_file}.merged" && \
+            mv "${tmp_file}.merged" "${tmp_file}"
+    fi
 
-    echo "$((total_input + total_output + total_cache_read + total_cache_creation))"
+    mv "${tmp_file}" "${SUBAGENT_STATE_FILE}"
+
+    # Cleanup old offsets periodically (every ~100 scans based on randomness)
+    if [[ $((RANDOM % 100)) -eq 0 ]]; then
+        cleanup_old_offsets
+    fi
+
+    echo "${total_tokens}"
 }
 
 # Get breakdown of subagent tokens (input, output, cache_read, cache_creation)
+# Combines all models into aggregate totals
 # Usage: get_subagent_tokens_breakdown
 # Returns: input output cache_read cache_creation (space separated)
 get_subagent_tokens_breakdown() {
     # Ensure state is initialized and cached
     get_subagent_tokens >/dev/null
 
-    local input output cache_read cache_creation
-    input=$(get_subagent_state_value "total_input_tokens")
-    output=$(get_subagent_state_value "total_output_tokens")
-    cache_read=$(get_subagent_state_value "total_cache_read_tokens")
-    cache_creation=$(get_subagent_state_value "total_cache_creation_tokens")
-    [[ "${input}" == "null" ]] && input=0
-    [[ "${output}" == "null" ]] && output=0
-    [[ "${cache_read}" == "null" ]] && cache_read=0
-    [[ "${cache_creation}" == "null" ]] && cache_creation=0
+    if [[ ! -f "${SUBAGENT_STATE_FILE}" ]]; then
+        echo "0 0 0 0"
+        return
+    fi
 
-    echo "${input} ${output} ${cache_read} ${cache_creation}"
+    # Sum across all models
+    local result
+    result=$(jq -r '
+        ((.haiku.input_tokens // 0) + (.sonnet.input_tokens // 0) + (.opus.input_tokens // 0)) as $inp |
+        ((.haiku.output_tokens // 0) + (.sonnet.output_tokens // 0) + (.opus.output_tokens // 0)) as $out |
+        ((.haiku.cache_read_tokens // 0) + (.sonnet.cache_read_tokens // 0) + (.opus.cache_read_tokens // 0)) as $cr |
+        ((.haiku.cache_creation_tokens // 0) + (.sonnet.cache_creation_tokens // 0) + (.opus.cache_creation_tokens // 0)) as $cc |
+        "\($inp) \($out) \($cr) \($cc)"
+    ' "${SUBAGENT_STATE_FILE}" 2>/dev/null) || result="0 0 0 0"
+
+    echo "${result}"
 }
 
 # Get subagent tokens with cost (reads from state, no full rescan)
-# Cost is now calculated incrementally during token scanning
 # Returns: total_tokens total_cost_usd (space separated)
 get_subagent_tokens_with_cost() {
     # Update state via incremental scan (cost is calculated during scan)
     get_subagent_tokens >/dev/null
 
     # Read totals from state
-    local input output cache_read cache_creation cost
-    input=$(get_subagent_state_value "total_input_tokens")
-    output=$(get_subagent_state_value "total_output_tokens")
-    cache_read=$(get_subagent_state_value "total_cache_read_tokens")
-    cache_creation=$(get_subagent_state_value "total_cache_creation_tokens")
-    cost=$(get_subagent_state_value "total_cost_usd")
+    local total_tokens cost
+    total_tokens=$(get_subagent_state_value "total_tokens")
+    cost=$(get_subagent_state_value "total_price")
 
-    [[ "${input}" == "null" ]] && input=0
-    [[ "${output}" == "null" ]] && output=0
-    [[ "${cache_read}" == "null" ]] && cache_read=0
-    [[ "${cache_creation}" == "null" ]] && cache_creation=0
+    [[ "${total_tokens}" == "null" ]] && total_tokens=0
     [[ "${cost}" == "null" || "${cost}" == "0" ]] && cost="0.000000"
 
-    local total_tokens=$((input + output + cache_read + cache_creation))
     echo "${total_tokens} ${cost}"
 }
 
@@ -508,17 +715,41 @@ get_subagent_cost() {
 
     # Read cost from state
     local cost
-    cost=$(get_subagent_state_value "total_cost_usd")
+    cost=$(get_subagent_state_value "total_price")
     [[ "${cost}" == "null" || "${cost}" == "0" ]] && cost="0.000000"
     echo "${cost}"
+}
+
+# Get per-model token breakdown
+# Usage: get_subagent_tokens_per_model
+# Returns JSON: {"haiku":{...},"sonnet":{...},"opus":{...},"total_tokens":N,"total_price":N}
+get_subagent_tokens_per_model() {
+    # Ensure state is initialized and cached
+    get_subagent_tokens >/dev/null
+
+    if [[ ! -f "${SUBAGENT_STATE_FILE}" ]]; then
+        echo '{"haiku":{"input_tokens":0,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0},"sonnet":{"input_tokens":0,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0},"opus":{"input_tokens":0,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0},"total_tokens":0,"total_price":0}'
+        return
+    fi
+
+    jq -c '{
+        haiku: .haiku,
+        sonnet: .sonnet,
+        opus: .opus,
+        total_tokens: .total_tokens,
+        total_price: .total_price
+    }' "${SUBAGENT_STATE_FILE}" 2>/dev/null || \
+        echo '{"haiku":{"input_tokens":0,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0},"sonnet":{"input_tokens":0,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0},"opus":{"input_tokens":0,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0},"total_tokens":0,"total_price":0}'
 }
 
 # Reset subagent state (for testing or manual reset)
 # Usage: reset_subagent_state
 reset_subagent_state() {
+    subagent_log "reset_subagent_state: manual reset requested"
     rm -f "${SUBAGENT_STATE_FILE}" 2>/dev/null || true
     rm -f "${SUBAGENT_TIMESTAMP_FILE}" 2>/dev/null || true
     init_subagent_state
+    subagent_log "reset_subagent_state: complete"
 }
 
 # =============================================================================
@@ -546,11 +777,38 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         cost-only)
             echo "$(get_subagent_cost)"
             ;;
+        per-model)
+            # Show per-model breakdown with costs
+            get_subagent_tokens >/dev/null
+            if [[ -f "${SUBAGENT_STATE_FILE}" ]]; then
+                echo "=== Per-Model Token Breakdown ==="
+                jq -r '
+                    def fmt: if . >= 1000000 then "\(./1000000 | . * 10 | floor / 10)M"
+                        elif . >= 1000 then "\(./1000 | . * 10 | floor / 10)k"
+                        else "\(.)" end;
+
+                    "Haiku:  In: \(.haiku.input_tokens | fmt)  Out: \(.haiku.output_tokens | fmt)  Cache: \(.haiku.cache_read_tokens | fmt)  Write: \(.haiku.cache_creation_tokens | fmt)",
+                    "Sonnet: In: \(.sonnet.input_tokens | fmt)  Out: \(.sonnet.output_tokens | fmt)  Cache: \(.sonnet.cache_read_tokens | fmt)  Write: \(.sonnet.cache_creation_tokens | fmt)",
+                    "Opus:   In: \(.opus.input_tokens | fmt)  Out: \(.opus.output_tokens | fmt)  Cache: \(.opus.cache_read_tokens | fmt)  Write: \(.opus.cache_creation_tokens | fmt)",
+                    "",
+                    "Total tokens: \(.total_tokens | fmt)",
+                    "Total cost:   $\(.total_price | . * 100 | floor / 100)"
+                ' "${SUBAGENT_STATE_FILE}"
+            fi
+            ;;
+        cleanup)
+            cleanup_old_offsets
+            echo "Old file offsets cleaned up"
+            local offset_count
+            offset_count=$(jq '.file_offsets | length' "${SUBAGENT_STATE_FILE}" 2>/dev/null) || offset_count=0
+            echo "Remaining offsets: ${offset_count}"
+            ;;
         reset)
             reset_subagent_state
             echo "Subagent state reset"
             ;;
         show)
+            reset_state_if_incompatible
             init_subagent_state
             jq . "${SUBAGENT_STATE_FILE}" 2>/dev/null
             ;;
@@ -558,6 +816,16 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             find_new_jsonl_files | head -20
             echo "..."
             echo "Total files: $(find "${CLAUDE_PROJECTS_DIR}" -name "agent-*.jsonl" -type f 2>/dev/null | wc -l)"
+            ;;
+        offsets)
+            init_subagent_state
+            local offset_count
+            offset_count=$(jq '.file_offsets | length' "${SUBAGENT_STATE_FILE}" 2>/dev/null) || offset_count=0
+            echo "Tracked file offsets: ${offset_count}"
+            jq '.file_offsets | to_entries | .[:10] | from_entries' "${SUBAGENT_STATE_FILE}" 2>/dev/null
+            if [[ "${offset_count}" -gt 10 ]]; then
+                echo "... and $((offset_count - 10)) more"
+            fi
             ;;
         *)
             echo "Usage: $0 <command>"
@@ -567,9 +835,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             echo "  breakdown  Get token breakdown (input, output, cache_read, cache_creation)"
             echo "  cost       Get tokens and cost with model-specific pricing"
             echo "  cost-only  Get only the total cost (USD)"
+            echo "  per-model  Show per-model token and cost breakdown"
+            echo "  cleanup    Remove old file offsets (>30 days)"
             echo "  reset      Reset subagent state"
             echo "  show       Show full state file"
             echo "  files      List new JSONL files to process"
+            echo "  offsets    Show tracked file offsets"
             ;;
     esac
 fi
