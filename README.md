@@ -57,9 +57,11 @@ Without guardrails:
 
 A growing collection of plugins, continuously developed to meet my extremely high expectations for AI-assisted development.
 
-They don't replace Claude. They make Claude manageable.
+Born from real pain points. Built for developers who learned the hard way - since Claude Code exists.
 
 **Each plugin works independently - pick what you need. But together, they form a solid framework for developers who want control, quality, and security over pure YOLO mode.**
+
+They don't replace Claude. They make Claude manageable.
 
 | Plugin | Role | What they do |
 |--------|------|--------------|
@@ -76,8 +78,6 @@ They don't replace Claude. They make Claude manageable.
 | Plugin | Author | Role | What they do |
 |--------|--------|------|--------------|
 | [**get-shit-done**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Get-Shit-Done-Plugin) | [TACHES](https://github.com/glittercowboy) | The Taskmaster | Specs first. Implementation second. Ship third. |
-
-Born from real pain points. Built for developers who learned the hard way - since Claude Code exists.
 
 ## Requirements
 
