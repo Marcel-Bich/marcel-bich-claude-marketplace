@@ -7,6 +7,14 @@
 # - Explicit model passed -> respect it (no override)
 # - No model + Anthropic plugin -> force inherit
 # - No model + Third-party plugin -> unchanged (use agent default)
+#
+# ENV: CLAUDE_MB_DOGMA_DEBUG=true | false (default) - debug logging to /tmp/dogma-debug.log
+
+# Source shared library for debug logging
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib-permissions.sh"
+
+dogma_debug_log "=== enforce-model-policy.sh START ==="
 
 # Read JSON from stdin
 input=$(cat)
@@ -17,16 +25,24 @@ MODEL=$(echo "$input" | jq -r '.tool_input.model // empty')
 
 # No agent type specified - allow as-is
 if [[ -z "$AGENT_TYPE" ]]; then
+  dogma_debug_log "No agent type - skipping"
+  dogma_debug_log "=== enforce-model-policy.sh END ==="
   exit 0
 fi
 
+dogma_debug_log "Agent: $AGENT_TYPE, Model: ${MODEL:-<none>}"
+
 # Built-in agents (no colon) - allow as-is
 if [[ "$AGENT_TYPE" != *":"* ]]; then
+  dogma_debug_log "Built-in agent - skipping"
+  dogma_debug_log "=== enforce-model-policy.sh END ==="
   exit 0
 fi
 
 # If model is explicitly specified, respect that choice
 if [[ -n "$MODEL" ]]; then
+  dogma_debug_log "Model explicitly set to $MODEL - respecting"
+  dogma_debug_log "=== enforce-model-policy.sh END ==="
   exit 0
 fi
 
@@ -63,16 +79,18 @@ done
 
 # Allow non-Anthropic plugins as-is
 if [[ "$IS_ANTHROPIC" == false ]]; then
+  dogma_debug_log "Non-Anthropic plugin ($PLUGIN_NAME) - skipping"
+  dogma_debug_log "=== enforce-model-policy.sh END ==="
   exit 0
 fi
 
 # No model specified + Anthropic plugin -> force inherit
+dogma_debug_log "Overriding model to inherit for $AGENT_TYPE"
+dogma_debug_log "=== enforce-model-policy.sh END ==="
 cat <<EOF
 {
-  "hookSpecificOutput": {
-    "permissionDecision": "allow",
-    "updatedInput": {"model": "inherit"}
-  },
+  "decision": "allow",
+  "updatedInput": {"model": "inherit"},
   "systemMessage": "Model defaulted to inherit for Anthropic agent: $AGENT_TYPE"
 }
 EOF
