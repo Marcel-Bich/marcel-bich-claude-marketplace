@@ -1337,11 +1337,45 @@ format_output() {
         lines+=("${gray_color}Context -> ${ctx_c1}${ctx_c2}${gray_color_reset}${ctx_usable_color}${ctx_col3_str}${ctx_usable_color_reset}")
     fi
 
-    # Session line
+    # Session line - includes model, style, hostname, total tokens and cost
     if [[ "$SHOW_SESSION" == "true" ]]; then
         local sess_c1
         printf -v sess_c1 "%-${col1_width}s" "$sess_col1_str"
-        lines+=("${gray_color}Session -> ${sess_c1}${sess_col2_str}${gray_color_reset}")
+
+        # Get model info for session line
+        local current_model_sess
+        current_model_sess=$(get_current_model)
+        local style_sess
+        style_sess=$(get_thinking_style)
+
+        # Get total tokens and cost for session summary
+        local in_tokens_sess out_tokens_sess total_tokens_sess cost_sess
+        in_tokens_sess=$(get_token_metrics "input")
+        out_tokens_sess=$(get_token_metrics "output")
+        total_tokens_sess=$((in_tokens_sess + out_tokens_sess))
+        cost_sess=$(get_total_cost)
+
+        local model_name_color_sess="" model_color_reset_sess=""
+        if [[ "$SHOW_COLORS" == "true" ]] && [[ -n "$current_model_sess" ]]; then
+            model_color_reset_sess="$COLOR_RESET"
+            case "${current_model_sess,,}" in
+                haiku*) model_name_color_sess="$COLOR_SILVER" ;;
+                sonnet*) model_name_color_sess="$COLOR_SALMON" ;;
+                opus*) model_name_color_sess="$COLOR_GOLD" ;;
+                *) model_name_color_sess="$COLOR_GRAY" ;;
+            esac
+        fi
+
+        # Format: "Model | Style: X | (hostname) [T:XXM $X.XX]"
+        local session_model_part=""
+        if [[ -n "$current_model_sess" ]]; then
+            session_model_part="${model_name_color_sess}${current_model_sess}${model_color_reset_sess}${gray_color} | Style: ${style_sess} | (${LOCAL_DEVICE_LABEL} => LifetimeTotal: $(format_tokens "$(get_total_tokens_ever)") \$$(get_total_cost_ever)]${gray_color_reset}"
+        fi
+
+        lines+=("${gray_color}Session -> ${sess_c1}${sess_col2_str}    Cost: \$${cost_sess}${gray_color_reset}")
+        if [[ -n "$session_model_part" ]]; then
+            lines+=("$session_model_part")
+        fi
     fi
 
     # -------------------------------------------------------------------------
@@ -1610,9 +1644,15 @@ EOF
         lines+=("$(format_limit_line "7d Opus" "$opus_pct" "$opus_reset")")
     fi
 
-    # 7-day Sonnet limit (if enabled and has utilization > 0 or reset time)
-    if [[ "$SHOW_SONNET" == "true" ]] && [[ -n "$sonnet_pct" ]] && { [[ "$sonnet_pct" -gt 0 ]] || [[ -n "$sonnet_reset" && "$sonnet_reset" != "null" ]]; }; then
-        lines+=("$(format_limit_line "7d Sonnet" "$sonnet_pct" "$sonnet_reset")")
+    # 7-day Sonnet limit (if enabled and has utilization >= 0.1%)
+    # Hide when usage is 0 or rounds to 0.0% (check both numeric and string)
+    if [[ "$SHOW_SONNET" == "true" ]] && [[ -n "$sonnet_pct" ]]; then
+        # Use awk for proper decimal comparison - show only if >= 0.1%
+        local sonnet_above_threshold
+        sonnet_above_threshold=$(awk "BEGIN {print ($sonnet_pct >= 0.1) ? 1 : 0}")
+        if [[ "$sonnet_above_threshold" -eq 1 ]]; then
+            lines+=("$(format_limit_line "7d Sonnet" "$sonnet_pct" "$sonnet_reset")")
+        fi
     fi
 
     # Extra usage (if enabled AND used_credits > 0)
@@ -1640,62 +1680,31 @@ EOF
         lines+=("$extra_line")
     fi
 
-    # Current model with Style and Cost (if enabled)
-    if [[ "$SHOW_MODEL" == "true" ]]; then
-        local current_model
-        current_model=$(get_current_model)
-        if [[ -n "$current_model" ]]; then
-            local model_name_color=""
-            local model_color=""
-            local model_color_reset=""
-            local cost_value_color=""
+    # Lifetime stats line (if enabled) - shows total tokens and cost across all sessions on this device
+    if [[ "$SHOW_MODEL" == "true" ]] && [[ "$SHOW_LOCAL" == "true" ]]; then
+        local total_tokens_ever
+        # Use cached value if available, otherwise call function
+        if [[ -n "$_total_tokens_sync" ]] && [[ "$_total_tokens_sync" -gt 0 ]]; then
+            total_tokens_ever="$_total_tokens_sync"
+        else
+            total_tokens_ever=$(get_total_tokens_ever)
+        fi
+        # Add subagent tokens to lifetime total
+        local subagent_total=0
+        subagent_total=$(get_subagent_tokens 2>/dev/null) || subagent_total=0
+        [[ "$subagent_total" == "null" ]] && subagent_total=0
+        total_tokens_ever=$((total_tokens_ever + subagent_total))
+        if [[ "$total_tokens_ever" -gt 0 ]]; then
+            local formatted_tokens total_cost_ever
+            formatted_tokens=$(format_tokens "$total_tokens_ever")
+            # Use accumulated cost from Claude's total_cost_usd (correctly calculated)
+            total_cost_ever=$(get_total_cost_ever)
+            local lifetime_color="" lifetime_color_reset=""
             if [[ "$SHOW_COLORS" == "true" ]]; then
-                model_color="$COLOR_GRAY"
-                model_color_reset="$COLOR_RESET"
-                cost_value_color="$COLOR_WHITE"
-                # Model name color based on model type
-                case "${current_model,,}" in
-                    haiku*) model_name_color="$COLOR_SILVER" ;;
-                    sonnet*) model_name_color="$COLOR_SALMON" ;;
-                    opus*) model_name_color="$COLOR_GOLD" ;;
-                    *) model_name_color="$COLOR_GRAY" ;;
-                esac
+                lifetime_color="$COLOR_GRAY"
+                lifetime_color_reset="$COLOR_RESET"
             fi
-
-            # Add Style
-            local style
-            style=$(get_thinking_style)
-
-            # Add Cost (dollar sign gray, value white)
-            local cost
-            cost=$(get_total_cost)
-
-            local model_line="${model_name_color}${current_model}${model_color_reset}${model_color} | Style: ${style} | Cost: \$${model_color_reset}${cost_value_color}${cost}${model_color_reset}"
-
-            # Add local token stats if enabled (gray) - shows lifetime total tokens and cost
-            if [[ "$SHOW_LOCAL" == "true" ]]; then
-                local total_tokens_ever
-                # Use cached value if available, otherwise call function
-                if [[ -n "$_total_tokens_sync" ]] && [[ "$_total_tokens_sync" -gt 0 ]]; then
-                    total_tokens_ever="$_total_tokens_sync"
-                else
-                    total_tokens_ever=$(get_total_tokens_ever)
-                fi
-                # Add subagent tokens to lifetime total
-                local subagent_total=0
-                subagent_total=$(get_subagent_tokens 2>/dev/null) || subagent_total=0
-                [[ "$subagent_total" == "null" ]] && subagent_total=0
-                total_tokens_ever=$((total_tokens_ever + subagent_total))
-                if [[ "$total_tokens_ever" -gt 0 ]]; then
-                    local formatted_tokens total_cost_ever
-                    formatted_tokens=$(format_tokens "$total_tokens_ever")
-                    # Use accumulated cost from Claude's total_cost_usd (correctly calculated)
-                    total_cost_ever=$(get_total_cost_ever)
-                    model_line="${model_line}${model_color} | (${LOCAL_DEVICE_LABEL} => [T:${formatted_tokens} \$${total_cost_ever}])${model_color_reset}"
-                fi
-            fi
-
-            lines+=("$model_line")
+            lines+=("${lifetime_color}Lifetime (${LOCAL_DEVICE_LABEL}) [T:${formatted_tokens} \$${total_cost_ever}]${lifetime_color_reset}")
         fi
     fi
 
