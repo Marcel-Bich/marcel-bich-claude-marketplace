@@ -155,6 +155,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-context.sh",
             "timeout": 5,
             "description": "Remind about subagent context rules (CLAUDE.md, no push, etc.)"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/enforce-model-policy.sh",
+            "timeout": 5,
+            "description": "Override sonnet/haiku to inherit for Anthropic proprietary agents"
           }
         ]
       },

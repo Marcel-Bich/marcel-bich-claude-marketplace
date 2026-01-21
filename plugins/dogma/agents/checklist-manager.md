@@ -1,6 +1,7 @@
 ---
 name: checklist-manager
 description: Scan and analyze checklists in the project, return summary for user decision
+model: inherit
 allowed-tools:
   - Glob
   - Grep
