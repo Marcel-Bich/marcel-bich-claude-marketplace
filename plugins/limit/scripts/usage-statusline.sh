@@ -1236,13 +1236,23 @@ format_output() {
     fi
 
     # -------------------------------------------------------------------------
-    # Tokens/Context/Session with dynamic column alignment
+    # Tokens/Context/Session with right-aligned column values
     # -------------------------------------------------------------------------
 
-    # First, gather all values to calculate dynamic column widths
-    local tok_col1_str="" tok_col2_str="" tok_col3_str="" tok_col4_str=""
-    local ctx_col1_str="" ctx_col2_str="" ctx_col3_str=""
-    local sess_col1_str="" sess_col2_str=""
+    # Column widths for right-aligned values
+    # Token values: 7 chars (e.g., "109.0k", "965.8M")
+    # Percentages: 6 chars (e.g., "54.7%", "100.0%")
+    # Durations: 5 chars (e.g., "53m", "2h15m")
+    # Costs: 7 chars (e.g., "$9.13", "$815.14")
+    local VAL_WIDTH_TOKEN=7
+    local VAL_WIDTH_PCT=6
+    local VAL_WIDTH_DUR=5
+    local VAL_WIDTH_COST=7
+
+    # Gather raw values for each line
+    local tok_val1="" tok_val2="" tok_val3="" tok_val4=""
+    local ctx_val1="" ctx_val2="" ctx_val3="" ctx_val4=""
+    local sess_val1="" sess_val2="" sess_val3=""
 
     # Tokens values
     if [[ "$SHOW_TOKENS" == "true" ]]; then
@@ -1252,16 +1262,15 @@ format_output() {
         cache_read=$(get_token_metrics "cache_read")
         total_tokens=$((in_tokens + out_tokens))
 
-        tok_col1_str="Input: $(format_tokens "$in_tokens")"
-        tok_col2_str="Output: $(format_tokens "$out_tokens")"
-        tok_col3_str="Cached: $(format_tokens "$cache_read")"
-        tok_col4_str="TotalTk: $(format_tokens "$total_tokens")"
+        tok_val1=$(format_tokens "$in_tokens")
+        tok_val2=$(format_tokens "$out_tokens")
+        tok_val3=$(format_tokens "$cache_read")
+        tok_val4=$(format_tokens "$total_tokens")
     fi
 
     # Context values
     # Store usable percentage and bar for Session line (moved from Context line)
     local ctx_usable_pct="" ctx_usable_bar=""
-    local ctx_col4_str=""
     if [[ "$SHOW_CTX" == "true" ]]; then
         local ctx_len formatted_len max_tokens total_pct="" usable_tokens usable_pct="" tokens_left="" ctx_left_pct=""
         ctx_len=$(get_context_length)
@@ -1286,80 +1295,54 @@ format_output() {
             ctx_usable_bar=$(progress_bar "$usable_pct")
         fi
 
-        ctx_col1_str="UsedT: ${formatted_len}"
-        ctx_col2_str="TkLeft: ${tokens_left}"
-        ctx_col3_str="CtxMax: ${total_pct}%"
-        ctx_col4_str="CtxLeft: ${ctx_left_pct}%"
+        ctx_val1="${formatted_len}"
+        ctx_val2="${tokens_left}"
+        ctx_val3="${total_pct}%"
+        ctx_val4="${ctx_left_pct}%"
     fi
 
     # Session values
+    local sess_cost=""
     if [[ "$SHOW_SESSION" == "true" ]]; then
         local session_secs api_secs
         session_secs=$(get_session_time "session")
         api_secs=$(get_session_time "block")
 
-        sess_col1_str="Sessn: $(format_duration "$session_secs")"
-        sess_col2_str="APIuse: $(format_duration "$api_secs")"
+        sess_val1=$(format_duration "$session_secs")
+        sess_val2=$(format_duration "$api_secs")
+        sess_cost=$(get_total_cost)
     fi
 
-    # Calculate dynamic column widths (max of each column + 2 for spacing)
-    local col1_width=0 col2_width=0
-    local len
-
-    # Col1: tok_col1, ctx_col1, sess_col1
-    for str in "$tok_col1_str" "$ctx_col1_str" "$sess_col1_str"; do
-        len=${#str}
-        [[ $len -gt $col1_width ]] && col1_width=$len
-    done
-    col1_width=$((col1_width + 2))
-
-    # Col2: tok_col2, ctx_col2, sess_col2
-    for str in "$tok_col2_str" "$ctx_col2_str" "$sess_col2_str"; do
-        len=${#str}
-        [[ $len -gt $col2_width ]] && col2_width=$len
-    done
-    col2_width=$((col2_width + 2))
-
-    # Now output the lines with dynamic widths
+    # Now output the lines with right-aligned values
     local gray_color="" gray_color_reset=""
     if [[ "$SHOW_COLORS" == "true" ]]; then
         gray_color="$COLOR_GRAY"
         gray_color_reset="$COLOR_RESET"
     fi
 
-    # Tokens line
+    # Tokens line: Input: %7s  Output: %7s  Cached: %7s  UserTk.: %7s
     if [[ "$SHOW_TOKENS" == "true" ]]; then
-        local tok_c1 tok_c2
-        printf -v tok_c1 "%-${col1_width}s" "$tok_col1_str"
-        printf -v tok_c2 "%-${col2_width}s" "$tok_col2_str"
-        lines+=("${gray_color}Tokens  -> ${tok_c1}${tok_c2}${tok_col3_str}  ${tok_col4_str}${gray_color_reset}")
+        local tok_line
+        printf -v tok_line "Tokens  -> Input: %${VAL_WIDTH_TOKEN}s  Output: %${VAL_WIDTH_TOKEN}s  Cached: %${VAL_WIDTH_TOKEN}s  UserTk.: %${VAL_WIDTH_TOKEN}s" \
+            "$tok_val1" "$tok_val2" "$tok_val3" "$tok_val4"
+        lines+=("${gray_color}${tok_line}${gray_color_reset}")
     fi
 
-    # Context line (no progress bar - moved to Session line)
+    # Context line: UsedT: %7s  TkLeft: %7s  CtxMax: %6s  CtxLeft: %6s
     if [[ "$SHOW_CTX" == "true" ]]; then
-        local ctx_c1 ctx_c2
-        printf -v ctx_c1 "%-${col1_width}s" "$ctx_col1_str"
-        printf -v ctx_c2 "%-${col2_width}s" "$ctx_col2_str"
-        lines+=("${gray_color}Context -> ${ctx_c1}${ctx_c2}${ctx_col3_str}  ${ctx_col4_str}${gray_color_reset}")
+        local ctx_line
+        printf -v ctx_line "Context -> UsedT: %${VAL_WIDTH_TOKEN}s  TkLeft: %${VAL_WIDTH_TOKEN}s  CtxMax: %${VAL_WIDTH_PCT}s  CtxLeft: %${VAL_WIDTH_PCT}s" \
+            "$ctx_val1" "$ctx_val2" "$ctx_val3" "$ctx_val4"
+        lines+=("${gray_color}${ctx_line}${gray_color_reset}")
     fi
 
     # Session line - includes model, style, hostname, total tokens and cost
     if [[ "$SHOW_SESSION" == "true" ]]; then
-        local sess_c1
-        printf -v sess_c1 "%-${col1_width}s" "$sess_col1_str"
-
         # Get model info for session line
         local current_model_sess
         current_model_sess=$(get_current_model)
         local style_sess
         style_sess=$(get_thinking_style)
-
-        # Get total tokens and cost for session summary
-        local in_tokens_sess out_tokens_sess total_tokens_sess cost_sess
-        in_tokens_sess=$(get_token_metrics "input")
-        out_tokens_sess=$(get_token_metrics "output")
-        total_tokens_sess=$((in_tokens_sess + out_tokens_sess))
-        cost_sess=$(get_total_cost)
 
         local model_name_color_sess="" model_color_reset_sess=""
         if [[ "$SHOW_COLORS" == "true" ]] && [[ -n "$current_model_sess" ]]; then
@@ -1375,17 +1358,22 @@ format_output() {
         # Build session line with progress bar at end (showing usable context percentage)
         local sess_progress_bar="" sess_progress_color="" sess_progress_color_reset=""
         if [[ -n "$ctx_usable_pct" ]] && [[ "$SHOW_PROGRESS" == "true" ]]; then
-            sess_progress_bar="    ${ctx_usable_bar} ${ctx_usable_pct}%"
+            sess_progress_bar="  ${ctx_usable_bar} ${ctx_usable_pct}%"
             if [[ "$SHOW_COLORS" == "true" ]]; then
                 local usable_pct_int="${ctx_usable_pct%%.*}"
                 sess_progress_color=$(get_color "$usable_pct_int")
                 sess_progress_color_reset="$COLOR_RESET"
             fi
         fi
-        lines+=("${gray_color}Session -> ${sess_c1}${sess_col2_str}    Cost: \$${cost_sess}${gray_color_reset}${sess_progress_color}${sess_progress_bar}${sess_progress_color_reset}")
+
+        # Session line: Sessn: %5s  APIuse: %5s  SnCost: %7s  [progress bar]
+        local sess_line
+        printf -v sess_line "Session -> Sessn: %${VAL_WIDTH_DUR}s  APIuse: %${VAL_WIDTH_DUR}s  SnCost: %${VAL_WIDTH_COST}s" \
+            "$sess_val1" "$sess_val2" "\$${sess_cost}"
+        lines+=("${gray_color}${sess_line}${gray_color_reset}${sess_progress_color}${sess_progress_bar}${sess_progress_color_reset}")
 
         # Model info line with lifetime totals
-        # Format: {Model} | Style: {style} | LifetimeTotal: T:{tokens} ${cost} | Device: {device}
+        # Format: {Model} | Style: {style} | LifetimeTotal: {tokens} ${cost} | Device: {device}
         if [[ "$SHOW_MODEL" == "true" ]] && [[ -n "$current_model_sess" ]]; then
             # Get lifetime tokens from JSONL files (main + subagent)
             local main_tokens_lifetime subagent_tokens_lifetime total_tokens_lifetime
@@ -1412,7 +1400,7 @@ format_output() {
             model_line="${model_name_color_sess}${current_model_sess}${model_color_reset_sess}"
             model_line="${model_line}${gray_color} | Style: ${style_sess}"
             if [[ -n "$formatted_tokens_lifetime" ]]; then
-                model_line="${model_line} | LifetimeTotal: T:${formatted_tokens_lifetime} \$${total_cost_lifetime}"
+                model_line="${model_line} | LifetimeTotal: ${formatted_tokens_lifetime} \$${total_cost_lifetime}"
             fi
             model_line="${model_line} | Device: ${LOCAL_DEVICE_LABEL}${gray_color_reset}"
             lines+=("$model_line")
