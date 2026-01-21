@@ -12,7 +12,7 @@ Display the current highscore state in a formatted view, including current usage
 1. Read the state files, fetch current API usage, and get hostname:
    ```bash
    cat ~/.claude/marcel-bich-claude-marketplace/limit/limit-highscore-state.json 2>/dev/null
-   cat ~/.claude/marcel-bich-claude-marketplace/limit/limit-usage-state.json 2>/dev/null
+   cat ~/.claude/marcel-bich-claude-marketplace/limit/limit-main-agent-state.json 2>/dev/null
    cat ~/.claude/marcel-bich-claude-marketplace/limit/limit-subagent-state.json 2>/dev/null
    cat /tmp/claude-mb-limit-cache.json 2>/dev/null
    hostname
@@ -32,9 +32,11 @@ Display the current highscore state in a formatted view, including current usage
 
 ### Combined Total (Main + Subagents)
 
-Calculate and display prominently at the top:
-- Main Agent tokens: `totals.input_tokens + totals.output_tokens` from limit-usage-state.json
-- Main Agent cost: `totals.total_cost_usd` from limit-usage-state.json
+Calculate and display prominently at the top.
+All values come from JSONL-based tracking (self-calculated with all token types: input, output, cache_read, cache_creation).
+
+- Main Agent tokens: `total_tokens` from limit-main-agent-state.json
+- Main Agent cost: `total_price` from limit-main-agent-state.json
 - Subagent tokens: `total_tokens` from limit-subagent-state.json
 - Subagent cost: `total_price` from limit-subagent-state.json
 - Combined tokens: Main tokens + Subagent tokens
@@ -109,18 +111,23 @@ Format numbers as: 5.2M (millions), 500.0k (thousands), 1.5B (billions)
 
 ### Lifetime Breakdown
 
-**Main Agent:**
-- Tokens: {totals.input_tokens + totals.output_tokens formatted}
-- Cost: ${totals.total_cost_usd formatted with 2 decimals}
+Both Main Agent and Subagent values come from JSONL-based tracking (self-calculated, NOT from API).
+Read from `limit-main-agent-state.json` and `limit-subagent-state.json`.
 
-**Subagents:**
-- Tokens: {total_tokens formatted}
-- Cost: ${total_price formatted with 2 decimals}
+**Main Agent (from limit-main-agent-state.json):**
+- Tokens: `total_tokens` formatted
+- Cost: `total_price` formatted with 2 decimals
 
-Per-model breakdown (if available):
-- Haiku: {haiku tokens formatted}
-- Sonnet: {sonnet tokens formatted}
-- Opus: {opus tokens formatted}
+Per-model breakdown:
+- Haiku: `haiku.input_tokens + haiku.output_tokens + haiku.cache_read_tokens + haiku.cache_creation_tokens`
+- Sonnet: `sonnet.input_tokens + sonnet.output_tokens + sonnet.cache_read_tokens + sonnet.cache_creation_tokens`
+- Opus: `opus.input_tokens + opus.output_tokens + opus.cache_read_tokens + opus.cache_creation_tokens`
+
+**Subagents (from limit-subagent-state.json):**
+- Tokens: `total_tokens` formatted
+- Cost: `total_price` formatted with 2 decimals
+
+Per-model breakdown (same structure as main agent)
 
 ---
 
