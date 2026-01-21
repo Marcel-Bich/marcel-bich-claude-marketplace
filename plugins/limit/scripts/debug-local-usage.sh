@@ -6,7 +6,7 @@ set -euo pipefail
 
 # Plugin data directory (organized under marketplace name)
 PLUGIN_DATA_DIR="${HOME}/.claude/marcel-bich-claude-marketplace/limit"
-STATE_FILE="${PLUGIN_DATA_DIR}/state.json"
+STATE_FILE="${PLUGIN_DATA_DIR}/limit-usage-state.json"
 CACHE_FILE="/tmp/claude-mb-limit-cache.json"
 DEVICE_ID="${CLAUDE_MB_LIMIT_DEVICE_LABEL:-$(hostname)}"
 

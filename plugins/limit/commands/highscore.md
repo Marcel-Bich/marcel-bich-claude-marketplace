@@ -12,8 +12,8 @@ Display the current highscore state in a formatted view, including subagent toke
 1. Read the state files and hostname:
    ```bash
    cat ~/.claude/limit-highscore-state.json 2>/dev/null
-   cat ~/.claude/marcel-bich-claude-marketplace/limit/state.json 2>/dev/null
-   cat ~/.claude/marcel-bich-claude-marketplace/limit/subagent-state.json 2>/dev/null
+   cat ~/.claude/marcel-bich-claude-marketplace/limit/limit-usage-state.json 2>/dev/null
+   cat ~/.claude/marcel-bich-claude-marketplace/limit/limit-subagent-state.json 2>/dev/null
    hostname
    ```
 
@@ -48,11 +48,11 @@ Format numbers as: 5.2M (millions), 500.0k (thousands), 1.5B (billions)
 
 ### Lifetime Totals
 
-**Main Agent** (from state.json):
+**Main Agent** (from limit-usage-state.json):
 - Tokens: {totals.input_tokens + totals.output_tokens formatted}
 - Cost: ${totals.total_cost_usd formatted with 2 decimals}
 
-**Subagents** (from subagent-state.json):
+**Subagents** (from limit-subagent-state.json):
 - Input Tokens: {total_input_tokens formatted}
 - Output Tokens: {total_output_tokens formatted}
 - Cache Read Tokens: {total_cache_read_tokens formatted}

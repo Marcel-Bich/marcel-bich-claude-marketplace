@@ -27,7 +27,7 @@ CACHE_MAX_AGE="${CLAUDE_MB_LIMIT_CACHE_AGE:-120}"  # 2 minutes default
 PLUGIN_DATA_DIR="${HOME}/.claude/marcel-bich-claude-marketplace/limit"
 
 # State file for local tracking (sessions, totals, calibration)
-STATE_FILE="${PLUGIN_DATA_DIR}/state.json"
+STATE_FILE="${PLUGIN_DATA_DIR}/limit-usage-state.json"
 
 # Debug mode - logs stay in /tmp (temporary, cleared on reboot)
 DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-false}"
@@ -53,14 +53,14 @@ ensure_plugin_dir() {
 }
 
 # =============================================================================
-# Session compaction - prevents state.json from growing indefinitely
+# Session compaction - prevents limit-usage-state.json from growing indefinitely
 # =============================================================================
 
 # Compaction thresholds
 SESSION_COMPACT_THRESHOLD=50
 SESSION_COMPACT_COUNT=25
 
-# Compact sessions in state.json when threshold exceeded
+# Compact sessions in limit-usage-state.json when threshold exceeded
 # Archives oldest sessions to _archived entry, preserving totals
 # Called automatically during state file updates
 compact_sessions() {
