@@ -14,7 +14,10 @@ set -euo pipefail
 # State file for subagent tracking (within plugin data dir)
 SUBAGENT_STATE_FILE="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}/limit-subagent-state.json"
 
-# Claude projects directory (contains subagent JSONL files)
+# State file for main agent tracking (same principle as subagents)
+MAIN_AGENT_STATE_FILE="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}/limit-main-agent-state.json"
+
+# Claude projects directory (contains JSONL files)
 CLAUDE_PROJECTS_DIR="${HOME}/.claude/projects"
 
 # Cache duration for subagent scan (same as API cache, default 120s)
@@ -135,6 +138,7 @@ calculate_model_cost() {
 
 # Timestamp reference file for find -newer
 SUBAGENT_TIMESTAMP_FILE="/tmp/claude-mb-limit-subagent-timestamp"
+MAIN_AGENT_TIMESTAMP_FILE="/tmp/claude-mb-limit-main-agent-timestamp"
 
 # =============================================================================
 # State file operations
@@ -750,6 +754,320 @@ reset_subagent_state() {
     rm -f "${SUBAGENT_TIMESTAMP_FILE}" 2>/dev/null || true
     init_subagent_state
     subagent_log "reset_subagent_state: complete"
+}
+
+# =============================================================================
+# Main Agent Token Tracking (same principle as subagents)
+# Scans ~/.claude/projects/*/*.jsonl (not in subagents/ subdirs)
+# =============================================================================
+
+# Initialize main agent state file
+init_main_agent_state() {
+    local state_dir
+    state_dir=$(dirname "${MAIN_AGENT_STATE_FILE}")
+
+    if [[ ! -d "${state_dir}" ]]; then
+        mkdir -p "${state_dir}" 2>/dev/null || true
+    fi
+
+    if [[ ! -f "${MAIN_AGENT_STATE_FILE}" ]]; then
+        cat > "${MAIN_AGENT_STATE_FILE}" << 'EOF'
+{
+  "schema_version": 2,
+  "last_scan_timestamp": 0,
+  "last_cache_time": 0,
+  "file_offsets": {},
+  "haiku": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": 0
+  },
+  "sonnet": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": 0
+  },
+  "opus": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": 0
+  },
+  "total_tokens": 0,
+  "total_price": 0
+}
+EOF
+    fi
+}
+
+# Reset main agent state if schema version mismatch
+reset_main_agent_state_if_incompatible() {
+    if [[ ! -f "${MAIN_AGENT_STATE_FILE}" ]]; then
+        return 0
+    fi
+
+    local file_version
+    file_version=$(jq -r '.schema_version // 0' "${MAIN_AGENT_STATE_FILE}" 2>/dev/null) || file_version=0
+
+    if [[ "$file_version" != "$SUBAGENT_SCHEMA_VERSION" ]]; then
+        subagent_log "Main agent schema mismatch: file=$file_version current=$SUBAGENT_SCHEMA_VERSION - resetting"
+        cp "${MAIN_AGENT_STATE_FILE}" "${MAIN_AGENT_STATE_FILE}.bak" 2>/dev/null || true
+        rm -f "${MAIN_AGENT_STATE_FILE}"
+    fi
+}
+
+# Find main agent JSONL files (not in subagents/ subdirs)
+find_main_agent_jsonl_files() {
+    local last_scan
+    last_scan=$(jq -r '.last_scan_timestamp // 0' "${MAIN_AGENT_STATE_FILE}" 2>/dev/null) || last_scan=0
+    [[ "${last_scan}" == "null" ]] && last_scan=0
+
+    # Set timestamp file for find -newer
+    if [[ "${last_scan}" -eq 0 ]]; then
+        touch -t 197001010000 "${MAIN_AGENT_TIMESTAMP_FILE}" 2>/dev/null || true
+    else
+        if date --version >/dev/null 2>&1; then
+            touch -d "@${last_scan}" "${MAIN_AGENT_TIMESTAMP_FILE}" 2>/dev/null || true
+        else
+            local formatted
+            formatted=$(date -r "${last_scan}" "+%Y%m%d%H%M.%S" 2>/dev/null)
+            touch -t "${formatted}" "${MAIN_AGENT_TIMESTAMP_FILE}" 2>/dev/null || true
+        fi
+    fi
+
+    # Find JSONL files directly in project dirs (not in subagents/)
+    # Pattern: ~/.claude/projects/*/*.jsonl (UUID.jsonl files)
+    if [[ "${last_scan}" -eq 0 ]]; then
+        find "${CLAUDE_PROJECTS_DIR}" -maxdepth 2 -name "*.jsonl" -type f ! -path "*/subagents/*" 2>/dev/null || true
+    else
+        find "${CLAUDE_PROJECTS_DIR}" -maxdepth 2 -name "*.jsonl" -type f ! -path "*/subagents/*" -newer "${MAIN_AGENT_TIMESTAMP_FILE}" 2>/dev/null || true
+    fi
+}
+
+# Get main agent state value
+get_main_agent_state_value() {
+    local key="${1:-}"
+    init_main_agent_state
+    jq -r ".${key} // 0" "${MAIN_AGENT_STATE_FILE}" 2>/dev/null || echo "0"
+}
+
+# Main function to scan and get main agent tokens
+# Same logic as get_subagent_tokens but for main agent JSONLs
+get_main_agent_tokens() {
+    if [[ ! -d "${CLAUDE_PROJECTS_DIR}" ]]; then
+        echo "0"
+        return
+    fi
+
+    reset_main_agent_state_if_incompatible
+    init_main_agent_state
+
+    local current_time
+    current_time=$(date +%s)
+
+    # Check cache
+    local last_cache_time cache_age
+    last_cache_time=$(get_main_agent_state_value "last_cache_time")
+    [[ "${last_cache_time}" == "null" ]] && last_cache_time=0
+    cache_age=$((current_time - last_cache_time))
+
+    if [[ "${cache_age}" -lt "${SUBAGENT_CACHE_MAX_AGE}" ]]; then
+        local cached_total
+        cached_total=$(get_main_agent_state_value "total_tokens")
+        [[ "${cached_total}" == "null" ]] && cached_total=0
+        echo "${cached_total}"
+        return
+    fi
+
+    # Find files to process
+    local files_to_scan
+    files_to_scan=$(find_main_agent_jsonl_files)
+
+    if [[ -z "${files_to_scan}" ]]; then
+        local cached_total
+        cached_total=$(get_main_agent_state_value "total_tokens")
+        [[ "${cached_total}" == "null" ]] && cached_total=0
+
+        local tmp_file
+        tmp_file=$(mktemp)
+        jq ".last_cache_time = ${current_time}" "${MAIN_AGENT_STATE_FILE}" > "${tmp_file}" && \
+            mv "${tmp_file}" "${MAIN_AGENT_STATE_FILE}"
+
+        echo "${cached_total}"
+        return
+    fi
+
+    # Read current state
+    local state_json
+    state_json=$(cat "${MAIN_AGENT_STATE_FILE}" 2>/dev/null) || state_json="{}"
+
+    # Initialize delta accumulators
+    local haiku_inp=0 haiku_out=0 haiku_cr=0 haiku_cc=0
+    local sonnet_inp=0 sonnet_out=0 sonnet_cr=0 sonnet_cc=0
+    local opus_inp=0 opus_out=0 opus_cr=0 opus_cc=0
+    local file_offsets_updates=""
+
+    # Process each file
+    while IFS= read -r filepath; do
+        [[ -z "${filepath}" ]] && continue
+
+        local stored_offset
+        stored_offset=$(echo "$state_json" | jq -r --arg p "$filepath" '.file_offsets[$p].bytes // 0' 2>/dev/null) || stored_offset=0
+        [[ "$stored_offset" == "null" ]] && stored_offset=0
+
+        local result_json
+        result_json=$(extract_tokens_from_file_offset "$filepath" "$stored_offset")
+
+        local h_inp h_out h_cr h_cc s_inp s_out s_cr s_cc o_inp o_out o_cr o_cc new_offset
+
+        h_inp=$(echo "$result_json" | jq -r '.haiku.input // 0') || h_inp=0
+        h_out=$(echo "$result_json" | jq -r '.haiku.output // 0') || h_out=0
+        h_cr=$(echo "$result_json" | jq -r '.haiku.cache_read // 0') || h_cr=0
+        h_cc=$(echo "$result_json" | jq -r '.haiku.cache_creation // 0') || h_cc=0
+
+        s_inp=$(echo "$result_json" | jq -r '.sonnet.input // 0') || s_inp=0
+        s_out=$(echo "$result_json" | jq -r '.sonnet.output // 0') || s_out=0
+        s_cr=$(echo "$result_json" | jq -r '.sonnet.cache_read // 0') || s_cr=0
+        s_cc=$(echo "$result_json" | jq -r '.sonnet.cache_creation // 0') || s_cc=0
+
+        o_inp=$(echo "$result_json" | jq -r '.opus.input // 0') || o_inp=0
+        o_out=$(echo "$result_json" | jq -r '.opus.output // 0') || o_out=0
+        o_cr=$(echo "$result_json" | jq -r '.opus.cache_read // 0') || o_cr=0
+        o_cc=$(echo "$result_json" | jq -r '.opus.cache_creation // 0') || o_cc=0
+
+        new_offset=$(echo "$result_json" | jq -r '.new_offset // 0') || new_offset=0
+
+        haiku_inp=$((haiku_inp + h_inp))
+        haiku_out=$((haiku_out + h_out))
+        haiku_cr=$((haiku_cr + h_cr))
+        haiku_cc=$((haiku_cc + h_cc))
+
+        sonnet_inp=$((sonnet_inp + s_inp))
+        sonnet_out=$((sonnet_out + s_out))
+        sonnet_cr=$((sonnet_cr + s_cr))
+        sonnet_cc=$((sonnet_cc + s_cc))
+
+        opus_inp=$((opus_inp + o_inp))
+        opus_out=$((opus_out + o_out))
+        opus_cr=$((opus_cr + o_cr))
+        opus_cc=$((opus_cc + o_cc))
+
+        file_offsets_updates="${file_offsets_updates}\"${filepath}\":{\"bytes\":${new_offset},\"ts\":${current_time}},"
+    done <<< "${files_to_scan}"
+
+    file_offsets_updates="${file_offsets_updates%,}"
+
+    # Get current totals from state
+    local cur_haiku_inp cur_haiku_out cur_haiku_cr cur_haiku_cc
+    local cur_sonnet_inp cur_sonnet_out cur_sonnet_cr cur_sonnet_cc
+    local cur_opus_inp cur_opus_out cur_opus_cr cur_opus_cc
+
+    cur_haiku_inp=$(echo "$state_json" | jq -r '.haiku.input_tokens // 0') || cur_haiku_inp=0
+    cur_haiku_out=$(echo "$state_json" | jq -r '.haiku.output_tokens // 0') || cur_haiku_out=0
+    cur_haiku_cr=$(echo "$state_json" | jq -r '.haiku.cache_read_tokens // 0') || cur_haiku_cr=0
+    cur_haiku_cc=$(echo "$state_json" | jq -r '.haiku.cache_creation_tokens // 0') || cur_haiku_cc=0
+
+    cur_sonnet_inp=$(echo "$state_json" | jq -r '.sonnet.input_tokens // 0') || cur_sonnet_inp=0
+    cur_sonnet_out=$(echo "$state_json" | jq -r '.sonnet.output_tokens // 0') || cur_sonnet_out=0
+    cur_sonnet_cr=$(echo "$state_json" | jq -r '.sonnet.cache_read_tokens // 0') || cur_sonnet_cr=0
+    cur_sonnet_cc=$(echo "$state_json" | jq -r '.sonnet.cache_creation_tokens // 0') || cur_sonnet_cc=0
+
+    cur_opus_inp=$(echo "$state_json" | jq -r '.opus.input_tokens // 0') || cur_opus_inp=0
+    cur_opus_out=$(echo "$state_json" | jq -r '.opus.output_tokens // 0') || cur_opus_out=0
+    cur_opus_cr=$(echo "$state_json" | jq -r '.opus.cache_read_tokens // 0') || cur_opus_cr=0
+    cur_opus_cc=$(echo "$state_json" | jq -r '.opus.cache_creation_tokens // 0') || cur_opus_cc=0
+
+    # Calculate new totals
+    local new_haiku_inp=$((cur_haiku_inp + haiku_inp))
+    local new_haiku_out=$((cur_haiku_out + haiku_out))
+    local new_haiku_cr=$((cur_haiku_cr + haiku_cr))
+    local new_haiku_cc=$((cur_haiku_cc + haiku_cc))
+
+    local new_sonnet_inp=$((cur_sonnet_inp + sonnet_inp))
+    local new_sonnet_out=$((cur_sonnet_out + sonnet_out))
+    local new_sonnet_cr=$((cur_sonnet_cr + sonnet_cr))
+    local new_sonnet_cc=$((cur_sonnet_cc + sonnet_cc))
+
+    local new_opus_inp=$((cur_opus_inp + opus_inp))
+    local new_opus_out=$((cur_opus_out + opus_out))
+    local new_opus_cr=$((cur_opus_cr + opus_cr))
+    local new_opus_cc=$((cur_opus_cc + opus_cc))
+
+    # Calculate totals
+    local total_tokens=$((
+        new_haiku_inp + new_haiku_out + new_haiku_cr + new_haiku_cc +
+        new_sonnet_inp + new_sonnet_out + new_sonnet_cr + new_sonnet_cc +
+        new_opus_inp + new_opus_out + new_opus_cr + new_opus_cc
+    ))
+
+    local haiku_price sonnet_price opus_price total_price
+    haiku_price=$(calculate_model_cost "haiku" "$new_haiku_inp" "$new_haiku_out" "$new_haiku_cr" "$new_haiku_cc")
+    sonnet_price=$(calculate_model_cost "sonnet" "$new_sonnet_inp" "$new_sonnet_out" "$new_sonnet_cr" "$new_sonnet_cc")
+    opus_price=$(calculate_model_cost "opus" "$new_opus_inp" "$new_opus_out" "$new_opus_cr" "$new_opus_cc")
+    total_price=$(awk -v h="$haiku_price" -v s="$sonnet_price" -v o="$opus_price" 'BEGIN { printf "%.6f", h + s + o }')
+
+    local existing_offsets
+    existing_offsets=$(echo "$state_json" | jq -c '.file_offsets // {}') || existing_offsets="{}"
+
+    # Write updated state
+    local tmp_file
+    tmp_file=$(mktemp)
+
+    cat > "${tmp_file}" << EOF
+{
+  "schema_version": 2,
+  "last_scan_timestamp": ${current_time},
+  "last_cache_time": ${current_time},
+  "file_offsets": ${existing_offsets},
+  "haiku": {
+    "input_tokens": ${new_haiku_inp},
+    "output_tokens": ${new_haiku_out},
+    "cache_read_tokens": ${new_haiku_cr},
+    "cache_creation_tokens": ${new_haiku_cc}
+  },
+  "sonnet": {
+    "input_tokens": ${new_sonnet_inp},
+    "output_tokens": ${new_sonnet_out},
+    "cache_read_tokens": ${new_sonnet_cr},
+    "cache_creation_tokens": ${new_sonnet_cc}
+  },
+  "opus": {
+    "input_tokens": ${new_opus_inp},
+    "output_tokens": ${new_opus_out},
+    "cache_read_tokens": ${new_opus_cr},
+    "cache_creation_tokens": ${new_opus_cc}
+  },
+  "total_tokens": ${total_tokens},
+  "total_price": ${total_price}
+}
+EOF
+
+    if [[ -n "$file_offsets_updates" ]]; then
+        jq --argjson updates "{${file_offsets_updates}}" '.file_offsets = (.file_offsets + $updates)' "${tmp_file}" > "${tmp_file}.merged" && \
+            mv "${tmp_file}.merged" "${tmp_file}"
+    fi
+
+    mv "${tmp_file}" "${MAIN_AGENT_STATE_FILE}"
+
+    echo "${total_tokens}"
+}
+
+# Get main agent cost (self-calculated from JSONL tokens)
+get_main_agent_cost() {
+    get_main_agent_tokens >/dev/null
+    local cost
+    cost=$(get_main_agent_state_value "total_price")
+    [[ "${cost}" == "null" || "${cost}" == "0" ]] && cost="0.000000"
+    echo "${cost}"
+}
+
+# Reset main agent state
+reset_main_agent_state() {
+    rm -f "${MAIN_AGENT_STATE_FILE}" 2>/dev/null || true
+    rm -f "${MAIN_AGENT_TIMESTAMP_FILE}" 2>/dev/null || true
+    init_main_agent_state
 }
 
 # =============================================================================
