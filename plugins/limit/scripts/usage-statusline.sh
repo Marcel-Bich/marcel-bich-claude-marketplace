@@ -1281,8 +1281,8 @@ format_output() {
             fi
         fi
 
-        ctx_col1_str="Ctx: ${formatted_len}"
-        ctx_col2_str="Ctx/Max: ${total_pct}%"
+        ctx_col1_str="CT: ${formatted_len}"
+        ctx_col2_str="CTM: ${total_pct}%"
         local usable_bar
         usable_bar=$(progress_bar "$usable_pct")
         ctx_col3_str="${usable_bar} ${usable_pct}%"
@@ -1294,7 +1294,7 @@ format_output() {
         session_secs=$(get_session_time "session")
         api_secs=$(get_session_time "block")
 
-        sess_col1_str="Total: $(format_duration "$session_secs")"
+        sess_col1_str="Sn: $(format_duration "$session_secs")"
         sess_col2_str="API: $(format_duration "$api_secs")"
     fi
 
@@ -1369,6 +1369,40 @@ format_output() {
         fi
 
         lines+=("${gray_color}Session -> ${sess_c1}${sess_col2_str}    Cost: \$${cost_sess}${gray_color_reset}")
+
+        # Model info line with lifetime totals
+        # Format: {Model} | Style: {style} | LifetimeTotal: T:{tokens} ${cost} | Device: {device}
+        if [[ "$SHOW_MODEL" == "true" ]] && [[ -n "$current_model_sess" ]]; then
+            # Get lifetime tokens from JSONL files (main + subagent)
+            local main_tokens_lifetime subagent_tokens_lifetime total_tokens_lifetime
+            main_tokens_lifetime=$(get_main_agent_tokens 2>/dev/null) || main_tokens_lifetime=0
+            [[ "$main_tokens_lifetime" == "null" ]] && main_tokens_lifetime=0
+            subagent_tokens_lifetime=$(get_subagent_tokens 2>/dev/null) || subagent_tokens_lifetime=0
+            [[ "$subagent_tokens_lifetime" == "null" ]] && subagent_tokens_lifetime=0
+            total_tokens_lifetime=$((main_tokens_lifetime + subagent_tokens_lifetime))
+
+            local formatted_tokens_lifetime=""
+            local total_cost_lifetime="0.00"
+            if [[ "$total_tokens_lifetime" -gt 0 ]]; then
+                formatted_tokens_lifetime=$(format_tokens "$total_tokens_lifetime")
+                # Get cost from JSONL-based calculation (main + subagent)
+                local main_cost_lifetime subagent_cost_lifetime
+                main_cost_lifetime=$(get_main_agent_cost 2>/dev/null) || main_cost_lifetime=0
+                [[ "$main_cost_lifetime" == "null" ]] && main_cost_lifetime=0
+                subagent_cost_lifetime=$(get_subagent_cost 2>/dev/null) || subagent_cost_lifetime=0
+                [[ "$subagent_cost_lifetime" == "null" ]] && subagent_cost_lifetime=0
+                total_cost_lifetime=$(awk -v m="$main_cost_lifetime" -v s="$subagent_cost_lifetime" 'BEGIN {printf "%.2f", m + s}')
+            fi
+
+            local model_line=""
+            model_line="${model_name_color_sess}${current_model_sess}${model_color_reset_sess}"
+            model_line="${model_line}${gray_color} | Style: ${style_sess}"
+            if [[ -n "$formatted_tokens_lifetime" ]]; then
+                model_line="${model_line} | LifetimeTotal: T:${formatted_tokens_lifetime} \$${total_cost_lifetime}"
+            fi
+            model_line="${model_line} | Device: ${LOCAL_DEVICE_LABEL}${gray_color_reset}"
+            lines+=("$model_line")
+        fi
     fi
 
     # -------------------------------------------------------------------------
@@ -1671,36 +1705,6 @@ EOF
         fi
         printf -v extra_line "${extra_color}Extra%s \$%s/\$%s${extra_color_reset}" "$extra_bar" "$extra_used" "$extra_limit"
         lines+=("$extra_line")
-    fi
-
-    # Lifetime stats line (if enabled) - shows total tokens and cost across all sessions on this device
-    # Uses JSONL-based tracking (NOT API) for accurate lifetime totals
-    if [[ "$SHOW_MODEL" == "true" ]] && [[ "$SHOW_LOCAL" == "true" ]]; then
-        # Get tokens from JSONL files (main + subagent)
-        local main_tokens_ever subagent_tokens_ever total_tokens_ever
-        main_tokens_ever=$(get_main_agent_tokens 2>/dev/null) || main_tokens_ever=0
-        [[ "$main_tokens_ever" == "null" ]] && main_tokens_ever=0
-        subagent_tokens_ever=$(get_subagent_tokens 2>/dev/null) || subagent_tokens_ever=0
-        [[ "$subagent_tokens_ever" == "null" ]] && subagent_tokens_ever=0
-        total_tokens_ever=$((main_tokens_ever + subagent_tokens_ever))
-
-        if [[ "$total_tokens_ever" -gt 0 ]]; then
-            local formatted_tokens total_cost_ever
-            formatted_tokens=$(format_tokens "$total_tokens_ever")
-            # Get cost from JSONL-based calculation (main + subagent)
-            local main_cost_ever subagent_cost_ever
-            main_cost_ever=$(get_main_agent_cost 2>/dev/null) || main_cost_ever=0
-            [[ "$main_cost_ever" == "null" ]] && main_cost_ever=0
-            subagent_cost_ever=$(get_subagent_cost 2>/dev/null) || subagent_cost_ever=0
-            [[ "$subagent_cost_ever" == "null" ]] && subagent_cost_ever=0
-            total_cost_ever=$(awk -v m="$main_cost_ever" -v s="$subagent_cost_ever" 'BEGIN {printf "%.2f", m + s}')
-            local lifetime_color="" lifetime_color_reset=""
-            if [[ "$SHOW_COLORS" == "true" ]]; then
-                lifetime_color="$COLOR_GRAY"
-                lifetime_color_reset="$COLOR_RESET"
-            fi
-            lines+=("${lifetime_color}Lifetime (${LOCAL_DEVICE_LABEL}) [T:${formatted_tokens} \$${total_cost_ever}]${lifetime_color_reset}")
-        fi
     fi
 
     # Session ID (if enabled) - always gray, below Active Model with empty line
