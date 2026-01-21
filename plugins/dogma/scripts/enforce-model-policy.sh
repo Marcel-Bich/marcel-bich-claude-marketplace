@@ -1,16 +1,20 @@
 #!/bin/bash
-# For Anthropic plugin agents: if no model specified, inherit from parent
-# This ensures subagents use the main agent's model instead of the plugin's
-# hardcoded default (often sonnet)
+# For Anthropic plugin agents: ensure at least the higher model is used
+# Compares agent default (usually sonnet) with parent model from settings.json
+# and uses whichever is higher (opus > sonnet > haiku)
 #
 # Behavior:
 # - Explicit model passed -> respect it (no override)
-# - No model + Anthropic plugin -> inherit from ~/.claude/settings.json
+# - No model + Anthropic plugin -> max(agent_default, parent_model)
 # - No model + Third-party plugin -> unchanged (use agent default)
+#
+# Examples:
+# - Agent=sonnet, Parent=opus -> opus (parent higher)
+# - Agent=sonnet, Parent=haiku -> sonnet (agent higher)
+# - Agent=sonnet, Parent=sonnet -> sonnet (equal)
 #
 # Technical notes:
 # - "inherit" is not a valid API value, only sonnet/opus/haiku
-# - The hook resolves inherit by reading from settings.json
 # - The hook must output the full merged tool_input (Claude Code replaces, not merges)
 #
 # ENV: CLAUDE_MB_DOGMA_DEBUG=true | false (default) - debug logging to /tmp/dogma-debug.log
@@ -89,23 +93,56 @@ if [[ "$IS_ANTHROPIC" == false ]]; then
   exit 0
 fi
 
-# Resolve "inherit" to actual model from settings.json
-# Valid API values: sonnet, opus, haiku (not "inherit")
-resolve_model() {
-  local settings_model
-  settings_model=$(jq -r '.model // empty' ~/.claude/settings.json 2>/dev/null)
-
-  case "${settings_model,,}" in
-    opus*|claude-opus*) echo "opus" ;;
-    sonnet*|claude-sonnet*) echo "sonnet" ;;
-    haiku*|claude-haiku*) echo "haiku" ;;
-    *) echo "opus" ;;  # Default to opus
+# Model ranking: opus=3, sonnet=2, haiku=1
+model_rank() {
+  case "${1,,}" in
+    opus*|claude-opus*) echo 3 ;;
+    sonnet*|claude-sonnet*) echo 2 ;;
+    haiku*|claude-haiku*) echo 1 ;;
+    *) echo 2 ;;  # Default to sonnet rank
   esac
 }
 
-# No model specified + Anthropic plugin -> force parent model
-RESOLVED_MODEL=$(resolve_model)
-dogma_debug_log "Resolved model from settings: $RESOLVED_MODEL"
+normalize_model() {
+  case "${1,,}" in
+    opus*|claude-opus*) echo "opus" ;;
+    sonnet*|claude-sonnet*) echo "sonnet" ;;
+    haiku*|claude-haiku*) echo "haiku" ;;
+    *) echo "sonnet" ;;  # Default to sonnet
+  esac
+}
+
+# Get parent model from settings.json
+get_parent_model() {
+  local settings_model
+  settings_model=$(jq -r '.model // empty' ~/.claude/settings.json 2>/dev/null)
+  normalize_model "$settings_model"
+}
+
+# Choose the higher model between agent default and parent
+# Anthropic agents typically default to sonnet
+choose_best_model() {
+  local agent_default="sonnet"  # Anthropic agents usually default to sonnet
+  local parent_model
+  parent_model=$(get_parent_model)
+
+  local agent_rank parent_rank
+  agent_rank=$(model_rank "$agent_default")
+  parent_rank=$(model_rank "$parent_model")
+
+  dogma_debug_log "Agent default: $agent_default (rank $agent_rank)"
+  dogma_debug_log "Parent model: $parent_model (rank $parent_rank)"
+
+  if [[ $parent_rank -ge $agent_rank ]]; then
+    echo "$parent_model"
+  else
+    echo "$agent_default"
+  fi
+}
+
+# No model specified + Anthropic plugin -> use higher of (agent default, parent model)
+RESOLVED_MODEL=$(choose_best_model)
+dogma_debug_log "Chosen model (max of both): $RESOLVED_MODEL"
 dogma_debug_log "Overriding model to $RESOLVED_MODEL for $AGENT_TYPE"
 
 # Merge original tool_input with resolved model
