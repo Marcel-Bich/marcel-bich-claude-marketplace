@@ -104,7 +104,7 @@ Instead of complex calibration, we track the highest token usage ever measured o
 
 **LimitAt Achievement:** If you push hard enough to reach >95% API utilization when breaking your highscore, you discover the real limit of your plan - like an Easter-Egg!
 
-**State file:** `~/.claude/limit-highscore-state.json`
+**State file:** `~/.claude/marcel-bich-claude-marketplace/limit/limit-highscore-state.json`
 
 ## Debug Scripts
 
