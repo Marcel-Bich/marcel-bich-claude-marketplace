@@ -1252,16 +1252,18 @@ format_output() {
         cache_read=$(get_token_metrics "cache_read")
         total_tokens=$((in_tokens + out_tokens))
 
-        tok_col1_str="In: $(format_tokens "$in_tokens")"
-        tok_col2_str="Out: $(format_tokens "$out_tokens")"
+        tok_col1_str="Input: $(format_tokens "$in_tokens")"
+        tok_col2_str="Output: $(format_tokens "$out_tokens")"
         tok_col3_str="Cached: $(format_tokens "$cache_read")"
-        tok_col4_str="Total: $(format_tokens "$total_tokens")"
+        tok_col4_str="TotalTk: $(format_tokens "$total_tokens")"
     fi
 
     # Context values
-    local ctx_usable_color="" ctx_usable_color_reset=""
+    # Store usable percentage and bar for Session line (moved from Context line)
+    local ctx_usable_pct="" ctx_usable_bar=""
+    local ctx_col4_str=""
     if [[ "$SHOW_CTX" == "true" ]]; then
-        local ctx_len formatted_len max_tokens total_pct="" usable_tokens usable_pct="" usable_pct_int
+        local ctx_len formatted_len max_tokens total_pct="" usable_tokens usable_pct="" tokens_left="" ctx_left_pct=""
         ctx_len=$(get_context_length)
         ctx_len="${ctx_len:-0}"
         formatted_len=$(format_tokens "$ctx_len")
@@ -1269,23 +1271,25 @@ format_output() {
         max_tokens=$(get_model_context_config "max")
         if [[ -n "$max_tokens" ]] && [[ "$max_tokens" -gt 0 ]]; then
             total_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $max_tokens) * 100}")
+            # Calculate tokens left (max - current)
+            local tokens_left_raw=$((max_tokens - ctx_len))
+            tokens_left=$(format_tokens "$tokens_left_raw")
+            # Calculate context left percentage (100 - total_pct)
+            ctx_left_pct=$(awk "BEGIN {printf \"%.1f\", 100 - $total_pct}")
         fi
 
         usable_tokens=$(get_model_context_config "usable")
         if [[ -n "$usable_tokens" ]] && [[ "$usable_tokens" -gt 0 ]]; then
             usable_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $usable_tokens) * 100}")
-            usable_pct_int="${usable_pct%%.*}"
-            if [[ "$SHOW_COLORS" == "true" ]]; then
-                ctx_usable_color=$(get_color "$usable_pct_int")
-                ctx_usable_color_reset="$COLOR_RESET"
-            fi
+            # Store for Session line progress bar
+            ctx_usable_pct="$usable_pct"
+            ctx_usable_bar=$(progress_bar "$usable_pct")
         fi
 
-        ctx_col1_str="CT: ${formatted_len}"
-        ctx_col2_str="CTM: ${total_pct}%"
-        local usable_bar
-        usable_bar=$(progress_bar "$usable_pct")
-        ctx_col3_str="${usable_bar} ${usable_pct}%"
+        ctx_col1_str="UsedT: ${formatted_len}"
+        ctx_col2_str="TkLeft: ${tokens_left}"
+        ctx_col3_str="CtxMax: ${total_pct}%"
+        ctx_col4_str="CtxLeft: ${ctx_left_pct}%"
     fi
 
     # Session values
@@ -1294,8 +1298,8 @@ format_output() {
         session_secs=$(get_session_time "session")
         api_secs=$(get_session_time "block")
 
-        sess_col1_str="Sn: $(format_duration "$session_secs")"
-        sess_col2_str="API: $(format_duration "$api_secs")"
+        sess_col1_str="Sessn: $(format_duration "$session_secs")"
+        sess_col2_str="APIuse: $(format_duration "$api_secs")"
     fi
 
     # Calculate dynamic column widths (max of each column + 2 for spacing)
@@ -1331,12 +1335,12 @@ format_output() {
         lines+=("${gray_color}Tokens  -> ${tok_c1}${tok_c2}${tok_col3_str}  ${tok_col4_str}${gray_color_reset}")
     fi
 
-    # Context line
+    # Context line (no progress bar - moved to Session line)
     if [[ "$SHOW_CTX" == "true" ]]; then
         local ctx_c1 ctx_c2
         printf -v ctx_c1 "%-${col1_width}s" "$ctx_col1_str"
         printf -v ctx_c2 "%-${col2_width}s" "$ctx_col2_str"
-        lines+=("${gray_color}Context -> ${ctx_c1}${ctx_c2}${gray_color_reset}${ctx_usable_color}${ctx_col3_str}${ctx_usable_color_reset}")
+        lines+=("${gray_color}Context -> ${ctx_c1}${ctx_c2}${ctx_col3_str}  ${ctx_col4_str}${gray_color_reset}")
     fi
 
     # Session line - includes model, style, hostname, total tokens and cost
@@ -1368,7 +1372,17 @@ format_output() {
             esac
         fi
 
-        lines+=("${gray_color}Session -> ${sess_c1}${sess_col2_str}    Cost: \$${cost_sess}${gray_color_reset}")
+        # Build session line with progress bar at end (showing usable context percentage)
+        local sess_progress_bar="" sess_progress_color="" sess_progress_color_reset=""
+        if [[ -n "$ctx_usable_pct" ]] && [[ "$SHOW_PROGRESS" == "true" ]]; then
+            sess_progress_bar="    ${ctx_usable_bar} ${ctx_usable_pct}%"
+            if [[ "$SHOW_COLORS" == "true" ]]; then
+                local usable_pct_int="${ctx_usable_pct%%.*}"
+                sess_progress_color=$(get_color "$usable_pct_int")
+                sess_progress_color_reset="$COLOR_RESET"
+            fi
+        fi
+        lines+=("${gray_color}Session -> ${sess_c1}${sess_col2_str}    Cost: \$${cost_sess}${gray_color_reset}${sess_progress_color}${sess_progress_bar}${sess_progress_color_reset}")
 
         # Model info line with lifetime totals
         # Format: {Model} | Style: {style} | LifetimeTotal: T:{tokens} ${cost} | Device: {device}
