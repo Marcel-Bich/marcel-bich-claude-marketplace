@@ -21,7 +21,11 @@ TIMEOUT=5
 
 # Cache configuration (rate limiting)
 CACHE_FILE="/tmp/claude-mb-limit-cache.json"
-CACHE_MAX_AGE="${CLAUDE_MB_LIMIT_CACHE_AGE:-120}"  # 2 minutes default
+# Base cache age - actual age is jittered 90-150s to avoid detection patterns
+CACHE_BASE_AGE="${CLAUDE_MB_LIMIT_CACHE_AGE:-120}"
+
+# Backoff state file for rate-limit handling
+BACKOFF_STATE_FILE=""  # Set in ensure_plugin_dir
 
 # Plugin data directory (organized under marketplace name)
 PLUGIN_DATA_DIR="${HOME}/.claude/marcel-bich-claude-marketplace/limit"
@@ -50,6 +54,113 @@ ensure_plugin_dir() {
     if [[ ! -d "$PLUGIN_DATA_DIR" ]]; then
         mkdir -p "$PLUGIN_DATA_DIR" 2>/dev/null || true
     fi
+    # Set backoff state file path after directory exists
+    BACKOFF_STATE_FILE="${PLUGIN_DATA_DIR}/backoff-state.json"
+}
+
+# =============================================================================
+# Anti-bot-detection: Cache jitter, request jitter, and exponential backoff
+# =============================================================================
+
+# Get jittered cache max age (90-150 seconds)
+# Randomizes request patterns to avoid detection
+get_cache_max_age() {
+    echo $((90 + RANDOM % 61))
+}
+
+# Small jitter before API request (0-2000ms)
+# Prevents predictable request timing
+sleep_jitter() {
+    local ms=$((RANDOM % 2000))
+    # Format as 0.XXX seconds (bash RANDOM gives 0-32767, so ms is 0-1999)
+    local secs
+    printf -v secs "0.%03d" "$ms"
+    sleep "$secs" 2>/dev/null || sleep 1
+}
+
+# Get current backoff state
+# Returns: consecutive_failures count (0 if none or file missing)
+get_backoff_state() {
+    ensure_plugin_dir
+    if [[ -f "$BACKOFF_STATE_FILE" ]]; then
+        local failures
+        failures=$(jq -r '.consecutive_failures // 0' "$BACKOFF_STATE_FILE" 2>/dev/null) || failures=0
+        [[ "$failures" == "null" ]] && failures=0
+        echo "$failures"
+    else
+        echo "0"
+    fi
+}
+
+# Set backoff state after rate limit
+# Args: consecutive_failures
+set_backoff_state() {
+    local failures="$1"
+    ensure_plugin_dir
+    cat > "$BACKOFF_STATE_FILE" << EOF
+{
+  "consecutive_failures": ${failures},
+  "last_rate_limit": "$(date -Iseconds)"
+}
+EOF
+}
+
+# Reset backoff state after successful request
+reset_backoff_state() {
+    if [[ -f "$BACKOFF_STATE_FILE" ]]; then
+        rm -f "$BACKOFF_STATE_FILE" 2>/dev/null || true
+    fi
+}
+
+# Reset backoff if last rate-limit was more than 10 minutes ago
+# This prevents the counter from staying high forever if API recovers
+maybe_reset_backoff() {
+    if [[ ! -f "$BACKOFF_STATE_FILE" ]]; then
+        return
+    fi
+
+    local last_rate_limit
+    last_rate_limit=$(jq -r '.last_rate_limit // empty' "$BACKOFF_STATE_FILE" 2>/dev/null)
+
+    if [[ -z "$last_rate_limit" ]] || [[ "$last_rate_limit" == "null" ]]; then
+        return
+    fi
+
+    # Convert ISO timestamp to epoch seconds
+    local last_epoch now_epoch
+    last_epoch=$(date -d "$last_rate_limit" +%s 2>/dev/null) || return
+    now_epoch=$(date +%s)
+
+    # 600 seconds = 10 minutes
+    if [[ $((now_epoch - last_epoch)) -gt 600 ]]; then
+        debug_log "Backoff reset: last rate-limit was >10 minutes ago"
+        reset_backoff_state
+    fi
+}
+
+# Calculate backoff time with jitter for rate limits
+# Args: consecutive_failures (1-based)
+# Returns: backoff time in seconds (with jitter)
+# Pattern: 60-90s, 120-180s, 240-360s, max 600s
+calculate_backoff() {
+    local failures="${1:-1}"
+    local base_time=60
+    local max_time=600
+
+    # Exponential: base * 2^(failures-1), capped at max
+    local multiplier=1
+    for ((i=1; i<failures; i++)); do
+        multiplier=$((multiplier * 2))
+    done
+    base_time=$((60 * multiplier))
+    [[ "$base_time" -gt "$max_time" ]] && base_time="$max_time"
+
+    # Add 50% jitter (e.g., 60 -> 60-90, 120 -> 120-180)
+    local jitter=$((base_time / 2))
+    local jittered=$((base_time + RANDOM % (jitter + 1)))
+    [[ "$jittered" -gt "$max_time" ]] && jittered="$max_time"
+
+    echo "$jittered"
 }
 
 # =============================================================================
@@ -242,7 +353,13 @@ set_api_error() {
             API_ERROR="Limits: [auth] run 'claude login'"
             ;;
         api_429)
-            API_ERROR="Limits: [rate-limit] retry in 60s"
+            # Calculate backoff time with exponential increase and jitter
+            local failures backoff_time
+            failures=$(get_backoff_state)
+            failures=$((failures + 1))
+            set_backoff_state "$failures"
+            backoff_time=$(calculate_backoff "$failures")
+            API_ERROR="Limits: [rate-limit] retry in ${backoff_time}s"
             ;;
         api_500|api_502|api_503|api_504|api_5xx)
             API_ERROR="Limits: [api-error] try again later"
@@ -378,6 +495,7 @@ get_current_model() {
 }
 
 # Check if cache is valid (not expired)
+# Uses jittered cache age (90-150s) to avoid predictable request patterns
 is_cache_valid() {
     if [[ ! -f "$CACHE_FILE" ]]; then
         return 1
@@ -389,7 +507,11 @@ is_cache_valid() {
     current_time=$(date +%s)
     local age=$((current_time - cache_time))
 
-    if [[ "$age" -lt "$CACHE_MAX_AGE" ]]; then
+    # Use jittered cache age to randomize request patterns
+    local cache_max_age
+    cache_max_age=$(get_cache_max_age)
+
+    if [[ "$age" -lt "$cache_max_age" ]]; then
         return 0
     fi
     return 1
@@ -441,12 +563,17 @@ fetch_usage() {
         return 1
     fi
 
+    # Reset backoff counter if last rate-limit was >10 minutes ago
+    maybe_reset_backoff
+
     # Check cache first
     if is_cache_valid; then
         local cached
         cached=$(read_cache)
         if [[ -n "$cached" ]]; then
-            debug_log "Using cached response (age < ${CACHE_MAX_AGE}s)"
+            local cache_max_age
+            cache_max_age=$(get_cache_max_age)
+            debug_log "Using cached response (age < ${cache_max_age}s)"
             echo "$cached"
             return 0
         fi
@@ -458,6 +585,9 @@ fetch_usage() {
     local response_body="" http_code=""
     local temp_file
     temp_file=$(mktemp 2>/dev/null) || temp_file="/tmp/claude-limit-api-$$"
+
+    # Anti-bot: Add small random jitter before request (0-2s)
+    sleep_jitter
 
     # Execute curl: -s (silent), -w (write http_code to stdout after body)
     # We do NOT use -f (fail) because we want to capture the error response body
@@ -488,6 +618,8 @@ fetch_usage() {
     if [[ "$http_code" -ge 200 ]] && [[ "$http_code" -lt 300 ]]; then
         # Success - cache and return response
         write_cache "$response_body"
+        # Reset backoff state on successful request
+        reset_backoff_state
         debug_log "Fresh API response fetched successfully"
         echo "$response_body"
         return 0
