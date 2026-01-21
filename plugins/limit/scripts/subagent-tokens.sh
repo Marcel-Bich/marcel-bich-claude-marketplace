@@ -12,7 +12,7 @@ set -euo pipefail
 # =============================================================================
 
 # State file for subagent tracking (within plugin data dir)
-SUBAGENT_STATE_FILE="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}/subagent-state.json"
+SUBAGENT_STATE_FILE="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}/limit-subagent-state.json"
 
 # Claude projects directory (contains subagent JSONL files)
 CLAUDE_PROJECTS_DIR="${HOME}/.claude/projects"
@@ -759,7 +759,7 @@ reset_subagent_state() {
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     # Set PLUGIN_DATA_DIR if not set (for standalone execution)
     PLUGIN_DATA_DIR="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}"
-    SUBAGENT_STATE_FILE="${PLUGIN_DATA_DIR}/subagent-state.json"
+    SUBAGENT_STATE_FILE="${PLUGIN_DATA_DIR}/limit-subagent-state.json"
 
     case "${1:-}" in
         get)

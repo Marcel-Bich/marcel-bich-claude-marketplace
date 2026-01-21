@@ -102,7 +102,7 @@ CLAUDE_PROJECTS_DIR="${TEST_PROJECTS_DIR}"
 source "${SCRIPT_DIR}/subagent-tokens.sh"
 
 # Re-set paths after sourcing
-SUBAGENT_STATE_FILE="${TEST_DATA_DIR}/subagent-state.json"
+SUBAGENT_STATE_FILE="${TEST_DATA_DIR}/limit-subagent-state.json"
 CLAUDE_PROJECTS_DIR="${TEST_PROJECTS_DIR}"
 
 # =============================================================================
