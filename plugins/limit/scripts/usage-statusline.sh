@@ -1278,7 +1278,7 @@ format_output() {
             ctx_left_pct=$(awk "BEGIN {printf \"%.1f\", 100 - $total_pct}")
         fi
 
-        # Check if CtxLeft < 50% and add warning (will be shown on Session line)
+        # Check if ContxtLeft < 50% and add warning (will be shown on Session line)
         local compact_warning=""
         if [[ -n "$ctx_left_pct" ]]; then
             local should_warn
@@ -1348,11 +1348,11 @@ format_output() {
     [[ $sess_pct_len -gt $col4_width ]] && col4_width=$sess_pct_len
 
     # Progress bar is 12 chars + 1 space = 13 chars before percentage
-    # Labels "UserTk.: " and "CtxLeft: " are 9 chars each
+    # Labels "UserTokens: " and "ContxtLeft: " are 12 chars each
     # To align the VALUES (not total width), we need extra padding for Tokens/Context
-    # Extra padding needed = progress_bar_width (13) - label_width (9) = 4 chars
+    # Extra padding needed = progress_bar_width (13) - label_width (12) = 1 char
     local progress_bar_prefix_width=13  # [==========] + space
-    local label_prefix_width=9          # "UserTk.: " or "CtxLeft: "
+    local label_prefix_width=12         # "UserTokens: " or "ContxtLeft: "
     local extra_padding=$((progress_bar_prefix_width - label_prefix_width))
     local col4_padded_width=$((col4_width + extra_padding))
 
@@ -1363,22 +1363,22 @@ format_output() {
         gray_color_reset="$COLOR_RESET"
     fi
 
-    # Tokens line: Input: %Ns    Output: %Ns    Cached: %Ns    UserTk.: %Ns
+    # Tokens line: Input: %Ns    Output: %Ns    Cached: %Ns    UserTokens: %Ns
     # 4 spaces between columns for readability
     # col4 uses padded width so value aligns with Session's progress bar percentage
     if [[ "$SHOW_TOKENS" == "true" ]]; then
         local tok_line
-        printf -v tok_line "Tokens  -> Input: %${col1_width}s    Output: %${col2_width}s    Cached: %${col3_width}s    UserTk.: %${col4_padded_width}s" \
+        printf -v tok_line "Tokens  -> Input: %${col1_width}s    Output: %${col2_width}s    Cached: %${col3_width}s    UserTokens: %${col4_padded_width}s" \
             "$tok_val1" "$tok_val2" "$tok_val3" "$tok_val4"
         lines+=("${gray_color}${tok_line}${gray_color_reset}")
     fi
 
-    # Context line: UsedT: %Ns    TkLeft: %Ns    CtxMax: %Ns    CtxLeft: %Ns
+    # Context line: UsedT: %Ns    TkLeft: %Ns    CtxMax: %Ns    ContxtLeft: %Ns
     # 4 spaces between columns for readability
     # col4 uses padded width so value aligns with Session's progress bar percentage
     if [[ "$SHOW_CTX" == "true" ]]; then
         local ctx_line
-        printf -v ctx_line "Context -> UsedT: %${col1_width}s    TkLeft: %${col2_width}s    CtxMax: %${col3_width}s    CtxLeft: %${col4_padded_width}s" \
+        printf -v ctx_line "Context -> UsedT: %${col1_width}s    TkLeft: %${col2_width}s    CtxMax: %${col3_width}s    ContxtLeft: %${col4_padded_width}s" \
             "$ctx_val1" "$ctx_val2" "$ctx_val3" "$ctx_val4"
         lines+=("${gray_color}${ctx_line}${gray_color_reset}")
     fi
