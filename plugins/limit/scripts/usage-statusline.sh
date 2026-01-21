@@ -659,14 +659,16 @@ get_git_worktree() {
 }
 
 # Get git changes (insertions and deletions)
-# Returns "+X,-Y" format
+# Returns "+X,-Y" format (or "+?,Nf" if only file count available)
+# Uses tiered fallback for slow 9p filesystems (WSL2 /mnt/c)
 get_git_changes() {
     local insertions=0
     local deletions=0
+    local timeout_sec=7
 
-    # Staged changes
+    # Staged changes (usually fast, no tiered approach needed)
     local staged
-    staged=$(git diff --cached --shortstat 2>/dev/null) || true
+    staged=$(timeout "$timeout_sec" git diff --cached --shortstat 2>/dev/null) || true
     if [[ -n "$staged" ]]; then
         local staged_ins staged_del
         staged_ins=$(echo "$staged" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo "0")
@@ -675,9 +677,36 @@ get_git_changes() {
         deletions=$((deletions + ${staged_del:-0}))
     fi
 
-    # Unstaged changes
+    # Unstaged changes - tiered approach for slow repos
     local unstaged
-    unstaged=$(git diff --shortstat 2>/dev/null) || true
+    local exit_code
+
+    # On 9p filesystems (/mnt/*), skip Tier 1 and start with Tier 2
+    if [[ "$PWD" == /mnt/* ]]; then
+        # Tier 2: checkStat=minimal (ignores timestamps, fast on 9p)
+        # Longer timeout (14s) since 9p is inherently slower
+        unstaged=$(timeout 14 git -c core.checkStat=minimal diff --shortstat 2>/dev/null)
+        exit_code=$?
+    else
+        # Tier 1: Normal method (fast on most systems)
+        unstaged=$(timeout "$timeout_sec" git diff --shortstat 2>/dev/null)
+        exit_code=$?
+
+        # Tier 2: If timeout, try with checkStat=minimal (ignores timestamps)
+        if [[ $exit_code -eq 124 ]]; then
+            unstaged=$(timeout "$timeout_sec" git -c core.checkStat=minimal diff --shortstat 2>/dev/null)
+            exit_code=$?
+        fi
+    fi
+
+    # Tier 3: If still timeout, just count files
+    if [[ $exit_code -eq 124 ]]; then
+        local file_count
+        file_count=$(git -c core.checkStat=minimal diff --name-only 2>/dev/null | wc -l)
+        echo "+${insertions},${file_count}f"
+        return
+    fi
+
     if [[ -n "$unstaged" ]]; then
         local unstaged_ins unstaged_del
         unstaged_ins=$(echo "$unstaged" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo "0")
