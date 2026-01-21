@@ -1366,10 +1366,23 @@ format_output() {
             esac
         fi
 
+        # Compute lifetime totals including subagents
+        local lifetime_tokens_main lifetime_tokens_subagent lifetime_tokens_total
+        lifetime_tokens_main=$(get_total_tokens_ever)
+        lifetime_tokens_subagent=$(get_subagent_tokens 2>/dev/null) || lifetime_tokens_subagent=0
+        [[ "$lifetime_tokens_subagent" == "null" ]] && lifetime_tokens_subagent=0
+        lifetime_tokens_total=$((lifetime_tokens_main + lifetime_tokens_subagent))
+
+        local lifetime_cost_main lifetime_cost_subagent lifetime_cost_total
+        lifetime_cost_main=$(get_total_cost_ever)
+        lifetime_cost_subagent=$(get_subagent_cost 2>/dev/null) || lifetime_cost_subagent=0
+        [[ "$lifetime_cost_subagent" == "null" ]] && lifetime_cost_subagent=0
+        lifetime_cost_total=$(awk -v m="$lifetime_cost_main" -v s="$lifetime_cost_subagent" 'BEGIN {printf "%.2f", m + s}')
+
         # Format: "Model | Style: X | (hostname) [T:XXM $X.XX]"
         local session_model_part=""
         if [[ -n "$current_model_sess" ]]; then
-            session_model_part="${model_name_color_sess}${current_model_sess}${model_color_reset_sess}${gray_color} | Style: ${style_sess} | (${LOCAL_DEVICE_LABEL} => LifetimeTotal: $(format_tokens "$(get_total_tokens_ever)") \$$(get_total_cost_ever)]${gray_color_reset}"
+            session_model_part="${model_name_color_sess}${current_model_sess}${model_color_reset_sess}${gray_color} | Style: ${style_sess} | (${LOCAL_DEVICE_LABEL} => LifetimeTotal: $(format_tokens "$lifetime_tokens_total") \$${lifetime_cost_total}]${gray_color_reset}"
         fi
 
         lines+=("${gray_color}Session -> ${sess_c1}${sess_col2_str}    Cost: \$${cost_sess}${gray_color_reset}")
@@ -1697,8 +1710,12 @@ EOF
         if [[ "$total_tokens_ever" -gt 0 ]]; then
             local formatted_tokens total_cost_ever
             formatted_tokens=$(format_tokens "$total_tokens_ever")
-            # Use accumulated cost from Claude's total_cost_usd (correctly calculated)
-            total_cost_ever=$(get_total_cost_ever)
+            # Use accumulated cost from Claude's total_cost_usd + subagent cost
+            local main_cost_ever subagent_cost_ever
+            main_cost_ever=$(get_total_cost_ever)
+            subagent_cost_ever=$(get_subagent_cost 2>/dev/null) || subagent_cost_ever=0
+            [[ "$subagent_cost_ever" == "null" ]] && subagent_cost_ever=0
+            total_cost_ever=$(awk -v m="$main_cost_ever" -v s="$subagent_cost_ever" 'BEGIN {printf "%.2f", m + s}')
             local lifetime_color="" lifetime_color_reset=""
             if [[ "$SHOW_COLORS" == "true" ]]; then
                 lifetime_color="$COLOR_GRAY"

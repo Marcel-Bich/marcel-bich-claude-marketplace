@@ -34,8 +34,11 @@ Display the current highscore state in a formatted view, including current usage
 
 Calculate and display prominently at the top:
 - Main Agent tokens: `totals.input_tokens + totals.output_tokens` from limit-usage-state.json
+- Main Agent cost: `totals.total_cost_usd` from limit-usage-state.json
 - Subagent tokens: `total_tokens` from limit-subagent-state.json
-- Combined: Main + Subagent tokens
+- Subagent cost: `total_price` from limit-subagent-state.json
+- Combined tokens: Main tokens + Subagent tokens
+- Combined cost: Main cost + Subagent cost
 
 **{combined_total formatted} Tokens** | ${combined_cost formatted with 2 decimals}
 
