@@ -1,12 +1,17 @@
 #!/bin/bash
-# For Anthropic plugin agents: if no model specified, default to inherit
-# This ensures subagents use the main agent's model (e.g., Opus) instead of
-# the plugin's hardcoded default (often sonnet)
+# For Anthropic plugin agents: if no model specified, inherit from parent
+# This ensures subagents use the main agent's model instead of the plugin's
+# hardcoded default (often sonnet)
 #
 # Behavior:
 # - Explicit model passed -> respect it (no override)
-# - No model + Anthropic plugin -> force inherit
+# - No model + Anthropic plugin -> inherit from ~/.claude/settings.json
 # - No model + Third-party plugin -> unchanged (use agent default)
+#
+# Technical notes:
+# - "inherit" is not a valid API value, only sonnet/opus/haiku
+# - The hook resolves inherit by reading from settings.json
+# - The hook must output the full merged tool_input (Claude Code replaces, not merges)
 #
 # ENV: CLAUDE_MB_DOGMA_DEBUG=true | false (default) - debug logging to /tmp/dogma-debug.log
 
@@ -84,14 +89,38 @@ if [[ "$IS_ANTHROPIC" == false ]]; then
   exit 0
 fi
 
-# No model specified + Anthropic plugin -> force inherit
-dogma_debug_log "Overriding model to inherit for $AGENT_TYPE"
+# Resolve "inherit" to actual model from settings.json
+# Valid API values: sonnet, opus, haiku (not "inherit")
+resolve_model() {
+  local settings_model
+  settings_model=$(jq -r '.model // empty' ~/.claude/settings.json 2>/dev/null)
+
+  case "${settings_model,,}" in
+    opus*|claude-opus*) echo "opus" ;;
+    sonnet*|claude-sonnet*) echo "sonnet" ;;
+    haiku*|claude-haiku*) echo "haiku" ;;
+    *) echo "opus" ;;  # Default to opus
+  esac
+}
+
+# No model specified + Anthropic plugin -> force parent model
+RESOLVED_MODEL=$(resolve_model)
+dogma_debug_log "Resolved model from settings: $RESOLVED_MODEL"
+dogma_debug_log "Overriding model to $RESOLVED_MODEL for $AGENT_TYPE"
+
+# Merge original tool_input with resolved model
+MERGED_INPUT=$(echo "$input" | jq --arg model "$RESOLVED_MODEL" '.tool_input + {"model": $model}')
+dogma_debug_log "Merged input: $MERGED_INPUT"
 dogma_debug_log "=== enforce-model-policy.sh END ==="
+
+# Output with full merged input (Claude Code replaces instead of merging)
 cat <<EOF
 {
-  "decision": "allow",
-  "updatedInput": {"model": "inherit"},
-  "systemMessage": "Model defaulted to inherit for Anthropic agent: $AGENT_TYPE"
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "updatedInput": $MERGED_INPUT
+  }
 }
 EOF
 exit 0
