@@ -1240,13 +1240,14 @@ format_output() {
     # -------------------------------------------------------------------------
 
     # Column widths for right-aligned values
+    # All columns use width=7 for consistent cross-line alignment
     # Token values: 7 chars (e.g., "109.0k", "965.8M")
-    # Percentages: 6 chars (e.g., "54.7%", "100.0%")
-    # Durations: 5 chars (e.g., "53m", "2h15m")
+    # Percentages: 7 chars (e.g., "54.7%", "100.0%") - includes % sign
+    # Durations: 7 chars (e.g., "53m", "2h15m", "1d2h")
     # Costs: 7 chars (e.g., "$9.13", "$815.14")
     local VAL_WIDTH_TOKEN=7
-    local VAL_WIDTH_PCT=6
-    local VAL_WIDTH_DUR=5
+    local VAL_WIDTH_PCT=7
+    local VAL_WIDTH_DUR=7
     local VAL_WIDTH_COST=7
 
     # Gather raw values for each line
@@ -1320,18 +1321,20 @@ format_output() {
         gray_color_reset="$COLOR_RESET"
     fi
 
-    # Tokens line: Input: %7s  Output: %7s  Cached: %7s  UserTk.: %7s
+    # Tokens line: Input: %7s    Output: %7s    Cached: %7s    UserTk.: %7s
+    # 4 spaces between columns for readability
     if [[ "$SHOW_TOKENS" == "true" ]]; then
         local tok_line
-        printf -v tok_line "Tokens  -> Input: %${VAL_WIDTH_TOKEN}s  Output: %${VAL_WIDTH_TOKEN}s  Cached: %${VAL_WIDTH_TOKEN}s  UserTk.: %${VAL_WIDTH_TOKEN}s" \
+        printf -v tok_line "Tokens  -> Input: %${VAL_WIDTH_TOKEN}s    Output: %${VAL_WIDTH_TOKEN}s    Cached: %${VAL_WIDTH_TOKEN}s    UserTk.: %${VAL_WIDTH_TOKEN}s" \
             "$tok_val1" "$tok_val2" "$tok_val3" "$tok_val4"
         lines+=("${gray_color}${tok_line}${gray_color_reset}")
     fi
 
-    # Context line: UsedT: %7s  TkLeft: %7s  CtxMax: %6s  CtxLeft: %6s
+    # Context line: UsedT: %7s    TkLeft: %7s    CtxMax: %6s    CtxLeft: %6s
+    # 4 spaces between columns for readability
     if [[ "$SHOW_CTX" == "true" ]]; then
         local ctx_line
-        printf -v ctx_line "Context -> UsedT: %${VAL_WIDTH_TOKEN}s  TkLeft: %${VAL_WIDTH_TOKEN}s  CtxMax: %${VAL_WIDTH_PCT}s  CtxLeft: %${VAL_WIDTH_PCT}s" \
+        printf -v ctx_line "Context -> UsedT: %${VAL_WIDTH_TOKEN}s    TkLeft: %${VAL_WIDTH_TOKEN}s    CtxMax: %${VAL_WIDTH_PCT}s    CtxLeft: %${VAL_WIDTH_PCT}s" \
             "$ctx_val1" "$ctx_val2" "$ctx_val3" "$ctx_val4"
         lines+=("${gray_color}${ctx_line}${gray_color_reset}")
     fi
@@ -1358,7 +1361,7 @@ format_output() {
         # Build session line with progress bar at end (showing usable context percentage)
         local sess_progress_bar="" sess_progress_color="" sess_progress_color_reset=""
         if [[ -n "$ctx_usable_pct" ]] && [[ "$SHOW_PROGRESS" == "true" ]]; then
-            sess_progress_bar="  ${ctx_usable_bar} ${ctx_usable_pct}%"
+            sess_progress_bar="    ${ctx_usable_bar} ${ctx_usable_pct}%"
             if [[ "$SHOW_COLORS" == "true" ]]; then
                 local usable_pct_int="${ctx_usable_pct%%.*}"
                 sess_progress_color=$(get_color "$usable_pct_int")
@@ -1366,9 +1369,10 @@ format_output() {
             fi
         fi
 
-        # Session line: Sessn: %5s  APIuse: %5s  SnCost: %7s  [progress bar]
+        # Session line: Sessn: %5s    APIuse: %5s    SnCost: %7s    [progress bar]
+        # 4 spaces between columns for readability
         local sess_line
-        printf -v sess_line "Session -> Sessn: %${VAL_WIDTH_DUR}s  APIuse: %${VAL_WIDTH_DUR}s  SnCost: %${VAL_WIDTH_COST}s" \
+        printf -v sess_line "Session -> Sessn: %${VAL_WIDTH_DUR}s    APIuse: %${VAL_WIDTH_DUR}s    SnCost: %${VAL_WIDTH_COST}s" \
             "$sess_val1" "$sess_val2" "\$${sess_cost}"
         lines+=("${gray_color}${sess_line}${gray_color_reset}${sess_progress_color}${sess_progress_bar}${sess_progress_color_reset}")
 
