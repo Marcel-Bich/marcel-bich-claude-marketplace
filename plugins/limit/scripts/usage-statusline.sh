@@ -1285,9 +1285,9 @@ format_output() {
             should_warn=$(awk "BEGIN {print ($ctx_left_pct < 50) ? 1 : 0}")
             if [[ "$should_warn" -eq 1 ]]; then
                 if [[ "$SHOW_COLORS" == "true" ]]; then
-                    compact_warning=" ${COLOR_ORANGE}(try /compact if CtxLeft <= 50%)${COLOR_RESET}"
+                    compact_warning=" ${COLOR_ORANGE}(try /compact)${COLOR_RESET}"
                 else
-                    compact_warning=" (try /compact if CtxLeft <= 50%)"
+                    compact_warning=" (try /compact)"
                 fi
             fi
         fi
