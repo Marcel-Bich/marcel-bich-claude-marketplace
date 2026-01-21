@@ -187,6 +187,11 @@ DEFAULT_COLOR="${CLAUDE_MB_LIMIT_DEFAULT_COLOR:-\033[90m}"
 # Claude settings file (for model info)
 CLAUDE_SETTINGS_FILE="${HOME}/.claude/settings.json"
 
+# API error tracking for graceful degradation
+# When set, local data is still shown but API-dependent parts display error message
+API_ERROR=""
+API_ERROR_CODE=""
+
 # ANSI color codes
 COLOR_RESET='\033[0m'
 COLOR_GRAY="$DEFAULT_COLOR"
@@ -212,7 +217,48 @@ BAR_FILLED='='
 BAR_EMPTY='-'
 BAR_WIDTH=10
 
-# Silent error exit for statusline
+# Set API error for graceful degradation (does not exit)
+# Usage: set_api_error <error_code>
+# Sets API_ERROR and API_ERROR_CODE for display in format_output
+set_api_error() {
+    local error_code="${1:-unknown}"
+    API_ERROR_CODE="$error_code"
+
+    # Map error codes to user-friendly messages
+    case "$error_code" in
+        no_jq)
+            API_ERROR="Limits: [missing] install jq"
+            ;;
+        no_curl)
+            API_ERROR="Limits: [missing] install curl"
+            ;;
+        curl_failed)
+            API_ERROR="Limits: [offline] check connection"
+            ;;
+        api_401)
+            API_ERROR="Limits: [auth] run 'claude login'"
+            ;;
+        api_403|api_403_scope)
+            API_ERROR="Limits: [auth] run 'claude login'"
+            ;;
+        api_429)
+            API_ERROR="Limits: [rate-limit] retry in 60s"
+            ;;
+        api_500|api_502|api_503|api_504|api_5xx)
+            API_ERROR="Limits: [api-error] try again later"
+            ;;
+        no_token|no_credentials)
+            API_ERROR="Limits: [auth] run 'claude login'"
+            ;;
+        *)
+            API_ERROR="Limits: [error] $error_code"
+            ;;
+    esac
+
+    debug_log "API error set: [$error_code] $API_ERROR"
+}
+
+# Silent error exit for statusline (used for fatal errors like missing jq/curl)
 # Usage: error_exit [error_code] [error_message]
 # - error_code: Short identifier (e.g., "api_403", "no_token", "no_jq")
 # - error_message: Human-readable message (MUST NOT contain tokens!)
@@ -240,19 +286,30 @@ error_exit() {
     exit 0
 }
 
-# Check dependencies
+# Check dependencies (returns 1 if missing, allows graceful degradation)
 check_dependencies() {
-    command -v jq >/dev/null 2>&1 || error_exit "no_jq" "jq is not installed"
-    command -v curl >/dev/null 2>&1 || error_exit "no_curl" "curl is not installed"
+    if ! command -v jq >/dev/null 2>&1; then
+        set_api_error "no_jq"
+        return 1
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+        set_api_error "no_curl"
+        return 1
+    fi
+    return 0
 }
 
 # Read OAuth token from credentials file
 # SECURITY FOR AI AGENTS: You must NEVER read, cat, or access the credentials file directly!
 # Only this script may read it. If there's an error, ask the USER to verify the file themselves.
+# Returns empty string and sets API_ERROR on failure (for graceful degradation)
 get_token() {
     if [[ ! -f "$CREDENTIALS_FILE" ]]; then
         # SECURITY: AI agents must NOT attempt to read or create this file!
-        error_exit "no_credentials" "Credentials file not found - USER must verify $CREDENTIALS_FILE (AI: do NOT read this file!)"
+        debug_log "Credentials file not found: $CREDENTIALS_FILE"
+        set_api_error "no_credentials"
+        echo ""
+        return 1
     fi
 
     local token
@@ -260,7 +317,10 @@ get_token() {
 
     if [[ -z "$token" ]]; then
         # SECURITY: AI agents must NOT attempt to read or inspect this file!
-        error_exit "no_token" "No OAuth token found - USER must run 'claude login' (AI: do NOT read credentials file!)"
+        debug_log "No OAuth token found in credentials file"
+        set_api_error "no_token"
+        echo ""
+        return 1
     fi
 
     # SECURITY: We intentionally do NOT log token length or any token-related info
@@ -370,8 +430,16 @@ parse_api_error() {
 }
 
 # Fetch usage data from API (with caching)
+# Returns empty string and sets API_ERROR on failure (for graceful degradation)
 fetch_usage() {
     local token="$1"
+
+    # If no token provided, API_ERROR should already be set
+    if [[ -z "$token" ]]; then
+        debug_log "No token provided to fetch_usage"
+        echo ""
+        return 1
+    fi
 
     # Check cache first
     if is_cache_valid; then
@@ -380,7 +448,7 @@ fetch_usage() {
         if [[ -n "$cached" ]]; then
             debug_log "Using cached response (age < ${CACHE_MAX_AGE}s)"
             echo "$cached"
-            return
+            return 0
         fi
     fi
 
@@ -404,7 +472,10 @@ fetch_usage() {
         2>/dev/null) || {
             # curl itself failed (network error, timeout, etc.)
             rm -f "$temp_file" 2>/dev/null
-            error_exit "curl_failed" "curl request failed (network error or timeout)"
+            debug_log "curl request failed (network error or timeout)"
+            set_api_error "curl_failed"
+            echo ""
+            return 1
         }
 
     # Read response body from temp file
@@ -419,7 +490,7 @@ fetch_usage() {
         write_cache "$response_body"
         debug_log "Fresh API response fetched successfully"
         echo "$response_body"
-        return
+        return 0
     fi
 
     # HTTP error - parse and log the error safely (never expose token!)
@@ -427,29 +498,32 @@ fetch_usage() {
     safe_error=$(parse_api_error "$response_body" "$http_code")
     debug_log "API error: $safe_error"
 
-    # Provide specific guidance for common errors
+    # Set API error for graceful degradation
     case "$http_code" in
         401)
-            error_exit "api_401" "Authentication failed - try 'claude login'"
+            set_api_error "api_401"
             ;;
         403)
             # Check for specific scope error
             if [[ "$response_body" == *"scope"* ]]; then
-                error_exit "api_403_scope" "Token missing required scope - try 'claude login'"
+                set_api_error "api_403_scope"
             else
-                error_exit "api_403" "Permission denied - $safe_error"
+                set_api_error "api_403"
             fi
             ;;
         429)
-            error_exit "api_429" "Rate limited - try again later"
+            set_api_error "api_429"
             ;;
         500|502|503|504)
-            error_exit "api_${http_code}" "Anthropic API error - try again later"
+            set_api_error "api_5xx"
             ;;
         *)
-            error_exit "api_${http_code}" "$safe_error"
+            set_api_error "api_${http_code}"
             ;;
     esac
+
+    echo ""
+    return 1
 }
 
 # Get color based on utilization percentage (supports decimals)
@@ -1146,45 +1220,61 @@ format_duration() {
 # =============================================================================
 
 # Main output formatting
+# Supports graceful degradation: if API_ERROR is set, local data is shown
+# but API-dependent parts (5h/7d/opus/sonnet limits) display error message
 format_output() {
     local response="$1"
     local output=""
+    local api_available="true"
 
-    # Extract all values using jq
-    local five_hour_util five_hour_reset
-    local seven_day_util seven_day_reset
-    local opus_util opus_reset
-    local sonnet_util sonnet_reset
-    local extra_enabled extra_limit extra_used
-
-    five_hour_util=$(echo "$response" | jq -r '.five_hour.utilization // empty' 2>/dev/null)
-    five_hour_reset=$(echo "$response" | jq -r '.five_hour.resets_at // empty' 2>/dev/null)
-    seven_day_util=$(echo "$response" | jq -r '.seven_day.utilization // empty' 2>/dev/null)
-    seven_day_reset=$(echo "$response" | jq -r '.seven_day.resets_at // empty' 2>/dev/null)
-    opus_util=$(echo "$response" | jq -r '.seven_day_opus.utilization // empty' 2>/dev/null)
-    opus_reset=$(echo "$response" | jq -r '.seven_day_opus.resets_at // empty' 2>/dev/null)
-    sonnet_util=$(echo "$response" | jq -r '.seven_day_sonnet.utilization // empty' 2>/dev/null)
-    sonnet_reset=$(echo "$response" | jq -r '.seven_day_sonnet.resets_at // empty' 2>/dev/null)
-    extra_enabled=$(echo "$response" | jq -r '.extra_usage.is_enabled // empty' 2>/dev/null)
-    extra_limit=$(echo "$response" | jq -r '.extra_usage.monthly_limit // empty' 2>/dev/null)
-    extra_used=$(echo "$response" | jq -r '.extra_usage.used_credits // empty' 2>/dev/null)
-
-    # Required: 5-hour limit
-    if [[ -z "$five_hour_util" ]] || [[ -z "$five_hour_reset" ]]; then
-        debug_log "Invalid API response: missing five_hour data (util=$five_hour_util, reset=$five_hour_reset)"
-        error_exit "invalid_response" "API response missing required 5-hour limit data"
+    # Check if API data is available
+    if [[ -z "$response" ]] || [[ -n "$API_ERROR" ]]; then
+        api_available="false"
+        debug_log "API unavailable, using graceful degradation mode"
     fi
 
-    local five_pct seven_pct opus_pct sonnet_pct
-    five_pct=$(parse_decimal "$five_hour_util")
-    seven_pct=$(parse_decimal "$seven_day_util")
-    opus_pct=$(parse_decimal "$opus_util")
-    sonnet_pct=$(parse_decimal "$sonnet_util")
-    # Cap all percentages at 100.0 max
-    [[ -n "$five_pct" ]] && five_pct=$(cap_decimal "$five_pct" 100)
-    [[ -n "$seven_pct" ]] && seven_pct=$(cap_decimal "$seven_pct" 100)
-    [[ -n "$opus_pct" ]] && opus_pct=$(cap_decimal "$opus_pct" 100)
-    [[ -n "$sonnet_pct" ]] && sonnet_pct=$(cap_decimal "$sonnet_pct" 100)
+    # Extract all values using jq (only if API available)
+    local five_hour_util="" five_hour_reset=""
+    local seven_day_util="" seven_day_reset=""
+    local opus_util="" opus_reset=""
+    local sonnet_util="" sonnet_reset=""
+    local extra_enabled="" extra_limit="" extra_used=""
+
+    if [[ "$api_available" == "true" ]]; then
+        five_hour_util=$(echo "$response" | jq -r '.five_hour.utilization // empty' 2>/dev/null)
+        five_hour_reset=$(echo "$response" | jq -r '.five_hour.resets_at // empty' 2>/dev/null)
+        seven_day_util=$(echo "$response" | jq -r '.seven_day.utilization // empty' 2>/dev/null)
+        seven_day_reset=$(echo "$response" | jq -r '.seven_day.resets_at // empty' 2>/dev/null)
+        opus_util=$(echo "$response" | jq -r '.seven_day_opus.utilization // empty' 2>/dev/null)
+        opus_reset=$(echo "$response" | jq -r '.seven_day_opus.resets_at // empty' 2>/dev/null)
+        sonnet_util=$(echo "$response" | jq -r '.seven_day_sonnet.utilization // empty' 2>/dev/null)
+        sonnet_reset=$(echo "$response" | jq -r '.seven_day_sonnet.resets_at // empty' 2>/dev/null)
+        extra_enabled=$(echo "$response" | jq -r '.extra_usage.is_enabled // empty' 2>/dev/null)
+        extra_limit=$(echo "$response" | jq -r '.extra_usage.monthly_limit // empty' 2>/dev/null)
+        extra_used=$(echo "$response" | jq -r '.extra_usage.used_credits // empty' 2>/dev/null)
+
+        # Check if response has required data
+        if [[ -z "$five_hour_util" ]] || [[ -z "$five_hour_reset" ]]; then
+            debug_log "Invalid API response: missing five_hour data (util=$five_hour_util, reset=$five_hour_reset)"
+            api_available="false"
+            if [[ -z "$API_ERROR" ]]; then
+                set_api_error "invalid_response"
+            fi
+        fi
+    fi
+
+    local five_pct="" seven_pct="" opus_pct="" sonnet_pct=""
+    if [[ "$api_available" == "true" ]]; then
+        five_pct=$(parse_decimal "$five_hour_util")
+        seven_pct=$(parse_decimal "$seven_day_util")
+        opus_pct=$(parse_decimal "$opus_util")
+        sonnet_pct=$(parse_decimal "$sonnet_util")
+        # Cap all percentages at 100.0 max
+        [[ -n "$five_pct" ]] && five_pct=$(cap_decimal "$five_pct" 100)
+        [[ -n "$seven_pct" ]] && seven_pct=$(cap_decimal "$seven_pct" 100)
+        [[ -n "$opus_pct" ]] && opus_pct=$(cap_decimal "$opus_pct" 100)
+        [[ -n "$sonnet_pct" ]] && sonnet_pct=$(cap_decimal "$sonnet_pct" 100)
+    fi
 
     # Build output lines
     local lines=()
@@ -1547,13 +1637,16 @@ format_output() {
         # Reset detection: check if API reset times have changed
         # If reset time changed, window tokens are reset to 0
         # Also save subagent token baseline at reset time
+        # Note: Skip reset detection when API is unavailable (no reset times)
         local reset_5h_detected=false reset_7d_detected=false
-        if check_reset "5h" "$five_hour_reset"; then
-            reset_5h_detected=true
-        fi
-        if [[ -n "$seven_day_reset" ]]; then
-            if check_reset "7d" "$seven_day_reset"; then
-                reset_7d_detected=true
+        if [[ "$api_available" == "true" ]]; then
+            if check_reset "5h" "$five_hour_reset"; then
+                reset_5h_detected=true
+            fi
+            if [[ -n "$seven_day_reset" ]]; then
+                if check_reset "7d" "$seven_day_reset"; then
+                    reset_7d_detected=true
+                fi
             fi
         fi
 
@@ -1687,19 +1780,28 @@ format_output() {
         # Update legacy state file with last_total_tokens for delta calculation
         ensure_plugin_dir
         local existing_sessions="{}" existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
+        local existing_5h_reset="" existing_7d_reset=""
         if [[ -f "$STATE_FILE" ]]; then
             existing_sessions=$(jq -r '.sessions // {}' "$STATE_FILE" 2>/dev/null) || existing_sessions="{}"
             existing_totals=$(jq -c '.totals // {"input_tokens":0,"output_tokens":0,"total_cost_usd":0}' "$STATE_FILE" 2>/dev/null) || existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
+            existing_5h_reset=$(jq -r '.last_5h_reset // ""' "$STATE_FILE" 2>/dev/null) || existing_5h_reset=""
+            existing_7d_reset=$(jq -r '.last_7d_reset // ""' "$STATE_FILE" 2>/dev/null) || existing_7d_reset=""
             [[ "$existing_sessions" == "null" ]] && existing_sessions="{}"
             [[ "$existing_totals" == "null" ]] && existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
+            [[ "$existing_5h_reset" == "null" ]] && existing_5h_reset=""
+            [[ "$existing_7d_reset" == "null" ]] && existing_7d_reset=""
         fi
+
+        # Use API reset times if available, otherwise preserve existing values
+        local state_5h_reset="${five_hour_reset:-$existing_5h_reset}"
+        local state_7d_reset="${seven_day_reset:-$existing_7d_reset}"
 
         # Write minimal state for session tracking (highscores are in separate file)
         cat > "$STATE_FILE" << EOF
 {
   "current_plan": "${CURRENT_PLAN}",
-  "last_5h_reset": "${five_hour_reset:-}",
-  "last_7d_reset": "${seven_day_reset:-}",
+  "last_5h_reset": "${state_5h_reset}",
+  "last_7d_reset": "${state_7d_reset}",
   "sessions": ${existing_sessions},
   "totals": ${existing_totals},
   "calibration": {
@@ -1712,99 +1814,126 @@ EOF
         debug_log "Highscore tracking: plan=$CURRENT_PLAN window_5h=$window_tokens_5h window_7d=$window_tokens_7d hs_5h=$highscore_5h hs_7d=$highscore_7d local_5h_pct=$local_5h_pct local_7d_pct=$local_7d_pct"
     fi
 
-    # 5-hour limit (if enabled) - all models
-    if [[ "$SHOW_5H" == "true" ]]; then
-        # Global 5h line - append [LimitAt:X.XM] Easter-Egg if discovered
-        local global_5h_line
-        global_5h_line="$(format_limit_line "5h all" "$five_pct" "$five_hour_reset")"
-        if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "$limit_at_5h" ]] && [[ "$limit_at_5h" != "null" ]]; then
-            local limit_at_5h_fmt window_5h_limit_fmt
-            limit_at_5h_fmt=$(format_highscore "$limit_at_5h")
-            window_5h_limit_fmt=$(format_highscore "$window_tokens_5h")
-            global_5h_line="${global_5h_line} [LimitAt:${window_5h_limit_fmt}/${limit_at_5h_fmt}]"
+    # API error handling: show error message instead of API-dependent limits
+    if [[ "$api_available" != "true" ]] && [[ -n "$API_ERROR" ]]; then
+        # Display error message for API-dependent parts
+        local error_color="" error_color_reset=""
+        if [[ "$SHOW_COLORS" == "true" ]]; then
+            error_color="$COLOR_ORANGE"
+            error_color_reset="$COLOR_RESET"
         fi
-        lines+=("$global_5h_line")
-        # Local 5h directly below global 5h - shows highscore-based percentage
-        if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "${local_5h_pct}" ]]; then
+        lines+=("${error_color}${API_ERROR}${error_color_reset}")
+
+        # Still show local highscore lines if available (without reset time)
+        if [[ "$SHOW_LOCAL" == "true" ]] && [[ "$SHOW_5H" == "true" ]] && [[ -n "${local_5h_pct}" ]]; then
             local local_5h_color="" local_5h_color_reset=""
             if [[ "$SHOW_COLORS" == "true" ]]; then
                 local_5h_color=$(get_color "${local_5h_pct}")
                 local_5h_color_reset="${COLOR_RESET}"
             fi
-            # Format current window tokens and highscore (e.g., 150.0k/1.5M)
             local window_5h_formatted hs_5h_formatted
             window_5h_formatted=$(format_highscore "$window_tokens_5h")
             hs_5h_formatted=$(format_highscore "$highscore_5h")
-            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset" 1) ${local_5h_color}[Highest:${window_5h_formatted}/${hs_5h_formatted}] (${LOCAL_DEVICE_LABEL})${local_5h_color_reset}")
+            # Show without reset time since we don't have fresh API data
+            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "" 1) ${local_5h_color}[Highest:${window_5h_formatted}/${hs_5h_formatted}] (${LOCAL_DEVICE_LABEL})${local_5h_color_reset}")
         fi
-    fi
+    else
+        # Normal mode: API available, show all limits
 
-    # 7-day limit (if enabled and available) - all models
-    if [[ "$SHOW_7D" == "true" ]] && [[ -n "$seven_pct" ]]; then
-        # Global 7d line - append [LimitAt:X.XM] Easter-Egg if discovered
-        local global_7d_line
-        global_7d_line="$(format_limit_line "7d all" "$seven_pct" "$seven_day_reset")"
-        if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "$limit_at_7d" ]] && [[ "$limit_at_7d" != "null" ]]; then
-            local limit_at_7d_fmt window_7d_limit_fmt
-            limit_at_7d_fmt=$(format_highscore "$limit_at_7d")
-            window_7d_limit_fmt=$(format_highscore "$window_tokens_7d")
-            global_7d_line="${global_7d_line} [LimitAt:${window_7d_limit_fmt}/${limit_at_7d_fmt}]"
-        fi
-        lines+=("$global_7d_line")
-        # Local 7d directly below global 7d - shows highscore-based percentage
-        if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "${local_7d_pct}" ]]; then
-            local local_7d_color="" local_7d_color_reset=""
-            if [[ "$SHOW_COLORS" == "true" ]]; then
-                local_7d_color=$(get_color "${local_7d_pct}")
-                local_7d_color_reset="${COLOR_RESET}"
+        # 5-hour limit (if enabled) - all models
+        if [[ "$SHOW_5H" == "true" ]]; then
+            # Global 5h line - append [LimitAt:X.XM] Easter-Egg if discovered
+            local global_5h_line
+            global_5h_line="$(format_limit_line "5h all" "$five_pct" "$five_hour_reset")"
+            if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "$limit_at_5h" ]] && [[ "$limit_at_5h" != "null" ]]; then
+                local limit_at_5h_fmt window_5h_limit_fmt
+                limit_at_5h_fmt=$(format_highscore "$limit_at_5h")
+                window_5h_limit_fmt=$(format_highscore "$window_tokens_5h")
+                global_5h_line="${global_5h_line} [LimitAt:${window_5h_limit_fmt}/${limit_at_5h_fmt}]"
             fi
-            # Format current window tokens and highscore (e.g., 150.0k/1.5M)
-            local window_7d_formatted hs_7d_formatted
-            window_7d_formatted=$(format_highscore "$window_tokens_7d")
-            hs_7d_formatted=$(format_highscore "$highscore_7d")
-            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset" 1) ${local_7d_color}[Highest:${window_7d_formatted}/${hs_7d_formatted}] (${LOCAL_DEVICE_LABEL})${local_7d_color_reset}")
+            lines+=("$global_5h_line")
+            # Local 5h directly below global 5h - shows highscore-based percentage
+            if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "${local_5h_pct}" ]]; then
+                local local_5h_color="" local_5h_color_reset=""
+                if [[ "$SHOW_COLORS" == "true" ]]; then
+                    local_5h_color=$(get_color "${local_5h_pct}")
+                    local_5h_color_reset="${COLOR_RESET}"
+                fi
+                # Format current window tokens and highscore (e.g., 150.0k/1.5M)
+                local window_5h_formatted hs_5h_formatted
+                window_5h_formatted=$(format_highscore "$window_tokens_5h")
+                hs_5h_formatted=$(format_highscore "$highscore_5h")
+                lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset" 1) ${local_5h_color}[Highest:${window_5h_formatted}/${hs_5h_formatted}] (${LOCAL_DEVICE_LABEL})${local_5h_color_reset}")
+            fi
         fi
-    fi
 
-    # 7-day Opus limit (if enabled and has data)
-    if [[ "$SHOW_OPUS" == "true" ]] && [[ -n "$opus_pct" ]]; then
-        lines+=("$(format_limit_line "7d Opus" "$opus_pct" "$opus_reset")")
-    fi
+        # 7-day limit (if enabled and available) - all models
+        if [[ "$SHOW_7D" == "true" ]] && [[ -n "$seven_pct" ]]; then
+            # Global 7d line - append [LimitAt:X.XM] Easter-Egg if discovered
+            local global_7d_line
+            global_7d_line="$(format_limit_line "7d all" "$seven_pct" "$seven_day_reset")"
+            if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "$limit_at_7d" ]] && [[ "$limit_at_7d" != "null" ]]; then
+                local limit_at_7d_fmt window_7d_limit_fmt
+                limit_at_7d_fmt=$(format_highscore "$limit_at_7d")
+                window_7d_limit_fmt=$(format_highscore "$window_tokens_7d")
+                global_7d_line="${global_7d_line} [LimitAt:${window_7d_limit_fmt}/${limit_at_7d_fmt}]"
+            fi
+            lines+=("$global_7d_line")
+            # Local 7d directly below global 7d - shows highscore-based percentage
+            if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "${local_7d_pct}" ]]; then
+                local local_7d_color="" local_7d_color_reset=""
+                if [[ "$SHOW_COLORS" == "true" ]]; then
+                    local_7d_color=$(get_color "${local_7d_pct}")
+                    local_7d_color_reset="${COLOR_RESET}"
+                fi
+                # Format current window tokens and highscore (e.g., 150.0k/1.5M)
+                local window_7d_formatted hs_7d_formatted
+                window_7d_formatted=$(format_highscore "$window_tokens_7d")
+                hs_7d_formatted=$(format_highscore "$highscore_7d")
+                lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset" 1) ${local_7d_color}[Highest:${window_7d_formatted}/${hs_7d_formatted}] (${LOCAL_DEVICE_LABEL})${local_7d_color_reset}")
+            fi
+        fi
 
-    # 7-day Sonnet limit (if enabled and has utilization >= 0.1%)
-    # Hide when usage is 0 or rounds to 0.0% (check both numeric and string)
-    if [[ "$SHOW_SONNET" == "true" ]] && [[ -n "$sonnet_pct" ]]; then
-        # Use awk for proper decimal comparison - show only if >= 0.1%
-        local sonnet_above_threshold
-        sonnet_above_threshold=$(awk "BEGIN {print ($sonnet_pct >= 0.1) ? 1 : 0}")
-        if [[ "$sonnet_above_threshold" -eq 1 ]]; then
-            lines+=("$(format_limit_line "7d Sonnet" "$sonnet_pct" "$sonnet_reset")")
+        # 7-day Opus limit (if enabled and has data)
+        if [[ "$SHOW_OPUS" == "true" ]] && [[ -n "$opus_pct" ]]; then
+            lines+=("$(format_limit_line "7d Opus" "$opus_pct" "$opus_reset")")
         fi
-    fi
 
-    # Extra usage (if enabled AND used_credits > 0)
-    # Note: extra_limit and extra_used are dollar amounts and may contain decimals
-    # Extra usage: check if used_credits > 0 (handles "0", "0.0", "0.00" etc.)
-    local extra_used_int="${extra_used%%.*}"
-    if [[ "$SHOW_EXTRA" == "true" ]] && [[ "$extra_enabled" == "true" ]] && [[ -n "$extra_used" ]] && [[ "$extra_used" != "null" ]] && [[ -n "$extra_used_int" ]] && [[ "$extra_used_int" != "0" ]]; then
-        local extra_pct=0
-        # Convert limit to integer for arithmetic (remove decimal part)
-        local extra_limit_int="${extra_limit%%.*}"
-        if [[ -n "$extra_limit_int" ]] && [[ "$extra_limit_int" =~ ^[0-9]+$ ]] && [[ "$extra_limit_int" -gt 0 ]]; then
-            extra_pct=$((extra_used_int * 100 / extra_limit_int))
+        # 7-day Sonnet limit (if enabled and has utilization >= 0.1%)
+        # Hide when usage is 0 or rounds to 0.0% (check both numeric and string)
+        if [[ "$SHOW_SONNET" == "true" ]] && [[ -n "$sonnet_pct" ]]; then
+            # Use awk for proper decimal comparison - show only if >= 0.1%
+            local sonnet_above_threshold
+            sonnet_above_threshold=$(awk "BEGIN {print ($sonnet_pct >= 0.1) ? 1 : 0}")
+            if [[ "$sonnet_above_threshold" -eq 1 ]]; then
+                lines+=("$(format_limit_line "7d Sonnet" "$sonnet_pct" "$sonnet_reset")")
+            fi
         fi
-        local extra_color=""
-        local extra_color_reset=""
-        if [[ "$SHOW_COLORS" == "true" ]]; then
-            extra_color=$(get_color "$extra_pct")
-            extra_color_reset="$COLOR_RESET"
+
+        # Extra usage (if enabled AND used_credits > 0)
+        # Note: extra_limit and extra_used are dollar amounts and may contain decimals
+        # Extra usage: check if used_credits > 0 (handles "0", "0.0", "0.00" etc.)
+        local extra_used_int="${extra_used%%.*}"
+        if [[ "$SHOW_EXTRA" == "true" ]] && [[ "$extra_enabled" == "true" ]] && [[ -n "$extra_used" ]] && [[ "$extra_used" != "null" ]] && [[ -n "$extra_used_int" ]] && [[ "$extra_used_int" != "0" ]]; then
+            local extra_pct=0
+            # Convert limit to integer for arithmetic (remove decimal part)
+            local extra_limit_int="${extra_limit%%.*}"
+            if [[ -n "$extra_limit_int" ]] && [[ "$extra_limit_int" =~ ^[0-9]+$ ]] && [[ "$extra_limit_int" -gt 0 ]]; then
+                extra_pct=$((extra_used_int * 100 / extra_limit_int))
+            fi
+            local extra_color=""
+            local extra_color_reset=""
+            if [[ "$SHOW_COLORS" == "true" ]]; then
+                extra_color=$(get_color "$extra_pct")
+                extra_color_reset="$COLOR_RESET"
+            fi
+            local extra_bar=""
+            if [[ "$SHOW_PROGRESS" == "true" ]]; then
+                extra_bar=" $(progress_bar "$extra_pct")"
+            fi
+            printf -v extra_line "${extra_color}Extra%s \$%s/\$%s${extra_color_reset}" "$extra_bar" "$extra_used" "$extra_limit"
+            lines+=("$extra_line")
         fi
-        local extra_bar=""
-        if [[ "$SHOW_PROGRESS" == "true" ]]; then
-            extra_bar=" $(progress_bar "$extra_pct")"
-        fi
-        printf -v extra_line "${extra_color}Extra%s \$%s/\$%s${extra_color_reset}" "$extra_bar" "$extra_used" "$extra_limit"
-        lines+=("$extra_line")
     fi
 
     # Session ID (if enabled) - always gray, below Active Model with empty line
@@ -1844,13 +1973,13 @@ main() {
     # Read stdin data from Claude Code first (contains model info)
     read_stdin_data
 
-    check_dependencies
+    local token="" response=""
 
-    local token
-    token=$(get_token)
-
-    local response
-    response=$(fetch_usage "$token")
+    # Check dependencies - if missing, skip API calls but continue with local data
+    if check_dependencies; then
+        token=$(get_token)
+        response=$(fetch_usage "$token")
+    fi
 
     # Debug logging
     debug_log "=== Statusline execution ==="
