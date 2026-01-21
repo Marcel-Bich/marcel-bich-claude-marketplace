@@ -49,6 +49,10 @@ source "${SCRIPT_DIR}/highscore-state.sh"
 # shellcheck source=subagent-tokens.sh
 source "${SCRIPT_DIR}/subagent-tokens.sh"
 
+# Source history tracking functions
+# shellcheck source=limit-history.sh
+source "${SCRIPT_DIR}/limit-history.sh"
+
 # Ensure plugin data directory exists
 ensure_plugin_dir() {
     if [[ ! -d "$PLUGIN_DATA_DIR" ]]; then
@@ -286,6 +290,9 @@ SHOW_SEPARATORS="${CLAUDE_MB_LIMIT_SEPARATORS:-true}"
 SHOW_LOCAL="${CLAUDE_MB_LIMIT_LOCAL:-true}"
 LOCAL_DEVICE_LABEL="${CLAUDE_MB_LIMIT_DEVICE_LABEL:-$(hostname)}"
 
+# History and average display (default true)
+SHOW_AVERAGE="${CLAUDE_MB_LIMIT_AVERAGE:-true}"
+
 # Default estimated max tokens (can be overridden, will be calibrated dynamically)
 # These are conservative estimates for Max20 plan
 DEFAULT_ESTIMATED_MAX_5H="${CLAUDE_MB_LIMIT_EST_MAX_5H:-220000}"
@@ -327,6 +334,14 @@ COLOR_SOFT_RED='\033[38;5;181m'
 BAR_FILLED='='
 BAR_EMPTY='-'
 BAR_WIDTH=10
+
+# Achievement symbol (trophy for UTF-8, [!] fallback)
+# Used when local usage >= 95% of API limit
+if [[ "$TERM" != "linux" ]] && [[ "${LANG:-}" == *"UTF-8"* || "${LC_ALL:-}" == *"UTF-8"* ]]; then
+    ACHIEVEMENT_SYMBOL=$'\xF0\x9F\x8F\x86'  # Trophy emoji (U+1F3C6)
+else
+    ACHIEVEMENT_SYMBOL="[!]"
+fi
 
 # Set API error for graceful degradation (does not exit)
 # Usage: set_api_error <error_code>
@@ -1944,6 +1959,15 @@ format_output() {
 }
 EOF
         debug_log "Highscore tracking: plan=$CURRENT_PLAN window_5h=$window_tokens_5h window_7d=$window_tokens_7d hs_5h=$highscore_5h hs_7d=$highscore_7d local_5h_pct=$local_5h_pct local_7d_pct=$local_7d_pct"
+
+        # Append history entry (respects 10-min interval and retention cleanup)
+        if [[ "$api_available" == "true" ]]; then
+            append_history \
+                "${five_pct:-0}" "$window_tokens_5h" "$highscore_5h" \
+                "${seven_pct:-0}" "$window_tokens_7d" "$highscore_7d" \
+                "${opus_pct:-0}" "${sonnet_pct:-0}" \
+                "$CURRENT_PLAN" "$LOCAL_DEVICE_LABEL"
+        fi
     fi
 
     # API error handling: show error message instead of API-dependent limits
@@ -1972,6 +1996,38 @@ EOF
     else
         # Normal mode: API available, show all limits
 
+        # Calculate averages from history (for [Average:X%/Y%] display)
+        local avg_5h_local="" avg_5h_api="" avg_7d_local="" avg_7d_api=""
+        local avg_opus="" avg_sonnet=""
+        if [[ "$SHOW_AVERAGE" == "true" ]]; then
+            # Local averages (this device only, over 24h for 5h window, 168h for 7d)
+            avg_5h_local=$(get_local_average '."5h".api' 24 "$LOCAL_DEVICE_LABEL")
+            avg_7d_local=$(get_local_average '."7d".api' 168 "$LOCAL_DEVICE_LABEL")
+            # API averages (all devices, same time windows)
+            avg_5h_api=$(get_average '."5h".api' 24)
+            avg_7d_api=$(get_average '."7d".api' 168)
+            # Model averages (API only, no local tracking)
+            avg_opus=$(get_average '.opus' 168)
+            avg_sonnet=$(get_average '.sonnet' 168)
+        fi
+
+        # Check for achievement: local >= 95% of API
+        local achievement_5h="" achievement_7d=""
+        if [[ -n "$local_5h_pct" ]] && [[ -n "$five_pct" ]]; then
+            local is_achievement_5h
+            is_achievement_5h=$(awk "BEGIN {print ($local_5h_pct >= $five_pct * 0.95 && $five_pct >= 50) ? 1 : 0}")
+            if [[ "$is_achievement_5h" -eq 1 ]]; then
+                achievement_5h=" $ACHIEVEMENT_SYMBOL"
+            fi
+        fi
+        if [[ -n "$local_7d_pct" ]] && [[ -n "$seven_pct" ]]; then
+            local is_achievement_7d
+            is_achievement_7d=$(awk "BEGIN {print ($local_7d_pct >= $seven_pct * 0.95 && $seven_pct >= 50) ? 1 : 0}")
+            if [[ "$is_achievement_7d" -eq 1 ]]; then
+                achievement_7d=" $ACHIEVEMENT_SYMBOL"
+            fi
+        fi
+
         # 5-hour limit (if enabled) - all models
         if [[ "$SHOW_5H" == "true" ]]; then
             # Global 5h line - append [LimitAt:X.XM] Easter-Egg if discovered
@@ -1982,6 +2038,11 @@ EOF
                 limit_at_5h_fmt=$(format_highscore "$limit_at_5h")
                 window_5h_limit_fmt=$(format_highscore "$window_tokens_5h")
                 global_5h_line="${global_5h_line} [LimitAt:${window_5h_limit_fmt}/${limit_at_5h_fmt}]"
+            fi
+            # Append [Average:LOCAL%/API%] if available
+            if [[ "$SHOW_AVERAGE" == "true" ]] && [[ -n "$avg_5h_local" || -n "$avg_5h_api" ]]; then
+                local avg_5h_display="${avg_5h_local:-n/a}%/${avg_5h_api:-n/a}%"
+                global_5h_line="${global_5h_line} [Average:${avg_5h_display}]"
             fi
             lines+=("$global_5h_line")
             # Local 5h directly below global 5h - shows highscore-based percentage
@@ -1995,7 +2056,7 @@ EOF
                 local window_5h_formatted hs_5h_formatted
                 window_5h_formatted=$(format_highscore "$window_tokens_5h")
                 hs_5h_formatted=$(format_highscore "$highscore_5h")
-                lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset" 1) ${local_5h_color}[Highest:${window_5h_formatted}/${hs_5h_formatted}] (${LOCAL_DEVICE_LABEL})${local_5h_color_reset}")
+                lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset" 1) ${local_5h_color}[Highest:${window_5h_formatted}/${hs_5h_formatted}]${achievement_5h} (${LOCAL_DEVICE_LABEL})${local_5h_color_reset}")
             fi
         fi
 
@@ -2010,6 +2071,11 @@ EOF
                 window_7d_limit_fmt=$(format_highscore "$window_tokens_7d")
                 global_7d_line="${global_7d_line} [LimitAt:${window_7d_limit_fmt}/${limit_at_7d_fmt}]"
             fi
+            # Append [Average:LOCAL%/API%] if available
+            if [[ "$SHOW_AVERAGE" == "true" ]] && [[ -n "$avg_7d_local" || -n "$avg_7d_api" ]]; then
+                local avg_7d_display="${avg_7d_local:-n/a}%/${avg_7d_api:-n/a}%"
+                global_7d_line="${global_7d_line} [Average:${avg_7d_display}]"
+            fi
             lines+=("$global_7d_line")
             # Local 7d directly below global 7d - shows highscore-based percentage
             if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "${local_7d_pct}" ]]; then
@@ -2022,13 +2088,19 @@ EOF
                 local window_7d_formatted hs_7d_formatted
                 window_7d_formatted=$(format_highscore "$window_tokens_7d")
                 hs_7d_formatted=$(format_highscore "$highscore_7d")
-                lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset" 1) ${local_7d_color}[Highest:${window_7d_formatted}/${hs_7d_formatted}] (${LOCAL_DEVICE_LABEL})${local_7d_color_reset}")
+                lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset" 1) ${local_7d_color}[Highest:${window_7d_formatted}/${hs_7d_formatted}]${achievement_7d} (${LOCAL_DEVICE_LABEL})${local_7d_color_reset}")
             fi
         fi
 
         # 7-day Opus limit (if enabled and has data)
         if [[ "$SHOW_OPUS" == "true" ]] && [[ -n "$opus_pct" ]]; then
-            lines+=("$(format_limit_line "7d Opus" "$opus_pct" "$opus_reset")")
+            local opus_line
+            opus_line="$(format_limit_line "7d Opus" "$opus_pct" "$opus_reset")"
+            # Append [Average:X%] for Opus (API only, no local tracking)
+            if [[ "$SHOW_AVERAGE" == "true" ]] && [[ -n "$avg_opus" ]]; then
+                opus_line="${opus_line} [Average:${avg_opus}%]"
+            fi
+            lines+=("$opus_line")
         fi
 
         # 7-day Sonnet limit (if enabled and has utilization >= 0.1%)
@@ -2038,7 +2110,13 @@ EOF
             local sonnet_above_threshold
             sonnet_above_threshold=$(awk "BEGIN {print ($sonnet_pct >= 0.1) ? 1 : 0}")
             if [[ "$sonnet_above_threshold" -eq 1 ]]; then
-                lines+=("$(format_limit_line "7d Sonnet" "$sonnet_pct" "$sonnet_reset")")
+                local sonnet_line
+                sonnet_line="$(format_limit_line "7d Sonnet" "$sonnet_pct" "$sonnet_reset")"
+                # Append [Average:X%] for Sonnet (API only, no local tracking)
+                if [[ "$SHOW_AVERAGE" == "true" ]] && [[ -n "$avg_sonnet" ]]; then
+                    sonnet_line="${sonnet_line} [Average:${avg_sonnet}%]"
+                fi
+                lines+=("$sonnet_line")
             fi
         fi
 

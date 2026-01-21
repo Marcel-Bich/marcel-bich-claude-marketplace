@@ -11,6 +11,11 @@ HIGHSCORE_STATE="${PLUGIN_DATA_DIR}/limit-highscore-state.json"
 MAIN_AGENT_STATE="${PLUGIN_DATA_DIR}/limit-main-agent-state.json"
 SUBAGENT_STATE="${PLUGIN_DATA_DIR}/limit-subagent-state.json"
 API_CACHE="/tmp/claude-mb-limit-cache.json"
+HISTORY_FILE="${PLUGIN_DATA_DIR}/limit-history.jsonl"
+
+# Source history functions
+# shellcheck source=limit-history.sh
+source "${SCRIPT_DIR}/limit-history.sh"
 
 # Format number as human-readable (1.5M, 500.0k, 2.0G, 1.5T)
 # Uses G (Giga) instead of B (Billion) for consistency with statusline
@@ -289,6 +294,67 @@ main() {
     else
         echo "- No subagent usage recorded yet"
     fi
+    echo ""
+    echo "---"
+    echo ""
+
+    # History & Averages
+    echo "### History & Averages"
+    echo ""
+
+    if [[ -f "$HISTORY_FILE" ]]; then
+        local total_entries entries_24h entries_7d
+        total_entries=$(get_history_count)
+        entries_24h=$(get_history_count 24)
+        entries_7d=$(get_history_count 168)
+
+        echo "**History Data:**"
+        echo "- Total entries: $total_entries"
+        echo "- Last 24h: $entries_24h entries"
+        echo "- Last 7d: $entries_7d entries"
+        echo ""
+
+        # Get averages
+        local avg_5h_local avg_5h_api avg_7d_local avg_7d_api
+        local device_label
+        device_label=$(hostname 2>/dev/null || echo "unknown")
+
+        avg_5h_local=$(get_local_average '."5h".api' 24 "$device_label")
+        avg_5h_api=$(get_average '."5h".api' 24)
+        avg_7d_local=$(get_local_average '."7d".api' 168 "$device_label")
+        avg_7d_api=$(get_average '."7d".api' 168)
+
+        echo "**Averages (24h/7d):**"
+        echo "- 5h window: Local ${avg_5h_local:-n/a}% / API ${avg_5h_api:-n/a}%"
+        echo "- 7d window: Local ${avg_7d_local:-n/a}% / API ${avg_7d_api:-n/a}%"
+        echo ""
+
+        # Model averages
+        local avg_opus avg_sonnet
+        avg_opus=$(get_average '.opus' 168)
+        avg_sonnet=$(get_average '.sonnet' 168)
+
+        if [[ -n "$avg_opus" ]] || [[ -n "$avg_sonnet" ]]; then
+            echo "**Model Averages (7d):**"
+            [[ -n "$avg_opus" ]] && echo "- Opus: ${avg_opus}%"
+            [[ -n "$avg_sonnet" ]] && echo "- Sonnet: ${avg_sonnet}%"
+            echo ""
+        fi
+    else
+        echo "> No history data yet. History is recorded every 10 minutes"
+        echo "> during active usage and retained for 28 days."
+        echo ""
+    fi
+
+    echo "---"
+    echo ""
+
+    # Achievement explanation
+    echo "### Achievement Symbol"
+    echo ""
+    echo "The achievement symbol (trophy or [!]) appears when your local"
+    echo "device usage reaches >= 95% of the total API usage. This means"
+    echo "you are the primary user of your Anthropic account on this device."
     echo ""
     echo "---"
     echo ""
