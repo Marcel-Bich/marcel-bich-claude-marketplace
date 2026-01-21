@@ -1278,6 +1278,20 @@ format_output() {
             ctx_left_pct=$(awk "BEGIN {printf \"%.1f\", 100 - $total_pct}")
         fi
 
+        # Check if CtxLeft < 50% and add warning
+        local compact_warning=""
+        if [[ -n "$ctx_left_pct" ]]; then
+            local should_warn
+            should_warn=$(awk "BEGIN {print ($ctx_left_pct < 50) ? 1 : 0}")
+            if [[ "$should_warn" -eq 1 ]]; then
+                if [[ "$SHOW_COLORS" == "true" ]]; then
+                    compact_warning=" ${COLOR_ORANGE}(you should /compact)${COLOR_RESET}"
+                else
+                    compact_warning=" (you should /compact)"
+                fi
+            fi
+        fi
+
         usable_tokens=$(get_model_context_config "usable")
         if [[ -n "$usable_tokens" ]] && [[ "$usable_tokens" -gt 0 ]]; then
             usable_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $usable_tokens) * 100}")
@@ -1347,7 +1361,7 @@ format_output() {
         local ctx_line
         printf -v ctx_line "Context -> UsedT: %${col1_width}s    TkLeft: %${col2_width}s    CtxMax: %${col3_width}s    CtxLeft: %${col4_width}s" \
             "$ctx_val1" "$ctx_val2" "$ctx_val3" "$ctx_val4"
-        lines+=("${gray_color}${ctx_line}${gray_color_reset}")
+        lines+=("${gray_color}${ctx_line}${gray_color_reset}${compact_warning}")
     fi
 
     # Session line - includes model, style, hostname, total tokens and cost
@@ -1372,7 +1386,10 @@ format_output() {
         # Build session line with progress bar at end (showing usable context percentage)
         local sess_progress_bar="" sess_progress_color="" sess_progress_color_reset=""
         if [[ -n "$ctx_usable_pct" ]] && [[ "$SHOW_PROGRESS" == "true" ]]; then
-            sess_progress_bar="    ${ctx_usable_bar} ${ctx_usable_pct}%"
+            # Format progress bar percentage right-aligned using col4_width
+            local sess_pct_formatted
+            printf -v sess_pct_formatted "%${col4_width}s" "${ctx_usable_pct}%"
+            sess_progress_bar="    ${ctx_usable_bar} ${sess_pct_formatted}"
             if [[ "$SHOW_COLORS" == "true" ]]; then
                 local usable_pct_int="${ctx_usable_pct%%.*}"
                 sess_progress_color=$(get_color "$usable_pct_int")
@@ -1565,7 +1582,10 @@ format_output() {
 
             # LimitAt Easter-Egg: If new highscore AND API utilization >= 95%,
             # we've found the real user limit!
-            if [[ "$five_pct" -ge 95 ]] && [[ "$five_pct" -le 100 ]]; then
+            # Use awk for float comparison since bash arithmetic doesn't support floats
+            local five_pct_in_range
+            five_pct_in_range=$(awk "BEGIN {print ($five_pct >= 95 && $five_pct <= 100) ? 1 : 0}")
+            if [[ "$five_pct_in_range" -eq 1 ]]; then
                 set_limit_at "$CURRENT_PLAN" "5h" "$window_tokens_5h"
                 debug_log "LimitAt 5h discovered for $CURRENT_PLAN: $window_tokens_5h at ${five_pct}% API"
             fi
@@ -1576,9 +1596,14 @@ format_output() {
 
             # LimitAt Easter-Egg: If new highscore AND API utilization >= 95%,
             # we've found the real user limit!
-            if [[ -n "$seven_pct" ]] && [[ "$seven_pct" -ge 95 ]] && [[ "$seven_pct" -le 100 ]]; then
-                set_limit_at "$CURRENT_PLAN" "7d" "$window_tokens_7d"
-                debug_log "LimitAt 7d discovered for $CURRENT_PLAN: $window_tokens_7d at ${seven_pct}% API"
+            # Use awk for float comparison since bash arithmetic doesn't support floats
+            if [[ -n "$seven_pct" ]]; then
+                local seven_pct_in_range
+                seven_pct_in_range=$(awk "BEGIN {print ($seven_pct >= 95 && $seven_pct <= 100) ? 1 : 0}")
+                if [[ "$seven_pct_in_range" -eq 1 ]]; then
+                    set_limit_at "$CURRENT_PLAN" "7d" "$window_tokens_7d"
+                    debug_log "LimitAt 7d discovered for $CURRENT_PLAN: $window_tokens_7d at ${seven_pct}% API"
+                fi
             fi
         fi
 
