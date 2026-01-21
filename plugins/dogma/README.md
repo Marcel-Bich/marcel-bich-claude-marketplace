@@ -1,6 +1,30 @@
 # dogma
 
-Intelligent sync of Claude instructions with enforcement hooks for security and consistency.
+Flexible sync of Claude instructions from any source, with enforcement hooks for security and consistency. Use the opinionated [default rules](https://github.com/Marcel-Bich/marcel-bich-claude-dogma) or bring your own.
+
+## Why dogma?
+
+Claude Code is powerful, but without guardrails it's YOLO mode - and many developers (or their employers) don't want that.
+
+### For Teams and Enterprises
+
+**Single Source of Truth**: Define your coding standards, security rules, and AI guidelines once. Use the [default source repository](https://github.com/Marcel-Bich/marcel-bich-claude-dogma) or create your own - every team member syncs from the same source, ensuring consistency across the organization.
+
+**Custom Rules, Your Way**: dogma doesn't force you to use anyone's defaults. Point it at your own private repository with your company's specific guidelines. The only requirement: a similar structure to the [default source repository](https://github.com/Marcel-Bich/marcel-bich-claude-dogma).
+
+**No AI Traces in Code**: Many companies prohibit AI-generated artifacts in their codebase. dogma's hooks and cleanup commands help detect and remove typical AI patterns (curly quotes, em-dashes, AI phrases) before they reach your commits.
+
+**Smart Merging**: When syncing rules, dogma doesn't blindly overwrite your local customizations. It handles merging intelligently, so project-specific rules stay intact while shared standards get updated.
+
+### For Individual Developers
+
+**Sync Across Projects**: Same rules everywhere. Whether you have 5 or 50 repositories, one `/dogma:sync` keeps them all aligned with your personal standards.
+
+**Sync Across Devices**: Work on multiple machines? Your rules live in a source repository - sync them wherever you need them.
+
+### Continuously Maintained
+
+The [default source repository](https://github.com/Marcel-Bich/marcel-bich-claude-dogma) is actively developed and used by the author across all personal and professional projects. Strong self-interest ensures it stays functional and up-to-date.
 
 ## Features
 
