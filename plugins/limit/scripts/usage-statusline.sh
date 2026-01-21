@@ -1237,20 +1237,10 @@ format_output() {
 
     # -------------------------------------------------------------------------
     # Tokens/Context/Session with right-aligned column values
+    # Dynamic column widths calculated from max value length across all 3 lines
     # -------------------------------------------------------------------------
 
-    # Column widths for right-aligned values
-    # All columns use width=7 for consistent cross-line alignment
-    # Token values: 7 chars (e.g., "109.0k", "965.8M")
-    # Percentages: 7 chars (e.g., "54.7%", "100.0%") - includes % sign
-    # Durations: 7 chars (e.g., "53m", "2h15m", "1d2h")
-    # Costs: 7 chars (e.g., "$9.13", "$815.14")
-    local VAL_WIDTH_TOKEN=7
-    local VAL_WIDTH_PCT=7
-    local VAL_WIDTH_DUR=7
-    local VAL_WIDTH_COST=7
-
-    # Gather raw values for each line
+    # Gather raw values for each line first (before calculating widths)
     local tok_val1="" tok_val2="" tok_val3="" tok_val4=""
     local ctx_val1="" ctx_val2="" ctx_val3="" ctx_val4=""
     local sess_val1="" sess_val2="" sess_val3=""
@@ -1312,29 +1302,50 @@ format_output() {
         sess_val1=$(format_duration "$session_secs")
         sess_val2=$(format_duration "$api_secs")
         sess_cost=$(get_total_cost)
+        sess_val3="\$${sess_cost}"
     fi
 
-    # Now output the lines with right-aligned values
+    # Calculate max width per column across all 3 lines
+    # Column 1: tok_val1 vs ctx_val1 vs sess_val1
+    local col1_width=${#tok_val1}
+    [[ ${#ctx_val1} -gt $col1_width ]] && col1_width=${#ctx_val1}
+    [[ ${#sess_val1} -gt $col1_width ]] && col1_width=${#sess_val1}
+
+    # Column 2: tok_val2 vs ctx_val2 vs sess_val2
+    local col2_width=${#tok_val2}
+    [[ ${#ctx_val2} -gt $col2_width ]] && col2_width=${#ctx_val2}
+    [[ ${#sess_val2} -gt $col2_width ]] && col2_width=${#sess_val2}
+
+    # Column 3: tok_val3 vs ctx_val3 vs sess_val3
+    local col3_width=${#tok_val3}
+    [[ ${#ctx_val3} -gt $col3_width ]] && col3_width=${#ctx_val3}
+    [[ ${#sess_val3} -gt $col3_width ]] && col3_width=${#sess_val3}
+
+    # Column 4: tok_val4 vs ctx_val4 (session has progress bar instead)
+    local col4_width=${#tok_val4}
+    [[ ${#ctx_val4} -gt $col4_width ]] && col4_width=${#ctx_val4}
+
+    # Now output the lines with dynamically calculated right-aligned values
     local gray_color="" gray_color_reset=""
     if [[ "$SHOW_COLORS" == "true" ]]; then
         gray_color="$COLOR_GRAY"
         gray_color_reset="$COLOR_RESET"
     fi
 
-    # Tokens line: Input: %7s    Output: %7s    Cached: %7s    UserTk.: %7s
+    # Tokens line: Input: %Ns    Output: %Ns    Cached: %Ns    UserTk.: %Ns
     # 4 spaces between columns for readability
     if [[ "$SHOW_TOKENS" == "true" ]]; then
         local tok_line
-        printf -v tok_line "Tokens  -> Input: %${VAL_WIDTH_TOKEN}s    Output: %${VAL_WIDTH_TOKEN}s    Cached: %${VAL_WIDTH_TOKEN}s    UserTk.: %${VAL_WIDTH_TOKEN}s" \
+        printf -v tok_line "Tokens  -> Input: %${col1_width}s    Output: %${col2_width}s    Cached: %${col3_width}s    UserTk.: %${col4_width}s" \
             "$tok_val1" "$tok_val2" "$tok_val3" "$tok_val4"
         lines+=("${gray_color}${tok_line}${gray_color_reset}")
     fi
 
-    # Context line: UsedT: %7s    TkLeft: %7s    CtxMax: %6s    CtxLeft: %6s
+    # Context line: UsedT: %Ns    TkLeft: %Ns    CtxMax: %Ns    CtxLeft: %Ns
     # 4 spaces between columns for readability
     if [[ "$SHOW_CTX" == "true" ]]; then
         local ctx_line
-        printf -v ctx_line "Context -> UsedT: %${VAL_WIDTH_TOKEN}s    TkLeft: %${VAL_WIDTH_TOKEN}s    CtxMax: %${VAL_WIDTH_PCT}s    CtxLeft: %${VAL_WIDTH_PCT}s" \
+        printf -v ctx_line "Context -> UsedT: %${col1_width}s    TkLeft: %${col2_width}s    CtxMax: %${col3_width}s    CtxLeft: %${col4_width}s" \
             "$ctx_val1" "$ctx_val2" "$ctx_val3" "$ctx_val4"
         lines+=("${gray_color}${ctx_line}${gray_color_reset}")
     fi
@@ -1369,11 +1380,11 @@ format_output() {
             fi
         fi
 
-        # Session line: Sessn: %5s    APIuse: %5s    SnCost: %7s    [progress bar]
+        # Session line: Sessn: %Ns    APIuse: %Ns    SnCost: %Ns    [progress bar]
         # 4 spaces between columns for readability
         local sess_line
-        printf -v sess_line "Session -> Sessn: %${VAL_WIDTH_DUR}s    APIuse: %${VAL_WIDTH_DUR}s    SnCost: %${VAL_WIDTH_COST}s" \
-            "$sess_val1" "$sess_val2" "\$${sess_cost}"
+        printf -v sess_line "Session -> Sessn: %${col1_width}s    APIuse: %${col2_width}s    SnCost: %${col3_width}s" \
+            "$sess_val1" "$sess_val2" "$sess_val3"
         lines+=("${gray_color}${sess_line}${gray_color_reset}${sess_progress_color}${sess_progress_bar}${sess_progress_color_reset}")
 
         # Model info line with lifetime totals
