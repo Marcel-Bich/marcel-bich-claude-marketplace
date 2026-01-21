@@ -11,7 +11,7 @@ Display the current highscore state in a formatted view, including subagent toke
 <instructions>
 1. Read the state files and hostname:
    ```bash
-   cat ~/.claude/limit-highscore-state.json 2>/dev/null
+   cat ~/.claude/marcel-bich-claude-marketplace/limit/limit-highscore-state.json 2>/dev/null
    cat ~/.claude/marcel-bich-claude-marketplace/limit/limit-usage-state.json 2>/dev/null
    cat ~/.claude/marcel-bich-claude-marketplace/limit/limit-subagent-state.json 2>/dev/null
    hostname

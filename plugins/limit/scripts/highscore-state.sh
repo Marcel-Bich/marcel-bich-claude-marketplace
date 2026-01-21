@@ -28,7 +28,7 @@
 set -euo pipefail
 
 # State file location
-HIGHSCORE_STATE_FILE="${HOME}/.claude/limit-highscore-state.json"
+HIGHSCORE_STATE_FILE="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}/limit-highscore-state.json"
 
 # Default highscore values (conservative estimates)
 # These will be exceeded and updated as usage is tracked
