@@ -733,7 +733,17 @@ format_highscore() {
         return
     fi
 
-    if [[ "$tokens" -ge 1000000000 ]]; then
+    if [[ "$tokens" -ge 1000000000000000000000000 ]]; then
+        printf "%.1fY" "$(echo "scale=1; $tokens/1000000000000000000000000" | bc)"
+    elif [[ "$tokens" -ge 1000000000000000000000 ]]; then
+        printf "%.1fZ" "$(echo "scale=1; $tokens/1000000000000000000000" | bc)"
+    elif [[ "$tokens" -ge 1000000000000000000 ]]; then
+        printf "%.1fE" "$(echo "scale=1; $tokens/1000000000000000000" | bc)"
+    elif [[ "$tokens" -ge 1000000000000000 ]]; then
+        printf "%.1fP" "$(echo "scale=1; $tokens/1000000000000000" | bc)"
+    elif [[ "$tokens" -ge 1000000000000 ]]; then
+        printf "%.1fT" "$(echo "scale=1; $tokens/1000000000000" | bc)"
+    elif [[ "$tokens" -ge 1000000000 ]]; then
         printf "%.1fG" "$(echo "scale=1; $tokens/1000000000" | bc)"
     elif [[ "$tokens" -ge 1000000 ]]; then
         printf "%.1fM" "$(echo "scale=1; $tokens/1000000" | bc)"
