@@ -2031,18 +2031,22 @@ EOF
         # 5-hour limit (if enabled) - all models
         if [[ "$SHOW_5H" == "true" ]]; then
             # Global 5h line - append [LimitAt:X.XM] Easter-Egg if discovered
-            local global_5h_line
+            local global_5h_line global_5h_color="" global_5h_color_reset=""
+            if [[ "$SHOW_COLORS" == "true" ]]; then
+                global_5h_color=$(get_color "$five_pct")
+                global_5h_color_reset="${COLOR_RESET}"
+            fi
             global_5h_line="$(format_limit_line "5h all" "$five_pct" "$five_hour_reset")"
             if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "$limit_at_5h" ]] && [[ "$limit_at_5h" != "null" ]]; then
                 local limit_at_5h_fmt window_5h_limit_fmt
                 limit_at_5h_fmt=$(format_highscore "$limit_at_5h")
                 window_5h_limit_fmt=$(format_highscore "$window_tokens_5h")
-                global_5h_line="${global_5h_line} [LimitAt:${window_5h_limit_fmt}/${limit_at_5h_fmt}]"
+                global_5h_line="${global_5h_line} ${global_5h_color}[LimitAt:${window_5h_limit_fmt}/${limit_at_5h_fmt}]${global_5h_color_reset}"
             fi
             # Append [Average:LOCAL%/API%] if available
             if [[ "$SHOW_AVERAGE" == "true" ]] && [[ -n "$avg_5h_local" || -n "$avg_5h_api" ]]; then
                 local avg_5h_display="${avg_5h_local:-n/a}%/${avg_5h_api:-n/a}%"
-                global_5h_line="${global_5h_line} [Average:${avg_5h_display}]"
+                global_5h_line="${global_5h_line} ${global_5h_color}[Average:${avg_5h_display}]${global_5h_color_reset}"
             fi
             lines+=("$global_5h_line")
             # Local 5h directly below global 5h - shows highscore-based percentage
@@ -2063,18 +2067,22 @@ EOF
         # 7-day limit (if enabled and available) - all models
         if [[ "$SHOW_7D" == "true" ]] && [[ -n "$seven_pct" ]]; then
             # Global 7d line - append [LimitAt:X.XM] Easter-Egg if discovered
-            local global_7d_line
+            local global_7d_line global_7d_color="" global_7d_color_reset=""
+            if [[ "$SHOW_COLORS" == "true" ]]; then
+                global_7d_color=$(get_color "$seven_pct")
+                global_7d_color_reset="${COLOR_RESET}"
+            fi
             global_7d_line="$(format_limit_line "7d all" "$seven_pct" "$seven_day_reset")"
             if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "$limit_at_7d" ]] && [[ "$limit_at_7d" != "null" ]]; then
                 local limit_at_7d_fmt window_7d_limit_fmt
                 limit_at_7d_fmt=$(format_highscore "$limit_at_7d")
                 window_7d_limit_fmt=$(format_highscore "$window_tokens_7d")
-                global_7d_line="${global_7d_line} [LimitAt:${window_7d_limit_fmt}/${limit_at_7d_fmt}]"
+                global_7d_line="${global_7d_line} ${global_7d_color}[LimitAt:${window_7d_limit_fmt}/${limit_at_7d_fmt}]${global_7d_color_reset}"
             fi
             # Append [Average:LOCAL%/API%] if available
             if [[ "$SHOW_AVERAGE" == "true" ]] && [[ -n "$avg_7d_local" || -n "$avg_7d_api" ]]; then
                 local avg_7d_display="${avg_7d_local:-n/a}%/${avg_7d_api:-n/a}%"
-                global_7d_line="${global_7d_line} [Average:${avg_7d_display}]"
+                global_7d_line="${global_7d_line} ${global_7d_color}[Average:${avg_7d_display}]${global_7d_color_reset}"
             fi
             lines+=("$global_7d_line")
             # Local 7d directly below global 7d - shows highscore-based percentage
@@ -2094,11 +2102,15 @@ EOF
 
         # 7-day Opus limit (if enabled and has data)
         if [[ "$SHOW_OPUS" == "true" ]] && [[ -n "$opus_pct" ]]; then
-            local opus_line
+            local opus_line opus_color="" opus_color_reset=""
+            if [[ "$SHOW_COLORS" == "true" ]]; then
+                opus_color=$(get_color "$opus_pct")
+                opus_color_reset="${COLOR_RESET}"
+            fi
             opus_line="$(format_limit_line "7d Opus" "$opus_pct" "$opus_reset")"
             # Append [Average:X%] for Opus (API only, no local tracking)
             if [[ "$SHOW_AVERAGE" == "true" ]] && [[ -n "$avg_opus" ]]; then
-                opus_line="${opus_line} [Average:${avg_opus}%]"
+                opus_line="${opus_line} ${opus_color}[Average:${avg_opus}%]${opus_color_reset}"
             fi
             lines+=("$opus_line")
         fi
@@ -2110,11 +2122,15 @@ EOF
             local sonnet_above_threshold
             sonnet_above_threshold=$(awk "BEGIN {print ($sonnet_pct >= 0.1) ? 1 : 0}")
             if [[ "$sonnet_above_threshold" -eq 1 ]]; then
-                local sonnet_line
+                local sonnet_line sonnet_color="" sonnet_color_reset=""
+                if [[ "$SHOW_COLORS" == "true" ]]; then
+                    sonnet_color=$(get_color "$sonnet_pct")
+                    sonnet_color_reset="${COLOR_RESET}"
+                fi
                 sonnet_line="$(format_limit_line "7d Sonnet" "$sonnet_pct" "$sonnet_reset")"
                 # Append [Average:X%] for Sonnet (API only, no local tracking)
                 if [[ "$SHOW_AVERAGE" == "true" ]] && [[ -n "$avg_sonnet" ]]; then
-                    sonnet_line="${sonnet_line} [Average:${avg_sonnet}%]"
+                    sonnet_line="${sonnet_line} ${sonnet_color}[Average:${avg_sonnet}%]${sonnet_color_reset}"
                 fi
                 lines+=("$sonnet_line")
             fi

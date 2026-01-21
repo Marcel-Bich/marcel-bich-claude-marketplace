@@ -183,7 +183,8 @@ get_average() {
     if [[ "$result" == "null" ]] || [[ -z "$result" ]]; then
         echo ""
     else
-        echo "$result"
+        # Ensure one decimal place (e.g., 22 -> 22.0, 22.5 -> 22.5)
+        LC_NUMERIC=C printf "%.1f" "$result"
     fi
 }
 
@@ -211,7 +212,8 @@ get_local_average() {
     if [[ "$result" == "null" ]] || [[ -z "$result" ]]; then
         echo ""
     else
-        echo "$result"
+        # Ensure one decimal place (e.g., 22 -> 22.0, 22.5 -> 22.5)
+        LC_NUMERIC=C printf "%.1f" "$result"
     fi
 }
 

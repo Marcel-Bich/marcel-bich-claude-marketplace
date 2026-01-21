@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+# Force C locale for numeric operations (prevents issues with de_DE locale expecting comma)
+export LC_NUMERIC=C
+
 # Paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DATA_DIR="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}"
