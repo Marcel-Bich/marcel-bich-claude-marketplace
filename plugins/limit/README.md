@@ -7,7 +7,7 @@ Live API usage display in Claude Code statusline - shows your utilization with c
 **API Usage Tracking**
 - Real API data from Anthropic (same as `/usage`)
 - Colored progress bars with signal colors (gray/green/yellow/orange/red)
-- Multiple limits: 5-hour, 7-day, Opus, Sonnet, Extra Credits
+- Multiple limits: 5-hour, 7-day, Sonnet, Extra Credits
 - Reset times for each limit (rounded to nearest hour)
 
 **Highscore Tracking** (enabled by default, disable with `CLAUDE_MB_LIMIT_LOCAL=false`)
@@ -64,7 +64,6 @@ All features can be toggled via environment variables. Export them in your shell
 | `CLAUDE_MB_LIMIT_MODEL` | true | Show current model with style and cost |
 | `CLAUDE_MB_LIMIT_5H` | true | Show 5-hour limit |
 | `CLAUDE_MB_LIMIT_7D` | true | Show 7-day limit |
-| `CLAUDE_MB_LIMIT_OPUS` | true | Show Opus-specific limit |
 | `CLAUDE_MB_LIMIT_SONNET` | true | Show Sonnet-specific limit |
 | `CLAUDE_MB_LIMIT_EXTRA` | true | Show extra credits usage |
 | `CLAUDE_MB_LIMIT_CWD` | true | Show current working directory |
@@ -91,6 +90,8 @@ All features can be toggled via environment variables. Export them in your shell
 |----------|---------|-------------|
 | `CLAUDE_MB_LIMIT_CACHE_AGE` | 120 | Cache duration in seconds |
 | `CLAUDE_MB_LIMIT_DEFAULT_COLOR` | `\033[90m` | Default color (ANSI escape sequence) |
+| `CLAUDE_MB_LIMIT_SHOW_ERRORS` | false | Show "limit: error" on failures |
+| `CLAUDE_MB_LIMIT_AVERAGE` | true | Show rolling average display |
 | `CLAUDE_MB_LIMIT_DEBUG` | false | Enable debug logging to `/tmp/claude-mb-limit-debug.log` |
 
 ## Highscore Concept
