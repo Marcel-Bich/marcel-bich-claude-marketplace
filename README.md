@@ -83,8 +83,9 @@ They don't replace Claude. They make Claude manageable.
 
 All plugins require:
 
-- `jq` - JSON processor (install: `sudo apt install jq`)
-- **Windows:** WSL2 required (native Windows/PowerShell not supported)
+- `jq` - JSON processor (install: `sudo apt install jq` / `brew install jq`)
+- **Supported:** Linux, macOS, WSL2
+- **Not supported:** Native Windows / PowerShell (use WSL2 instead)
 
 ## Quick Start
 

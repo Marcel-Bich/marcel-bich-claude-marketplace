@@ -12,7 +12,7 @@
     {
       "name": "credo",
       "source": "./plugins/credo",
-      "description": "Opinionated workflow guides and best practices - the core plugin that orchestrates all others."
+      "description": "Opinionated workflow guides and best practices - the preacher's proven patterns for Claude Code projects."
     },
     {
       "name": "dogma",
@@ -27,7 +27,7 @@
     {
       "name": "limit",
       "source": "./plugins/limit",
-      "description": "Live API usage display in Claude Code statusline - shows utilization with colored progress bars and reset times."
+      "description": "Live API usage display in Claude Code statusline - colored progress bars, reset times, tokens, context, session metrics, Git info, highscore tracking, and more."
     },
     {
       "name": "hydra",
