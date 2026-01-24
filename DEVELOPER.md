@@ -24,6 +24,14 @@ git config core.hooksPath .githooks
 git config --unset core.hooksPath
 ```
 
+## Git Configuration
+
+Run once after cloning to suppress warnings about ignored files (prevents accidental `-f` adds):
+
+```bash
+git config advice.addIgnoredFile false
+```
+
 ## Workflow
 
 1. **Make changes**
