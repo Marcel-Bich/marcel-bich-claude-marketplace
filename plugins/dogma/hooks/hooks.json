@@ -185,6 +185,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/post-write-validate.sh",
             "timeout": 5,
             "description": "Validate written content for AI traces (curly quotes, em-dashes, etc.)"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/review-trigger.sh",
+            "timeout": 5,
+            "description": "Remind to spawn reviewer when review is configured in DOGMA-PERMISSIONS.md"
           }
         ]
       },
@@ -196,6 +202,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/post-write-validate.sh",
             "timeout": 5,
             "description": "Validate written content for AI traces (curly quotes, em-dashes, etc.)"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/review-trigger.sh",
+            "timeout": 5,
+            "description": "Remind to spawn reviewer when review is configured in DOGMA-PERMISSIONS.md"
           }
         ]
       },
