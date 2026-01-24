@@ -355,9 +355,10 @@ main() {
     # Achievement explanation
     echo "### Achievement Symbol"
     echo ""
-    echo "The achievement symbol (trophy or [!]) appears when your local"
-    echo "device usage reaches >= 95% of the total API usage. This means"
-    echo "you are the primary user of your Anthropic account on this device."
+    echo "The achievement symbol (trophy or [!]) appears when the global API"
+    echo "usage is >= 95% AND your local device usage is >= 95% of its own"
+    echo "highscore. This means the real limit is nearly exhausted and you"
+    echo "have almost maxed out your device's recorded capacity."
     echo ""
     echo "---"
     echo ""

@@ -2011,18 +2011,19 @@ EOF
             avg_sonnet=$(get_average '.sonnet' 168)
         fi
 
-        # Check for achievement: local >= 95% of API
+        # Check for achievement: trophy appears when global API usage >= 95%
+        # AND local device usage >= 95% of its own highscore
         local achievement_5h="" achievement_7d=""
         if [[ -n "$local_5h_pct" ]] && [[ -n "$five_pct" ]]; then
             local is_achievement_5h
-            is_achievement_5h=$(awk "BEGIN {print ($local_5h_pct >= $five_pct * 0.95 && $five_pct >= 50) ? 1 : 0}")
+            is_achievement_5h=$(awk "BEGIN {print ($five_pct >= 95 && $local_5h_pct >= 95) ? 1 : 0}")
             if [[ "$is_achievement_5h" -eq 1 ]]; then
                 achievement_5h=" $ACHIEVEMENT_SYMBOL"
             fi
         fi
         if [[ -n "$local_7d_pct" ]] && [[ -n "$seven_pct" ]]; then
             local is_achievement_7d
-            is_achievement_7d=$(awk "BEGIN {print ($local_7d_pct >= $seven_pct * 0.95 && $seven_pct >= 50) ? 1 : 0}")
+            is_achievement_7d=$(awk "BEGIN {print ($seven_pct >= 95 && $local_7d_pct >= 95) ? 1 : 0}")
             if [[ "$is_achievement_7d" -eq 1 ]]; then
                 achievement_7d=" $ACHIEVEMENT_SYMBOL"
             fi
@@ -2060,7 +2061,7 @@ EOF
                 local window_5h_formatted hs_5h_formatted
                 window_5h_formatted=$(format_highscore "$window_tokens_5h")
                 hs_5h_formatted=$(format_highscore "$highscore_5h")
-                lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset" 1) ${local_5h_color}[Highest:${window_5h_formatted}/${hs_5h_formatted}]${achievement_5h} (${LOCAL_DEVICE_LABEL})${local_5h_color_reset}")
+                lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset" 1) ${local_5h_color}[Highest:${window_5h_formatted}/${hs_5h_formatted}] (${LOCAL_DEVICE_LABEL})${achievement_5h}${local_5h_color_reset}")
             fi
         fi
 
@@ -2096,7 +2097,7 @@ EOF
                 local window_7d_formatted hs_7d_formatted
                 window_7d_formatted=$(format_highscore "$window_tokens_7d")
                 hs_7d_formatted=$(format_highscore "$highscore_7d")
-                lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset" 1) ${local_7d_color}[Highest:${window_7d_formatted}/${hs_7d_formatted}]${achievement_7d} (${LOCAL_DEVICE_LABEL})${local_7d_color_reset}")
+                lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset" 1) ${local_7d_color}[Highest:${window_7d_formatted}/${hs_7d_formatted}] (${LOCAL_DEVICE_LABEL})${achievement_7d}${local_7d_color_reset}")
             fi
         fi
 
