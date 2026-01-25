@@ -141,6 +141,21 @@ is_secret_file() {
 # ============================================
 EXCLUDE_FILE=".git/info/exclude"
 
+# Helper: Check if file is ignored by .git/info/exclude (not .gitignore)
+# Uses git check-ignore -v which shows the source of the ignore rule
+is_excluded_file() {
+    local FILE="$1"
+    # git check-ignore -v outputs: <source>:<line>:<pattern>\t<file>
+    # We only want to block files ignored by .git/info/exclude, not .gitignore
+    local RESULT
+    RESULT=$(git check-ignore -v "$FILE" 2>/dev/null) || return 1
+    # Check if the ignore comes from .git/info/exclude
+    if echo "$RESULT" | grep -q "^\.git/info/exclude:"; then
+        return 0
+    fi
+    return 1
+}
+
 for FILE in $FILES; do
     # Handle git add . or git add -A
     if [ "$FILE" = "." ] || [ "$FILE" = "-A" ] || [ "$FILE" = "--all" ]; then
@@ -151,13 +166,9 @@ for FILE in $FILES; do
             if is_secret_file "$AF"; then
                 BLOCKED_SECRET_FILES="$BLOCKED_SECRET_FILES $AF"
             fi
-            # Check for AI files in exclude
-            if [ -f "$EXCLUDE_FILE" ]; then
-                if git check-ignore -q "$AF" 2>/dev/null; then
-                    if grep -qF "$AF" "$EXCLUDE_FILE" 2>/dev/null; then
-                        BLOCKED_AI_FILES="$BLOCKED_AI_FILES $AF"
-                    fi
-                fi
+            # Check for AI files in .git/info/exclude
+            if is_excluded_file "$AF"; then
+                BLOCKED_AI_FILES="$BLOCKED_AI_FILES $AF"
             fi
         done
         continue
@@ -174,35 +185,12 @@ for FILE in $FILES; do
         continue
     fi
 
-    # Check for AI files (only if untracked and in exclude)
-    if [ -f "$EXCLUDE_FILE" ]; then
-        # Check if file is already tracked
-        if ! git ls-files --error-unmatch "$FILE" &>/dev/null; then
-            # File is untracked - check if it's in .git/info/exclude
-            if grep -qxF "$FILE" "$EXCLUDE_FILE" 2>/dev/null; then
-                BLOCKED_AI_FILES="$BLOCKED_AI_FILES $FILE"
-                continue
-            fi
-
-            # Check directory match
-            DIR=$(dirname "$FILE")
-            if [ "$DIR" != "." ]; then
-                if grep -qE "^${DIR}/?$" "$EXCLUDE_FILE" 2>/dev/null; then
-                    BLOCKED_AI_FILES="$BLOCKED_AI_FILES $FILE"
-                    continue
-                fi
-            fi
-
-            # Check glob patterns
-            BASENAME=$(basename "$FILE")
-            while IFS= read -r PATTERN; do
-                [[ "$PATTERN" =~ ^#.*$ || -z "$PATTERN" ]] && continue
-                REGEX=$(echo "$PATTERN" | sed 's/\./\\./g' | sed 's/\*/[^\/]*/g')
-                if echo "$BASENAME" | grep -qE "^${REGEX}$" 2>/dev/null; then
-                    BLOCKED_AI_FILES="$BLOCKED_AI_FILES $FILE"
-                    break
-                fi
-            done < "$EXCLUDE_FILE"
+    # Check for AI files (only if untracked and in .git/info/exclude)
+    # Check if file is already tracked
+    if ! git ls-files --error-unmatch "$FILE" &>/dev/null; then
+        # File is untracked - check if it's in .git/info/exclude
+        if is_excluded_file "$FILE"; then
+            BLOCKED_AI_FILES="$BLOCKED_AI_FILES $FILE"
         fi
     fi
 done
