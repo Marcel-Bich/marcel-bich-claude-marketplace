@@ -12,6 +12,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Initialize stats file if missing
+        run: |
+          if [ ! -f .github/clone-stats.json ]; then
+            echo '{"total_clones": 0, "last_recorded_date": "1970-01-01", "last_updated": ""}' > .github/clone-stats.json
+          fi
+
       - name: Update clone stats
         env:
           GH_TOKEN: ${{ secrets.CLONE_TOKEN }}
