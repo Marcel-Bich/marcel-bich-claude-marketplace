@@ -4,10 +4,14 @@
 
 set -euo pipefail
 
-# Plugin data directory (organized under marketplace name)
-PLUGIN_DATA_DIR="${HOME}/.claude/marcel-bich-claude-marketplace/limit"
-STATE_FILE="${PLUGIN_DATA_DIR}/limit-usage-state.json"
-CACHE_FILE="/tmp/claude-mb-limit-cache.json"
+# Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
+CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
+
+# Plugin data directory (organized under marketplace name) - profile-specific
+PLUGIN_DATA_DIR="${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit"
+STATE_FILE="${PLUGIN_DATA_DIR}/limit-usage-state_${PROFILE_NAME}.json"
+CACHE_FILE="/tmp/claude-mb-limit-cache_${PROFILE_NAME}.json"
 DEVICE_ID="${CLAUDE_MB_LIMIT_DEVICE_LABEL:-$(hostname)}"
 
 # Colors

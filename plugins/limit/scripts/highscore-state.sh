@@ -27,8 +27,14 @@
 
 set -euo pipefail
 
-# State file location
-HIGHSCORE_STATE_FILE="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}/limit-highscore-state.json"
+# =============================================================================
+# Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
+# =============================================================================
+CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
+
+# State file location - profile-specific
+HIGHSCORE_STATE_FILE="${PLUGIN_DATA_DIR:-${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit}/limit-highscore-state_${PROFILE_NAME}.json"
 
 # Default highscore values (conservative estimates)
 # These will be exceeded and updated as usage is tracked
@@ -49,9 +55,9 @@ declare -A DEFAULT_HIGHSCORES_7D=(
 # Current schema version - bump on breaking changes to trigger reset
 HIGHSCORE_SCHEMA_VERSION=1
 
-# Debug logging
+# Debug logging - profile-specific
 HIGHSCORE_DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-0}"
-HIGHSCORE_LOG_FILE="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}/highscore-debug.log"
+HIGHSCORE_LOG_FILE="${PLUGIN_DATA_DIR:-${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit}/highscore-debug_${PROFILE_NAME}.log"
 
 highscore_log() {
     if [[ "$HIGHSCORE_DEBUG" == "1" ]]; then

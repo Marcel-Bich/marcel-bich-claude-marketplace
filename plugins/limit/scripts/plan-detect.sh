@@ -2,7 +2,9 @@
 # Plan-Detection fuer Limit Plugin
 # Gibt NUR subscriptionType und rateLimitTier aus, KEINE Secrets!
 
-CREDS_FILE="${HOME}/.claude/.credentials.json"
+# Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
+CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+CREDS_FILE="${CLAUDE_BASE_DIR}/.credentials.json"
 
 if [[ ! -f "${CREDS_FILE}" ]]; then
   echo "unknown"

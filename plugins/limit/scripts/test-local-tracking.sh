@@ -4,9 +4,13 @@
 
 set -euo pipefail
 
-# Plugin data directory (organized under marketplace name)
-PLUGIN_DATA_DIR="${HOME}/.claude/marcel-bich-claude-marketplace/limit"
-STATE_FILE="${PLUGIN_DATA_DIR}/limit-usage-state.json"
+# Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
+CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
+
+# Plugin data directory (organized under marketplace name) - profile-specific
+PLUGIN_DATA_DIR="${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit"
+STATE_FILE="${PLUGIN_DATA_DIR}/limit-usage-state_${PROFILE_NAME}.json"
 
 # Ensure directory exists
 mkdir -p "$PLUGIN_DATA_DIR" 2>/dev/null || true
@@ -38,7 +42,7 @@ debug_log() {
 # The actual function we're testing (copied from usage-statusline.sh for isolation)
 test_get_total_tokens_ever() {
     local STDIN_DATA="$1"
-    local state_file="${HOME}/.claude/marcel-bich-claude-marketplace/limit/limit-usage-state.json"
+    local state_file="${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit/limit-usage-state_${PROFILE_NAME}.json"
 
     # Get current session data from stdin
     local session_id="" current_input=0 current_output=0 current_cost="0.00"

@@ -14,13 +14,19 @@ set -euo pipefail
 # Force C locale for numeric operations (prevents issues with de_DE locale expecting comma)
 export LC_NUMERIC=C
 
+# =============================================================================
+# Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
+# =============================================================================
+CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
+
 # Configuration
-CREDENTIALS_FILE="${HOME}/.claude/.credentials.json"
+CREDENTIALS_FILE="${CLAUDE_BASE_DIR}/.credentials.json"
 API_URL="https://api.anthropic.com/api/oauth/usage"
 TIMEOUT=5
 
-# Cache configuration (rate limiting)
-CACHE_FILE="/tmp/claude-mb-limit-cache.json"
+# Cache configuration (rate limiting) - profile-specific
+CACHE_FILE="/tmp/claude-mb-limit-cache_${PROFILE_NAME}.json"
 # Base cache age - actual age is jittered 90-150s to avoid detection patterns
 CACHE_BASE_AGE="${CLAUDE_MB_LIMIT_CACHE_AGE:-120}"
 
@@ -28,14 +34,14 @@ CACHE_BASE_AGE="${CLAUDE_MB_LIMIT_CACHE_AGE:-120}"
 BACKOFF_STATE_FILE=""  # Set in ensure_plugin_dir
 
 # Plugin data directory (organized under marketplace name)
-PLUGIN_DATA_DIR="${HOME}/.claude/marcel-bich-claude-marketplace/limit"
+PLUGIN_DATA_DIR="${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit"
 
-# State file for local tracking (sessions, totals, calibration)
-STATE_FILE="${PLUGIN_DATA_DIR}/limit-usage-state.json"
+# State file for local tracking (sessions, totals, calibration) - profile-specific
+STATE_FILE="${PLUGIN_DATA_DIR}/limit-usage-state_${PROFILE_NAME}.json"
 
-# Debug mode - logs stay in /tmp (temporary, cleared on reboot)
+# Debug mode - logs stay in /tmp (temporary, cleared on reboot) - profile-specific
 DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-false}"
-DEBUG_LOG="/tmp/claude-mb-limit-debug.log"
+DEBUG_LOG="/tmp/claude-mb-limit-debug_${PROFILE_NAME}.log"
 
 # Plan detection - determine subscription type for plan-specific highscores
 SCRIPT_DIR="$(dirname "$0")"
@@ -58,8 +64,73 @@ ensure_plugin_dir() {
     if [[ ! -d "$PLUGIN_DATA_DIR" ]]; then
         mkdir -p "$PLUGIN_DATA_DIR" 2>/dev/null || true
     fi
-    # Set backoff state file path after directory exists
-    BACKOFF_STATE_FILE="${PLUGIN_DATA_DIR}/backoff-state.json"
+    # Set backoff state file path after directory exists - profile-specific
+    BACKOFF_STATE_FILE="${PLUGIN_DATA_DIR}/backoff-state_${PROFILE_NAME}.json"
+}
+
+# =============================================================================
+# Auto-Migration: Migrate old state files to new profile-specific format
+# =============================================================================
+# Migrates files from pre-v2.20.0 format (without profile suffix) to new format
+# This is a one-time migration that runs automatically on first use after update
+
+MIGRATION_MARKER="${PLUGIN_DATA_DIR}/.migrated_${PROFILE_NAME}"
+
+migrate_old_state_files() {
+    # Skip if already migrated
+    if [[ -f "$MIGRATION_MARKER" ]]; then
+        return 0
+    fi
+
+    ensure_plugin_dir
+
+    # List of files to migrate: old_name -> new_name
+    local -A files_to_migrate=(
+        ["limit-usage-state.json"]="limit-usage-state_${PROFILE_NAME}.json"
+        ["limit-highscore-state.json"]="limit-highscore-state_${PROFILE_NAME}.json"
+        ["limit-subagent-state.json"]="limit-subagent-state_${PROFILE_NAME}.json"
+        ["limit-main-agent-state.json"]="limit-main-agent-state_${PROFILE_NAME}.json"
+        ["limit-history.jsonl"]="limit-history_${PROFILE_NAME}.jsonl"
+        ["history-last-write"]="history-last-write_${PROFILE_NAME}"
+        ["subagent-debug.log"]="subagent-debug_${PROFILE_NAME}.log"
+        ["highscore-debug.log"]="highscore-debug_${PROFILE_NAME}.log"
+        ["backoff-state.json"]="backoff-state_${PROFILE_NAME}.json"
+    )
+
+    local migrated=0
+
+    for old_name in "${!files_to_migrate[@]}"; do
+        local old_file="${PLUGIN_DATA_DIR}/${old_name}"
+        local new_file="${PLUGIN_DATA_DIR}/${files_to_migrate[$old_name]}"
+
+        # Only migrate if old file exists and new file does not
+        if [[ -f "$old_file" ]] && [[ ! -f "$new_file" ]]; then
+            if cp "$old_file" "$new_file" 2>/dev/null; then
+                migrated=$((migrated + 1))
+            fi
+        fi
+    done
+
+    # Migrate temp files in /tmp
+    local -A tmp_files_to_migrate=(
+        ["/tmp/claude-mb-limit-cache.json"]="/tmp/claude-mb-limit-cache_${PROFILE_NAME}.json"
+        ["/tmp/claude-mb-limit-subagent-timestamp"]="/tmp/claude-mb-limit-subagent-timestamp_${PROFILE_NAME}"
+        ["/tmp/claude-mb-limit-main-agent-timestamp"]="/tmp/claude-mb-limit-main-agent-timestamp_${PROFILE_NAME}"
+        ["/tmp/claude-mb-limit-debug.log"]="/tmp/claude-mb-limit-debug_${PROFILE_NAME}.log"
+    )
+
+    for old_file in "${!tmp_files_to_migrate[@]}"; do
+        local new_file="${tmp_files_to_migrate[$old_file]}"
+
+        if [[ -f "$old_file" ]] && [[ ! -f "$new_file" ]]; then
+            if cp "$old_file" "$new_file" 2>/dev/null; then
+                migrated=$((migrated + 1))
+            fi
+        fi
+    done
+
+    # Create marker file to prevent re-migration
+    echo "Migrated $migrated files on $(date -Iseconds)" > "$MIGRATION_MARKER" 2>/dev/null || true
 }
 
 # =============================================================================
@@ -303,7 +374,7 @@ DEFAULT_ESTIMATED_MAX_7D="${CLAUDE_MB_LIMIT_EST_MAX_7D:-5000000}"
 DEFAULT_COLOR="${CLAUDE_MB_LIMIT_DEFAULT_COLOR:-\033[90m}"
 
 # Claude settings file (for model info)
-CLAUDE_SETTINGS_FILE="${HOME}/.claude/settings.json"
+CLAUDE_SETTINGS_FILE="${CLAUDE_BASE_DIR}/settings.json"
 
 # API error tracking for graceful degradation
 # When set, local data is still shown but API-dependent parts display error message
@@ -2219,6 +2290,10 @@ EOF
 
 # Main execution
 main() {
+    # Ensure plugin directory exists and migrate old state files if needed
+    ensure_plugin_dir
+    migrate_old_state_files
+
     # Read stdin data from Claude Code first (contains model info)
     read_stdin_data
 
