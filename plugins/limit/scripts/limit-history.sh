@@ -5,16 +5,22 @@
 
 set -euo pipefail
 
-# History file location
-HISTORY_FILE="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}/limit-history.jsonl"
+# =============================================================================
+# Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
+# =============================================================================
+CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
+
+# History file location - profile-specific
+HISTORY_FILE="${PLUGIN_DATA_DIR:-${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit}/limit-history_${PROFILE_NAME}.jsonl"
 
 # Configuration with defaults
 HISTORY_ENABLED="${CLAUDE_MB_LIMIT_HISTORY_ENABLED:-true}"
 HISTORY_INTERVAL="${CLAUDE_MB_LIMIT_HISTORY_INTERVAL:-600}"  # 10 minutes in seconds
 HISTORY_DAYS="${CLAUDE_MB_LIMIT_HISTORY_DAYS:-28}"           # 28 days retention
 
-# Last write timestamp file (to check interval)
-HISTORY_LAST_WRITE="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}/history-last-write"
+# Last write timestamp file (to check interval) - profile-specific
+HISTORY_LAST_WRITE="${PLUGIN_DATA_DIR:-${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit}/history-last-write_${PROFILE_NAME}"
 
 # =============================================================================
 # History write control

@@ -12,8 +12,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
 
-# Paths
-CLAUDE_DIR="${HOME}/.claude"
+# Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
+CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
 SETTINGS_FILE="${CLAUDE_DIR}/settings.json"
 WRAPPER_SCRIPT="${CLAUDE_DIR}/statusline-mb-combined.sh"
 LIMIT_SCRIPT="${CLAUDE_DIR}/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/usage-statusline.sh"

@@ -8,17 +8,23 @@
 set -euo pipefail
 
 # =============================================================================
+# Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
+# =============================================================================
+CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
+
+# =============================================================================
 # Configuration
 # =============================================================================
 
-# State file for subagent tracking (within plugin data dir)
-SUBAGENT_STATE_FILE="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}/limit-subagent-state.json"
+# State file for subagent tracking (within plugin data dir) - profile-specific
+SUBAGENT_STATE_FILE="${PLUGIN_DATA_DIR:-${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit}/limit-subagent-state_${PROFILE_NAME}.json"
 
-# State file for main agent tracking (same principle as subagents)
-MAIN_AGENT_STATE_FILE="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}/limit-main-agent-state.json"
+# State file for main agent tracking (same principle as subagents) - profile-specific
+MAIN_AGENT_STATE_FILE="${PLUGIN_DATA_DIR:-${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit}/limit-main-agent-state_${PROFILE_NAME}.json"
 
 # Claude projects directory (contains JSONL files)
-CLAUDE_PROJECTS_DIR="${HOME}/.claude/projects"
+CLAUDE_PROJECTS_DIR="${CLAUDE_BASE_DIR}/projects"
 
 # Cache duration for subagent scan (same as API cache, default 120s)
 SUBAGENT_CACHE_MAX_AGE="${CLAUDE_MB_LIMIT_CACHE_AGE:-120}"
@@ -30,9 +36,9 @@ FILE_OFFSET_RETENTION_SECONDS=$((FILE_OFFSET_RETENTION_DAYS * 86400))
 # Current schema version - bump on breaking changes to trigger reset
 SUBAGENT_SCHEMA_VERSION=2
 
-# Debug logging
+# Debug logging - profile-specific
 SUBAGENT_DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-0}"
-SUBAGENT_LOG_FILE="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}/subagent-debug.log"
+SUBAGENT_LOG_FILE="${PLUGIN_DATA_DIR:-${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit}/subagent-debug_${PROFILE_NAME}.log"
 
 subagent_log() {
     if [[ "$SUBAGENT_DEBUG" == "1" ]]; then
@@ -136,9 +142,9 @@ calculate_model_cost() {
         }'
 }
 
-# Timestamp reference file for find -newer
-SUBAGENT_TIMESTAMP_FILE="/tmp/claude-mb-limit-subagent-timestamp"
-MAIN_AGENT_TIMESTAMP_FILE="/tmp/claude-mb-limit-main-agent-timestamp"
+# Timestamp reference file for find -newer - profile-specific
+SUBAGENT_TIMESTAMP_FILE="/tmp/claude-mb-limit-subagent-timestamp_${PROFILE_NAME}"
+MAIN_AGENT_TIMESTAMP_FILE="/tmp/claude-mb-limit-main-agent-timestamp_${PROFILE_NAME}"
 
 # =============================================================================
 # State file operations
@@ -1076,8 +1082,8 @@ reset_main_agent_state() {
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     # Set PLUGIN_DATA_DIR if not set (for standalone execution)
-    PLUGIN_DATA_DIR="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}"
-    SUBAGENT_STATE_FILE="${PLUGIN_DATA_DIR}/limit-subagent-state.json"
+    PLUGIN_DATA_DIR="${PLUGIN_DATA_DIR:-${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit}"
+    SUBAGENT_STATE_FILE="${PLUGIN_DATA_DIR}/limit-subagent-state_${PROFILE_NAME}.json"
 
     case "${1:-}" in
         get)

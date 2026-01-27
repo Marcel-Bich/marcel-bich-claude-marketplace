@@ -7,14 +7,18 @@ set -euo pipefail
 # Force C locale for numeric operations (prevents issues with de_DE locale expecting comma)
 export LC_NUMERIC=C
 
-# Paths
+# Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
+CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
+
+# Paths - profile-specific
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLUGIN_DATA_DIR="${PLUGIN_DATA_DIR:-${HOME}/.claude/marcel-bich-claude-marketplace/limit}"
-HIGHSCORE_STATE="${PLUGIN_DATA_DIR}/limit-highscore-state.json"
-MAIN_AGENT_STATE="${PLUGIN_DATA_DIR}/limit-main-agent-state.json"
-SUBAGENT_STATE="${PLUGIN_DATA_DIR}/limit-subagent-state.json"
-API_CACHE="/tmp/claude-mb-limit-cache.json"
-HISTORY_FILE="${PLUGIN_DATA_DIR}/limit-history.jsonl"
+PLUGIN_DATA_DIR="${PLUGIN_DATA_DIR:-${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit}"
+HIGHSCORE_STATE="${PLUGIN_DATA_DIR}/limit-highscore-state_${PROFILE_NAME}.json"
+MAIN_AGENT_STATE="${PLUGIN_DATA_DIR}/limit-main-agent-state_${PROFILE_NAME}.json"
+SUBAGENT_STATE="${PLUGIN_DATA_DIR}/limit-subagent-state_${PROFILE_NAME}.json"
+API_CACHE="/tmp/claude-mb-limit-cache_${PROFILE_NAME}.json"
+HISTORY_FILE="${PLUGIN_DATA_DIR}/limit-history_${PROFILE_NAME}.jsonl"
 
 # Source history functions
 # shellcheck source=limit-history.sh
