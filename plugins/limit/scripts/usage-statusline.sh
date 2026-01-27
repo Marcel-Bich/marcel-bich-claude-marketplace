@@ -1206,7 +1206,7 @@ get_context_length() {
     echo "0"
 }
 
-# Get max context for model (usable = 80% before auto-compact)
+# Get max context for model (usable = auto-compact threshold or full)
 get_model_context_config() {
     local config_type="$1"  # "max" or "usable"
 
@@ -1220,8 +1220,30 @@ get_model_context_config() {
         fi
     fi
 
-    # Usable = 80% of max (before auto-compact)
-    local usable_tokens=$((max_tokens * 80 / 100))
+    # Progressbar mode: "auto-compact" (default) or "full"
+    # - auto-compact: 100% = when auto-compact triggers
+    # - full: 100% = full context window (for users with auto-compact disabled)
+    local progressbar_mode="${CLAUDE_MB_LIMIT_PROGRESSBAR_MODE:-auto-compact}"
+
+    local usable_tokens
+    if [[ "$progressbar_mode" == "full" ]]; then
+        # Full mode: progressbar shows full context usage
+        usable_tokens="$max_tokens"
+    else
+        # Auto-compact mode: progressbar shows distance to auto-compact trigger
+        # Get threshold from env (default: 85% based on observed Claude Code behavior)
+        local auto_compact_pct="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-85}"
+
+        # Validate: must be number between 1-100
+        if ! [[ "$auto_compact_pct" =~ ^[0-9]+$ ]] || [[ "$auto_compact_pct" -lt 1 ]]; then
+            auto_compact_pct=85
+        elif [[ "$auto_compact_pct" -gt 100 ]]; then
+            auto_compact_pct=100
+        fi
+
+        # Usable = threshold% of max (point where auto-compact triggers)
+        usable_tokens=$((max_tokens * auto_compact_pct / 100))
+    fi
 
     if [[ "$config_type" == "usable" ]]; then
         echo "$usable_tokens"
