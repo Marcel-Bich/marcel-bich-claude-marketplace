@@ -355,6 +355,7 @@ SHOW_TOKENS="${CLAUDE_MB_LIMIT_TOKENS:-true}"
 SHOW_CTX="${CLAUDE_MB_LIMIT_CTX:-true}"
 SHOW_SESSION="${CLAUDE_MB_LIMIT_SESSION:-true}"
 SHOW_SESSION_ID="${CLAUDE_MB_LIMIT_SESSION_ID:-true}"
+SHOW_PROFILE="${CLAUDE_MB_LIMIT_PROFILE:-true}"
 SHOW_SEPARATORS="${CLAUDE_MB_LIMIT_SEPARATORS:-true}"
 
 # Local device tracking (default true - highscore-based tracking enabled for all)
@@ -2256,21 +2257,45 @@ EOF
         fi
     fi
 
-    # Session ID (if enabled) - always gray, below Active Model with empty line
-    if [[ "$SHOW_SESSION_ID" == "true" ]]; then
-        local session_id
-        session_id=$(get_session_id)
-        if [[ -n "$session_id" ]]; then
-            local sid_color=""
-            local sid_color_reset=""
-            if [[ "$SHOW_COLORS" == "true" ]]; then
-                sid_color="$COLOR_GRAY"
-                sid_color_reset="$COLOR_RESET"
+    # Session ID and/or Profile (if enabled) - always gray, same line with 4 spaces between
+    if [[ "$SHOW_SESSION_ID" == "true" ]] || [[ "$SHOW_PROFILE" == "true" ]]; then
+        local info_parts=()
+        local info_color=""
+        local info_color_reset=""
+
+        if [[ "$SHOW_COLORS" == "true" ]]; then
+            info_color="$COLOR_GRAY"
+            info_color_reset="$COLOR_RESET"
+        fi
+
+        if [[ "$SHOW_SESSION_ID" == "true" ]]; then
+            local session_id
+            session_id=$(get_session_id)
+            if [[ -n "$session_id" ]]; then
+                info_parts+=("Session ID: ${session_id}")
             fi
+        fi
+
+        if [[ "$SHOW_PROFILE" == "true" ]]; then
+            info_parts+=("Profile: ${PROFILE_NAME}")
+        fi
+
+        if [[ ${#info_parts[@]} -gt 0 ]]; then
             if [[ "$SHOW_SEPARATORS" == "true" ]]; then
                 lines+=("${COLOR_BLACK}-${COLOR_RESET}")
             fi
-            lines+=("${sid_color}Session ID: ${session_id}${sid_color_reset}")
+            # Join parts with 4 spaces
+            local info_line=""
+            local first_part=true
+            for part in "${info_parts[@]}"; do
+                if [[ "$first_part" == "true" ]]; then
+                    info_line="$part"
+                    first_part=false
+                else
+                    info_line="${info_line}    ${part}"
+                fi
+            done
+            lines+=("${info_color}${info_line}${info_color_reset}")
         fi
     fi
 
