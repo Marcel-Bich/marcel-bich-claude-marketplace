@@ -72,6 +72,7 @@ All features can be toggled via environment variables. Export them in your shell
 | `CLAUDE_MB_LIMIT_CTX` | true | Show context usage |
 | `CLAUDE_MB_LIMIT_SESSION` | true | Show session timing |
 | `CLAUDE_MB_LIMIT_SESSION_ID` | true | Show session ID |
+| `CLAUDE_MB_LIMIT_PROFILE` | true | Show active profile name |
 | `CLAUDE_MB_LIMIT_COLORS` | true | Enable colored output |
 | `CLAUDE_MB_LIMIT_PROGRESS` | true | Show progress bars |
 | `CLAUDE_MB_LIMIT_RESET` | true | Show reset times |
@@ -93,6 +94,20 @@ All features can be toggled via environment variables. Export them in your shell
 | `CLAUDE_MB_LIMIT_SHOW_ERRORS` | false | Show "limit: error" on failures |
 | `CLAUDE_MB_LIMIT_AVERAGE` | true | Show rolling average display |
 | `CLAUDE_MB_LIMIT_DEBUG` | false | Enable debug logging to `/tmp/claude-mb-limit-debug.log` |
+
+**Multi-Account Support:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLAUDE_CONFIG_DIR` | `~/.claude` | Base directory for Claude config |
+
+When using multiple accounts, set `CLAUDE_CONFIG_DIR` before starting Claude Code:
+
+```bash
+CLAUDE_CONFIG_DIR=~/.claude-work claude
+```
+
+Each profile gets separate state files (highscores, history, cache).
 
 ## Highscore Concept
 
