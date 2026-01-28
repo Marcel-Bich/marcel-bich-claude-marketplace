@@ -110,6 +110,16 @@ Full documentation, installation, configuration, and troubleshooting:
 
 MIT - See [LICENSE](LICENSE) for full terms.
 
+## Name, Logo, Trademarks (No endorsement)
+
+The source code is licensed under MIT. However, the project name "marcel-bich-claude-marketplace", logos, and branding assets are not covered by the MIT License.
+
+Trademark rights are not granted by the MIT License. Using the project name or branding in ways that suggest endorsement, official affiliation, or sponsorship is not permitted.
+
+Forks and derivative works must use a different name and their own branding. A clear statement that your project is not official and not affiliated is required.
+
+See [TRADEMARK.md](TRADEMARK.md) for the full trademark policy.
+
 ---
 
 ## Star History
