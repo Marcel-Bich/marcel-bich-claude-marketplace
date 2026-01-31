@@ -25,6 +25,14 @@ After setup, you use the original GSD commands directly.
 3. Use the GSD commands (e.g., `/gsd:new-project`, `/gsd:map-codebase`, `/gsd:help`)
 4. Run `/gsd:uninstall` to remove
 
+## Recommended Third-Party
+
+The following plugins complement GSD workflows:
+
+| Plugin | Description | Author |
+|--------|-------------|--------|
+| [taches-cc-resources](https://github.com/taches/taches-cc-resources) | Skills for creating plans, prompts, slash commands, agents. Debugging and todo management. | [TACHES](https://github.com/taches) |
+
 ## Credits
 
 All code and credit belongs to the original author:
