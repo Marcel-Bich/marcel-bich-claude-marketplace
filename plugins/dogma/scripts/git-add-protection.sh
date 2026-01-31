@@ -87,116 +87,107 @@ fi
 GIT_ADD_PART=$(echo "$TOOL_INPUT" | sed 's/\s*&&.*//; s/\s*;.*//; s/\s*|.*//')
 FILES=$(echo "$GIT_ADD_PART" | sed 's/^git\s\+add\s\+//' | tr ' ' '\n' | grep -v '^-')
 
-BLOCKED_AI_FILES=""
-BLOCKED_SECRET_FILES=""
-
 # ============================================
-# Part 2: Secret File Patterns (IDEA.md 391-403)
+# Part 2: Secret File Detection (OPTIMIZED)
 # ============================================
-SECRET_PATTERNS=(
-    ".env"
-    ".env.local"
-    ".env.production"
-    ".env.development"
-    "*.pem"
-    "*.key"
-    "*.p12"
-    "*.pfx"
-    "*credentials*"
-    "*secret*"
-    "*.secrets"
-    "id_rsa"
-    "id_ed25519"
-    "id_ecdsa"
-)
+# Single regex for all secret patterns - no loops needed
+#
+# Covered patterns:
+# - .env files: .env, .env.local, .env.production, .env.*
+# - Crypto keys: *.pem, *.key, *.p12, *.pfx, *.crt, *.keystore, *.jks
+# - SSH keys: id_rsa, id_ed25519, id_ecdsa, id_dsa, *.pub (in .ssh context)
+# - SSH dir: .ssh/* (entire directory)
+# - Cloud creds: .aws/*, .kube/*, .gcloud/*, .azure/*
+# - Package tokens: .npmrc, .pypirc, .netrc, .docker/config.json
+# - Git creds: .git-credentials, .gitconfig (can contain tokens)
+# - Vault/tokens: .vault-token, *token*, *password*
+# - Generic: *credentials*, *secret*, *.secrets, .htpasswd
+# - GCP: service-account*.json
+#
+SECRET_REGEX='(^|/)('
+SECRET_REGEX+='\.env(\..*)?'                    # .env files
+SECRET_REGEX+='|.*\.(pem|key|p12|pfx|crt|keystore|jks)'  # crypto files
+SECRET_REGEX+='|id_(rsa|ed25519|ecdsa|dsa)'     # SSH private keys
+SECRET_REGEX+='|\.ssh/.*'                       # entire .ssh directory
+SECRET_REGEX+='|\.(aws|kube|gcloud|azure)/.*'   # cloud config dirs
+SECRET_REGEX+='|\.(npmrc|pypirc|netrc)'         # package manager tokens
+SECRET_REGEX+='|\.docker/config\.json'          # docker registry creds
+SECRET_REGEX+='|\.git-credentials'              # git credentials
+SECRET_REGEX+='|\.vault-token'                  # hashicorp vault
+SECRET_REGEX+='|.*credentials.*'                # generic credentials
+SECRET_REGEX+='|.*secret.*'                     # generic secrets
+SECRET_REGEX+='|.*password.*'                   # password files
+SECRET_REGEX+='|.*token.*'                      # token files
+SECRET_REGEX+='|.*\.secrets'                    # *.secrets files
+SECRET_REGEX+='|\.htpasswd'                     # apache passwords
+SECRET_REGEX+='|kubeconfig'                     # kubernetes config
+SECRET_REGEX+='|service-account.*\.json'        # GCP service accounts
+SECRET_REGEX+=')$'
 
-is_secret_file() {
-    local FILE="$1"
-    local BASENAME=$(basename "$FILE")
-    local EXT="${BASENAME##*.}"
+# File extensions that are CODE, not secrets (even if name matches)
+# Note: .txt, .json, .dat are NOT here - they can contain actual secrets
+CODE_EXT_REGEX='\.(sh|bash|py|js|ts|tsx|jsx|rb|go|rs|java|php|pl|c|cpp|h|hpp|cs|swift|kt|scala|vue|svelte|md|html|css|scss|less|xml|yaml|yml|toml)$'
 
-    # Skip script files - they contain code, not secrets
-    case "$EXT" in
-        sh|bash|py|js|ts|rb|go|rs|java|php|pl)
-            return 1
-            ;;
-    esac
-
-    for PATTERN in "${SECRET_PATTERNS[@]}"; do
-        # Convert glob to regex
-        local REGEX=$(echo "$PATTERN" | sed 's/\./\\./g' | sed 's/\*/.*/g')
-        if echo "$BASENAME" | grep -qiE "^${REGEX}$"; then
-            return 0
-        fi
-        # Also check full path for patterns like .env
-        if echo "$FILE" | grep -qiE "(^|/)${REGEX}$"; then
-            return 0
-        fi
-    done
-    return 1
+# Filter secret files from a list (stdin -> stdout)
+# Usage: echo "$FILES" | filter_secrets
+filter_secrets() {
+    grep -iE "$SECRET_REGEX" | grep -ivE "$CODE_EXT_REGEX" || true
 }
 
 # ============================================
-# Part 3: Check each file
+# Part 3: Excluded File Detection (OPTIMIZED)
 # ============================================
-EXCLUDE_FILE=".git/info/exclude"
+# Uses single git check-ignore --stdin call for ALL files at once
+# Returns files that are in .git/info/exclude (not .gitignore)
 
-# Helper: Check if file is ignored by .git/info/exclude (not .gitignore)
-# Uses git check-ignore -v which shows the source of the ignore rule
-is_excluded_file() {
-    local FILE="$1"
-    # git check-ignore -v outputs: <source>:<line>:<pattern>\t<file>
-    # We only want to block files ignored by .git/info/exclude, not .gitignore
-    local RESULT
-    RESULT=$(git check-ignore -v "$FILE" 2>/dev/null) || return 1
-    # Check if the ignore comes from .git/info/exclude
-    if echo "$RESULT" | grep -q "^\.git/info/exclude:"; then
-        return 0
-    fi
-    return 1
+# Get all files excluded by .git/info/exclude in one batch call
+# Usage: echo "$FILES" | get_excluded_files
+get_excluded_files() {
+    # git check-ignore -v --stdin outputs: <source>:<line>:<pattern>\t<file>
+    # Filter only lines from .git/info/exclude
+    git check-ignore -v --stdin 2>/dev/null | grep "^\.git/info/exclude:" | cut -f2 || true
 }
+
+# ============================================
+# Part 4: Collect files to check
+# ============================================
+FILES_TO_CHECK=""
 
 for FILE in $FILES; do
     # Handle git add . or git add -A
     if [ "$FILE" = "." ] || [ "$FILE" = "-A" ] || [ "$FILE" = "--all" ]; then
-        # Check all untracked and modified files
-        ALL_FILES=$(git status --porcelain 2>/dev/null | awk '{print $2}')
-        for AF in $ALL_FILES; do
-            # Check for secret files
-            if is_secret_file "$AF"; then
-                BLOCKED_SECRET_FILES="$BLOCKED_SECRET_FILES $AF"
-            fi
-            # Check for AI files in .git/info/exclude
-            if is_excluded_file "$AF"; then
-                BLOCKED_AI_FILES="$BLOCKED_AI_FILES $AF"
-            fi
-        done
-        continue
+        # Get all untracked and modified files
+        FILES_TO_CHECK=$(git status --porcelain 2>/dev/null | awk '{print $2}')
+        break
     fi
 
     # Skip if file doesn't exist
-    if [ ! -e "$FILE" ]; then
-        continue
-    fi
-
-    # Check for secret files (always block, even if tracked)
-    if is_secret_file "$FILE"; then
-        BLOCKED_SECRET_FILES="$BLOCKED_SECRET_FILES $FILE"
-        continue
-    fi
-
-    # Check for AI files (only if untracked and in .git/info/exclude)
-    # Check if file is already tracked
-    if ! git ls-files --error-unmatch "$FILE" &>/dev/null; then
-        # File is untracked - check if it's in .git/info/exclude
-        if is_excluded_file "$FILE"; then
-            BLOCKED_AI_FILES="$BLOCKED_AI_FILES $FILE"
-        fi
+    if [ -e "$FILE" ]; then
+        FILES_TO_CHECK="$FILES_TO_CHECK
+$FILE"
     fi
 done
 
+# Remove empty lines
+FILES_TO_CHECK=$(echo "$FILES_TO_CHECK" | grep -v '^$' || true)
+
+# Exit early if no files to check
+if [ -z "$FILES_TO_CHECK" ]; then
+    exit 0
+fi
+
 # ============================================
-# Part 4: Output blocking messages
+# Part 5: Batch check all files at once
+# ============================================
+
+# Check for secrets (simple regex, no subprocess per file)
+BLOCKED_SECRET_FILES=$(echo "$FILES_TO_CHECK" | filter_secrets | tr '\n' ' ')
+
+# Check for excluded files (single git call for ALL files)
+BLOCKED_AI_FILES=$(echo "$FILES_TO_CHECK" | get_excluded_files | tr '\n' ' ')
+
+# ============================================
+# Part 6: Output blocking messages
 # ============================================
 
 # Block AI files - Claude can NEVER add these
