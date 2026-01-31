@@ -408,93 +408,8 @@ Apply these changes?
 
 ### 4.1.4 Special: DOGMA-PERMISSIONS.md
 
-**Principle:** Sync does NOT handle permissions logic. All permissions work is delegated to `/dogma:permissions`.
-
-**Detection logic:**
-
-```bash
-# Check current state
-HAS_PROJECT_PERMS=$([ -f "DOGMA-PERMISSIONS.md" ] && echo "true" || echo "false")
-HAS_SOURCE_PERMS=$([ -f "$SOURCE_DIR/DOGMA-PERMISSIONS.md" ] && echo "true" || echo "false")
-
-# Check for old structure (permissions in CLAUDE.git.md)
-HAS_OLD_PERMS="false"
-for f in "CLAUDE/CLAUDE.git.md" "CLAUDE.git.md"; do
-    if [ -f "$f" ] && grep -q "<permissions>" "$f"; then
-        HAS_OLD_PERMS="true"
-        break
-    fi
-done
-```
-
-**Decision tree:**
-
-**1. Source has DOGMA-PERMISSIONS.md AND project has DOGMA-PERMISSIONS.md:**
-
-```bash
-# Compare both files
-if diff -q "DOGMA-PERMISSIONS.md" "$SOURCE_DIR/DOGMA-PERMISSIONS.md" > /dev/null 2>&1; then
-    echo "Permissions identical - no changes needed"
-else
-    # Show differences for user awareness
-    echo "Permissions differ between source and project:"
-    diff "DOGMA-PERMISSIONS.md" "$SOURCE_DIR/DOGMA-PERMISSIONS.md"
-fi
-```
-
-If different, show:
-```
-DOGMA-PERMISSIONS.md differs from source.
-
-Would you like to review and configure permissions?
-1. Yes, run /dogma:permissions (Recommended)
-2. Skip permissions for now
-```
-
-**2. Source has DOGMA-PERMISSIONS.md, project has none:**
-
-```
-Source has permissions configuration.
-
-Would you like to configure permissions for this project?
-1. Yes, run /dogma:permissions (Recommended)
-2. Skip permissions for now
-```
-
-**3. Project has old structure (permissions in CLAUDE.git.md):**
-
-```
-Found permissions in old location (CLAUDE.git.md).
-
-Would you like to migrate to the new permissions structure?
-1. Yes, run /dogma:permissions (Recommended)
-2. Skip permissions for now
-```
-
-**4. No permissions in source or project:**
-
-```
-No permissions configured.
-
-Would you like to set up permissions?
-1. Yes, run /dogma:permissions (Recommended)
-2. Skip permissions for now
-```
-
-**For all cases - if user chooses option 1:**
-
-```
-Will invoke /dogma:permissions after sync completes.
-```
-
-Set flag: `INVOKE_PERMISSIONS_AFTER_SYNC=true`
-
-**Key points:**
-- Sync handles NO permissions logic itself
-- All permissions work delegated to /dogma:permissions
-- Comparison only to show user what differs
-- Actual configuration always via /dogma:permissions
-- Flag triggers Skill invocation at end of sync (Step 8)
+**Note:** DOGMA-PERMISSIONS is handled in Step 5 (after all file merges, before cleanup).
+This ensures the check is ALWAYS performed, regardless of which files are synced.
 
 ### 4.2 File EXISTS in Project - Granular Rule-by-Rule Merge
 
@@ -646,11 +561,27 @@ Extract each recommendation with:
 cat ~/.claude/plugins/installed_plugins.json 2>/dev/null | grep -i "<plugin-name>"
 ```
 
-**For MCP Servers:**
+**For MCP Servers - check BOTH as direct MCP AND as plugin:**
 ```bash
-# Check ~/.claude.json for mcpServers
-cat ~/.claude.json 2>/dev/null | grep -o '"<mcp-name>"'
+check_mcp_installed() {
+    local name=$1
+    # Check direct MCP in ~/.claude.json
+    if grep -qi "\"$name\"" ~/.claude.json 2>/dev/null; then
+        echo "INSTALLED_MCP"
+    # Check as plugin (MCP might be installed via plugin)
+    elif grep -qi "$name" ~/.claude/plugins/installed_plugins.json 2>/dev/null; then
+        echo "INSTALLED_PLUGIN"
+    else
+        echo "NOT_FOUND"
+    fi
+}
 ```
+
+**IMPORTANT:** An MCP can be installed either as:
+1. Direct MCP (in ~/.claude.json mcpServers)
+2. As a plugin (in installed_plugins.json)
+
+Both count as "installed" - do NOT suggest installing if either is true.
 
 #### Step 4.4.3: Present missing recommendations
 
@@ -699,7 +630,7 @@ Follow the instructions in the repo README.
 
 #### Step 4.4.5: Handle MCP installations
 
-MCP servers require special handling:
+MCP servers require special handling - offer choice between plugin and direct MCP:
 
 ```
 RECOMMENDATION: context7 (MCP Server)
@@ -709,26 +640,47 @@ RECOMMENDATION: context7 (MCP Server)
 
 Status: NOT INSTALLED
 
-This MCP server will be added to ~/.claude.json
-
-Would you like to install it?
-1. Yes, install now
-2. No, skip
-3. Show install command first
+How would you like to install it?
+1. As plugin (Recommended) - Easier updates, managed by marketplace
+2. As direct MCP - Added to ~/.claude.json
+3. Skip
+4. Show more info
 ```
 
-If yes, run the install command from RECOMMENDATIONS.md:
+**If user chooses "As plugin" (option 1):**
+
+Check if the MCP has a plugin version in the marketplace. If available:
+```bash
+# Example for context7
+claude plugin marketplace add upstash/context7-mcp  # or similar
+claude plugin install context7@upstash/context7-mcp
+```
+
+If no plugin version exists, inform user:
+```
+No plugin version available for context7.
+Installing as direct MCP instead...
+```
+
+**If user chooses "As direct MCP" (option 2):**
+
+Run the install command from RECOMMENDATIONS.md:
 ```bash
 # The one-liner from RECOMMENDATIONS.md
 MCP_NAME="context7" MCP_CMD="npx" MCP_ARGS='["-y","@upstash/context7-mcp"]' node -e "..."
 ```
 
-After MCP installation:
+**After installation (either method):**
 ```
-context7 MCP installed successfully.
+context7 installed successfully.
 
 NOTE: Restart Claude Code for the MCP server to become available.
 ```
+
+**Key points:**
+- Always recommend plugin installation first (easier updates)
+- Fall back to direct MCP if no plugin exists
+- User always has the choice
 
 #### Step 4.4.6: Skip already installed
 
@@ -942,7 +894,100 @@ To force-add a file: git add -f <filename>
 - User can override with `git add -f` if needed
 - Already-tracked files are NOT affected (git respects tracked status)
 
-## Step 5: Cleanup
+## Step 5: DOGMA-PERMISSIONS Check
+
+**CRITICAL: This step is ALWAYS executed, regardless of which files were synced.**
+
+This ensures permissions are never forgotten and the user always has the option to configure them.
+
+### 5.1 Detection
+
+```bash
+# Check current state (SOURCE_DIR still available - before cleanup!)
+HAS_PROJECT_PERMS=$([ -f "DOGMA-PERMISSIONS.md" ] && echo "true" || echo "false")
+HAS_SOURCE_PERMS=$([ -f "$SOURCE_DIR/DOGMA-PERMISSIONS.md" ] && echo "true" || echo "false")
+
+# Check for old structure (permissions in CLAUDE.git.md)
+HAS_OLD_PERMS="false"
+for f in "CLAUDE/CLAUDE.git.md" "CLAUDE.git.md"; do
+    if [ -f "$f" ] && grep -q "<permissions>" "$f"; then
+        HAS_OLD_PERMS="true"
+        break
+    fi
+done
+```
+
+### 5.2 Decision Tree
+
+**Case 1: Both source and project have DOGMA-PERMISSIONS.md**
+
+```bash
+if diff -q "DOGMA-PERMISSIONS.md" "$SOURCE_DIR/DOGMA-PERMISSIONS.md" > /dev/null 2>&1; then
+    echo "Permissions identical - no changes needed"
+else
+    echo "Permissions differ between source and project"
+    diff "DOGMA-PERMISSIONS.md" "$SOURCE_DIR/DOGMA-PERMISSIONS.md"
+fi
+```
+
+If different, ask:
+```
+DOGMA-PERMISSIONS.md differs from source.
+
+Would you like to review and configure permissions?
+1. Yes, run /dogma:permissions (Recommended)
+2. Skip permissions for now
+```
+
+**Case 2: Only source has DOGMA-PERMISSIONS.md**
+
+```
+Source has permissions configuration.
+
+Would you like to configure permissions for this project?
+1. Yes, run /dogma:permissions (Recommended)
+2. Skip permissions for now
+```
+
+**Case 3: Project has old structure (permissions in CLAUDE.git.md)**
+
+```
+Found permissions in old location (CLAUDE.git.md).
+
+Would you like to migrate to the new permissions structure?
+1. Yes, run /dogma:permissions (Recommended)
+2. Skip permissions for now
+```
+
+**Case 4: No permissions anywhere**
+
+```
+No permissions configured yet.
+
+Would you like to set up permissions for this project?
+1. Yes, run /dogma:permissions (Recommended)
+2. Skip permissions for now
+```
+
+### 5.3 Execute Permission Setup
+
+**If user chooses option 1 in any case:**
+
+Immediately invoke `/dogma:permissions` via Skill tool:
+
+```
+Invoking /dogma:permissions...
+```
+
+Then use Skill tool with skill: "dogma:permissions"
+
+**Key points:**
+- This step runs BEFORE cleanup (SOURCE_DIR still available for comparison)
+- ALL cases lead to the same question - user is ALWAYS asked
+- /dogma:permissions is invoked immediately, not deferred
+- Sync handles no permission logic - all delegated to /dogma:permissions
+
+## Step 6: Cleanup
 
 ```bash
 # Only if we cloned a remote repo
@@ -951,13 +996,13 @@ if [ -n "$TEMP_DIR" ]; then
 fi
 ```
 
-## Step 6: Interactive Setup-Tour
+## Step 7: Interactive Setup-Tour
 
 **After sync, help the user set up their project according to the synced rules.**
 
 The Setup-Tour checks which tools/configs are referenced in the synced CLAUDE files and offers to install missing ones.
 
-### 6.1 Announce Setup-Tour
+### 7.1 Announce Setup-Tour
 
 ```
 dogma:sync complete. Starting Setup-Tour...
@@ -966,7 +1011,7 @@ The Setup-Tour checks your project against the synced rules
 and helps install any missing tools or configurations.
 ```
 
-### 6.2 Project Compatibility Check
+### 7.2 Project Compatibility Check
 
 **BEFORE suggesting any tool, check if it's compatible with the project:**
 
@@ -998,7 +1043,7 @@ fi
 - Non-Node project -> Don't suggest Prettier/ESLint (suggest alternatives)
 - Plugin/Marketplace repo -> Security scanners usually not needed
 
-### 6.3 Detection Matrix (Global vs Local)
+### 7.3 Detection Matrix (Global vs Local)
 
 For each tool, check **BOTH global AND local** installation:
 
@@ -1039,7 +1084,7 @@ For each tool, check **BOTH global AND local** installation:
 | gofmt | `gofmt -h` | Included with Go |
 | golangci-lint | `command -v golangci-lint` | External, global recommended |
 
-### 6.4 Run Detection with Version Info
+### 7.4 Run Detection with Version Info
 
 ```bash
 # Global CLI tools - check with version
@@ -1123,7 +1168,7 @@ check_composer_dep() {
 }
 ```
 
-### 6.5 Present Items with Intelligent Status
+### 7.5 Present Items with Intelligent Status
 
 <!-- TBD: Global CLI tools presentation
 **For Global CLI tools (security scanners):**
@@ -1176,7 +1221,7 @@ Install?
 3. Skip
 ```
 
-### 6.6 Handle Incompatible Projects
+### 7.6 Handle Incompatible Projects
 
 **If project type doesn't match tool:**
 
@@ -1207,7 +1252,7 @@ If user chooses "Yes, find alternative":
 - Suggest installation
 - Offer to set up config
 
-### 6.7 Installation Actions
+### 7.7 Installation Actions
 
 <!-- TBD: Global CLI tools installation
 **Global CLI tools:**
@@ -1228,7 +1273,7 @@ npm install -D eslint
 npx eslint --init
 ```
 
-### 6.8 Skip Irrelevant Tools
+### 7.8 Skip Irrelevant Tools
 
 **Automatically skip (don't even ask) when:**
 - Security scanners for repos without external dependencies
@@ -1239,7 +1284,7 @@ npx eslint --init
 Skipping security scanners: No external dependencies to scan.
 ```
 
-### 6.9 Setup-Tour Summary
+### 7.9 Setup-Tour Summary
 
 ```
 Setup-Tour Complete
@@ -1262,7 +1307,7 @@ NOT APPLICABLE:
 - Security scanners (no external dependencies)
 ```
 
-### 6.10 Git Host Security Setup
+### 7.10 Git Host Security Setup
 
 **Check if git repository with remote:**
 
@@ -1309,7 +1354,7 @@ Would you like to configure security settings?
 - User confirms before any action
 - Show different recommendations for public vs private repos
 
-### 6.11 Skip Option
+### 7.11 Skip Option
 
 Allow user to skip the entire Setup-Tour:
 
@@ -1332,11 +1377,11 @@ The Setup-Tour checks your project for missing tools referenced in the synced ru
 - Each installation requires user confirmation
 - Summary shows what was done
 
-## Step 7: Lint Setup Suggestion
+## Step 8: Lint Setup Suggestion
 
 After successful sync, check if linting is already set up:
 
-### 7.1 Check for existing Prettier configuration
+### 8.1 Check for existing Prettier configuration
 
 ```bash
 # Check for .prettierrc or similar
@@ -1346,7 +1391,7 @@ ls -la .prettierrc* prettier.config.* 2>/dev/null
 grep -q '"prettier"' package.json 2>/dev/null && echo "found"
 ```
 
-### 7.2 Suggest lint setup if missing
+### 8.2 Suggest lint setup if missing
 
 **If BOTH checks fail (no Prettier configured):**
 
@@ -1362,7 +1407,7 @@ Would you like to set it up?
 
 **Key principle:** Only suggest if truly missing. Don't nag users who already have Prettier.
 
-## Step 8: Summary Report
+## Step 9: Summary Report
 
 After all decisions are made, provide a summary:
 
@@ -1381,19 +1426,7 @@ Changes made:
 Note: Files are untracked. Run 'git status' to see them.
 ```
 
-### 8.1 Invoke Pending Permissions Setup
-
-After displaying the summary, check if permissions setup was requested:
-
-```bash
-if [ "$INVOKE_PERMISSIONS_AFTER_SYNC" = "true" ]; then
-    echo ""
-    echo "Now invoking /dogma:permissions as requested..."
-    # Invoke Skill tool with skill: "dogma:permissions"
-fi
-```
-
-This ensures the user can configure permissions interactively after the sync is complete.
+**Note:** Permissions setup is handled in Step 5 (immediately, not deferred).
 
 ## Important Rules
 
