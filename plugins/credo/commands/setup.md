@@ -14,6 +14,8 @@ allowed-tools:
 
 Set up Claude Code with the preacher's recommended tools, instructions, and project structure.
 
+**Goal:** Only ask about things that are NOT yet done. Skip everything already configured.
+
 ## Step 1: Run Setup Check
 
 Run the setup check script to gather all information at once:
@@ -26,9 +28,16 @@ This outputs structured results for all checks. Parse the output to determine:
 
 - `plugins.dogma` / `plugins.gsd` - Are required plugins installed?
 - `directories.claude` - Are Claude instructions present?
-- `project.state` - Overall project state (needs_setup, needs_mapping, needs_roadmap, ready)
+- `files.project_md` - Does PROJECT.md exist?
+- `directories.codebase_map` - Is codebase mapped?
+- `files.roadmap` - Does ROADMAP.md exist?
+- `project.state` - Overall state (needs_setup, needs_mapping, needs_project, needs_roadmap, ready)
+
+**If project.state = ready:** Skip directly to "Setup Complete" section. Do NOT ask any questions.
 
 ## Step 2: Install Required Plugins
+
+**Skip if:** `plugins.dogma = true AND plugins.gsd = true`
 
 **If plugins are missing (dogma: false OR gsd: false):**
 
@@ -103,7 +112,9 @@ Continue, but the journey will be hindered.
 
 ## Step 3: Install Recommended Plugins and MCPs (Recommended)
 
-**Skip if:** User explicitly declines or already has all needed plugins installed.
+**Skip if:** `directories.claude = true` (user already ran setup before - recommended plugins were offered then)
+
+**Only ask on first setup** (when `directories.claude = false`):
 
 Ask the user:
 ```
@@ -162,9 +173,9 @@ Legend: `[x]` = auto, `[?]` = ask, `[ ]` = deny
 
 ## Step 5: Initialize Project with GSD
 
-**Skip if:** Project is already initialized (directories.codebase_map = true OR files.project_md = true)
+**Skip if:** `files.project_md = true OR directories.codebase_map = true`
 
-**For NEW projects (project.is_greenfield = true):**
+**For NEW projects (project.is_greenfield = true AND no existing code):**
 
 Use AskUserQuestion:
 ```
@@ -208,6 +219,16 @@ If user chooses "Yes": Run `/gsd:create-roadmap` via Skill tool.
 
 ## Setup Complete
 
+**If all steps were skipped (project.state was ready):**
+
+```
+Setup already complete! Your project is fully configured.
+
+Proceeding to workflow guides...
+```
+
+**If some steps were executed:**
+
 ```
 Setup complete!
 
@@ -216,8 +237,7 @@ Your project now has:
 - Claude instructions synced
 - Project structure initialized
 
-Next steps:
-- Run /credo:psalm to explore workflow guides and best practices
-- Run /gsd:plan-phase 1 to start planning your first phase
-- Run /hydra:help to learn about parallel development
+Proceeding to workflow guides...
 ```
+
+**Note:** When invoked via `/credo:psalm`, the psalm command continues automatically after this message. When invoked directly via `/credo:setup`, stop here.
