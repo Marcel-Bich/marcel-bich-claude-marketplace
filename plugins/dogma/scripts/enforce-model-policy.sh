@@ -27,6 +27,7 @@
 # ENV: CLAUDE_MB_DOGMA_DEBUG=true | false (default) - debug logging to /tmp/dogma-debug.log
 # ENV: CLAUDE_MB_DOGMA_BUILTIN_INHERIT_MODEL=true (default) | false - enforce model policy for built-in agents
 # ENV: CLAUDE_MB_DOGMA_ALLOW_MODEL_DOWNGRADE=false (default) | true - allow explicit model to downgrade below parent
+# ENV: CLAUDE_MB_DOGMA_FORCE_PARENT_MODEL=true (default) | false - enforce parent model for ALL plugins (not just Anthropic)
 
 # Source shared library for debug logging
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,8 +38,9 @@ dogma_debug_log "=== enforce-model-policy.sh START ==="
 # Env var defaults
 BUILTIN_INHERIT="${CLAUDE_MB_DOGMA_BUILTIN_INHERIT_MODEL:-true}"
 ALLOW_DOWNGRADE="${CLAUDE_MB_DOGMA_ALLOW_MODEL_DOWNGRADE:-false}"
+FORCE_PARENT="${CLAUDE_MB_DOGMA_FORCE_PARENT_MODEL:-true}"
 
-dogma_debug_log "Config: BUILTIN_INHERIT=$BUILTIN_INHERIT, ALLOW_DOWNGRADE=$ALLOW_DOWNGRADE"
+dogma_debug_log "Config: BUILTIN_INHERIT=$BUILTIN_INHERIT, ALLOW_DOWNGRADE=$ALLOW_DOWNGRADE, FORCE_PARENT=$FORCE_PARENT"
 
 # Model ranking: opus=3, sonnet=2, haiku=1
 model_rank() {
@@ -195,16 +197,23 @@ for plugin in "${ANTHROPIC_PLUGINS[@]}"; do
   fi
 done
 
-# Allow non-Anthropic plugins as-is
-if [[ "$IS_ANTHROPIC" == false ]]; then
-  dogma_debug_log "Non-Anthropic plugin ($PLUGIN_NAME) - skipping"
+# Allow non-Anthropic plugins as-is (unless FORCE_PARENT is enabled)
+if [[ "$IS_ANTHROPIC" == false && "$FORCE_PARENT" != "true" ]]; then
+  dogma_debug_log "Non-Anthropic plugin ($PLUGIN_NAME) - skipping (force_parent=false)"
   dogma_debug_log "=== enforce-model-policy.sh END ==="
   exit 0
 fi
 
-# No model specified + Anthropic plugin -> use higher of (agent default, parent model)
-RESOLVED_MODEL=$(choose_best_model)
-dogma_debug_log "Chosen model (max of both): $RESOLVED_MODEL"
+# Determine resolved model
+if [[ "$FORCE_PARENT" == "true" ]]; then
+  # FORCE_PARENT=true: always use parent model (100% guaranteed)
+  RESOLVED_MODEL=$(get_parent_model)
+  dogma_debug_log "Force parent enabled - using parent model: $RESOLVED_MODEL"
+else
+  # Anthropic plugin without FORCE_PARENT: use higher of (agent default, parent model)
+  RESOLVED_MODEL=$(choose_best_model)
+  dogma_debug_log "Chosen model (max of both): $RESOLVED_MODEL"
+fi
 dogma_debug_log "Overriding model to $RESOLVED_MODEL for $AGENT_TYPE"
 
 # Merge original tool_input with resolved model
