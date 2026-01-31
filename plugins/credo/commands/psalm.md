@@ -275,12 +275,22 @@ claude --dangerously-skip-permissions
 
 **Warning:** `--dangerously-skip-permissions` allows Claude to execute any command without asking for permission. This includes file deletions, system modifications, and other potentially destructive operations. **Use at your own risk.** You are solely responsible for any data loss, system crashes, or other damages that may occur.
 
-### Step 3: Install Recommended Plugins (Optional)
+### Step 3: Install Recommended Plugins (Recommended)
 
-**Skip if:** User already has all needed plugins installed.
+**Skip if:** User explicitly declines or already has all needed plugins installed.
 
-To check and install recommended plugins/MCPs:
+Ask the user:
+```
+Would you like to install recommended plugins and MCP servers?
 
+This includes tools for planning, debugging, parallel execution, and more.
+You can skip this step if you prefer to set them up manually later.
+
+1. Yes, run /dogma:recommended:setup (Recommended)
+2. No, skip for now
+```
+
+If user chooses option 1:
 ```
 /dogma:recommended:setup
 ```
