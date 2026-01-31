@@ -23,6 +23,9 @@ GIT_INIT=$(git rev-parse --is-inside-work-tree >/dev/null 2>&1 && echo "true" ||
 # Code detection
 HAS_CODE=$(find . -maxdepth 2 -type f \( -name "*.ts" -o -name "*.js" -o -name "*.py" -o -name "*.go" -o -name "*.rs" -o -name "*.java" -o -name "*.c" -o -name "*.cpp" \) 2>/dev/null | head -1 | grep -q . && echo "true" || echo "false")
 
+# File checks
+PROJECT_MD_EXISTS=$([ -f ".planning/PROJECT.md" ] && echo "true" || echo "false")
+
 # File count for greenfield detection
 FILE_COUNT=$(find . -maxdepth 2 -type f ! -path "./.git/*" 2>/dev/null | head -10 | wc -l)
 
@@ -36,8 +39,13 @@ fi
 PROJECT_STATE="unknown"
 if [ "$CLAUDE_EXISTS" = "false" ]; then
     PROJECT_STATE="needs_setup"
-elif [ "$CODEBASE_MAPPED" = "false" ] && [ "$HAS_CODE" = "true" ]; then
-    PROJECT_STATE="needs_mapping"
+elif [ "$PROJECT_MD_EXISTS" = "false" ] && [ "$CODEBASE_MAPPED" = "false" ]; then
+    # Neither PROJECT.md nor codebase map exists
+    if [ "$HAS_CODE" = "true" ]; then
+        PROJECT_STATE="needs_mapping"
+    else
+        PROJECT_STATE="needs_project"
+    fi
 elif [ "$ROADMAP_EXISTS" = "false" ]; then
     PROJECT_STATE="needs_roadmap"
 else
@@ -69,6 +77,7 @@ directories:
   codebase_map: $CODEBASE_MAPPED
   language_config: $LANGUAGE_EXISTS
 files:
+  project_md: $PROJECT_MD_EXISTS
   roadmap: $ROADMAP_EXISTS
 project:
   git_init: $GIT_INIT
