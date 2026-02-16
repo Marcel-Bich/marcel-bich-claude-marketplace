@@ -133,7 +133,7 @@ if [ "$TOOL_NAME" = "Read" ]; then
             output_block "BLOCKED: File '$FILE_PATH' contains an AWS Access Key. Reading would expose credentials."
         fi
         # Private keys
-        if grep -qE '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----' "$FILE_PATH" 2>/dev/null; then
+        if grep -qE -- '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----' "$FILE_PATH" 2>/dev/null; then
             output_block "BLOCKED: File '$FILE_PATH' contains a private key. Reading would expose credentials."
         fi
     fi
@@ -284,10 +284,10 @@ if echo "$COMMAND" | grep -qE '(cat|less|head|tail|cp|mv|scp|rsync|source|base64
    echo "$COMMAND" | grep -qE '(/[a-zA-Z0-9_./-]+)\.(pem|key)(\s|$|;|"|'"'"'|\|)'; then
     output_block "BLOCKED: Command references a key/certificate file that may contain secrets."
 fi
-if echo "$COMMAND" | grep -qiE '(^|\s|/)credentials(\s|$|/|;|"|'"'"'|\|)'; then
+if echo "$COMMAND" | grep -qiE '(^|\s|/)credentials(\s|$|/|;|"|'"'"'|\||\.|\-)'; then
     output_block "BLOCKED: Command references a credentials file that may contain tokens."
 fi
-if echo "$COMMAND" | grep -qiE '(^|\s|/)secrets(\s|$|/|;|"|'"'"'|\|)'; then
+if echo "$COMMAND" | grep -qiE '(^|\s|/)secrets(\s|$|/|;|"|'"'"'|\||\.|\-)'; then
     output_block "BLOCKED: Command references a secrets file that may contain tokens."
 fi
 
