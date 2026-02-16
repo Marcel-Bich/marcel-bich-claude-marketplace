@@ -44,6 +44,10 @@ if [ "$ENABLED" != "true" ]; then
     exit 0
 fi
 
+# Strict mode: block all .env* files (true) or only exact .env (false)
+STRICT="${CLAUDE_MB_DOGMA_TOKEN_STRICT:-true}"
+log_debug "Strict mode: $STRICT"
+
 # Read input
 INPUT=$(cat 2>/dev/null || true)
 if [ -z "$INPUT" ]; then
@@ -75,10 +79,30 @@ if [ "$TOOL_NAME" = "Read" ]; then
 
     # Block known credential files by name
     # Pattern matches:
-    # - Files ending with: .env, .netrc, .git-credentials, .npmrc, .pypirc, .pem, .key
+    # - .env files (strict: all .env*, relaxed: only exact .env)
+    # - Files ending with: .netrc, .git-credentials, .npmrc, .pypirc, .pem, .key
     # - Files containing: credential, secret, id_rsa, id_ed25519, id_ecdsa
     # - Hidden files like .credentials.json, .secrets.yaml
-    if echo "$FILE_PATH" | grep -qiE '(\.env|\.netrc|\.git-credentials|\.npmrc|\.pypirc|\.pem|\.key)$'; then
+    BASENAME=$(basename "$FILE_PATH")
+
+    # .env file check (mode-dependent)
+    # Always allow safe variants
+    if echo "$BASENAME" | grep -qiE '^\.env\.(example|sample|template)$'; then
+        log_debug "Safe .env variant: $BASENAME"
+    elif [ "$STRICT" = "true" ]; then
+        # Strict: block any file whose basename starts with .env followed by end or non-alnum
+        if echo "$BASENAME" | grep -qiE '^\.env($|[^a-zA-Z0-9])'; then
+            output_block "BLOCKED: Reading .env file '$FILE_PATH'. These files typically contain sensitive tokens. Use .env.example instead."
+        fi
+    else
+        # Relaxed: only block exact .env
+        if [ "$BASENAME" = ".env" ]; then
+            output_block "BLOCKED: Reading .env file '$FILE_PATH'. These files typically contain sensitive tokens. Use .env.example instead."
+        fi
+    fi
+
+    # Other credential files (not .env - those are handled above)
+    if echo "$FILE_PATH" | grep -qiE '(\.netrc|\.git-credentials|\.npmrc|\.pypirc|\.pem|\.key)$'; then
         output_block "BLOCKED: Reading credential/secrets file '$FILE_PATH'. These files typically contain sensitive tokens."
     fi
     # Match credential/secret anywhere in filename (handles .credentials.json, secrets.yaml, etc.)
@@ -114,6 +138,46 @@ if [ "$TOOL_NAME" = "Read" ]; then
         # Private keys
         if grep -qE '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----' "$FILE_PATH" 2>/dev/null; then
             output_block "BLOCKED: File '$FILE_PATH' contains a private key. Reading would expose credentials."
+        fi
+    fi
+
+    exit 0
+fi
+
+# =============================================================================
+# GREP TOOL - Block searching in .env files
+# =============================================================================
+if [ "$TOOL_NAME" = "Grep" ]; then
+    log_debug "Processing Grep tool"
+    PATH_ARG=$(echo "$INPUT" | jq -r '.tool_input.path // empty' 2>/dev/null)
+    GLOB_ARG=$(echo "$INPUT" | jq -r '.tool_input.glob // empty' 2>/dev/null)
+
+    # Check if path points to .env file
+    if [ -n "$PATH_ARG" ]; then
+        BASENAME=$(basename "$PATH_ARG")
+        # Allow safe variants
+        if echo "$BASENAME" | grep -qiE '^\.env\.(example|sample|template)$'; then
+            log_debug "Safe .env variant: $BASENAME"
+        elif [ "$STRICT" = "true" ]; then
+            # Strict: block any .env* file
+            if echo "$BASENAME" | grep -qiE '^\.env($|[^a-zA-Z0-9])'; then
+                output_block "BLOCKED: Grep in .env file '$PATH_ARG'. Use .env.example instead."
+            fi
+        else
+            # Relaxed: only block exact .env
+            if [ "$BASENAME" = ".env" ]; then
+                output_block "BLOCKED: Grep in .env file '$PATH_ARG'. Use .env.example instead."
+            fi
+        fi
+    fi
+
+    # Check if glob pattern targets .env files
+    if [ -n "$GLOB_ARG" ]; then
+        SAFE_GLOB=$(echo "$GLOB_ARG" | sed -E 's/\.env\.(example|sample|template)//g')
+        if echo "$SAFE_GLOB" | grep -qE '\.env'; then
+            if [ "$STRICT" = "true" ]; then
+                output_block "BLOCKED: Grep with .env glob pattern '$GLOB_ARG'. Use .env.example instead."
+            fi
         fi
     fi
 
@@ -181,9 +245,27 @@ if echo "$COMMAND" | grep -qE '\$\{?(GITHUB_TOKEN|GITLAB_TOKEN|BITBUCKET_TOKEN|N
     output_block "BLOCKED: Command references a token/secret variable directly. This could expose sensitive credentials in output."
 fi
 
-# Credential files
-if echo "$COMMAND" | grep -qE '(cat|head|tail|less|more|bat|view)\s+.*(\~\/\.netrc|\.git-credentials|\.npmrc|\.pypirc|credentials|secrets|\.env)'; then
+# Credential files (non-.env)
+if echo "$COMMAND" | grep -qE '(cat|head|tail|less|more|bat|view)\s+.*(\~\/\.netrc|\.git-credentials|\.npmrc|\.pypirc|credentials|secrets)'; then
     output_block "BLOCKED: Command would read a credential/secrets file that may contain tokens."
+fi
+
+# .env file references in commands
+ENV_REFS=$(echo "$COMMAND" | grep -oE '\.env[a-zA-Z0-9._-]*' | sort -u)
+if [ -n "$ENV_REFS" ]; then
+    # Filter out safe variants (.env.example, .env.sample, .env.template)
+    UNSAFE=$(echo "$ENV_REFS" | grep -vE '\.env\.(example|sample|template)$')
+    if [ -n "$UNSAFE" ]; then
+        if [ "$STRICT" = "true" ]; then
+            # Strict: block all unsafe .env refs
+            output_block "BLOCKED: Command references .env file(s). Use .env.example instead."
+        else
+            # Relaxed: only block if .env (exact) is among the refs
+            if echo "$UNSAFE" | grep -qxF '.env'; then
+                output_block "BLOCKED: Command references .env file directly. Use .env.example instead."
+            fi
+        fi
+    fi
 fi
 
 # Git credential helpers (also handles git -C /path credential, etc.)

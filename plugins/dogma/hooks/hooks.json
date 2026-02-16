@@ -43,6 +43,17 @@
         ]
       },
       {
+        "matcher": "Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/token-protection.sh",
+            "timeout": 5,
+            "description": "Block searching in .env files"
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {
