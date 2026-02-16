@@ -64,7 +64,6 @@ log_debug "Tool: $TOOL_NAME"
 log_debug "Checking tool type..."
 if [ "$TOOL_NAME" = "Read" ]; then
     log_debug "Processing Read tool"
-    log_debug "Processing Read tool"
     FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
     log_debug "File path: $FILE_PATH"
     if [ -z "$FILE_PATH" ]; then
@@ -122,10 +121,8 @@ if [ "$TOOL_NAME" = "Read" ]; then
             output_block "BLOCKED: File '$FILE_PATH' contains embedded access tokens in URLs. Reading would expose credentials."
         fi
         # OpenAI key
-        if grep -qE 'sk-[a-zA-Z0-9]{20,}' "$FILE_PATH" 2>/dev/null; then
-            if ! grep -qE 'sk-your|sk-xxx|sk-\.\.\.' "$FILE_PATH" 2>/dev/null; then
-                output_block "BLOCKED: File '$FILE_PATH' contains an OpenAI API key (sk-...). Reading would expose credentials."
-            fi
+        if grep -E 'sk-[a-zA-Z0-9]{20,}' "$FILE_PATH" 2>/dev/null | grep -qvE 'sk-your|sk-xxx|sk-\.\.\.'; then
+            output_block "BLOCKED: File '$FILE_PATH' contains an OpenAI API key (sk-...). Reading would expose credentials."
         fi
         # Anthropic key
         if grep -qE 'sk-ant-[a-zA-Z0-9]{20,}' "$FILE_PATH" 2>/dev/null; then
@@ -199,6 +196,11 @@ if [ "$TOOL_NAME" = "Grep" ]; then
         if echo "$SAFE_GLOB" | grep -qE '\.env'; then
             if [ "$STRICT" = "true" ]; then
                 output_block "BLOCKED: Grep with .env glob pattern '$GLOB_ARG'. Use .env.example instead."
+            else
+                # Relaxed: only block if the glob targets exact .env or .env.local
+                if echo "$GLOB_ARG" | grep -qE '(^|\*)\.env($|\*)|\.env\.local'; then
+                    output_block "BLOCKED: Grep with .env glob pattern '$GLOB_ARG'. Use .env.example instead."
+                fi
             fi
         fi
         # Credential file glob patterns (always blocked)
@@ -277,17 +279,15 @@ fi
 if echo "$COMMAND" | grep -qE '(\.netrc|\.git-credentials|\.npmrc|\.pypirc)(\s|$|;|"|'"'"'|\|)'; then
     output_block "BLOCKED: Command references a credential file that may contain tokens."
 fi
-if echo "$COMMAND" | grep -qE '\.(pem|key)(\s|$|;|"|'"'"'|\|)'; then
-    # Avoid false positives: only block if it looks like a file reference
-    # (has a path separator or starts with a dot)
-    if echo "$COMMAND" | grep -qE '(/|\.)\w*\.(pem|key)(\s|$|;|"|'"'"'|\|)'; then
-        output_block "BLOCKED: Command references a key/certificate file that may contain secrets."
-    fi
+# Key/certificate files - require path-like context to reduce false positives
+if echo "$COMMAND" | grep -qE '(cat|less|head|tail|cp|mv|scp|rsync|source|base64|xxd|strings)\s.*\.(pem|key)(\s|$|;|"|'"'"'|\|)' || \
+   echo "$COMMAND" | grep -qE '(/[a-zA-Z0-9_./-]+)\.(pem|key)(\s|$|;|"|'"'"'|\|)'; then
+    output_block "BLOCKED: Command references a key/certificate file that may contain secrets."
 fi
-if echo "$COMMAND" | grep -qiE '(^|[\s/])credentials(\s|$|/|;|"|'"'"'|\|)'; then
+if echo "$COMMAND" | grep -qiE '(^|\s|/)credentials(\s|$|/|;|"|'"'"'|\|)'; then
     output_block "BLOCKED: Command references a credentials file that may contain tokens."
 fi
-if echo "$COMMAND" | grep -qiE '(^|[\s/])secrets(\s|$|/|;|"|'"'"'|\|)'; then
+if echo "$COMMAND" | grep -qiE '(^|\s|/)secrets(\s|$|/|;|"|'"'"'|\|)'; then
     output_block "BLOCKED: Command references a secrets file that may contain tokens."
 fi
 
@@ -320,7 +320,8 @@ if echo "$COMMAND" | grep -qiE '(curl|wget).*(-H|--header).*([Aa]uthorization|[B
 fi
 
 # SSH key files - catch ANY reference, not just cat/head
-if echo "$COMMAND" | grep -qE 'id_(rsa|ed25519|ecdsa|dsa)'; then
+if echo "$COMMAND" | grep -qE '[/~.]id_(rsa|ed25519|ecdsa|dsa)\b' || \
+   echo "$COMMAND" | grep -qE '(cat|less|head|tail|cp|mv|scp|rsync|chmod|source)\s.*id_(rsa|ed25519|ecdsa|dsa)'; then
     output_block "BLOCKED: Command references an SSH private key file."
 fi
 
