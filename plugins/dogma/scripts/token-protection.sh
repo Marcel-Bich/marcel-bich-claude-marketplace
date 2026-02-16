@@ -95,8 +95,8 @@ if [ "$TOOL_NAME" = "Read" ]; then
             output_block "BLOCKED: Reading .env file '$FILE_PATH'. These files typically contain sensitive tokens. Use .env.example instead."
         fi
     else
-        # Relaxed: only block exact .env
-        if [ "$BASENAME" = ".env" ]; then
+        # Relaxed: block exact .env and .env.local
+        if [ "$BASENAME" = ".env" ] || [ "$BASENAME" = ".env.local" ]; then
             output_block "BLOCKED: Reading .env file '$FILE_PATH'. These files typically contain sensitive tokens. Use .env.example instead."
         fi
     fi
@@ -145,16 +145,18 @@ if [ "$TOOL_NAME" = "Read" ]; then
 fi
 
 # =============================================================================
-# GREP TOOL - Block searching in .env files
+# GREP TOOL - Block searching in sensitive files
 # =============================================================================
 if [ "$TOOL_NAME" = "Grep" ]; then
     log_debug "Processing Grep tool"
     PATH_ARG=$(echo "$INPUT" | jq -r '.tool_input.path // empty' 2>/dev/null)
     GLOB_ARG=$(echo "$INPUT" | jq -r '.tool_input.glob // empty' 2>/dev/null)
 
-    # Check if path points to .env file
+    # Check if path points to a sensitive file
     if [ -n "$PATH_ARG" ]; then
         BASENAME=$(basename "$PATH_ARG")
+
+        # .env file check (mode-dependent)
         # Allow safe variants
         if echo "$BASENAME" | grep -qiE '^\.env\.(example|sample|template)$'; then
             log_debug "Safe .env variant: $BASENAME"
@@ -164,10 +166,30 @@ if [ "$TOOL_NAME" = "Grep" ]; then
                 output_block "BLOCKED: Grep in .env file '$PATH_ARG'. Use .env.example instead."
             fi
         else
-            # Relaxed: only block exact .env
-            if [ "$BASENAME" = ".env" ]; then
+            # Relaxed: block exact .env and .env.local
+            if [ "$BASENAME" = ".env" ] || [ "$BASENAME" = ".env.local" ]; then
                 output_block "BLOCKED: Grep in .env file '$PATH_ARG'. Use .env.example instead."
             fi
+        fi
+
+        # Credential files (always blocked regardless of STRICT)
+        if echo "$BASENAME" | grep -qiE '^(\.netrc|\.git-credentials|\.npmrc|\.pypirc)$'; then
+            output_block "BLOCKED: Grep in credential file '$PATH_ARG'. This file may contain tokens."
+        fi
+
+        # Key/certificate files
+        if echo "$BASENAME" | grep -qiE '\.(pem|key)$'; then
+            output_block "BLOCKED: Grep in key/certificate file '$PATH_ARG'. This file may contain secrets."
+        fi
+
+        # Files with credential/secret in the path
+        if echo "$PATH_ARG" | grep -qiE '(credential|secret)'; then
+            output_block "BLOCKED: Grep in credential/secrets file '$PATH_ARG'. This file may contain tokens."
+        fi
+
+        # SSH key files
+        if echo "$BASENAME" | grep -qE 'id_(rsa|ed25519|ecdsa|dsa)'; then
+            output_block "BLOCKED: Grep in SSH key file '$PATH_ARG'. This file contains private key material."
         fi
     fi
 
@@ -178,6 +200,10 @@ if [ "$TOOL_NAME" = "Grep" ]; then
             if [ "$STRICT" = "true" ]; then
                 output_block "BLOCKED: Grep with .env glob pattern '$GLOB_ARG'. Use .env.example instead."
             fi
+        fi
+        # Credential file glob patterns (always blocked)
+        if echo "$GLOB_ARG" | grep -qiE '\.(netrc|git-credentials|npmrc|pypirc|pem|key)'; then
+            output_block "BLOCKED: Grep with credential file glob pattern '$GLOB_ARG'."
         fi
     fi
 
@@ -245,9 +271,24 @@ if echo "$COMMAND" | grep -qE '\$\{?(GITHUB_TOKEN|GITLAB_TOKEN|BITBUCKET_TOKEN|N
     output_block "BLOCKED: Command references a token/secret variable directly. This could expose sensitive credentials in output."
 fi
 
-# Credential files (non-.env)
-if echo "$COMMAND" | grep -qE '(cat|head|tail|less|more|bat|view)\s+.*(\~\/\.netrc|\.git-credentials|\.npmrc|\.pypirc|credentials|secrets)'; then
-    output_block "BLOCKED: Command would read a credential/secrets file that may contain tokens."
+# Credential files (non-.env) - catch ANY reference, not just cat/head
+# Matches: .netrc, .git-credentials, .npmrc, .pypirc, .pem, .key files
+# Also matches paths containing: credentials, secrets
+if echo "$COMMAND" | grep -qE '(\.netrc|\.git-credentials|\.npmrc|\.pypirc)(\s|$|;|"|'"'"'|\|)'; then
+    output_block "BLOCKED: Command references a credential file that may contain tokens."
+fi
+if echo "$COMMAND" | grep -qE '\.(pem|key)(\s|$|;|"|'"'"'|\|)'; then
+    # Avoid false positives: only block if it looks like a file reference
+    # (has a path separator or starts with a dot)
+    if echo "$COMMAND" | grep -qE '(/|\.)\w*\.(pem|key)(\s|$|;|"|'"'"'|\|)'; then
+        output_block "BLOCKED: Command references a key/certificate file that may contain secrets."
+    fi
+fi
+if echo "$COMMAND" | grep -qiE '(^|[\s/])credentials(\s|$|/|;|"|'"'"'|\|)'; then
+    output_block "BLOCKED: Command references a credentials file that may contain tokens."
+fi
+if echo "$COMMAND" | grep -qiE '(^|[\s/])secrets(\s|$|/|;|"|'"'"'|\|)'; then
+    output_block "BLOCKED: Command references a secrets file that may contain tokens."
 fi
 
 # .env file references in commands
@@ -260,8 +301,8 @@ if [ -n "$ENV_REFS" ]; then
             # Strict: block all unsafe .env refs
             output_block "BLOCKED: Command references .env file(s). Use .env.example instead."
         else
-            # Relaxed: only block if .env (exact) is among the refs
-            if echo "$UNSAFE" | grep -qxF '.env'; then
+            # Relaxed: block .env (exact) and .env.local
+            if echo "$UNSAFE" | grep -qxE '\.env(\.local)?'; then
                 output_block "BLOCKED: Command references .env file directly. Use .env.example instead."
             fi
         fi
@@ -278,9 +319,9 @@ if echo "$COMMAND" | grep -qiE '(curl|wget).*(-H|--header).*([Aa]uthorization|[B
     output_block "BLOCKED: Command includes authorization headers that could expose tokens in output/logs."
 fi
 
-# SSH key content
-if echo "$COMMAND" | grep -qE '(cat|head|tail|less|more)\s+.*id_(rsa|ed25519|ecdsa|dsa)'; then
-    output_block "BLOCKED: Command would expose SSH private key content."
+# SSH key files - catch ANY reference, not just cat/head
+if echo "$COMMAND" | grep -qE 'id_(rsa|ed25519|ecdsa|dsa)'; then
+    output_block "BLOCKED: Command references an SSH private key file."
 fi
 
 # All checks passed
