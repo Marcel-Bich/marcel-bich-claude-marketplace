@@ -467,6 +467,28 @@ The structure within project folders can be designed as you see fit.
 Further project info will be conveyed through roadmaps/milestones/phases/plans.
 ```
 
+### GSD Hierarchy - The Structure of Things
+
+```
+PROJECT.md          <- What is the project? (created once)
+ROADMAP.md          <- Entire project roadmap (all milestones)
+  Milestone v1.0    <- A coherent block of work
+    Phase 1-9       <- Individual steps within a milestone
+      Plans         <- Executable work packages per phase
+  Milestone v1.1    <- Next block of work
+    Phase 10-15
+  Milestone v2.0
+    Phase 16-22
+```
+
+**Key points:**
+
+- ROADMAP.md is **project-wide**, not milestone-specific
+- Each new milestone is appended via `/gsd:new-milestone`
+- Completed milestones are collapsed in `<details>` tags
+- `/gsd:new-project` creates both PROJECT.md and ROADMAP.md
+- You can skip PROJECT.md and jump straight to milestones - it works, but the preacher recommends creating it for long-term context
+
 ### Create Roadmap
 
 ```
