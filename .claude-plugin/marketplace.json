@@ -12,42 +12,42 @@
     {
       "name": "credo",
       "source": "./plugins/credo",
-      "description": "Opinionated workflow guides and best practices - the preacher's proven patterns for Claude Code projects."
+      "description": "Opinionated workflow guides and best practices - the preacher's proven patterns for Claude Code projects"
     },
     {
       "name": "dogma",
       "source": "./plugins/dogma",
-      "description": "Intelligent sync of Claude instructions with enforcement hooks for security and consistency."
+      "description": "Intelligent sync of Claude instructions with enforcement hooks for security and consistency"
     },
     {
       "name": "signal",
       "source": "./plugins/signal",
-      "description": "Desktop notifications showing what Claude Code is working on - stay informed even when the terminal is not in focus."
+      "description": "Desktop notifications showing what Claude Code is working on - stay informed even when the terminal is not in focus. Optional sound alerts and AI summaries"
     },
     {
       "name": "limit",
       "source": "./plugins/limit",
-      "description": "Live API usage display in Claude Code statusline - colored progress bars, reset times, tokens, context, session metrics, Git info, highscore tracking, and more."
+      "description": "Live API usage in Claude Code statusline - colored progress bars, Git info, tokens, session metrics, device tracking, and more"
     },
     {
       "name": "hydra",
       "source": "./plugins/hydra",
-      "description": "Git Worktree management for parallel agent execution - isolated working directories without Git conflicts."
+      "description": "Git Worktree management for parallel agent execution - isolated working directories without Git conflicts"
     },
     {
       "name": "import",
       "source": "./plugins/import",
-      "description": "Import external documentation locally - bypass AI-blocking sites via Playwright or copy local paths."
+      "description": "Import external documentation locally - bypass AI-blocking sites via Context7, WebFetch, or Playwright"
     },
     {
       "name": "get-shit-done",
       "source": "./plugins/get-shit-done",
-      "description": "Meta-prompting, context engineering and spec-driven development system for Claude Code"
+      "description": "Installer for TÂCHES' Get-Shit-Done workflow system - meta-prompting, context engineering and spec-driven development"
     },
     {
       "name": "marketplace",
       "source": "./plugins/marketplace",
-      "description": "Development tools for Claude Code plugins - local testing without pushing."
+      "description": "Development tools for Claude Code plugins - local testing without pushing"
     }
   ]
 }

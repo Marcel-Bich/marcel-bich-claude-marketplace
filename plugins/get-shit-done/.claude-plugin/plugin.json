@@ -1,7 +1,7 @@
 {
     "name": "get-shit-done",
     "version": "1.2.1",
-    "description": "Installer for TÂCHES' Get-Shit-Done workflow system",
+    "description": "Installer for TÂCHES' Get-Shit-Done workflow system - meta-prompting, context engineering and spec-driven development",
     "keywords": ["meta-prompting", "context-engineering", "spec-driven-development", "project-management"],
     "license": "MIT"
 }

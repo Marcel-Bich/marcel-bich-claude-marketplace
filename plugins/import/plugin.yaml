@@ -1,5 +1,5 @@
 name: import
-description: Import external documentation locally - bypass AI-blocking sites via Playwright or copy local paths
+description: Import external documentation locally - bypass AI-blocking sites via Context7, WebFetch, or Playwright
 version: 0.2.2
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace

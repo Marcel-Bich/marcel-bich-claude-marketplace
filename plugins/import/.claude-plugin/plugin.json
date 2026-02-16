@@ -1,7 +1,7 @@
 {
   "name": "import",
   "version": "0.2.2",
-  "description": "Import external documentation locally - bypass AI-blocking sites via Context7, WebFetch, or Playwright.",
+  "description": "Import external documentation locally - bypass AI-blocking sites via Context7, WebFetch, or Playwright",
   "keywords": [
     "docs",
     "documentation",

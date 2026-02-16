@@ -6,6 +6,7 @@ Opinionated workflow guides and best practices - the preacher's proven patterns 
 
 | Command | Description |
 |---------|-------------|
+| `/credo:setup` | Set up Claude Code with recommended workflows and plugins |
 | `/credo:psalm` | Interactive guide to available topics and workflows |
 | `/credo:session-init` | Initialize session with main agent workflow instructions |
 

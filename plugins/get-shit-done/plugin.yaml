@@ -1,5 +1,5 @@
 name: get-shit-done
-description: Installer for TÂCHES' Get-Shit-Done workflow system
+description: Installer for TÂCHES' Get-Shit-Done workflow system - meta-prompting, context engineering and spec-driven development
 version: 1.2.1
 author: Lex Christopherson (TÂCHES / glittercowboy)
 repository: https://github.com/glittercowboy/get-shit-done
