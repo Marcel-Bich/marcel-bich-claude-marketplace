@@ -16,10 +16,8 @@ Create or update DOGMA-PERMISSIONS.md to configure what Claude can do autonomous
 <checkbox-legend>
 | Symbol | Meaning |
 |--------|---------|
-| `[ ]` (blank) or `[0]` | Disabled |
-| `[1]` | Only one (most relevant) |
-| `[x]` | All relevant |
-| `[a]` or `[A]` | ALL |
+| `[ ]` | Disabled |
+| `[x]` | Enabled / Auto |
 | `[?]` | On request |
 </checkbox-legend>
 
@@ -70,9 +68,9 @@ Ask about workflow automation settings.
 Ask: "When should tests be executed?"
 
 Options (can select multiple):
-- before commit (blank, 0, 1, x, a, ?)
-- before push (blank, 0, 1, x, a, ?)
-- on tasklist completion (blank, 0, 1, x, a, ?)
+- before commit
+- before push
+- on tasklist completion
 
 Default: `[x] before commit`, `[x] before push`, `[x] on tasklist completion`
 
@@ -81,8 +79,8 @@ Default: `[x] before commit`, `[x] before push`, `[x] on tasklist completion`
 Ask: "What should be tested?"
 
 Options:
-- relevant tests (blank, 0, x)
-- silent-failure check (blank, 0, x) - finds code that swallows errors (empty catch, ignored promises)
+- relevant tests
+- silent-failure check - finds code that swallows errors (empty catch, ignored promises)
 
 Default: `[x] relevant tests`, `[x] silent-failure check`
 
@@ -91,9 +89,9 @@ Default: `[x] relevant tests`, `[x] silent-failure check`
 Ask: "When should code review happen?"
 
 Options (can select multiple):
-- after implementation (blank, 0, 1, x, a, ?)
-- before commit (blank, 0, 1, x, a, ?)
-- before push (blank, 0, 1, x, a, ?)
+- after implementation
+- before commit
+- before push
 
 Default: `[x] after implementation`, `[x] before commit`, `[x] before push`
 
@@ -102,9 +100,9 @@ Default: `[x] after implementation`, `[x] before commit`, `[x] before push`
 Ask: "What should be reviewed?"
 
 Options:
-- changed code (blank, 0, x)
-- architecture (blank, 0, x)
-- types (blank, 0, x)
+- changed code
+- architecture
+- types
 
 Default: `[x] changed code`
 
@@ -113,8 +111,8 @@ Default: `[x] changed code`
 Ask: "What to do when no tests exist?"
 
 Options:
-- spawn subagent for verification (blank, 0, x)
-- skip (blank, 0, x)
+- spawn subagent for verification
+- skip
 
 Default: `[x] spawn subagent for verification`
 
@@ -123,7 +121,7 @@ Default: `[x] spawn subagent for verification`
 Ask: "How should parallel work be handled?"
 
 Options:
-- use Hydra for 2+ independent tasks (blank, 0, x) - only if Hydra available, otherwise sequential without asking
+- use Hydra for 2+ independent tasks - only if Hydra available, otherwise sequential without asking
 
 Default: `[x] use Hydra for 2+ independent tasks`
 
@@ -134,8 +132,8 @@ Note: If Hydra is not installed, work proceeds sequentially without asking.
 Ask: "How should Test-Driven Development be handled?"
 
 Options:
-- TDD when tests exist (blank, 0, x)
-- enforce TDD even without existing tests (blank, 0, x)
+- TDD when tests exist
+- enforce TDD even without existing tests
 
 Default: `[x] TDD when tests exist`
 
@@ -146,11 +144,21 @@ Ask: "What to check after merge/review?"
 Order: relevant tests -> build -> ALL tests (as final check before push)
 
 Options:
-- run relevant tests (blank, 0, x)
-- check build (blank, 0, x)
-- run ALL tests (blank, 0, x, a) - as final check before push
+- run relevant tests
+- check build
+- run ALL tests - as final check before push
 
-Default: `[x] run relevant tests`, `[x] check build`, `[a] run ALL tests`
+Default: `[x] run relevant tests`, `[x] check build`, `[x] run ALL tests`
+
+### 3.9 Subagent Delegation
+
+Ask: "What counts as delegation (prevents subagent-first warning)?"
+
+Options:
+- Task tool usage counts as delegation
+- Skill tool usage counts as delegation
+
+Default: `[x] Task tool usage counts as delegation`, `[x] Skill tool usage counts as delegation`
 
 ## Step 4: Generate DOGMA-PERMISSIONS.md
 
@@ -173,7 +181,7 @@ Mark with `[x]` for auto, `[?]` for ask, `[ ]` for deny.
 
 ## Workflow Permissions
 
-Checkbox legend: `[ ]`/`[0]` = disabled, `[1]` = only one, `[x]` = all relevant, `[a]` = ALL, `[?]` = on request
+Checkbox legend: `[ ]` = disabled, `[x]` = auto, `[?]` = on request
 
 ### Testing
 
@@ -220,7 +228,13 @@ Test-Driven Development:
 After merge/review (order: relevant tests -> build -> ALL tests):
 - [x] run relevant tests
 - [x] check build
-- [a] run ALL tests
+- [x] run ALL tests
+
+### Subagent Delegation
+
+What counts as delegation (prevents subagent-first warning):
+- [x] Task tool usage counts as delegation
+- [x] Skill tool usage counts as delegation
 </permissions>
 
 ## Behavior
