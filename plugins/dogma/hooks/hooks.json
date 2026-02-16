@@ -160,7 +160,7 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/enforce-model-policy.sh",
             "timeout": 5,
-            "description": "Override sonnet/haiku to inherit for Anthropic proprietary agents"
+            "description": "Enforce model policy for subagents (parent model inheritance, downgrade protection)"
           }
         ]
       },

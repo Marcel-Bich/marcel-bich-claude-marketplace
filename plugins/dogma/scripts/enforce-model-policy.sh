@@ -10,7 +10,8 @@
 # - Built-in agent + enforce_builtin=false -> skip
 # - Built-in agent + enforce_builtin=true -> enforce parent model
 # - No model + Anthropic plugin -> max(agent_default, parent_model)
-# - No model + Third-party plugin -> unchanged (use agent default)
+# - No model + Third-party plugin + FORCE_PARENT=false -> unchanged (use agent default)
+# - No model + Third-party plugin + FORCE_PARENT=true -> parent model (forced)
 #
 # Examples:
 # - Agent=sonnet, Parent=opus -> opus (parent higher)
@@ -28,10 +29,26 @@
 # ENV: CLAUDE_MB_DOGMA_BUILTIN_INHERIT_MODEL=true (default) | false - enforce model policy for built-in agents
 # ENV: CLAUDE_MB_DOGMA_ALLOW_MODEL_DOWNGRADE=false (default) | true - allow explicit model to downgrade below parent
 # ENV: CLAUDE_MB_DOGMA_FORCE_PARENT_MODEL=true (default) | false - enforce parent model for ALL plugins (not just Anthropic)
+# ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch for all hooks
+# ENV: CLAUDE_MB_DOGMA_MODEL_POLICY=true (default) | false - individual toggle for model enforcement
+
+# NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
+# Trap all errors and exit cleanly
+trap 'exit 0' ERR
 
 # Source shared library for debug logging
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib-permissions.sh"
+
+# Master switch - exit early if dogma is disabled
+if [ "${CLAUDE_MB_DOGMA_ENABLED:-true}" != "true" ]; then
+  exit 0
+fi
+
+# Individual toggle for model policy
+if [ "${CLAUDE_MB_DOGMA_MODEL_POLICY:-true}" != "true" ]; then
+  exit 0
+fi
 
 dogma_debug_log "=== enforce-model-policy.sh START ==="
 
@@ -61,10 +78,32 @@ normalize_model() {
   esac
 }
 
-# Get parent model from settings.json
+# Get parent model from settings (project-local > project > global > fallback)
 get_parent_model() {
-  local settings_model
-  settings_model=$(jq -r '.model // empty' ~/.claude/settings.json 2>/dev/null)
+  local settings_model=""
+
+  # 1. Project-local settings (highest priority)
+  if [[ -z "$settings_model" ]] && [[ -f ".claude/settings.local.json" ]]; then
+    settings_model=$(jq -r '.model // empty' .claude/settings.local.json 2>/dev/null)
+  fi
+
+  # 2. Project settings
+  if [[ -z "$settings_model" ]] && [[ -f ".claude/settings.json" ]]; then
+    settings_model=$(jq -r '.model // empty' .claude/settings.json 2>/dev/null)
+  fi
+
+  # 3. Global settings
+  if [[ -z "$settings_model" ]]; then
+    settings_model=$(jq -r '.model // empty' ~/.claude/settings.json 2>/dev/null)
+  fi
+
+  # 4. Fallback to opus (safest default - never downgrade by accident)
+  if [[ -z "$settings_model" ]]; then
+    dogma_debug_log "No model found in any settings - falling back to opus"
+    echo "opus"
+    return
+  fi
+
   normalize_model "$settings_model"
 }
 

@@ -82,6 +82,10 @@ Run `/dogma:permissions` to configure interactively.
 | `CLAUDE_MB_DOGMA_SKIP_LINT_CHECK` | `false` | Skip pre-commit lint check (set by Claude after lint) |
 | `CLAUDE_MB_DOGMA_AUTO_FORMAT` | `true` | Allow automatic formatting of staged files |
 | `CLAUDE_MB_DOGMA_LINT_ON_STOP` | `true` | Run lint check when task completes (fallback) |
+| `CLAUDE_MB_DOGMA_MODEL_POLICY` | `true` | Toggle for model enforcement hook |
+| `CLAUDE_MB_DOGMA_FORCE_PARENT_MODEL` | `true` | Enforce parent model for all plugins |
+| `CLAUDE_MB_DOGMA_BUILTIN_INHERIT_MODEL` | `true` | Force built-in agents to inherit parent model |
+| `CLAUDE_MB_DOGMA_ALLOW_MODEL_DOWNGRADE` | `false` | Allow explicit model downgrades below parent |
 
 ### Usage Warning
 
