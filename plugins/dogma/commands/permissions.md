@@ -127,7 +127,17 @@ Default: `[x] use Hydra for 2+ independent tasks`
 
 Note: If Hydra is not installed, work proceeds sequentially without asking.
 
-### 3.7 TDD
+### 3.7 Subagent Delegation
+
+Ask: "What counts as delegation (prevents subagent-first warning)?"
+
+Options:
+- Task tool usage counts as delegation
+- Skill tool usage counts as delegation
+
+Default: `[x] Task tool usage counts as delegation`, `[x] Skill tool usage counts as delegation`
+
+### 3.8 TDD
 
 Ask: "How should Test-Driven Development be handled?"
 
@@ -137,7 +147,7 @@ Options:
 
 Default: `[x] TDD when tests exist`
 
-### 3.8 Final Verification
+### 3.9 Final Verification
 
 Ask: "What to check after merge/review?"
 
@@ -149,16 +159,6 @@ Options:
 - run ALL tests - as final check before push
 
 Default: `[x] run relevant tests`, `[x] check build`, `[x] run ALL tests`
-
-### 3.9 Subagent Delegation
-
-Ask: "What counts as delegation (prevents subagent-first warning)?"
-
-Options:
-- Task tool usage counts as delegation
-- Skill tool usage counts as delegation
-
-Default: `[x] Task tool usage counts as delegation`, `[x] Skill tool usage counts as delegation`
 
 ## Step 4: Generate DOGMA-PERMISSIONS.md
 
@@ -217,6 +217,12 @@ When no tests exist:
 Parallel work (only if Hydra available, otherwise sequential):
 - [x] use Hydra for 2+ independent tasks
 
+### Subagent Delegation
+
+What counts as delegation (prevents subagent-first warning):
+- [x] Task tool usage counts as delegation
+- [x] Skill tool usage counts as delegation
+
 ### TDD
 
 Test-Driven Development:
@@ -229,12 +235,6 @@ After merge/review (order: relevant tests -> build -> ALL tests):
 - [x] run relevant tests
 - [x] check build
 - [x] run ALL tests
-
-### Subagent Delegation
-
-What counts as delegation (prevents subagent-first warning):
-- [x] Task tool usage counts as delegation
-- [x] Skill tool usage counts as delegation
 </permissions>
 
 ## Behavior
