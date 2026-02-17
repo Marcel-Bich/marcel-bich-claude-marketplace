@@ -36,6 +36,15 @@ if is_wsl; then
     windows_notify "$TITLE" "$BODY" "$SESSION_ID" "$URGENCY"
 # Linux: Try gdbus first (supports replacement)
 elif command -v gdbus &> /dev/null; then
+    # Close previous notification to prevent tray stacking (GNOME)
+    if [ "$PREV_ID" != "0" ]; then
+        gdbus call --session \
+            -d org.freedesktop.Notifications \
+            -o /org/freedesktop/Notifications \
+            -m org.freedesktop.Notifications.CloseNotification \
+            "$PREV_ID" 2>/dev/null || true
+    fi
+
     RESULT=$(gdbus call --session \
         -d org.freedesktop.Notifications \
         -o /org/freedesktop/Notifications \

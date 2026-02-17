@@ -18,7 +18,20 @@ if is_wsl; then
         [Windows.UI.Notifications.ToastNotificationManager]::History.RemoveGroup('ClaudeCode', '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe')
     " 2>/dev/null &
 else
-    # Linux: Remove old notification ID files for this project
+    # Linux: Close all tracked notifications and clean up ID files
+    if command -v gdbus &> /dev/null; then
+        for id_file in /tmp/claude-mb-notify-id-project-${PROJECT}-*; do
+            [ -f "$id_file" ] || continue
+            NOTIF_ID=$(cat "$id_file" 2>/dev/null)
+            if [ -n "$NOTIF_ID" ] && [ "$NOTIF_ID" != "0" ]; then
+                gdbus call --session \
+                    -d org.freedesktop.Notifications \
+                    -o /org/freedesktop/Notifications \
+                    -m org.freedesktop.Notifications.CloseNotification \
+                    "$NOTIF_ID" 2>/dev/null || true
+            fi
+        done
+    fi
     rm -f /tmp/claude-mb-notify-id-project-${PROJECT}-* 2>/dev/null
 fi
 

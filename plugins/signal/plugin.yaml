@@ -1,6 +1,6 @@
 name: signal
 description: Desktop notifications showing what Claude Code is working on - stay informed even when the terminal is not in focus. Optional sound alerts and AI summaries
-version: 1.1.5
+version: 1.1.6
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
