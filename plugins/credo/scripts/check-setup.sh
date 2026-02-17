@@ -6,9 +6,10 @@
 JQ_INSTALLED=$(command -v jq >/dev/null 2>&1 && echo "true" || echo "false")
 CURL_INSTALLED=$(command -v curl >/dev/null 2>&1 && echo "true" || echo "false")
 
-# Plugin checks
-DOGMA_INSTALLED=$(claude plugin list 2>/dev/null | grep -q "dogma@marcel-bich-claude-marketplace" && echo "true" || echo "false")
-GSD_INSTALLED=$(claude plugin list 2>/dev/null | grep -q "get-shit-done@marcel-bich-claude-marketplace" && echo "true" || echo "false")
+# Plugin checks (read JSON directly - claude plugin list fails inside active sessions)
+PLUGINS_JSON="$HOME/.claude/plugins/installed_plugins.json"
+DOGMA_INSTALLED=$(grep -q '"dogma@marcel-bich-claude-marketplace"' "$PLUGINS_JSON" 2>/dev/null && echo "true" || echo "false")
+GSD_INSTALLED=$(grep -q '"get-shit-done@marcel-bich-claude-marketplace"' "$PLUGINS_JSON" 2>/dev/null && echo "true" || echo "false")
 
 # Directory checks
 CLAUDE_EXISTS=$([ -d "CLAUDE" ] && echo "true" || echo "false")
