@@ -68,7 +68,7 @@ Run `/dogma:permissions` to configure interactively.
 ### Enforcement Hooks
 
 - Git permissions, secrets detection
-- File protection, prompt injection detection
+- File and search protection, prompt injection detection
 - AI traces validation, language rules reminders
 - Dependency verification (asks before package installs)
 - All hooks toggleable via environment variables
