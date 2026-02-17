@@ -355,6 +355,7 @@ SHOW_TOKENS="${CLAUDE_MB_LIMIT_TOKENS:-true}"
 SHOW_CTX="${CLAUDE_MB_LIMIT_CTX:-true}"
 SHOW_SESSION="${CLAUDE_MB_LIMIT_SESSION:-true}"
 SHOW_SESSION_ID="${CLAUDE_MB_LIMIT_SESSION_ID:-true}"
+SHOW_CAPTION="${CLAUDE_MB_LIMIT_CAPTION:-true}"
 SHOW_PROFILE="${CLAUDE_MB_LIMIT_PROFILE:-true}"
 SHOW_SEPARATORS="${CLAUDE_MB_LIMIT_SEPARATORS:-true}"
 
@@ -1377,6 +1378,92 @@ get_session_id() {
     echo ""
 }
 
+# Get session caption from stdin data or JSONL file
+# Priority: session_name (from /rename) > custom-title from JSONL > first user prompt from JSONL
+# Result is cached per session in /tmp to avoid re-reading JSONL on every call
+get_session_caption() {
+    local session_id="$1"
+    local max_len=60
+
+    # 1. Try session_name from stdin (set by /rename)
+    if [[ -n "$STDIN_DATA" ]]; then
+        local session_name
+        session_name=$(echo "$STDIN_DATA" | jq -r '.session_name // empty' 2>/dev/null)
+        if [[ -n "$session_name" ]] && [[ "$session_name" != "null" ]]; then
+            if [[ ${#session_name} -gt $max_len ]]; then
+                echo "${session_name:0:$max_len}..."
+            else
+                echo "$session_name"
+            fi
+            return
+        fi
+    fi
+
+    # 2. Try cached caption from previous lookup
+    if [[ -n "$session_id" ]]; then
+        local cache_file="/tmp/claude-mb-limit-caption-${session_id}"
+        if [[ -f "$cache_file" ]]; then
+            cat "$cache_file"
+            return
+        fi
+
+        # 3. Try to read from JSONL session file
+        local config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+        local jsonl_file=""
+
+        # Find JSONL by session ID (search in projects dir)
+        if [[ -d "${config_dir}/projects" ]]; then
+            jsonl_file=$(find "${config_dir}/projects" -name "${session_id}.jsonl" -print -quit 2>/dev/null)
+        fi
+
+        if [[ -n "$jsonl_file" ]] && [[ -f "$jsonl_file" ]]; then
+            local caption=""
+
+            # Try custom-title first
+            caption=$(grep -m1 '"custom-title"' "$jsonl_file" 2>/dev/null | jq -r '.customTitle // empty' 2>/dev/null)
+
+            # Fall back to summary
+            if [[ -z "$caption" ]]; then
+                caption=$(grep -m1 '"type".*"summary"' "$jsonl_file" 2>/dev/null | jq -r '.summary // empty' 2>/dev/null)
+            fi
+
+            # Fall back to first real user prompt (type is "user" in JSONL)
+            # Skip hook-injected messages (content starts with < like XML tags)
+            if [[ -z "$caption" ]]; then
+                while IFS= read -r line; do
+                    local content
+                    content=$(echo "$line" | jq -r '.message.content // empty' 2>/dev/null)
+                    # For array content, take first text element
+                    if [[ "$content" == "["* ]]; then
+                        content=$(echo "$line" | jq -r '.message.content[0].text // empty' 2>/dev/null)
+                    fi
+                    # Skip empty or hook-injected content (starts with <)
+                    if [[ -n "$content" ]] && [[ "$content" != "<"* ]]; then
+                        caption="$content"
+                        break
+                    fi
+                done < <(grep '"type":"user"' "$jsonl_file" 2>/dev/null | head -10)
+            fi
+
+            if [[ -n "$caption" ]] && [[ "$caption" != "null" ]]; then
+                # Truncate long captions
+                if [[ ${#caption} -gt $max_len ]]; then
+                    caption="${caption:0:$max_len}..."
+                fi
+                # Cache result
+                echo "$caption" > "$cache_file"
+                echo "$caption"
+                return
+            fi
+        fi
+
+        # Nothing found - don't cache, retry on next call
+        # (JSONL may not exist yet at session start)
+    fi
+
+    echo ""
+}
+
 # Get token metrics from stdin data
 # Uses context_window totals for session-wide metrics, current_usage for cache
 get_token_metrics() {
@@ -2296,6 +2383,27 @@ EOF
                 fi
             done
             lines+=("${info_color}${info_line}${info_color_reset}")
+        fi
+    fi
+
+    # Session caption (below session ID line)
+    if [[ "$SHOW_CAPTION" == "true" ]]; then
+        local caption_color=""
+        local caption_color_reset=""
+        if [[ "$SHOW_COLORS" == "true" ]]; then
+            caption_color="$COLOR_GRAY"
+            caption_color_reset="$COLOR_RESET"
+        fi
+
+        local sid
+        sid=$(get_session_id)
+        local caption
+        caption=$(get_session_caption "$sid")
+
+        if [[ -n "$caption" ]]; then
+            lines+=("${caption_color}Caption: ${caption}${caption_color_reset}")
+        else
+            lines+=("${caption_color}Caption: loading...${caption_color_reset}")
         fi
     fi
 

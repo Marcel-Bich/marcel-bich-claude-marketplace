@@ -23,6 +23,7 @@ Live API usage display in Claude Code statusline - shows your utilization with c
 - Context usage with percentage of max and usable (before auto-compact)
 - Session timing: Total duration, API time
 - Session ID display
+- Session caption (from /rename, summary, or first user prompt)
 
 **Platform Support**
 - Cross-platform: Linux, macOS, and WSL2
@@ -72,6 +73,7 @@ All features can be toggled via environment variables. Export them in your shell
 | `CLAUDE_MB_LIMIT_CTX` | true | Show context usage |
 | `CLAUDE_MB_LIMIT_SESSION` | true | Show session timing |
 | `CLAUDE_MB_LIMIT_SESSION_ID` | true | Show session ID |
+| `CLAUDE_MB_LIMIT_CAPTION` | true | Show session caption (from /rename, summary, or first prompt) |
 | `CLAUDE_MB_LIMIT_PROFILE` | true | Show active profile name |
 | `CLAUDE_MB_LIMIT_COLORS` | true | Enable colored output |
 | `CLAUDE_MB_LIMIT_PROGRESS` | true | Show progress bars |
