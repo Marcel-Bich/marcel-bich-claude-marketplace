@@ -93,7 +93,7 @@ FILES=$(echo "$GIT_ADD_PART" | sed 's/^git\s\+add\s\+//' | tr ' ' '\n' | grep -v
 # Single regex for all secret patterns - no loops needed
 #
 # Covered patterns:
-# - .env files: .env, .env.local, .env.production, .env.*
+# - .env files: .env, .env.local, .env.production, .env.* (except .env.example/sample/template)
 # - Crypto keys: *.pem, *.key, *.p12, *.pfx, *.crt, *.keystore, *.jks
 # - SSH keys: id_rsa, id_ed25519, id_ecdsa, id_dsa, *.pub (in .ssh context)
 # - SSH dir: .ssh/* (entire directory)
@@ -131,7 +131,7 @@ CODE_EXT_REGEX='\.(sh|bash|py|js|ts|tsx|jsx|rb|go|rs|java|php|pl|c|cpp|h|hpp|cs|
 # Filter secret files from a list (stdin -> stdout)
 # Usage: echo "$FILES" | filter_secrets
 filter_secrets() {
-    grep -iE "$SECRET_REGEX" | grep -ivE "$CODE_EXT_REGEX" || true
+    grep -iE "$SECRET_REGEX" | grep -ivE '\.env\.(example|sample|template)$' | grep -ivE "$CODE_EXT_REGEX" || true
 }
 
 # ============================================
