@@ -48,6 +48,57 @@ fi
 STRICT="${CLAUDE_MB_DOGMA_TOKEN_STRICT:-true}"
 log_debug "Strict mode: $STRICT"
 
+# ---------------------------------------------------------------------------
+# Allowlist: directories whose files skip path-based name checks.
+# Content scanning (token patterns, private keys, etc.) still applies.
+# CLAUDE_PLUGIN_ROOT is always allowed (the plugin's own scripts directory).
+# CLAUDE_MB_DOGMA_TOKEN_ALLOW_DIRS accepts a comma-separated list of extra dirs.
+# ---------------------------------------------------------------------------
+is_in_allowed_dir() {
+    local check_path="$1"
+
+    # Always allow files within CLAUDE_PLUGIN_ROOT (own plugin scripts)
+    if [ -n "$CLAUDE_PLUGIN_ROOT" ] && [[ "$check_path" == "$CLAUDE_PLUGIN_ROOT"* ]]; then
+        log_debug "File within CLAUDE_PLUGIN_ROOT - allowing past path check"
+        return 0
+    fi
+
+    # Check configurable extra directories
+    local allow_dirs="${CLAUDE_MB_DOGMA_TOKEN_ALLOW_DIRS:-}"
+    if [ -n "$allow_dirs" ]; then
+        local IFS=','
+        for dir in $allow_dirs; do
+            # Trim whitespace
+            dir=$(echo "$dir" | xargs)
+            if [ -n "$dir" ] && [[ "$check_path" == "$dir"* ]]; then
+                log_debug "File in allowed dir '$dir' - allowing past path check"
+                return 0
+            fi
+        done
+    fi
+
+    return 1
+}
+
+# Same idea for Bash commands: check if any allowed dir appears in the string.
+command_in_allowed_dir() {
+    local cmd="$1"
+    if [ -n "$CLAUDE_PLUGIN_ROOT" ] && echo "$cmd" | grep -qF "$CLAUDE_PLUGIN_ROOT"; then
+        return 0
+    fi
+    local allow_dirs="${CLAUDE_MB_DOGMA_TOKEN_ALLOW_DIRS:-}"
+    if [ -n "$allow_dirs" ]; then
+        local IFS=','
+        for dir in $allow_dirs; do
+            dir=$(echo "$dir" | xargs)
+            if [ -n "$dir" ] && echo "$cmd" | grep -qF "$dir"; then
+                return 0
+            fi
+        done
+    fi
+    return 1
+}
+
 # Read input
 INPUT=$(cat 2>/dev/null || true)
 if [ -z "$INPUT" ]; then
@@ -101,12 +152,17 @@ if [ "$TOOL_NAME" = "Read" ]; then
     fi
 
     # Other credential files (not .env - those are handled above)
-    if echo "$FILE_PATH" | grep -qiE '(\.netrc|\.git-credentials|\.npmrc|\.pypirc|\.pem|\.key)$'; then
-        output_block "BLOCKED: Reading credential/secrets file '$FILE_PATH'. These files typically contain sensitive tokens."
-    fi
-    # Match credential/secret anywhere in filename (handles .credentials.json, secrets.yaml, etc.)
-    if echo "$FILE_PATH" | grep -qiE '(credential|secret|id_rsa|id_ed25519|id_ecdsa)'; then
-        output_block "BLOCKED: Reading credential/secrets file '$FILE_PATH'. These files typically contain sensitive tokens."
+    # Skip path-based checks for files in allowed directories
+    if ! is_in_allowed_dir "$FILE_PATH"; then
+        if echo "$FILE_PATH" | grep -qiE '(\.netrc|\.git-credentials|\.npmrc|\.pypirc|\.pem|\.key)$'; then
+            output_block "BLOCKED: Reading credential/secrets file '$FILE_PATH'. These files typically contain sensitive tokens."
+        fi
+        # Match credential/secret anywhere in filename (handles .credentials.json, secrets.yaml, etc.)
+        if echo "$FILE_PATH" | grep -qiE '(credential|secret|id_rsa|id_ed25519|id_ecdsa)'; then
+            output_block "BLOCKED: Reading credential/secrets file '$FILE_PATH'. These files typically contain sensitive tokens."
+        fi
+    else
+        log_debug "Skipping path-based checks for allowed dir file: $FILE_PATH"
     fi
 
     # Scan file content for token patterns (only if file is small enough)
@@ -169,24 +225,29 @@ if [ "$TOOL_NAME" = "Grep" ]; then
             fi
         fi
 
-        # Credential files (always blocked regardless of STRICT)
-        if echo "$BASENAME" | grep -qiE '^(\.netrc|\.git-credentials|\.npmrc|\.pypirc)$'; then
-            output_block "BLOCKED: Grep in credential file '$PATH_ARG'. This file may contain tokens."
-        fi
+        # Path-based checks - skip for files in allowed directories
+        if ! is_in_allowed_dir "$PATH_ARG"; then
+            # Credential files (always blocked regardless of STRICT)
+            if echo "$BASENAME" | grep -qiE '^(\.netrc|\.git-credentials|\.npmrc|\.pypirc)$'; then
+                output_block "BLOCKED: Grep in credential file '$PATH_ARG'. This file may contain tokens."
+            fi
 
-        # Key/certificate files
-        if echo "$BASENAME" | grep -qiE '\.(pem|key)$'; then
-            output_block "BLOCKED: Grep in key/certificate file '$PATH_ARG'. This file may contain secrets."
-        fi
+            # Key/certificate files
+            if echo "$BASENAME" | grep -qiE '\.(pem|key)$'; then
+                output_block "BLOCKED: Grep in key/certificate file '$PATH_ARG'. This file may contain secrets."
+            fi
 
-        # Files with credential/secret in the path
-        if echo "$PATH_ARG" | grep -qiE '(credential|secret)'; then
-            output_block "BLOCKED: Grep in credential/secrets file '$PATH_ARG'. This file may contain tokens."
-        fi
+            # Files with credential/secret in the path
+            if echo "$PATH_ARG" | grep -qiE '(credential|secret)'; then
+                output_block "BLOCKED: Grep in credential/secrets file '$PATH_ARG'. This file may contain tokens."
+            fi
 
-        # SSH key files
-        if echo "$BASENAME" | grep -qE 'id_(rsa|ed25519|ecdsa|dsa)'; then
-            output_block "BLOCKED: Grep in SSH key file '$PATH_ARG'. This file contains private key material."
+            # SSH key files
+            if echo "$BASENAME" | grep -qE 'id_(rsa|ed25519|ecdsa|dsa)'; then
+                output_block "BLOCKED: Grep in SSH key file '$PATH_ARG'. This file contains private key material."
+            fi
+        else
+            log_debug "Skipping path-based Grep checks for allowed dir: $PATH_ARG"
         fi
     fi
 
@@ -276,19 +337,22 @@ fi
 # Credential files (non-.env) - catch ANY reference, not just cat/head
 # Matches: .netrc, .git-credentials, .npmrc, .pypirc, .pem, .key files
 # Also matches paths containing: credentials, secrets
-if echo "$COMMAND" | grep -qE '(\.netrc|\.git-credentials|\.npmrc|\.pypirc)(\s|$|;|"|'"'"'|\|)'; then
-    output_block "BLOCKED: Command references a credential file that may contain tokens."
-fi
-# Key/certificate files - require path-like context to reduce false positives
-if echo "$COMMAND" | grep -qE '(cat|less|head|tail|cp|mv|scp|rsync|source|base64|xxd|strings)\s.*\.(pem|key)(\s|$|;|"|'"'"'|\|)' || \
-   echo "$COMMAND" | grep -qE '(/[a-zA-Z0-9_./-]+)\.(pem|key)(\s|$|;|"|'"'"'|\|)'; then
-    output_block "BLOCKED: Command references a key/certificate file that may contain secrets."
-fi
-if echo "$COMMAND" | grep -qiE '(^|\s|/)credentials(\s|$|/|;|"|'"'"'|\||\.|\-)'; then
-    output_block "BLOCKED: Command references a credentials file that may contain tokens."
-fi
-if echo "$COMMAND" | grep -qiE '(^|\s|/)secrets(\s|$|/|;|"|'"'"'|\||\.|\-)'; then
-    output_block "BLOCKED: Command references a secrets file that may contain tokens."
+# Skip path-based checks when the command references an allowed directory
+if ! command_in_allowed_dir "$COMMAND"; then
+    if echo "$COMMAND" | grep -qE '(\.netrc|\.git-credentials|\.npmrc|\.pypirc)(\s|$|;|"|'"'"'|\|)'; then
+        output_block "BLOCKED: Command references a credential file that may contain tokens."
+    fi
+    # Key/certificate files - require path-like context to reduce false positives
+    if echo "$COMMAND" | grep -qE '(cat|less|head|tail|cp|mv|scp|rsync|source|base64|xxd|strings)\s.*\.(pem|key)(\s|$|;|"|'"'"'|\|)' || \
+       echo "$COMMAND" | grep -qE '(/[a-zA-Z0-9_./-]+)\.(pem|key)(\s|$|;|"|'"'"'|\|)'; then
+        output_block "BLOCKED: Command references a key/certificate file that may contain secrets."
+    fi
+    if echo "$COMMAND" | grep -qiE '(^|\s|/)credentials(\s|$|/|;|"|'"'"'|\||\.|\-)'; then
+        output_block "BLOCKED: Command references a credentials file that may contain tokens."
+    fi
+    if echo "$COMMAND" | grep -qiE '(^|\s|/)secrets(\s|$|/|;|"|'"'"'|\||\.|\-)'; then
+        output_block "BLOCKED: Command references a secrets file that may contain tokens."
+    fi
 fi
 
 # .env file references in commands
