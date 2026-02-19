@@ -1,6 +1,6 @@
 # dogma
 
-Flexible sync of Claude instructions from any source, with enforcement hooks for security and consistency. Use the opinionated [default rules](https://github.com/Marcel-Bich/marcel-bich-claude-dogma) or bring your own.
+Intelligent sync of Claude instructions from any source, with enforcement hooks for security and consistency. Use the opinionated [default rules](https://github.com/Marcel-Bich/marcel-bich-claude-dogma) or bring your own.
 
 ## Why dogma?
 
@@ -86,6 +86,12 @@ Run `/dogma:permissions` to configure interactively.
 | `CLAUDE_MB_DOGMA_FORCE_PARENT_MODEL` | `true` | Enforce parent model for all plugins |
 | `CLAUDE_MB_DOGMA_BUILTIN_INHERIT_MODEL` | `true` | Force built-in agents to inherit parent model |
 | `CLAUDE_MB_DOGMA_ALLOW_MODEL_DOWNGRADE` | `false` | Allow explicit model downgrades below parent |
+| `CLAUDE_MB_DOGMA_TOKEN_ALLOW_DIRS` | - | Comma-separated list of directories whose files skip path-based name checks (content scanning still applies). `CLAUDE_PLUGIN_ROOT` is always allowed automatically. |
+
+### Token and File Protection
+
+- **Safe dotenv variants:** `.env.example`, `.env.sample`, `.env.template` are excluded from secret detection and git-add protection
+- **Grep hook:** The Grep tool is blocked from searching in sensitive files (credential files, .env files, key files) - same rules as the Read hook
 
 ### Usage Warning
 

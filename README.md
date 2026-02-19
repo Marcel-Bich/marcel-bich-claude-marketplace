@@ -65,7 +65,7 @@ They don't replace Claude. They make Claude manageable.
 
 | Plugin | Role | What they do |
 |--------|------|--------------|
-| [**dogma**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Dogma-Plugin) | The Compliance Officer | Flexible rule sync from any source, with enforcement hooks. Opinionated defaults included. |
+| [**dogma**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Dogma-Plugin) | The Compliance Officer | Intelligent rule sync from any source, with enforcement hooks. Opinionated defaults included. |
 | [**hydra**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Hydra-Plugin) | The Project Manager | Parallel workstreams. Isolated branches. No stepping on toes. |
 | [**signal**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Signal-Plugin) | The Receptionist | "Claude needs you." Ding. Simple. |
 | [**limit**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Limit-Plugin) | The Accountant | Tracks every token. Shows the burn rate and limits. No surprises. |

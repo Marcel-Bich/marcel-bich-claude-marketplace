@@ -1,6 +1,6 @@
 # signal
 
-Desktop notifications showing what Claude Code is working on - stay informed even when the terminal is not in focus.
+Desktop notifications showing what Claude Code is working on - stay informed even when the terminal is not in focus. Optional sound alerts and AI summaries.
 
 ## Features
 
@@ -11,6 +11,7 @@ Desktop notifications showing what Claude Code is working on - stay informed eve
 - Configurable sound volume via environment variables
 - Optional AI summaries (using Haiku)
 - Smart filtering to prevent notification spam
+- Non-stacking notifications: previous notifications are closed before sending new ones to prevent Linux tray stacking
 - Cross-platform: Linux and WSL2 (Windows 10/11)
 
 ## Requirements

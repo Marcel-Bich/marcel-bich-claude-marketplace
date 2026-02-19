@@ -1,6 +1,6 @@
 # Import Plugin
 
-Import external documentation locally for Claude Code. Uses smart fallback chain to bypass AI-blocking sites.
+Import external documentation locally for Claude Code. Uses smart fallback chain (Context7 -> WebFetch -> Playwright) to bypass AI-blocking sites.
 
 ## Problem
 

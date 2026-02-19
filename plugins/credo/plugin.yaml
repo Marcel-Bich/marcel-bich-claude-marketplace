@@ -9,7 +9,7 @@ commands:
     description: Interactive guide to available topics and workflows
     source: commands/psalm.md
   setup:
-    description: Set up Claude Code with recommended workflows and plugins (alias for /credo:psalm)
+    description: Interactive setup wizard - install plugins, sync instructions, init project
     source: commands/setup.md
   session-init:
     description: Initialize session with main agent workflow instructions

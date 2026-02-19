@@ -1,6 +1,6 @@
 # limit
 
-Live API usage display in Claude Code statusline - shows your utilization with colored progress bars and reset times using real Anthropic API data.
+Live API usage in Claude Code statusline - colored progress bars, Git info, tokens, session metrics, device tracking, and more.
 
 ## Features
 
