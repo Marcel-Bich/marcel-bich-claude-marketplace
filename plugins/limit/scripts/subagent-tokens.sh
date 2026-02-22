@@ -210,9 +210,14 @@ reset_state_if_incompatible() {
     fi
 }
 
-# Cleanup old file offsets (older than 30 days)
+# Cleanup old file offsets
+# Removes entries for non-existent files (regardless of age)
+# Removes entries older than 30 days (for existing but stale files)
+# Usage: cleanup_old_offsets <state_file_path>
 cleanup_old_offsets() {
-    if [[ ! -f "${SUBAGENT_STATE_FILE}" ]]; then
+    local state_file="${1:-${SUBAGENT_STATE_FILE}}"
+
+    if [[ ! -f "${state_file}" ]]; then
         return 0
     fi
 
@@ -220,15 +225,40 @@ cleanup_old_offsets() {
     current_time=$(date +%s)
     local cutoff_time=$((current_time - FILE_OFFSET_RETENTION_SECONDS))
 
+    # Collect keys for non-existent files
+    local stale_keys
+    stale_keys=$(jq -r '.file_offsets // {} | keys[]' "${state_file}" 2>/dev/null | while IFS= read -r filepath; do
+        [[ -z "$filepath" ]] && continue
+        if [[ ! -f "$filepath" ]]; then
+            echo "$filepath"
+        fi
+    done)
+
     local tmp_file
     tmp_file=$(mktemp)
 
-    jq --argjson cutoff "$cutoff_time" '
-        .file_offsets = (.file_offsets // {} | with_entries(select(.value.ts >= $cutoff)))
-    ' "${SUBAGENT_STATE_FILE}" > "${tmp_file}" 2>/dev/null
+    # Build jq filter: remove non-existent files, then apply age cutoff
+    if [[ -n "$stale_keys" ]]; then
+        # Convert stale keys to JSON array for jq
+        local stale_json
+        stale_json=$(printf '%s\n' "$stale_keys" | jq -R . | jq -sc .)
+
+        jq --argjson cutoff "$cutoff_time" --argjson stale "$stale_json" '
+            .file_offsets = (.file_offsets // {} |
+                with_entries(select(
+                    (.key as $k | $stale | index($k) | not) and
+                    .value.ts >= $cutoff
+                ))
+            )
+        ' "${state_file}" > "${tmp_file}" 2>/dev/null
+    else
+        jq --argjson cutoff "$cutoff_time" '
+            .file_offsets = (.file_offsets // {} | with_entries(select(.value.ts >= $cutoff)))
+        ' "${state_file}" > "${tmp_file}" 2>/dev/null
+    fi
 
     if [[ $? -eq 0 ]] && [[ -s "${tmp_file}" ]]; then
-        mv "${tmp_file}" "${SUBAGENT_STATE_FILE}"
+        mv "${tmp_file}" "${state_file}"
     else
         rm -f "${tmp_file}" 2>/dev/null
     fi
@@ -509,6 +539,7 @@ get_subagent_tokens() {
     # Process each file with offset tracking
     while IFS= read -r filepath; do
         [[ -z "${filepath}" ]] && continue
+        [[ ! -f "${filepath}" ]] && continue
 
         # Get stored offset for this file
         local stored_offset
@@ -663,7 +694,7 @@ EOF
 
     # Cleanup old offsets periodically (every ~100 scans based on randomness)
     if [[ $((RANDOM % 100)) -eq 0 ]]; then
-        cleanup_old_offsets
+        cleanup_old_offsets "${SUBAGENT_STATE_FILE}"
     fi
 
     echo "${total_tokens}"
@@ -914,6 +945,7 @@ get_main_agent_tokens() {
     # Process each file
     while IFS= read -r filepath; do
         [[ -z "${filepath}" ]] && continue
+        [[ ! -f "${filepath}" ]] && continue
 
         local stored_offset
         stored_offset=$(echo "$state_json" | jq -r --arg p "$filepath" '.file_offsets[$p].bytes // 0' 2>/dev/null) || stored_offset=0
@@ -1053,6 +1085,11 @@ EOF
 
     mv "${tmp_file}" "${MAIN_AGENT_STATE_FILE}"
 
+    # Cleanup old offsets periodically (every ~100 scans based on randomness)
+    if [[ $((RANDOM % 100)) -eq 0 ]]; then
+        cleanup_old_offsets "${MAIN_AGENT_STATE_FILE}"
+    fi
+
     echo "${total_tokens}"
 }
 
@@ -1117,7 +1154,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             fi
             ;;
         cleanup)
-            cleanup_old_offsets
+            cleanup_old_offsets "${SUBAGENT_STATE_FILE}"
             echo "Old file offsets cleaned up"
             local offset_count
             offset_count=$(jq '.file_offsets | length' "${SUBAGENT_STATE_FILE}" 2>/dev/null) || offset_count=0

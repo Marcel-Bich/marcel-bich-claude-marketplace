@@ -441,6 +441,98 @@ test_missing_file_handling() {
 }
 
 # =============================================================================
+# Test: Cleanup removes non-existent files
+# =============================================================================
+
+test_cleanup_removes_nonexistent_files() {
+    log_test "Cleanup removes entries for non-existent files"
+
+    # Reset state
+    rm -f "${SUBAGENT_STATE_FILE}" 2>/dev/null || true
+    init_subagent_state
+
+    # Create a real file
+    local real_file="${TEST_DIR}/real-agent.jsonl"
+    echo '{"test":true}' > "${real_file}"
+
+    local current_time
+    current_time=$(date +%s)
+
+    # Write state with one real and one non-existent file entry
+    local tmp_file
+    tmp_file=$(mktemp)
+    jq --arg real "$real_file" --argjson ts "$current_time" '
+        .file_offsets[$real] = {bytes: 100, ts: $ts} |
+        .file_offsets["/nonexistent/deleted-agent.jsonl"] = {bytes: 200, ts: $ts}
+    ' "${SUBAGENT_STATE_FILE}" > "${tmp_file}" && mv "${tmp_file}" "${SUBAGENT_STATE_FILE}"
+
+    # Verify both entries exist before cleanup
+    local count_before
+    count_before=$(jq '.file_offsets | length' "${SUBAGENT_STATE_FILE}" 2>/dev/null)
+    if ! assert_equals "2" "$count_before" "Should have 2 entries before cleanup"; then return 1; fi
+
+    # Run cleanup
+    cleanup_old_offsets "${SUBAGENT_STATE_FILE}"
+
+    # Verify only the real file remains
+    local count_after
+    count_after=$(jq '.file_offsets | length' "${SUBAGENT_STATE_FILE}" 2>/dev/null)
+    if ! assert_equals "1" "$count_after" "Should have 1 entry after cleanup"; then return 1; fi
+
+    # Verify it's the real file that remains
+    local remaining
+    remaining=$(jq -r --arg real "$real_file" '.file_offsets[$real].bytes // "missing"' "${SUBAGENT_STATE_FILE}" 2>/dev/null)
+    if ! assert_equals "100" "$remaining" "Real file entry should remain"; then return 1; fi
+
+    pass
+}
+
+test_cleanup_with_parametrized_state_path() {
+    log_test "Cleanup accepts parametrized state file path"
+
+    # Create a separate state file (simulates main agent state)
+    local alt_state_file="${TEST_DATA_DIR}/alt-state.json"
+    cat > "${alt_state_file}" << 'EOF'
+{
+  "schema_version": 2,
+  "last_scan_timestamp": 0,
+  "last_cache_time": 0,
+  "file_offsets": {
+    "/nonexistent/file1.jsonl": {"bytes": 100, "ts": 1000000},
+    "/nonexistent/file2.jsonl": {"bytes": 200, "ts": 1000000}
+  },
+  "haiku": {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_creation_tokens": 0},
+  "sonnet": {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_creation_tokens": 0},
+  "opus": {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_creation_tokens": 0},
+  "total_tokens": 0,
+  "total_price": 0
+}
+EOF
+
+    # Verify entries exist
+    local count_before
+    count_before=$(jq '.file_offsets | length' "${alt_state_file}" 2>/dev/null)
+    if ! assert_equals "2" "$count_before" "Alt state should have 2 entries before cleanup"; then return 1; fi
+
+    # Run cleanup on the alternative state file
+    cleanup_old_offsets "${alt_state_file}"
+
+    # All entries should be removed (non-existent files)
+    local count_after
+    count_after=$(jq '.file_offsets | length' "${alt_state_file}" 2>/dev/null)
+    if ! assert_equals "0" "$count_after" "Alt state should have 0 entries after cleanup (all files gone)"; then return 1; fi
+
+    # Verify the rest of the state is intact
+    local schema
+    schema=$(jq -r '.schema_version' "${alt_state_file}" 2>/dev/null)
+    if ! assert_equals "2" "$schema" "Schema version should be preserved"; then return 1; fi
+
+    rm -f "${alt_state_file}" 2>/dev/null || true
+
+    pass
+}
+
+# =============================================================================
 # Run All Tests
 # =============================================================================
 
@@ -468,6 +560,10 @@ test_cost_calculation
 # State file tests
 test_init_creates_valid_state
 test_reset_subagent_state
+
+# Cleanup tests
+test_cleanup_removes_nonexistent_files
+test_cleanup_with_parametrized_state_path
 
 # Edge case tests
 test_empty_content_handling
