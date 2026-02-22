@@ -1,6 +1,6 @@
 {
   "name": "limit",
-  "version": "2.23.0",
+  "version": "2.24.0",
   "description": "Live API usage in Claude Code statusline - colored progress bars, Git info, tokens, session metrics, device tracking, and more",
   "keywords": [
     "usage",

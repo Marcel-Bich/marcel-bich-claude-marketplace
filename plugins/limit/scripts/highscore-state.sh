@@ -57,7 +57,7 @@ HIGHSCORE_SCHEMA_VERSION=1
 
 # Debug logging - profile-specific
 HIGHSCORE_DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-0}"
-HIGHSCORE_LOG_FILE="${PLUGIN_DATA_DIR:-${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit}/highscore-debug_${PROFILE_NAME}.log"
+HIGHSCORE_LOG_FILE="/tmp/claude-mb-limit-highscore-debug_${PROFILE_NAME}.log"
 
 highscore_log() {
     if [[ "$HIGHSCORE_DEBUG" == "1" ]]; then

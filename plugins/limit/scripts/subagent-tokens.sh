@@ -38,7 +38,7 @@ SUBAGENT_SCHEMA_VERSION=2
 
 # Debug logging - profile-specific
 SUBAGENT_DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-0}"
-SUBAGENT_LOG_FILE="${PLUGIN_DATA_DIR:-${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit}/subagent-debug_${PROFILE_NAME}.log"
+SUBAGENT_LOG_FILE="/tmp/claude-mb-limit-subagent-debug_${PROFILE_NAME}.log"
 
 subagent_log() {
     if [[ "$SUBAGENT_DEBUG" == "1" ]]; then
