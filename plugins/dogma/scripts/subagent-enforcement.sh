@@ -48,16 +48,26 @@ if is_hydra_worktree; then
     exit 0
 fi
 
-# Get tool name - prefer argument (passed from hooks.json) over stdin
-# This avoids consuming stdin that other hooks need!
+# Always read stdin to access tool_input (each hook gets its own stdin pipe)
+INPUT=$(cat 2>/dev/null || true)
+
+# Get tool name - prefer argument (passed from hooks.json) over stdin parsing
 if [ -n "$1" ]; then
     TOOL_NAME="$1"
     dogma_debug_log "Tool from arg: $TOOL_NAME"
 else
-    # Fallback: read from stdin (but this consumes it for other hooks)
-    INPUT=$(cat 2>/dev/null || true)
     TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
     dogma_debug_log "Tool from stdin: $TOOL_NAME"
+fi
+
+# === PLAN FILE EXCEPTION ===
+# Claude Code plan mode writes to ~/.claude/plans/*.md - always allow
+if [ "$TOOL_NAME" = "Write" ] || [ "$TOOL_NAME" = "Edit" ]; then
+    FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
+    if [[ "$FILE_PATH" == "$HOME/.claude/plans/"*.md ]]; then
+        dogma_debug_log "Plan file write - skip enforcement: $FILE_PATH"
+        exit 0
+    fi
 fi
 
 # === GET BASH COMMAND FOR WHITELIST CHECK ===
