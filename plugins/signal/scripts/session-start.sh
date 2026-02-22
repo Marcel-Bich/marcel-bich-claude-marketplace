@@ -72,7 +72,7 @@ if [ -n "$WINDOW_PID" ]; then
         sleep 1
         kitty_tab_cleanup_stale "$WINDOW_PID"
         rm -f "$EXIT_MONITOR_FILE"
-    ) &
+    ) >/dev/null 2>&1 &
     echo $! > "$EXIT_MONITOR_FILE"
 fi
 

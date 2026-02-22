@@ -48,7 +48,7 @@ _find_kitty_window_pid() {
     # In tmux: start from tmux client PID (which is in kitty's process tree)
     if [ -n "${TMUX:-}" ]; then
         local client_pid
-        client_pid=$(tmux display-message -p '#{client_pid}' 2>/dev/null)
+        client_pid=$(timeout 2 tmux display-message -p '#{client_pid}' 2>/dev/null)
         if [ -n "$client_pid" ]; then
             local result
             result=$(_walk_up_to_kitty_child "$client_pid")
@@ -98,7 +98,7 @@ _is_our_tab_focused() {
     local socket="$1"
     local window_pid="$2"
     local tab_info
-    tab_info=$(kitty @ --to "unix:${socket}" ls 2>/dev/null)
+    tab_info=$(timeout 2 kitty @ --to "unix:${socket}" ls 2>/dev/null)
     [ $? -eq 0 ] || return 1
     local focused
     focused=$(echo "$tab_info" | jq -r --argjson pid "$window_pid" '
@@ -199,7 +199,7 @@ kitty_tab_save_and_mark() {
     else
         # First call: read current tab title via kitty @ ls + PID match
         local tab_info
-        tab_info=$(kitty @ --to "unix:${socket}" ls 2>/dev/null)
+        tab_info=$(timeout 2 kitty @ --to "unix:${socket}" ls 2>/dev/null)
         if [ $? -ne 0 ] || [ -z "$tab_info" ]; then
             _signal_debug "kitty @ ls failed"
             return 0
@@ -226,7 +226,7 @@ kitty_tab_save_and_mark() {
 
     # Set working indicator as PREFIX
     local new_title="[AI...] ${original_title}"
-    if kitty @ --to "unix:${socket}" set-tab-title --match "pid:${window_pid}" "$new_title" 2>/dev/null; then
+    if timeout 2 kitty @ --to "unix:${socket}" set-tab-title --match "pid:${window_pid}" "$new_title" 2>/dev/null; then
         _signal_debug "title set to: '$new_title'"
     else
         _signal_debug "kitty @ set-tab-title failed"
@@ -267,7 +267,7 @@ kitty_tab_restore() {
     fi
 
     # Set finished indicator as PREFIX
-    kitty @ --to "unix:${socket}" set-tab-title --match "pid:${window_pid}" "[FIN] ${original_title}" 2>/dev/null
+    timeout 2 kitty @ --to "unix:${socket}" set-tab-title --match "pid:${window_pid}" "[FIN] ${original_title}" 2>/dev/null
     _signal_debug "title set to: '[FIN] ${original_title}'"
 
     # Background: watch for sustained tab focus (3s debounce), then restore
@@ -278,7 +278,7 @@ kitty_tab_restore() {
             if _is_our_tab_focused "$socket" "$window_pid"; then
                 focused_for=$((focused_for + 1))
                 if [ "$focused_for" -ge "${CLAUDE_MB_KITTY_RESET_INTERVAL:-3}" ]; then
-                    kitty @ --to "unix:${socket}" set-tab-title --match "pid:${window_pid}" "$original_title" 2>/dev/null
+                    timeout 2 kitty @ --to "unix:${socket}" set-tab-title --match "pid:${window_pid}" "$original_title" 2>/dev/null
                     rm -f "$title_file" "$pid_file"
                     _signal_debug "tab focused ${CLAUDE_MB_KITTY_RESET_INTERVAL:-3}s, restored to: '$original_title'"
                     break
@@ -334,7 +334,7 @@ kitty_tab_init_display_name() {
     if [ -z "$socket" ]; then return 0; fi
 
     local tab_info
-    tab_info=$(kitty @ --to "unix:${socket}" ls 2>/dev/null)
+    tab_info=$(timeout 2 kitty @ --to "unix:${socket}" ls 2>/dev/null)
     if [ $? -ne 0 ] || [ -z "$tab_info" ]; then return 0; fi
 
     local title
@@ -383,7 +383,7 @@ kitty_tab_cleanup_stale() {
     socket=$(kitty_tab_find_socket 2>/dev/null)
     if [ -z "$socket" ]; then return 0; fi
 
-    kitty @ --to "unix:${socket}" set-tab-title --match "pid:${window_pid}" "$original_title" 2>/dev/null
+    timeout 2 kitty @ --to "unix:${socket}" set-tab-title --match "pid:${window_pid}" "$original_title" 2>/dev/null
     rm -f "$title_file"
     _signal_debug "cleaned up stale prefix, restored to: '$original_title'"
 }
@@ -409,7 +409,7 @@ kitty_tab_set_working() {
     socket=$(kitty_tab_find_socket 2>/dev/null)
     if [ -z "$socket" ]; then return 0; fi
 
-    kitty @ --to "unix:${socket}" set-tab-title --match "pid:${window_pid}" "[AI...] ${original_title}" 2>/dev/null
+    timeout 2 kitty @ --to "unix:${socket}" set-tab-title --match "pid:${window_pid}" "[AI...] ${original_title}" 2>/dev/null
     _signal_debug "title set to: '[AI...] ${original_title}'"
 }
 
@@ -434,6 +434,6 @@ kitty_tab_set_ask() {
     socket=$(kitty_tab_find_socket 2>/dev/null)
     if [ -z "$socket" ]; then return 0; fi
 
-    kitty @ --to "unix:${socket}" set-tab-title --match "pid:${window_pid}" "[ASK] ${original_title}" 2>/dev/null
+    timeout 2 kitty @ --to "unix:${socket}" set-tab-title --match "pid:${window_pid}" "[ASK] ${original_title}" 2>/dev/null
     _signal_debug "title set to: '[ASK] ${original_title}'"
 }
