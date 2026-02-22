@@ -48,7 +48,7 @@ PROJECT=$(basename "$CWD" 2>/dev/null || echo "claude")
 
 # Kitty tab indicator: restore original title
 source "$PLUGIN_ROOT/scripts/kitty-tab.sh"
-kitty_tab_restore "$PROJECT"
+kitty_tab_restore "$PROJECT" "$PPID"
 DEBOUNCE_FILE="/tmp/claude-mb-notify-${PROJECT}"
 NOW=$(date +%s)
 if [ -f "$DEBOUNCE_FILE" ]; then
