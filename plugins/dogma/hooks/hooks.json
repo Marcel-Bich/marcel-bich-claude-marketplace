@@ -8,19 +8,31 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-suggestion.sh",
             "timeout": 5,
             "description": "Suggest using subagents based on DOGMA-PERMISSIONS.md workflow settings"
-          },
+          }
+        ]
+      },
+      {
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/user-prompt-submit.sh",
             "timeout": 5,
             "description": "Remind of rules at every prompt (Honesty, Planning, Philosophy, Language)"
-          },
+          }
+        ]
+      },
+      {
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/prompt-intervention-reminder.sh",
             "timeout": 5,
             "description": "Suggest skills/MCPs when relevant to the task"
-          },
+          }
+        ]
+      },
+      {
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/checklist-tracking.sh",
@@ -61,43 +73,78 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/token-protection.sh",
             "timeout": 5,
             "description": "Block commands that could expose tokens/credentials (env, git remote -v, etc.)"
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/git-add-protection.sh",
             "timeout": 5,
             "description": "Block git add for AI files and secret files"
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/git-permissions.sh",
             "timeout": 5,
             "description": "Enforce git permissions from CLAUDE.git.md"
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/file-protection.sh",
             "timeout": 5,
             "description": "Block destructive file operations (rm, del, git clean)"
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/dependency-verification.sh",
             "timeout": 10,
             "description": "Ask user if they want to search for security risks before installing packages"
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/pre-commit-lint.sh",
             "timeout": 5,
             "description": "Block git commit until /dogma:lint has been run (ENV: CLAUDE_MB_DOGMA_PRE_COMMIT_LINT=true)"
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/git-pull-before-push.sh",
             "timeout": 15,
             "description": "Block git push if local branch is behind remote (ENV: CLAUDE_MB_DOGMA_PULL_BEFORE_PUSH=true)"
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh Bash",
@@ -114,13 +161,23 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/secrets-detection.sh",
             "timeout": 5,
             "description": "Block writing secrets (API keys, tokens, passwords) to files"
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/write-edit-reminder.sh",
             "timeout": 5,
             "description": "Remind of language and AI-traces rules with @-references"
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh Write",
@@ -137,13 +194,23 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/secrets-detection.sh",
             "timeout": 5,
             "description": "Block writing secrets (API keys, tokens, passwords) to files"
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/write-edit-reminder.sh",
             "timeout": 5,
             "description": "Remind of language and AI-traces rules with @-references"
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh Edit",
@@ -160,13 +227,23 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-enforcement.sh Task",
             "timeout": 5,
             "description": "Track subagent usage to reset direct work warning"
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "Task",
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-context.sh",
             "timeout": 5,
             "description": "Remind about subagent context rules (CLAUDE.md, no push, etc.)"
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "Task",
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/enforce-model-policy.sh",
@@ -196,7 +273,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/post-write-validate.sh",
             "timeout": 5,
             "description": "Validate written content for AI traces (curly quotes, em-dashes, etc.)"
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/review-trigger.sh",
@@ -213,7 +295,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/post-write-validate.sh",
             "timeout": 5,
             "description": "Validate written content for AI traces (curly quotes, em-dashes, etc.)"
-          },
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/review-trigger.sh",
@@ -253,13 +340,21 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/version-sync-check.sh",
             "timeout": 5,
             "description": "Check for version mismatches across version files"
-          },
+          }
+        ]
+      },
+      {
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/lint-on-stop.sh",
             "timeout": 30,
             "description": "Run prettier check when task completes (ENV: CLAUDE_MB_DOGMA_LINT_ON_STOP=true)"
-          },
+          }
+        ]
+      },
+      {
+        "hooks": [
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/checklist-reminder.sh",
