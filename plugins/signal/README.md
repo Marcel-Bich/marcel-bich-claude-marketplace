@@ -12,11 +12,31 @@ Desktop notifications showing what Claude Code is working on - stay informed eve
 - Optional AI summaries (using Haiku)
 - Smart filtering to prevent notification spam
 - Non-stacking notifications: previous notifications are closed before sending new ones to prevent Linux tray stacking
+- Kitty terminal tab indicator for active Claude sessions
 - Cross-platform: Linux and WSL2 (Windows 10/11)
 
 ## Requirements
 
 - `jq` - JSON processor (install: `sudo apt install jq`)
+
+## Kitty Tab Indicator
+
+Marks the kitty terminal tab title with a prefix during active Claude sessions so you can tell at a glance which tabs are running Claude.
+
+- `[ai...]` prefix while Claude is working
+- `[fin]` prefix when the session ends, automatically removed after you focus the tab for 3 seconds
+
+### Configuration
+
+| Variable | Values | Default |
+|---|---|---|
+| `CLAUDE_MB_KITTY_TAB` | `true` / `false` | `true` |
+
+### Requirements
+
+- [kitty](https://sw.kovidgoyal.net/kitty/) terminal
+- `allow_remote_control yes` in `kitty.conf`
+- `listen_on unix:/tmp/mykitty` in `kitty.conf`
 
 ## Installation
 
