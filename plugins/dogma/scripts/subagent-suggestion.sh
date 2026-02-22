@@ -180,7 +180,7 @@ echo "</dogma-orchestration>"
 # This ensures the subagent-first warning triggers again periodically
 STATE_DIR="/tmp/dogma-subagent-state"
 COUNTER_FILE="$STATE_DIR/prompt-counter"
-RESET_INTERVAL=2  # Reset every N prompts
+RESET_INTERVAL="${CLAUDE_MB_DOGMA_RESET_INTERVAL:-2}"
 
 if [ -d "$STATE_DIR" ]; then
     # Read and increment counter
@@ -196,14 +196,17 @@ if [ -d "$STATE_DIR" ]; then
     echo "$COUNTER" > "$COUNTER_FILE" 2>/dev/null || true
 
     # Reset ALL state every N prompts (not just warning flags)
-    if [ $((COUNTER % RESET_INTERVAL)) -eq 0 ]; then
-        # Delete warning flags
-        find "$STATE_DIR" -name "*.hydra-warned" -delete 2>/dev/null || true
-        find "$STATE_DIR" -name "*.fallback-warned" -delete 2>/dev/null || true
-        # Delete state files (tool tracking) - but keep counter
-        find "$STATE_DIR" -type f ! -name "prompt-counter" -delete 2>/dev/null || true
-        if [ "$DEBUG" = "true" ]; then
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Reset ALL subagent state (prompt $COUNTER)" >> /tmp/dogma-debug.log
+    # When RESET_INTERVAL is 0, skip reset entirely (enforcement disabled)
+    if [ "$RESET_INTERVAL" -gt 0 ]; then
+        if [ $((COUNTER % RESET_INTERVAL)) -eq 0 ]; then
+            # Delete warning flags
+            find "$STATE_DIR" -name "*.hydra-warned" -delete 2>/dev/null || true
+            find "$STATE_DIR" -name "*.fallback-warned" -delete 2>/dev/null || true
+            # Delete state files (tool tracking) - but keep counter
+            find "$STATE_DIR" -type f ! -name "prompt-counter" -delete 2>/dev/null || true
+            if [ "$DEBUG" = "true" ]; then
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] Reset ALL subagent state (prompt $COUNTER)" >> /tmp/dogma-debug.log
+            fi
         fi
     fi
 fi

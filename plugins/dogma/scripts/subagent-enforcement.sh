@@ -13,6 +13,7 @@
 #
 # ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch
 # ENV: CLAUDE_MB_DOGMA_SUBAGENT_ENFORCEMENT=true (default) | false
+# ENV: CLAUDE_MB_DOGMA_RESET_INTERVAL=2 (default) | 0 = disable enforcement
 
 # NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
 trap 'exit 0' ERR
@@ -38,6 +39,13 @@ fi
 # === CONFIGURATION ===
 ENABLED="${CLAUDE_MB_DOGMA_SUBAGENT_ENFORCEMENT:-true}"
 if [ "$ENABLED" != "true" ]; then
+    exit 0
+fi
+
+# === RESET INTERVAL CHECK ===
+# When interval is 0, enforcement is completely disabled
+if [ "${CLAUDE_MB_DOGMA_RESET_INTERVAL:-2}" = "0" ]; then
+    dogma_debug_log "Reset interval is 0 - enforcement disabled"
     exit 0
 fi
 
