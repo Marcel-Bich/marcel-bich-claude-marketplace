@@ -1,6 +1,6 @@
 name: limit
 description: Live API usage in Claude Code statusline - colored progress bars, Git info, tokens, session metrics, device tracking, and more
-version: 2.21.1
+version: 2.22.0
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 

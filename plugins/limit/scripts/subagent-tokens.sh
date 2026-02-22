@@ -338,17 +338,13 @@ extract_tokens_per_model() {
             }
         ] |
 
-        # Group by category and sum
-        group_by(.category) |
-        map({
-            key: .[0].category,
-            value: {
-                input: (map(.input) | add // 0),
-                output: (map(.output) | add // 0),
-                cache_read: (map(.cache_read) | add // 0),
-                cache_creation: (map(.cache_creation) | add // 0)
-            }
-        }) | from_entries |
+        # Accumulate tokens per category
+        reduce .[] as $e ({};
+            .[$e.category].input += ($e.input // 0)
+            | .[$e.category].output += ($e.output // 0)
+            | .[$e.category].cache_read += ($e.cache_read // 0)
+            | .[$e.category].cache_creation += ($e.cache_creation // 0)
+        ) |
 
         # Ensure all categories exist
         {

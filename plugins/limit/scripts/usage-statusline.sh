@@ -1077,20 +1077,6 @@ format_highscore() {
     fi
 }
 
-# Calculate token cost based on model (input price per million tokens)
-calculate_token_cost() {
-    local tokens="$1"
-    local model="$2"
-    local price_per_million=3  # Default: Sonnet
-
-    case "${model,,}" in
-        *opus*) price_per_million=15 ;;
-        *sonnet*) price_per_million=3 ;;
-        *haiku*) price_per_million=0.25 ;;
-    esac
-
-    awk "BEGIN {printf \"%.2f\", ($tokens / 1000000) * $price_per_million}"
-}
 
 # Get and update totals using per-session delta tracking
 # Each session is tracked by its session_id, allowing parallel sessions to accumulate correctly
