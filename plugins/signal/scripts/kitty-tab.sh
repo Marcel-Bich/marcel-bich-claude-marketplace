@@ -198,6 +198,9 @@ kitty_tab_save_and_mark() {
             return 0
         fi
 
+        # Strip stale prefixes from previous sessions
+        original_title=$(echo "$original_title" | sed 's/^\(\[ai\.\.\.\] \|\[ask\] \|\[fin\] \)*//')
+
         echo "$original_title" > "$title_file"
         _signal_debug "saved title for window pid $window_pid: '$original_title'"
     fi
