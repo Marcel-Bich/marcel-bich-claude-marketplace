@@ -116,6 +116,9 @@ case "$HOOK_TYPE" in
         ;;
 esac
 
+# Set [ask] prefix on kitty tab (all hooks here are user-waiting scenarios)
+kitty_tab_set_ask "$PROJECT"
+
 # Send notification
 "$PLUGIN_ROOT/scripts/notify-replace.sh" "$NOTIFY_ID" "$TITLE" "$MESSAGE" "$ICON" "$URGENCY"
 

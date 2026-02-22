@@ -159,6 +159,8 @@ kitty_tab_save_and_mark() {
         return 0
     fi
 
+    echo "$window_pid" > "/tmp/claude-mb-kitty-pid-${project}"
+
     local title_file="/tmp/claude-mb-kitty-title-${window_pid}"
     local pid_file="/tmp/claude-mb-kitty-reset-pid-${window_pid}"
 
@@ -199,6 +201,8 @@ kitty_tab_save_and_mark() {
         echo "$original_title" > "$title_file"
         _signal_debug "saved title for window pid $window_pid: '$original_title'"
     fi
+
+    echo "$original_title" > "/tmp/claude-mb-kitty-display-${project}"
 
     # Set working indicator as PREFIX
     local new_title="[ai...] ${original_title}"
@@ -255,7 +259,7 @@ kitty_tab_restore() {
                 focused_for=$((focused_for + 1))
                 if [ "$focused_for" -ge "${CLAUDE_MB_KITTY_RESET_INTERVAL:-3}" ]; then
                     kitty @ --to "unix:${socket}" set-tab-title --match "pid:${window_pid}" "$original_title" 2>/dev/null
-                    rm -f "$title_file" "$pid_file"
+                    rm -f "$title_file" "$pid_file" "/tmp/claude-mb-kitty-pid-${project}" "/tmp/claude-mb-kitty-display-${project}"
                     _signal_debug "tab focused ${CLAUDE_MB_KITTY_RESET_INTERVAL:-3}s, restored to: '$original_title'"
                     break
                 fi
@@ -273,20 +277,45 @@ kitty_tab_restore() {
 kitty_tab_get_display_name() {
     local fallback="${1:-claude}"
 
-    # Try saved title file (already cached by kitty_tab_save_and_mark)
-    local window_pid
-    window_pid=$(_find_kitty_window_pid 2>/dev/null)
-    if [ -n "$window_pid" ]; then
-        local title_file="/tmp/claude-mb-kitty-title-${window_pid}"
-        if [ -f "$title_file" ]; then
-            local title
-            title=$(cat "$title_file" 2>/dev/null)
-            if [ -n "$title" ]; then
-                echo "$title"
-                return 0
-            fi
+    # Try project-based display name file (set by kitty_tab_save_and_mark)
+    local display_file="/tmp/claude-mb-kitty-display-${fallback}"
+    if [ -f "$display_file" ]; then
+        local title
+        title=$(cat "$display_file" 2>/dev/null)
+        if [ -n "$title" ]; then
+            echo "$title"
+            return 0
         fi
     fi
 
     echo "$fallback"
+}
+
+# --- Set [ask] prefix on tab title ---
+
+kitty_tab_set_ask() {
+    local project="${1:-claude}"
+
+    if [ "${CLAUDE_MB_KITTY_TAB:-true}" = "false" ]; then return 0; fi
+
+    # Read window PID from project-based file (set by kitty_tab_save_and_mark)
+    local pid_file="/tmp/claude-mb-kitty-pid-${project}"
+    if [ ! -f "$pid_file" ]; then return 0; fi
+    local window_pid
+    window_pid=$(cat "$pid_file" 2>/dev/null)
+    if [ -z "$window_pid" ]; then return 0; fi
+
+    # Read original title
+    local title_file="/tmp/claude-mb-kitty-title-${window_pid}"
+    if [ ! -f "$title_file" ]; then return 0; fi
+    local original_title
+    original_title=$(cat "$title_file" 2>/dev/null)
+    if [ -z "$original_title" ]; then return 0; fi
+
+    local socket
+    socket=$(kitty_tab_find_socket 2>/dev/null)
+    if [ -z "$socket" ]; then return 0; fi
+
+    kitty @ --to "unix:${socket}" set-tab-title --match "pid:${window_pid}" "[ask] ${original_title}" 2>/dev/null
+    _signal_debug "title set to: '[ask] ${original_title}'"
 }
