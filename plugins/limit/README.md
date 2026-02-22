@@ -79,6 +79,7 @@ All features can be toggled via environment variables. Export them in your shell
 | `CLAUDE_MB_LIMIT_PROGRESS` | true | Show progress bars |
 | `CLAUDE_MB_LIMIT_RESET` | true | Show reset times |
 | `CLAUDE_MB_LIMIT_SEPARATORS` | true | Show visual separators |
+| `CLAUDE_MB_LIMIT_OPUS` | true | Show Opus limit (future-ready) |
 
 **Highscore Settings** (enabled by default):
 
@@ -95,7 +96,12 @@ All features can be toggled via environment variables. Export them in your shell
 | `CLAUDE_MB_LIMIT_DEFAULT_COLOR` | `\033[90m` | Default color (ANSI escape sequence) |
 | `CLAUDE_MB_LIMIT_SHOW_ERRORS` | false | Show "limit: error" on failures |
 | `CLAUDE_MB_LIMIT_AVERAGE` | true | Show rolling average display |
-| `CLAUDE_MB_LIMIT_DEBUG` | false | Enable debug logging to `/tmp/claude-mb-limit-debug.log` |
+| `CLAUDE_MB_LIMIT_DEBUG` | false | Enable debug logging to `/tmp/claude-mb-limit-debug_${PROFILE_NAME}.log` |
+| `CLAUDE_MB_LIMIT_HISTORY_ENABLED` | true | Enable history tracking for average display |
+| `CLAUDE_MB_LIMIT_HISTORY_INTERVAL` | 600 | Minimum seconds between history writes (10 min) |
+| `CLAUDE_MB_LIMIT_HISTORY_DAYS` | 28 | History retention in days |
+| `CLAUDE_MB_LIMIT_PROGRESSBAR_MODE` | auto-compact | Progress bar mode (auto-compact uses ContextLeft as threshold) |
+| `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | 85 | Auto-compact threshold percentage (used by auto-compact mode) |
 
 **Multi-Account Support:**
 
@@ -122,7 +128,7 @@ Instead of complex calibration, we track the highest token usage ever measured o
 
 **LimitAt Achievement:** If you push hard enough to reach >95% API utilization when breaking your highscore, you discover the real limit of your plan - like an Easter-Egg!
 
-**State file:** `~/.claude/marcel-bich-claude-marketplace/limit/limit-highscore-state.json`
+**State file:** `~/.claude/marcel-bich-claude-marketplace/limit/limit-highscore-state_${PROFILE_NAME}.json`
 
 ## Debug Scripts
 
