@@ -27,19 +27,19 @@ echo ""
 
 PROJECT="test-project"
 
-echo "Setting [ai...] indicator..."
-kitty_tab_save_and_mark "$PROJECT" "$$"
-echo "Tab should now show '[ai...] <original-title>' prefix."
+echo "Setting [AI...] indicator..."
+kitty_tab_save_and_mark "$PROJECT"
+echo "Tab should now show '[AI...] <original-title>' prefix."
 echo "Waiting 3 seconds..."
 sleep 3
 
 echo ""
-echo "Setting [fin] indicator..."
-kitty_tab_restore "$PROJECT" "$$"
-echo "Tab should now show '[fin] <original-title>' prefix."
+echo "Setting [FIN] indicator..."
+kitty_tab_restore "$PROJECT"
+echo "Tab should now show '[FIN] <original-title>' prefix."
 echo ""
 echo "Switch to another tab, then switch back to this tab."
-echo "The [fin] prefix should disappear when you focus this tab."
+echo "The [FIN] prefix should disappear when you focus this tab."
 echo ""
 echo "Waiting 30 seconds for you to test focus-based reset..."
 sleep 30

@@ -35,4 +35,45 @@ else
     rm -f /tmp/claude-mb-notify-id-project-${PROJECT}-* 2>/dev/null
 fi
 
+# --- Kitty tab: clean up stale prefix and start exit monitor ---
+
+source "$SCRIPT_DIR/kitty-tab.sh"
+
+# Find our kitty window PID (unique per tab)
+WINDOW_PID=$(_find_kitty_window_pid)
+
+if [ -n "$WINDOW_PID" ]; then
+    # Kill old exit monitor for THIS tab
+    EXIT_MONITOR_FILE="/tmp/claude-mb-kitty-exit-monitor-${WINDOW_PID}"
+    if [ -f "$EXIT_MONITOR_FILE" ]; then
+        OLD_MONITOR=$(cat "$EXIT_MONITOR_FILE" 2>/dev/null)
+        if [ -n "$OLD_MONITOR" ] && kill -0 "$OLD_MONITOR" 2>/dev/null; then
+            kill "$OLD_MONITOR" 2>/dev/null
+        fi
+    fi
+
+    # Immediate cleanup of any stale prefix
+    kitty_tab_cleanup_stale "$WINDOW_PID"
+
+    # Initialize display name for notifications before first prompt
+    kitty_tab_init_display_name
+
+    # Find Claude's actual PID (not an ephemeral hook shell)
+    CLAUDE_PID=$(_find_claude_pid)
+    if [ -z "$CLAUDE_PID" ]; then
+        CLAUDE_PID=$PPID
+    fi
+
+    # Background monitor: clean up when Claude exits
+    (
+        while kill -0 "$CLAUDE_PID" 2>/dev/null; do
+            sleep 3
+        done
+        sleep 1
+        kitty_tab_cleanup_stale "$WINDOW_PID"
+        rm -f "$EXIT_MONITOR_FILE"
+    ) &
+    echo $! > "$EXIT_MONITOR_FILE"
+fi
+
 exit 0
