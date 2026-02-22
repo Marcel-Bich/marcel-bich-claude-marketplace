@@ -14,8 +14,10 @@ PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Load WSL utilities
 source "$PLUGIN_ROOT/scripts/wsl-utils.sh"
+source "$PLUGIN_ROOT/scripts/kitty-tab.sh"
 HOOK_TYPE="${1:-notification}"
 PROJECT=$(basename "$PWD" 2>/dev/null || echo "claude")
+DISPLAY_NAME=$(kitty_tab_get_display_name "$PROJECT")
 
 # Read JSON input
 INPUT=""
@@ -42,7 +44,7 @@ case "$HOOK_TYPE" in
         exit 0
         ;;
     notification|Notification)
-        TITLE="Claude Code [$PROJECT]"
+        TITLE="Claude Code [$DISPLAY_NAME]"
         ICON="dialog-information"
         URGENCY=2
         SOUND_TYPE="attention"
@@ -72,7 +74,7 @@ case "$HOOK_TYPE" in
         fi
         ;;
     PreToolUse|pretooluse)
-        TITLE="Tool waiting [$PROJECT]"
+        TITLE="Tool waiting [$DISPLAY_NAME]"
         ICON="dialog-warning"
         URGENCY=2
         if [ -n "$INPUT" ]; then

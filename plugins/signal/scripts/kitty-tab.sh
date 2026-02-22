@@ -10,11 +10,10 @@
 #   CLAUDE_MB_KITTY_TAB: "true" (default) or "false" to disable
 #   CLAUDE_MB_SIGNAL_DEBUG: "true" for debug logging to stderr
 #
-# State files (per Claude PID):
-#   /tmp/claude-mb-kitty-title-${cpid}      -- saved original title
-#   /tmp/claude-mb-kitty-wpid-${cpid}       -- kitty window PID for --match
-#   /tmp/claude-mb-kitty-reset-pid-${cpid}  -- PID of background focus watcher
-#   /tmp/claude-mb-kitty-socket             -- cached socket path
+# State files (per kitty window PID):
+#   /tmp/claude-mb-kitty-title-${window_pid}      -- saved original title
+#   /tmp/claude-mb-kitty-reset-pid-${window_pid}  -- PID of background focus watcher
+#   /tmp/claude-mb-kitty-socket                    -- cached socket path
 
 # --- Debug helper ---
 
@@ -24,39 +23,51 @@ _signal_debug() {
     fi
 }
 
-# --- Find kitty window PID via process tree ---
+# --- Walk up process tree until parent is kitty, return that PID ---
 
-_find_kitty_window_pid() {
-    # In tmux: client's parent is the kitty window's shell
-    if [ -n "${TMUX:-}" ]; then
-        local client_pid
-        client_pid=$(tmux display-message -p '#{client_pid}' 2>/dev/null)
-        if [ -n "$client_pid" ]; then
-            local shell_pid
-            shell_pid=$(ps -p "$client_pid" -o ppid= 2>/dev/null | tr -d ' ')
-            if [ -n "$shell_pid" ]; then
-                _signal_debug "tmux client $client_pid -> window shell $shell_pid"
-                echo "$shell_pid"
-                return 0
-            fi
-        fi
-    fi
-
-    # Not in tmux: walk up process tree until parent is kitty
-    local pid=$$
+_walk_up_to_kitty_child() {
+    local pid="$1"
     while [ "$pid" -gt 1 ] 2>/dev/null; do
         local parent
         parent=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')
-        if [ -z "$parent" ]; then break; fi
+        if [ -z "$parent" ] || [ "$parent" -le 1 ] 2>/dev/null; then break; fi
         local parent_comm
         parent_comm=$(ps -p "$parent" -o comm= 2>/dev/null)
         if [ "$parent_comm" = "kitty" ]; then
-            _signal_debug "process tree: kitty -> $pid"
             echo "$pid"
             return 0
         fi
         pid="$parent"
     done
+    return 1
+}
+
+# --- Find kitty window PID via process tree ---
+
+_find_kitty_window_pid() {
+    # In tmux: start from tmux client PID (which is in kitty's process tree)
+    if [ -n "${TMUX:-}" ]; then
+        local client_pid
+        client_pid=$(tmux display-message -p '#{client_pid}' 2>/dev/null)
+        if [ -n "$client_pid" ]; then
+            local result
+            result=$(_walk_up_to_kitty_child "$client_pid")
+            if [ -n "$result" ]; then
+                _signal_debug "tmux client $client_pid -> kitty child $result"
+                echo "$result"
+                return 0
+            fi
+        fi
+    fi
+
+    # Not in tmux (or tmux detection failed): start from $$
+    local result
+    result=$(_walk_up_to_kitty_child "$$")
+    if [ -n "$result" ]; then
+        _signal_debug "process tree: kitty -> $result"
+        echo "$result"
+        return 0
+    fi
 
     _signal_debug "could not find kitty window PID"
     return 1
@@ -134,12 +145,22 @@ kitty_tab_available() {
 
 kitty_tab_save_and_mark() {
     local project="${1:-claude}"
-    local cpid="${2:-$$}"
-    local title_file="/tmp/claude-mb-kitty-title-${cpid}"
-    local wpid_file="/tmp/claude-mb-kitty-wpid-${cpid}"
-    local pid_file="/tmp/claude-mb-kitty-reset-pid-${cpid}"
 
     if ! kitty_tab_available; then return 0; fi
+
+    local socket
+    socket=$(kitty_tab_find_socket)
+
+    # Find our kitty window PID -- this IS the unique key
+    local window_pid
+    window_pid=$(_find_kitty_window_pid)
+    if [ -z "$window_pid" ]; then
+        _signal_debug "could not find kitty window PID"
+        return 0
+    fi
+
+    local title_file="/tmp/claude-mb-kitty-title-${window_pid}"
+    local pid_file="/tmp/claude-mb-kitty-reset-pid-${window_pid}"
 
     # Cancel pending focus-watcher if exists
     if [ -f "$pid_file" ]; then
@@ -152,23 +173,12 @@ kitty_tab_save_and_mark() {
         rm -f "$pid_file"
     fi
 
-    local socket
-    socket=$(kitty_tab_find_socket)
-
-    local window_pid original_title
-    if [ -f "$wpid_file" ] && [ -f "$title_file" ]; then
-        window_pid=$(cat "$wpid_file" 2>/dev/null)
+    local original_title
+    if [ -f "$title_file" ]; then
         original_title=$(cat "$title_file" 2>/dev/null)
-        _signal_debug "reusing saved window pid: $window_pid, original: '$original_title'"
+        _signal_debug "reusing saved title for window pid $window_pid: '$original_title'"
     else
-        # First call: find our kitty window
-        window_pid=$(_find_kitty_window_pid)
-        if [ -z "$window_pid" ]; then
-            _signal_debug "could not find kitty window PID"
-            return 0
-        fi
-
-        # Read current tab title via kitty @ ls + PID match
+        # First call: read current tab title via kitty @ ls + PID match
         local tab_info
         tab_info=$(kitty @ --to "unix:${socket}" ls 2>/dev/null)
         if [ $? -ne 0 ] || [ -z "$tab_info" ]; then
@@ -186,9 +196,8 @@ kitty_tab_save_and_mark() {
             return 0
         fi
 
-        echo "$window_pid" > "$wpid_file"
         echo "$original_title" > "$title_file"
-        _signal_debug "saved window pid: $window_pid, original: '$original_title'"
+        _signal_debug "saved title for window pid $window_pid: '$original_title'"
     fi
 
     # Set working indicator as PREFIX
@@ -204,32 +213,32 @@ kitty_tab_save_and_mark() {
 
 kitty_tab_restore() {
     local project="${1:-claude}"
-    local cpid="${2:-$$}"
-    local title_file="/tmp/claude-mb-kitty-title-${cpid}"
-    local wpid_file="/tmp/claude-mb-kitty-wpid-${cpid}"
-    local pid_file="/tmp/claude-mb-kitty-reset-pid-${cpid}"
 
     if [ "${CLAUDE_MB_KITTY_TAB:-true}" = "false" ]; then return 0; fi
 
-    if [ ! -f "$wpid_file" ] || [ ! -f "$title_file" ]; then
-        _signal_debug "no saved state for cpid '$cpid'"
-        return 0
-    fi
-
-    local window_pid original_title
-    window_pid=$(cat "$wpid_file" 2>/dev/null)
-    original_title=$(cat "$title_file" 2>/dev/null)
-
+    # Find our kitty window PID -- same key as save
+    local window_pid
+    window_pid=$(_find_kitty_window_pid)
     if [ -z "$window_pid" ]; then
-        _signal_debug "empty saved window pid"
-        rm -f "$wpid_file" "$title_file"
+        _signal_debug "could not find kitty window PID for restore"
         return 0
     fi
+
+    local title_file="/tmp/claude-mb-kitty-title-${window_pid}"
+    local pid_file="/tmp/claude-mb-kitty-reset-pid-${window_pid}"
+
+    if [ ! -f "$title_file" ]; then
+        _signal_debug "no saved state for window pid $window_pid"
+        return 0
+    fi
+
+    local original_title
+    original_title=$(cat "$title_file" 2>/dev/null)
 
     local socket
     socket=$(kitty_tab_find_socket)
     if [ -z "$socket" ]; then
-        rm -f "$wpid_file" "$title_file"
+        rm -f "$title_file"
         return 0
     fi
 
@@ -240,14 +249,14 @@ kitty_tab_restore() {
     # Background: watch for sustained tab focus (3s debounce), then restore
     (
         local focused_for=0
-        while [ -f "$wpid_file" ]; do
+        while [ -f "$title_file" ]; do
             sleep 1
             if _is_our_tab_focused "$socket" "$window_pid"; then
                 focused_for=$((focused_for + 1))
-                if [ "$focused_for" -ge 3 ]; then
+                if [ "$focused_for" -ge "${CLAUDE_MB_KITTY_RESET_INTERVAL:-3}" ]; then
                     kitty @ --to "unix:${socket}" set-tab-title --match "pid:${window_pid}" "$original_title" 2>/dev/null
-                    rm -f "$wpid_file" "$title_file" "$pid_file"
-                    _signal_debug "tab focused 3s, restored to: '$original_title'"
+                    rm -f "$title_file" "$pid_file"
+                    _signal_debug "tab focused ${CLAUDE_MB_KITTY_RESET_INTERVAL:-3}s, restored to: '$original_title'"
                     break
                 fi
             else
@@ -257,4 +266,27 @@ kitty_tab_restore() {
     ) &
     echo $! > "$pid_file"
     _signal_debug "started focus watcher (pid $!)"
+}
+
+# --- Return kitty tab title if available, otherwise fallback ---
+
+kitty_tab_get_display_name() {
+    local fallback="${1:-claude}"
+
+    # Try saved title file (already cached by kitty_tab_save_and_mark)
+    local window_pid
+    window_pid=$(_find_kitty_window_pid 2>/dev/null)
+    if [ -n "$window_pid" ]; then
+        local title_file="/tmp/claude-mb-kitty-title-${window_pid}"
+        if [ -f "$title_file" ]; then
+            local title
+            title=$(cat "$title_file" 2>/dev/null)
+            if [ -n "$title" ]; then
+                echo "$title"
+                return 0
+            fi
+        fi
+    fi
+
+    echo "$fallback"
 }

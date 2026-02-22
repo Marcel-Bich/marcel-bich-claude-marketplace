@@ -48,7 +48,8 @@ PROJECT=$(basename "$CWD" 2>/dev/null || echo "claude")
 
 # Kitty tab indicator: restore original title
 source "$PLUGIN_ROOT/scripts/kitty-tab.sh"
-kitty_tab_restore "$PROJECT" "$PPID"
+DISPLAY_NAME=$(kitty_tab_get_display_name "$PROJECT")
+kitty_tab_restore "$PROJECT"
 DEBOUNCE_FILE="/tmp/claude-mb-notify-${PROJECT}"
 NOW=$(date +%s)
 if [ -f "$DEBOUNCE_FILE" ]; then
@@ -126,7 +127,7 @@ if [ -z "$SUMMARY" ] || [ ${#SUMMARY} -lt 10 ]; then
 fi
 
 # Send notification
-"$PLUGIN_ROOT/scripts/notify-replace.sh" "project-${PROJECT}-stop" "✨ Done [$PROJECT]" "$SUMMARY" "dialog-information" 1
+"$PLUGIN_ROOT/scripts/notify-replace.sh" "project-${PROJECT}-stop" "✨ Done [$DISPLAY_NAME]" "$SUMMARY" "dialog-information" 1
 
 # Play completion sound
 if is_wsl; then
