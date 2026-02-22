@@ -35,8 +35,4 @@ else
     rm -f /tmp/claude-mb-notify-id-project-${PROJECT}-* 2>/dev/null
 fi
 
-# Kitty tab indicator: mark tab as working
-source "$SCRIPT_DIR/kitty-tab.sh"
-kitty_tab_save_and_mark "$PROJECT" "$$"
-
 exit 0
