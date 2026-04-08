@@ -24,6 +24,7 @@ Desktop notifications showing what Claude Code is working on - stay informed eve
 Marks the kitty terminal tab title with a prefix during active Claude sessions so you can tell at a glance which tabs are running Claude.
 
 - `[ai...]` prefix while Claude is working
+- `[ask]` prefix when user input or permission is required
 - `[fin]` prefix when the session ends, automatically removed after you focus the tab for 3 seconds
 
 ### Configuration

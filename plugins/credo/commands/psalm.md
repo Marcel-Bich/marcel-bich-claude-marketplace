@@ -600,8 +600,9 @@ Beyond what the main workflow covers, dogma offers these additional rituals:
 | `/dogma:permissions`     | Create or update DOGMA-PERMISSIONS.md interactively               |
 | `/dogma:force`           | Apply all CLAUDE rules to your project with full control          |
 | `/dogma:sanitize-git`    | Cleanse git history from Claude/AI traces                         |
-| `/dogma:docs-update`     | Synchronize documentation across README and wiki                  |
-| `/dogma:ignore:sync-all` | Sync ignore patterns to all local repositories (marketplace only) |
+| `/dogma:docs-update`       | Synchronize documentation across README and wiki                  |
+| `/dogma:recommended:setup` | Check and install recommended plugins and MCP servers             |
+| `/dogma:ignore:sync-all`   | Sync ignore patterns to all local repositories (marketplace only) |
 
 **The preacher's wisdom:**
 
