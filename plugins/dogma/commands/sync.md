@@ -761,9 +761,16 @@ Add ALL known AI-file patterns. This protects files even if they don't exist yet
 [Ww][Hh][Aa][Tt][Ss]-[Nn][Ee][Xx][Tt]*.[Mm][Dd]
 .[Pp][Ll][Aa][Nn][Nn][Ii][Nn][Gg]/
 [Pp][Rr][Oo][Mm][Pp][Tt][Ss]/
+[Hh][Aa][Nn][Dd][Oo][Ff][Ff]*
+[Tt][Ee][Ss][Tt]_[Cc][Oo][Vv][Ee][Rr][Aa][Gg][Ee].[Mm][Dd]
 **/[Tt][Oo][Dd][Oo]*
+**/.[Tt][Oo][Dd][Oo]/
 **/[Tt][Oo]-[Dd][Oo]*
 **/[Tt][Oo]_[Dd][Oo]*
+**/[Tt][Oo]-[Dd][Ee][Ll][Ee][Tt][Ee]*
+**/.[Mm][Oo][Cc][Kk][Uu][Pp][Ss]/
+**/.[Dd][Ee][Mm][Oo][Ss]/
+**/.[Bb][Aa][Cc][Kk][Ll][Oo][Gg]/
 
 # --- Import Plugin Cache ---
 **/[Mm][Aa][Bb][Ii]-[Ii][Mm][Pp][Oo][Rr][Tt]/
@@ -779,7 +786,7 @@ Add ALL known AI-file patterns. This protects files even if they don't exist yet
 # --- Claude ---
 [Cc][Ll][Aa][Uu][Dd][Ee].[Mm][Dd]
 [Cc][Ll][Aa][Uu][Dd][Ee]/
-[Cc][Ll][Aa][Uu][Dd][Ee].*.[Mm][Dd]
+[Cc][Ll][Aa][Uu][Dd][Ee][-_.]*
 
 # --- Cursor ---
 .[Cc][Uu][Rr][Ss][Oo][Rr]/
