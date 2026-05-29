@@ -1,6 +1,6 @@
 # get-shit-done
 
-Installer for TÂCHES' Get-Shit-Done workflow system.
+Installer for the Get-Shit-Done workflow system - own secured & frozen fork, markdown skills only.
 
 ## What This Does
 
@@ -9,7 +9,7 @@ This plugin installs GSD by copying commands and resources to:
 - `~/.claude/commands/gsd/` (slash commands)
 - `~/.claude/get-shit-done/` (templates, workflows, references)
 
-After setup, you use the original GSD commands directly.
+After setup, you use the GSD commands directly. Only markdown skills are installed - no executable code, hooks, or npm packages.
 
 ## Commands
 
@@ -29,29 +29,23 @@ After setup, you use the original GSD commands directly.
 
 The following plugins complement GSD workflows:
 
-| Plugin | Description | Author |
+| Plugin | Description | Source |
 |--------|-------------|--------|
-| [taches-cc-resources](https://github.com/taches/taches-cc-resources) | Skills for creating plans, prompts, slash commands, agents. Debugging and todo management. | [TACHES](https://github.com/taches) |
+| [taches-cc-resources](https://github.com/Marcel-Bich/taches-cc-resources) | Skills for creating plans, prompts, slash commands, agents. Debugging and todo management. Own secured & frozen fork, markdown skills only. | Marcel-Bich (secured fork) |
 
-## Credits
+## Source
 
-All code and credit belongs to the original author:
-
-**[TÂCHES (glittercowboy)](https://github.com/glittercowboy)** - [Original Repository](https://github.com/glittercowboy/get-shit-done)
-
-## Documentation
-
-**[Full documentation on the original repo](https://github.com/glittercowboy/get-shit-done)**
+Installed from a secured, frozen fork: [Marcel-Bich/get-shit-done](https://github.com/Marcel-Bich/get-shit-done). Pinned snapshot, markdown skills only.
 
 ## License
 
-MIT - [TÂCHES](https://github.com/glittercowboy/get-shit-done/blob/main/LICENSE)
+MIT
 
 ---
 
 <details>
 <summary>Keywords / Tags</summary>
 
-Claude Code, Claude Code Plugin, Claude Code Extension, Claude Code Slash Commands, Claude Code Project Management, Claude Code Workflow, Claude Code Context Engineering, Claude Code Meta-Prompting, Claude Code Spec-Driven Development, Claude Code Planning, Claude Code Roadmap, Claude Code Phases, Claude Code Tasks, Claude Code Milestones, Claude Code State Management, Claude Code Context Rot, Claude Code Subagents, Claude Code Parallel Execution, GSD, Get Shit Done, TÂCHES, glittercowboy, Project Initialization, Project Planning, Project Execution, Project Tracking, Software Development Workflow, Agile, Iterative Development, Requirements Management, Third Party Plugin, External Plugin, Community Plugin
+Claude Code, Claude Code Plugin, Claude Code Extension, Claude Code Slash Commands, Claude Code Project Management, Claude Code Workflow, Claude Code Context Engineering, Claude Code Meta-Prompting, Claude Code Spec-Driven Development, Claude Code Planning, Claude Code Roadmap, Claude Code Phases, Claude Code Tasks, Claude Code Milestones, Claude Code State Management, Claude Code Context Rot, Claude Code Subagents, Claude Code Parallel Execution, GSD, Get Shit Done, Project Initialization, Project Planning, Project Execution, Project Tracking, Software Development Workflow, Agile, Iterative Development, Requirements Management, Third Party Plugin, External Plugin, Community Plugin
 
 </details>

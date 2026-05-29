@@ -42,7 +42,7 @@
     {
       "name": "get-shit-done",
       "source": "./plugins/get-shit-done",
-      "description": "Installer for TÂCHES' Get-Shit-Done workflow system - meta-prompting, context engineering and spec-driven development"
+      "description": "Installer for the Get-Shit-Done workflow system (own secured & frozen fork, markdown skills only) - meta-prompting, context engineering and spec-driven development"
     },
     {
       "name": "marketplace",

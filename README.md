@@ -77,7 +77,7 @@ They don't replace Claude. They make Claude manageable.
 
 | Plugin | Author | Role | What they do |
 |--------|--------|------|--------------|
-| [**get-shit-done**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Get-Shit-Done-Plugin) | [TACHES](https://github.com/glittercowboy) | The Taskmaster | Specs first. Implementation second. Ship third. |
+| [**get-shit-done**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Get-Shit-Done-Plugin) | Marcel-Bich (secured fork) | The Taskmaster | Specs first. Implementation second. Ship third. |
 
 ## Requirements
 

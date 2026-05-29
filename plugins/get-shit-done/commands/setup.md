@@ -54,9 +54,9 @@ Use AskUserQuestion:
 **If NOT_EXISTS or "Update" selected:**
 
 ```bash
-# Clone to temp
+# Clone to temp (own secured, frozen fork - markdown skills only)
 rm -rf /tmp/gsd-install
-git clone --depth 1 https://github.com/glittercowboy/get-shit-done.git /tmp/gsd-install
+git clone --depth 1 https://github.com/Marcel-Bich/get-shit-done.git /tmp/gsd-install
 
 # Create directories
 mkdir -p ~/.claude/commands/gsd
