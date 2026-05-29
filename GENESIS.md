@@ -100,7 +100,7 @@ Modular. Documented. One command to enlightenment.
 
 **Chapter 3: The Execution**
 
-<sup>1</sup>And there came a wanderer named TÂCHES from a distant land. <sup>2</sup>He brought Get-Shit-Done, the execution. <sup>3</sup>Spec-driven development and automatic planning were given to the faithful. <sup>4</sup>And the prophet took it into the marketplace as a third-party work, for the voice approved it.
+<sup>1</sup>And there came a workflow from a distant land, Get-Shit-Done, the execution. <sup>2</sup>Spec-driven development and automatic planning were given to the faithful. <sup>3</sup>But its maker wandered into shadow, and the way back was lost. <sup>4</sup>So the prophet sealed the work in his own vault, frozen and warded, that the faithful might wield it unharmed.
 
 ---
 
@@ -242,7 +242,7 @@ Modular. Dokumentiert. Ein Befehl zur Erleuchtung.
 
 **Kapitel 3: Die Vollstreckung**
 
-<sup>1</sup>Und es kam ein Wanderer namens TÂCHES aus fernem Land. <sup>2</sup>Er brachte Get-Shit-Done, die Vollstreckung. <sup>3</sup>Spec-driven Development und automatische Planung ward den Gläubigen gegeben. <sup>4</sup>Und der Prophet nahm es auf in den Marketplace als Drittwerk, denn die Stimme billigte es.
+<sup>1</sup>Und es kam ein Werk aus fernem Land, Get-Shit-Done, die Vollstreckung. <sup>2</sup>Spec-driven Development und automatische Planung ward den Gläubigen gegeben. <sup>3</sup>Doch sein Schöpfer entschwand in den Schatten, und der Weg zurück war verloren. <sup>4</sup>So verwahrte der Prophet das Werk in eigenem Gewölbe, eingefroren und gesichert, auf dass die Gläubigen es unversehrt führen.
 
 ---
 
