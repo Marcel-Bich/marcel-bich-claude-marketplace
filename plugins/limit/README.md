@@ -25,6 +25,11 @@ Live API usage in Claude Code statusline - colored progress bars, Git info, toke
 - Session ID display
 - Session caption (from /rename, summary, or first user prompt)
 
+**Agent Context Injection** (enabled by default, disable with `CLAUDE_MB_LIMIT_INJECT=false`)
+- Lets the agent read its own context fill, limits and cost (it cannot see the statusline)
+- Context fill, window size and limits from Claude Code's own data (1M beta detected automatically) - accurate even during autonomous runs
+- Auto-runs a skill of your choice at configurable context-fill thresholds (you wire up which skill)
+
 **Platform Support**
 - Cross-platform: Linux, macOS, and WSL2
 
@@ -103,6 +108,17 @@ All features can be toggled via environment variables. Export them in your shell
 | `CLAUDE_MB_LIMIT_PROGRESSBAR_MODE` | auto-compact | Progress bar mode (auto-compact uses ContextLeft as threshold) |
 | `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | 85 | Auto-compact threshold percentage (used by auto-compact mode) |
 
+**Agent Context Injection** (lets the agent read its own usage and act on it):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLAUDE_MB_LIMIT_CTX_CACHE` | true | Statusline writes a per-session cache `/tmp/claude-mb-context-cache_${session_id}.json` (window size, limits, cost) |
+| `CLAUDE_MB_LIMIT_INJECT` | true | Inject hook injects a short status line into the agent's context (UserPromptSubmit + PostToolUse) |
+| `CLAUDE_MB_LIMIT_COMPACT_SKILL` | (unset) | The skill the agent should run when a threshold is reached, e.g. `/my-skill`. Empty = status only, no skill named |
+| `CLAUDE_MB_LIMIT_INJECT_INTERVAL` | 180 | Minimum seconds between routine status injects (throttle) |
+| `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS` | 70,90 | Comma-separated context-fill %% at which the skill hint fires (any count, e.g. `33,66,92`) |
+| `CLAUDE_MB_LIMIT_INJECT_MAX_AGE` | 300 | Ignore the cache (inject nothing) if older than this many seconds - avoids reporting stale numbers |
+
 **Multi-Account Support:**
 
 | Variable | Default | Description |
@@ -129,6 +145,42 @@ Instead of complex calibration, we track the highest token usage ever measured o
 **LimitAt Achievement:** If you push hard enough to reach >95% API utilization when breaking your highscore, you discover the real limit of your plan - like an Easter-Egg!
 
 **State file:** `~/.claude/marcel-bich-claude-marketplace/limit/limit-highscore-state_${PROFILE_NAME}.json`
+
+## Agent Context Injection
+
+The agent (Claude) cannot read the statusline - it is a separate process. This
+feature gives the running agent its own resource usage so it can act on it (for
+example run a securing or compacting skill before an auto-compact loses progress),
+even during long autonomous runs where no user prompts arrive.
+
+You decide what runs at the thresholds: set `CLAUDE_MB_LIMIT_COMPACT_SKILL` to the
+skill you want auto-run (any skill, e.g. `/my-skill`). This plugin ships no skill of
+its own - if the variable is unset, the agent just gets a "secure progress" hint
+without a skill name. Set the threshold points with `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS`
+(comma-separated, any number of values, e.g. `70,90` or `33,66,92`).
+
+How it works:
+
+- The **statusline** writes a small per-session cache `/tmp/claude-mb-context-cache_${session_id}.json`
+  with the values Claude Code hands only to the statusline: the context fill
+  percentage and window size (`context_window_size` is canonical - it reflects model
+  switches AND the 1M beta mid-session automatically, no lookup table needed), plus
+  the 5h / weekly limits and session cost. One file per session, so parallel sessions
+  never overwrite each other.
+- The **inject hook** (`scripts/inject-status.sh`, on `UserPromptSubmit` + `PostToolUse`)
+  reads that cache and injects a short status line via `additionalContext` - visible
+  to the agent, not flooding the user chat. It skips silently if the cache is missing
+  or stale (`CLAUDE_MB_LIMIT_INJECT_MAX_AGE`), so it never reports outdated numbers.
+- It is **throttled** (`CLAUDE_MB_LIMIT_INJECT_INTERVAL`); each threshold in
+  `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS` fires once and adds an action hint to run the
+  skill from `CLAUDE_MB_LIMIT_COMPACT_SKILL`. Thresholds reset after a compact drops the fill.
+
+Example injected line (with `CLAUDE_MB_LIMIT_COMPACT_SKILL=/my-skill`):
+
+```
+[limit] Context 72% (720k/1.0M) | 5h 64% | Weekly 31% | $4.20
+ACTION: Context-Fill >= 70% - run /my-skill now to secure progress before an auto-compact.
+```
 
 ## Debug Scripts
 

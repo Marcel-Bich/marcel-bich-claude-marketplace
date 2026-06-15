@@ -30,6 +30,10 @@ CACHE_FILE="/tmp/claude-mb-limit-cache_${PROFILE_NAME}.json"
 # Base cache age - actual age is jittered 90-150s to avoid detection patterns
 CACHE_BASE_AGE="${CLAUDE_MB_LIMIT_CACHE_AGE:-120}"
 
+# Context-fill cache - profile-specific, readable by agents (no secrets, numbers only)
+# Single atomic file (no history), refreshed at the same rate as the statusline
+CONTEXT_CACHE_FILE="/tmp/claude-mb-context-cache_${PROFILE_NAME}.json"
+
 # Backoff state file for rate-limit handling
 BACKOFF_STATE_FILE=""  # Set in ensure_plugin_dir
 
@@ -353,6 +357,8 @@ SHOW_CWD="${CLAUDE_MB_LIMIT_CWD:-true}"
 SHOW_GIT="${CLAUDE_MB_LIMIT_GIT:-true}"
 SHOW_TOKENS="${CLAUDE_MB_LIMIT_TOKENS:-true}"
 SHOW_CTX="${CLAUDE_MB_LIMIT_CTX:-true}"
+# Write the context-fill values to a readable cache file (for agents). Default on.
+CTX_CACHE="${CLAUDE_MB_LIMIT_CTX_CACHE:-true}"
 SHOW_SESSION="${CLAUDE_MB_LIMIT_SESSION:-true}"
 SHOW_SESSION_ID="${CLAUDE_MB_LIMIT_SESSION_ID:-true}"
 SHOW_CAPTION="${CLAUDE_MB_LIMIT_CAPTION:-true}"
@@ -1311,6 +1317,89 @@ get_model_context_config() {
     fi
 }
 
+# Write a per-session status cache for agents (read by the inject hook).
+# Atomic (temp + mv), failure-safe (never crash the statusline), numbers only.
+# The agent-facing inject hook recomputes ctx_tokens live from the transcript;
+# this file's job is mainly to supply the values only the statusline knows:
+# the context WINDOW size (denominator, 200k vs 1M) plus the account-wide limits
+# and session cost. Per session_id so parallel sessions never overwrite each other.
+# Args: 1=ctx_tokens 2=ctx_window 3=ctx_pct (total_pct, may be empty)
+write_context_cache() {
+    [[ "$CTX_CACHE" == "true" ]] || return 0
+
+    local ctx_tokens="${1:-0}" ctx_window="${2:-0}" ctx_pct="${3:-0}"
+    [[ -n "$ctx_pct" ]] || ctx_pct=0
+    [[ -n "$ctx_window" ]] || ctx_window=0
+    [[ -n "$ctx_tokens" ]] || ctx_tokens=0
+
+    # Session id, model and session-wide totals from the statusline stdin
+    local session_id="" model="" total_input=0 total_output=0
+    if [[ -n "$STDIN_DATA" ]]; then
+        session_id=$(echo "$STDIN_DATA" | jq -r '.session_id // ""' 2>/dev/null) || session_id=""
+        [[ "$session_id" == "null" ]] && session_id=""
+        model=$(echo "$STDIN_DATA" | jq -r '.model.id // ""' 2>/dev/null) || model=""
+        [[ "$model" == "null" ]] && model=""
+        total_input=$(echo "$STDIN_DATA" | jq -r '.context_window.total_input_tokens // 0' 2>/dev/null) || total_input=0
+        total_output=$(echo "$STDIN_DATA" | jq -r '.context_window.total_output_tokens // 0' 2>/dev/null) || total_output=0
+    fi
+
+    # Target: per-session file (parallel-safe). Fallback to profile file if no id.
+    local target_file
+    if [[ -n "$session_id" ]]; then
+        target_file="/tmp/claude-mb-context-cache_${session_id}.json"
+    else
+        target_file="$CONTEXT_CACHE_FILE"
+    fi
+
+    # Session cost (SnCost)
+    local session_cost
+    session_cost=$(get_total_cost 2>/dev/null) || session_cost="0"
+    [[ -n "$session_cost" ]] || session_cost="0"
+
+    # try_compact mirrors the "(try /compact)" hint: active when total_pct > 50
+    local try_compact="false"
+    if awk "BEGIN {exit !($ctx_pct > 50)}" 2>/dev/null; then
+        try_compact="true"
+    fi
+
+    local updated_at
+    updated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || updated_at=""
+
+    # Account-wide limits from the rate-limit cache (refreshed by the API poll)
+    local limits='{}'
+    if [[ -f "$CACHE_FILE" ]]; then
+        limits=$(jq -c '{
+            five_hour_pct: (.five_hour.utilization // null),
+            five_hour_resets_at: (.five_hour.resets_at // null),
+            seven_day_pct: (.seven_day.utilization // null),
+            seven_day_resets_at: (.seven_day.resets_at // null),
+            seven_day_sonnet_pct: (.seven_day_sonnet.utilization // null)
+        }' "$CACHE_FILE" 2>/dev/null) || limits='{}'
+        [[ -n "$limits" ]] || limits='{}'
+    fi
+
+    local tmp_file
+    tmp_file=$(mktemp 2>/dev/null) || return 0
+    if jq -n \
+        --arg sid "$session_id" \
+        --arg model "$model" \
+        --argjson ctx_tokens "${ctx_tokens:-0}" \
+        --argjson ctx_window "${ctx_window:-0}" \
+        --argjson ctx_pct "${ctx_pct:-0}" \
+        --argjson try_compact "$try_compact" \
+        --argjson total_input "${total_input:-0}" \
+        --argjson total_output "${total_output:-0}" \
+        --arg session_cost "$session_cost" \
+        --argjson limits "$limits" \
+        --arg updated_at "$updated_at" \
+        '{session_id: $sid, model: $model, ctx_tokens: $ctx_tokens, ctx_window: $ctx_window, ctx_pct: $ctx_pct, try_compact: $try_compact, total_input: $total_input, total_output: $total_output, session_cost: $session_cost} + $limits + {updated_at: $updated_at}' \
+        > "$tmp_file" 2>/dev/null; then
+        mv -f "$tmp_file" "$target_file" 2>/dev/null
+    fi
+    rm -f "$tmp_file" 2>/dev/null
+    return 0
+}
+
 # Get model ID from stdin data
 get_model_id() {
     if [[ -n "$STDIN_DATA" ]]; then
@@ -1747,6 +1836,9 @@ format_output() {
         ctx_val2="${tokens_left}"
         ctx_val3="${total_pct}%"
         ctx_val4="${ctx_left_pct}%"
+
+        # Write context-fill to a readable cache file for agents (failure-safe)
+        write_context_cache "$ctx_len" "$max_tokens" "$total_pct"
     fi
 
     # Session values
