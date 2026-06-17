@@ -33,6 +33,12 @@ Live API usage in Claude Code statusline - colored progress bars, Git info, toke
 **Platform Support**
 - Cross-platform: Linux, macOS, and WSL2
 
+**Provider Support**
+- Native Anthropic API: full feature set (above)
+- z.ai / GLM Coding Plan (`ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic`): auto-detected, shows GLM quota (5h / weekly tokens + monthly MCP) in the same bar/color style, plus context, git, session info and the agent context injection. Anthropic-only parts (OAuth usage endpoint, lifetime token/cost accounting) are skipped.
+- Other custom `ANTHROPIC_BASE_URL` providers: rendered without provider limits (no quota endpoint known), everything else still works.
+- Detection is automatic: if `ANTHROPIC_BASE_URL` is empty or points to `api.anthropic.com` the native path runs unchanged; any other base URL uses the provider statusline. When the `projects/` directory is shared between an Anthropic and a non-Anthropic profile, only native `claude-*` models are counted in the token accounting (foreign models like GLM are never counted as Anthropic usage).
+
 ## Commands
 
 - `/limit:highscore` - Display all highscores and LimitAt achievements

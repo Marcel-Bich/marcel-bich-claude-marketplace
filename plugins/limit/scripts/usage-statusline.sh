@@ -47,8 +47,20 @@ STATE_FILE="${PLUGIN_DATA_DIR}/limit-usage-state_${PROFILE_NAME}.json"
 DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-false}"
 DEBUG_LOG="/tmp/claude-mb-limit-debug_${PROFILE_NAME}.log"
 
-# Plan detection - determine subscription type for plan-specific highscores
 SCRIPT_DIR="$(dirname "$0")"
+
+# Provider gate: the Anthropic OAuth usage endpoint AND the token/cost accounting
+# below only make sense for the native Anthropic API. For any other provider (z.ai
+# or a custom ANTHROPIC_BASE_URL) hand off to the provider statusline, which does NO
+# Anthropic accounting and never scans projects/. exec replaces the process before
+# any stdin is read, so stdin passes through untouched. The native Anthropic path
+# (empty base URL or api.anthropic.com) continues unchanged below.
+__provider_base="${ANTHROPIC_BASE_URL:-}"
+if [[ -n "$__provider_base" && "$__provider_base" != *"api.anthropic.com"* ]]; then
+    exec "${SCRIPT_DIR}/zai-statusline.sh"
+fi
+
+# Plan detection - determine subscription type for plan-specific highscores
 CURRENT_PLAN=$("${SCRIPT_DIR}/plan-detect.sh" 2>/dev/null || echo "unknown")
 
 # Source highscore state management functions

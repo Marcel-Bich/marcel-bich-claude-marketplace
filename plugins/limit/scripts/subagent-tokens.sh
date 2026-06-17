@@ -358,7 +358,11 @@ extract_tokens_per_model() {
             end;
 
         # Extract and categorize tokens
-        [.[] | select(.message.usage and .message.model) |
+        # Only count native Anthropic (claude-*) models. When projects/ is shared with
+        # a non-Anthropic profile (e.g. z.ai/GLM via symlink), foreign-model entries
+        # must NOT be counted as Anthropic usage.
+        [.[] | select(.message.usage and .message.model)
+             | select(.message.model | test("claude"; "i")) |
             {
                 category: (.message.model | get_category),
                 input: (.message.usage.input_tokens // 0),
