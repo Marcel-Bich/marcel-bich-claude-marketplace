@@ -1,53 +1,58 @@
 {
-  "name": "marcel-bich-claude-marketplace",
-  "owner": {
-    "name": "Marcel Bich",
-    "email": "Marcel-Bich@users.noreply.github.com"
-  },
-  "metadata": {
-    "description": "Collection of productivity plugins for Claude Code",
-    "version": "1.0.0"
-  },
-  "plugins": [
-    {
-      "name": "credo",
-      "source": "./plugins/credo",
-      "description": "Opinionated workflow guides and best practices - the preacher's proven patterns for Claude Code projects"
+    "name": "marcel-bich-claude-marketplace",
+    "owner": {
+        "name": "Marcel Bich",
+        "email": "Marcel-Bich@users.noreply.github.com"
     },
-    {
-      "name": "dogma",
-      "source": "./plugins/dogma",
-      "description": "Intelligent sync of Claude instructions with enforcement hooks for security and consistency"
+    "metadata": {
+        "description": "Collection of productivity plugins for Claude Code",
+        "version": "1.0.0"
     },
-    {
-      "name": "signal",
-      "source": "./plugins/signal",
-      "description": "Desktop notifications showing what Claude Code is working on - stay informed even when the terminal is not in focus. Optional sound alerts and AI summaries"
-    },
-    {
-      "name": "limit",
-      "source": "./plugins/limit",
-      "description": "Live API usage in Claude Code statusline - colored progress bars, Git info, tokens, session metrics, device tracking, and more"
-    },
-    {
-      "name": "hydra",
-      "source": "./plugins/hydra",
-      "description": "Git Worktree management for parallel agent execution - isolated working directories without Git conflicts"
-    },
-    {
-      "name": "import",
-      "source": "./plugins/import",
-      "description": "Import external documentation locally - bypass AI-blocking sites via Context7, WebFetch, or Playwright"
-    },
-    {
-      "name": "get-shit-done",
-      "source": "./plugins/get-shit-done",
-      "description": "Installer for the Get-Shit-Done workflow system (own secured & frozen fork, markdown skills only) - meta-prompting, context engineering and spec-driven development"
-    },
-    {
-      "name": "marketplace",
-      "source": "./plugins/marketplace",
-      "description": "Development tools for Claude Code plugins - local testing without pushing"
-    }
-  ]
+    "plugins": [
+        {
+            "name": "credo",
+            "source": "./plugins/credo",
+            "description": "Opinionated workflow guides and best practices - the preacher's proven patterns for Claude Code projects"
+        },
+        {
+            "name": "dogma",
+            "source": "./plugins/dogma",
+            "description": "Intelligent sync of Claude instructions with enforcement hooks for security and consistency"
+        },
+        {
+            "name": "signal",
+            "source": "./plugins/signal",
+            "description": "Desktop notifications showing what Claude Code is working on - stay informed even when the terminal is not in focus. Optional sound alerts and AI summaries"
+        },
+        {
+            "name": "limit",
+            "source": "./plugins/limit",
+            "description": "Live API usage in Claude Code statusline - colored progress bars, Git info, tokens, session metrics, device tracking, and more"
+        },
+        {
+            "name": "hydra",
+            "source": "./plugins/hydra",
+            "description": "Git Worktree management for parallel agent execution - isolated working directories without Git conflicts"
+        },
+        {
+            "name": "import",
+            "source": "./plugins/import",
+            "description": "Import external documentation locally - bypass AI-blocking sites via Context7, WebFetch, or Playwright"
+        },
+        {
+            "name": "get-shit-done",
+            "source": "./plugins/get-shit-done",
+            "description": "Installer for the Get-Shit-Done workflow system (own secured & frozen fork, markdown skills only) - meta-prompting, context engineering and spec-driven development"
+        },
+        {
+            "name": "hermes-tweet",
+            "source": "./plugins/hermes-tweet",
+            "description": "Native Hermes Agent X/Twitter plugin guidance for Xquik automation with read-first workflows and approval-gated actions"
+        },
+        {
+            "name": "marketplace",
+            "source": "./plugins/marketplace",
+            "description": "Development tools for Claude Code plugins - local testing without pushing"
+        }
+    ]
 }
