@@ -48,6 +48,7 @@ Claude is brilliant. Claude is also a golden retriever with a keyboard - enthusi
 (Yes, I know full well you're all bypassing permissions because it's FAST. But you should at least put in SOME form of guardrails and check in occasionally to guarantee quality - not just blindly let it run and hope for the best, only to end up with buggy or even insecure AI slop.)
 
 Without guardrails:
+
 - Context dies mid-task? Start over.
 - API limit hit? Surprise!
 - Need parallel work? Git conflicts incoming.
@@ -63,21 +64,22 @@ Born from real pain points. Built for developers who learned the hard way - sinc
 
 They don't replace Claude. They make Claude manageable.
 
-| Plugin | Role | What they do |
-|--------|------|--------------|
-| [**dogma**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Dogma-Plugin) | The Compliance Officer | Intelligent rule sync from any source, with enforcement hooks. Opinionated defaults included. |
-| [**hydra**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Hydra-Plugin) | The Project Manager | Parallel workstreams. Isolated branches. No stepping on toes. |
-| [**signal**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Signal-Plugin) | The Receptionist | "Claude needs you." Ding. Simple. |
-| [**limit**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Limit-Plugin) | The Accountant | Tracks every token. Shows the burn rate and limits. No surprises. |
-| [**credo**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Credo-Plugin) | The Mentor | Best practices. Workflows. "Here's how we do things." |
-| [**import**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Import-Plugin) | The Librarian | External docs, locally cached. No annoying "site blocked AI." |
-| [**marketplace**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Marketplace-Plugin) | The Intern | Development tools for local plugin testing. |
+| Plugin                                                                                                               | Role                   | What they do                                                                                  |
+| -------------------------------------------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------- |
+| [**dogma**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Dogma-Plugin)             | The Compliance Officer | Intelligent rule sync from any source, with enforcement hooks. Opinionated defaults included. |
+| [**hydra**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Hydra-Plugin)             | The Project Manager    | Parallel workstreams. Isolated branches. No stepping on toes.                                 |
+| [**signal**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Signal-Plugin)           | The Receptionist       | "Claude needs you." Ding. Simple.                                                             |
+| [**limit**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Limit-Plugin)             | The Accountant         | Tracks every token. Shows the burn rate and limits. No surprises.                             |
+| [**credo**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Credo-Plugin)             | The Mentor             | Best practices. Workflows. "Here's how we do things."                                         |
+| [**import**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Import-Plugin)           | The Librarian          | External docs, locally cached. No annoying "site blocked AI."                                 |
+| [**marketplace**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Marketplace-Plugin) | The Intern             | Development tools for local plugin testing.                                                   |
 
 ### Third-Party Plugins
 
-| Plugin | Author | Role | What they do |
-|--------|--------|------|--------------|
-| [**get-shit-done**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Get-Shit-Done-Plugin) | Marcel-Bich (secured fork) | The Taskmaster | Specs first. Implementation second. Ship third. |
+| Plugin                                                                                                                   | Author                     | Role                   | What they do                                                                                        |
+| ------------------------------------------------------------------------------------------------------------------------ | -------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------- |
+| [**get-shit-done**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Get-Shit-Done-Plugin) | Marcel-Bich (secured fork) | The Taskmaster         | Specs first. Implementation second. Ship third.                                                     |
+| [**hermes-tweet**](https://github.com/Xquik-dev/hermes-tweet#readme)                                                     | Xquik                      | The X/Twitter Operator | Native Hermes Agent X/Twitter plugin guidance for read-first automation and approval-gated actions. |
 
 ## Requirements
 
@@ -98,6 +100,7 @@ claude plugin install signal@marcel-bich-claude-marketplace
 claude plugin install limit@marcel-bich-claude-marketplace
 claude plugin install import@marcel-bich-claude-marketplace
 claude plugin install get-shit-done@marcel-bich-claude-marketplace
+claude plugin install hermes-tweet@marcel-bich-claude-marketplace
 ```
 
 ## Documentation
@@ -141,4 +144,4 @@ Claude Code, Claude Code Plugin, Claude Code Extension, Claude Code Marketplace,
 
 </details>
 
-<sub>*The preacher invites the curious to study the [Genesis](GENESIS.md).*</sub>
+<sub>_The preacher invites the curious to study the [Genesis](GENESIS.md)._</sub>

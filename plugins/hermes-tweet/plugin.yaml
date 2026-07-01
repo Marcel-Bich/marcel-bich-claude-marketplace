@@ -1,0 +1,10 @@
+name: hermes-tweet
+description: Native Hermes Agent X/Twitter plugin guidance for Xquik automation with read-first workflows and approval-gated actions
+version: 0.1.6
+author: Xquik
+repository: https://github.com/Xquik-dev/hermes-tweet
+
+skills:
+  hermes-tweet:
+    description: Use Hermes Tweet safely for X/Twitter reads and approval-gated actions
+    source: skills/hermes-tweet/SKILL.md
