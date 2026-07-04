@@ -110,6 +110,11 @@ Full documentation, installation, configuration, and troubleshooting:
 
 MIT - See [LICENSE](LICENSE) for full terms.
 
+## Contributing
+
+I'm fine with issues containing code snippets, and I'm not against pull requests, but please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting anything!  
+The contributing rules only exist to prevent licensing issues on my end.
+
 ## Name, Logo, Trademarks (No endorsement)
 
 The source code is licensed under MIT. However, the project name "marcel-bich-claude-marketplace", logos, and branding assets are not covered by the MIT License.
