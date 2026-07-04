@@ -1,6 +1,6 @@
 name: credo
 description: Opinionated workflow guides and best practices - the preacher's proven patterns for Claude Code projects
-version: 0.4.0
+version: 0.5.0
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
@@ -14,3 +14,12 @@ commands:
   session-init:
     description: Initialize session with main agent workflow instructions
     source: commands/session-init.md
+  session-active:
+    description: Set the session mode to active (intensive live collaboration, no keep-alive)
+    source: commands/session-active.md
+  session-passive:
+    description: Set the session mode to passive (user available for clarifications only, no keep-alive)
+    source: commands/session-passive.md
+  session-autonomous:
+    description: Set the session mode to autonomous (work approved GO items unattended, keep-alive ON)
+    source: commands/session-autonomous.md
