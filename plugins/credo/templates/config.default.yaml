@@ -1,0 +1,135 @@
+# credo default configuration (builtin template, read-only).
+#
+# This ships with the plugin and is the lowest layer of the config cascade:
+#   builtin (this file) < global (~/.claude/credo/config) < project (.credo/config)
+#
+# On first need the global config is created from this template. It carries
+# UNIVERSAL defaults (safe for everyone). PERSONAL and environment-specific
+# fields are intentionally left EMPTY and are filled just-in-time by the skills
+# that need them (permission per change). Never put personal values or absolute
+# machine paths into this shipped template.
+
+# --- visual verify -----------------------------------------------------------
+verify:
+  # Fixed viewport widths (px) for visual verification.
+  viewports:
+    - 320
+    - 768
+    - 1440
+
+# --- timing windows ----------------------------------------------------------
+windows:
+  # Grace period (minutes) before an autonomous rest/hibernate action.
+  veto_minutes: 20
+  # Wait window (minutes) for a deferred question answer before falling back
+  # to a documented default and continuing autonomously.
+  deferred_question_minutes: 5
+
+# --- session-context compact trigger (not budget) ----------------------------
+compact:
+  # Session-context fill thresholds (percent) that auto-run compact-plus.
+  thresholds:
+    - 70
+    - 90
+
+# --- wakeup offsets (relative to a limit reset) ------------------------------
+wakeup:
+  # Preferred delay (minutes) after a limit reset before resuming.
+  reset_offset_minutes: 5
+  # Fallback delay (minutes) if the preferred offset cannot be used.
+  fallback_offset_minutes: 1
+
+# --- budget (consumed by the budget skill, Phase 5) --------------------------
+# Universal default cap schedule. Values are percent. Off-hours five_hour_cap
+# uses the soft/hard band (soft warn, hard stop); work-hours (Mon-Fri 09-17)
+# cap the 5h window low so the 09:00 guard holds.
+budget:
+  five_hour:
+    soft_percent: 92
+    hard_percent: 95
+  work_hours:
+    start: 9
+    end: 17
+  # At 09:00 on each work day at least this much of the 5h limit must remain.
+  nine_oclock_guard_reserve_percent: 60
+  # Task-sizing recommendation by remaining 5h budget (percent used).
+  # Recommendation only, must never cause a standstill.
+  task_sizing:
+    large_below_percent: 60
+    medium_below_percent: 80
+  # Cap schedule. five_hour_cap is the hard cap for that window; off-hours use
+  # the soft/hard band above (95 hard). weekly_cap is the weekly ceiling.
+  schedule:
+    - day: sunday
+      window: all_day
+      five_hour_cap: 95
+      weekly_cap: 30
+    - day: monday
+      window: work_hours
+      five_hour_cap: 40
+      weekly_cap: 40
+    - day: monday
+      window: off_hours
+      five_hour_cap: 95
+      weekly_cap: 40
+    - day: tuesday
+      window: work_hours
+      five_hour_cap: 40
+      weekly_cap: 50
+    - day: tuesday
+      window: off_hours
+      five_hour_cap: 95
+      weekly_cap: 50
+    - day: wednesday
+      window: work_hours
+      five_hour_cap: 40
+      weekly_cap: 60
+    - day: wednesday
+      window: off_hours
+      five_hour_cap: 95
+      weekly_cap: 60
+    - day: thursday
+      window: work_hours
+      five_hour_cap: 40
+      weekly_cap: 70
+    - day: thursday
+      window: off_hours
+      five_hour_cap: 95
+      weekly_cap: 70
+    - day: friday
+      window: work_hours
+      five_hour_cap: 40
+      weekly_cap: 80
+    - day: friday
+      window: after_17
+      five_hour_cap: 95
+      weekly_cap: 99
+    - day: saturday
+      window: before_reset
+      five_hour_cap: 95
+      weekly_cap: 99
+    - day: saturday
+      window: after_reset
+      five_hour_cap: 95
+      weekly_cap: 30
+
+# --- absolute fail-safe caps (used on compact loss of an explicit order) -----
+budget_failsafe:
+  five_hour_percent: 98
+  weekly_percent: 99
+
+# --- personal / environment fields (left EMPTY, filled just-in-time) ---------
+# Never committed with real values in the shipped template. The global config
+# holds the user's real values; those live in ~/.claude/credo/config, not here.
+personal:
+  # ntfy topic for push notifications. Empty -> notifications are skipped.
+  ntfy_topic: ""
+  # Expected commit-identity hint (optional). Empty -> rely on git/dogma.
+  commit_identity_hint: ""
+  # WSL / Windows-side reachability hints.
+  wsl:
+    lan_ip: ""
+    host: ""
+    port: ""
+  # Living-docs file list (relative names). Empty -> ask when first needed.
+  docs: []
