@@ -19,6 +19,16 @@ Desktop notifications showing what Claude Code is working on - stay informed eve
 
 - `jq` - JSON processor (install: `sudo apt install jq`)
 
+### Optional (sound alerts on Linux)
+
+Sound is optional. On Linux the plugin tries the first available player in this order:
+
+- `paplay` (PulseAudio, `pulseaudio-utils`) - honours the configured volume
+- `pw-play` (PipeWire, `pipewire-bin` on Debian/Ubuntu) - honours the configured volume
+- `ffplay` (ffmpeg) - plays at full volume (no per-play volume control)
+
+If none is installed, notifications still work; only the sound is skipped. On WSL2 the Windows system sound is used instead.
+
 ## Kitty Tab Indicator
 
 Marks the kitty terminal tab title with a prefix during active Claude sessions so you can tell at a glance which tabs are running Claude.
@@ -61,6 +71,6 @@ MIT - See [LICENSE](LICENSE) for full terms.
 <details>
 <summary>Keywords / Tags</summary>
 
-Claude Code, Claude Code Plugin, Claude Code Extension, Claude Code Notifications, Claude Code Desktop Notifications, Claude Code Terminal Notifications, Claude Code Alerts, Claude Code Sound, Claude Code Audio, Claude Code Toast, Claude Code Status, Claude Code Progress, Claude Code Monitoring, Claude Code Background, Claude Code Autonomous, Claude Code Dangerously Skip Permissions, Anthropic CLI, Anthropic Plugin, Anthropic Extension, Anthropic Claude, Anthropic AI, AI Agent Notifications, AI Agent Alerts, AI Agent Status, AI Agent Monitoring, AI Code Assistant, AI Coding, AI Programming, AI Development, Desktop Notifications, Terminal Notifications, System Notifications, Toast Notifications, Push Notifications, Sound Alerts, Audio Alerts, Notification Sound, Complete Sound, Attention Sound, WSL, WSL2, WSL Notifications, Windows Subsystem Linux, Windows 10, Windows 11, Windows Notifications, Linux Notifications, GNOME Notifications, KDE Notifications, Ubuntu Notifications, Debian Notifications, notify-send, gdbus, BurntToast, PowerShell Notifications, PulseAudio, paplay, pactl, Cross Platform, Background Tasks, Autonomous Coding, Haiku Summary, AI Summary, Task Completion, Tool Waiting, Permission Prompt, Input Required, Claude Code Hooks, Stop Hook, PreToolUse Hook, Notification Hook, Marcel Bich, marcel-bich-claude-marketplace, signal plugin, notification plugin
+Claude Code, Claude Code Plugin, Claude Code Extension, Claude Code Notifications, Claude Code Desktop Notifications, Claude Code Terminal Notifications, Claude Code Alerts, Claude Code Sound, Claude Code Audio, Claude Code Toast, Claude Code Status, Claude Code Progress, Claude Code Monitoring, Claude Code Background, Claude Code Autonomous, Claude Code Dangerously Skip Permissions, Anthropic CLI, Anthropic Plugin, Anthropic Extension, Anthropic Claude, Anthropic AI, AI Agent Notifications, AI Agent Alerts, AI Agent Status, AI Agent Monitoring, AI Code Assistant, AI Coding, AI Programming, AI Development, Desktop Notifications, Terminal Notifications, System Notifications, Toast Notifications, Push Notifications, Sound Alerts, Audio Alerts, Notification Sound, Complete Sound, Attention Sound, WSL, WSL2, WSL Notifications, Windows Subsystem Linux, Windows 10, Windows 11, Windows Notifications, Linux Notifications, GNOME Notifications, KDE Notifications, Ubuntu Notifications, Debian Notifications, notify-send, gdbus, BurntToast, PowerShell Notifications, PulseAudio, paplay, pactl, PipeWire, pw-play, ffplay, ffmpeg, Cross Platform, Background Tasks, Autonomous Coding, Haiku Summary, AI Summary, Task Completion, Tool Waiting, Permission Prompt, Input Required, Claude Code Hooks, Stop Hook, PreToolUse Hook, Notification Hook, Marcel Bich, marcel-bich-claude-marketplace, signal plugin, notification plugin
 
 </details>
