@@ -10,6 +10,17 @@
           }
         ]
       }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-subagent-inject.sh",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

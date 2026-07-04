@@ -65,6 +65,21 @@ Subagents inherit the same hard security rules as the main agent, with no except
 State these constraints in the task you hand each subagent so they hold even if the
 subagent does not otherwise load them.
 
+## Priming subagents with credo rules
+
+credo does not rely on the main agent to remember the rules. Two mechanisms keep a
+subagent self-sufficient even when the main agent's context has rotted:
+
+- The credo `SubagentStart` hook (`hooks/credo-subagent-inject.sh`) injects the
+  load-bearing credo rules (security, quality gates, honesty, output hygiene) into
+  every subagent at start, automatically.
+- The credo skill descriptions are phrased to auto-trigger inside subagents too, so
+  the relevant skill loads itself when its trigger is hit.
+
+As a backup for environments where the hook is not active, still name the relevant
+credo skills (for example `verify`, `audit`, `items`, `requirements-verbatim`) in the
+task you hand each subagent, so a subagent is primed regardless of the hook.
+
 ## Model policy (no downgrade, no model-choice logic)
 
 Subagents always run at a model at least as capable as the main agent's model - never
