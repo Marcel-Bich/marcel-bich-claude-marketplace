@@ -62,25 +62,55 @@ EOF
     mv -f "$tmp" "$CREDO_DIR/config"
 fi
 
-# --- git-exclude lines (idempotent, no duplicates on re-run) -----------------
+# --- git-exclude lines (managed block, toggle-safe + idempotent) -------------
 # By default .credo/ is kept entirely out of git; agents version nothing.
 # Opt-in (per project): set CREDO_VERSION_TRACKED=1 to version .credo/** in the repo
 # EXCEPT the per-project config and the screenshots, which stay local always. Default
 # (variable unset) = previous behaviour, all of .credo/** excluded.
+#
+# The credo entries live inside a marker-delimited managed block. Every run first
+# removes any existing credo block (and legacy loose lines from earlier versions),
+# then writes a fresh block for the current mode. This makes toggling default<->tracked
+# actually take effect on re-run and stays idempotent. Foreign entries in
+# .git/info/exclude are never touched.
+CREDO_BLOCK_BEGIN="# >>> credo (managed - do not edit)"
+CREDO_BLOCK_END="# <<< credo (managed)"
 if [ "${CREDO_VERSION_TRACKED:-}" = "1" ]; then
-    EXCLUDE_LINES=(".credo/config" ".credo/config/" ".credo/screenshots/")
+    EXCLUDE_LINES=(".credo/config" ".credo/screenshots/")
 else
-    EXCLUDE_LINES=(".credo/**" ".credo/screenshots/**")
+    EXCLUDE_LINES=(".credo/**")
 fi
 if GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)"; then
     EXCLUDE_FILE="$GIT_DIR/info/exclude"
     mkdir -p "$(dirname "$EXCLUDE_FILE")"
     [ -f "$EXCLUDE_FILE" ] || : > "$EXCLUDE_FILE"
-    for line in "${EXCLUDE_LINES[@]}"; do
-        if ! grep -qxF "$line" "$EXCLUDE_FILE" 2>/dev/null; then
-            printf '%s\n' "$line" >> "$EXCLUDE_FILE"
-        fi
-    done
+
+    tmp="$EXCLUDE_FILE.credo.tmp.$$"
+    # Strip an existing credo managed block plus any legacy loose lines from earlier
+    # versions, so old installs migrate cleanly. awk exits 0 even without a match.
+    awk -v b="$CREDO_BLOCK_BEGIN" -v e="$CREDO_BLOCK_END" '
+        $0 == b { inblock = 1; next }
+        $0 == e { inblock = 0; next }
+        inblock { next }
+        $0 == ".credo/**"             { next }
+        $0 == ".credo/screenshots/**" { next }
+        $0 == ".credo/config"         { next }
+        $0 == ".credo/config/"        { next }
+        $0 == ".credo/screenshots/"   { next }
+        { print }
+    ' "$EXCLUDE_FILE" > "$tmp"
+
+    # Append a fresh managed block for the current mode. awk guarantees the stripped
+    # output ends with a newline, so the begin marker never fuses onto a foreign line.
+    {
+        printf '%s\n' "$CREDO_BLOCK_BEGIN"
+        for line in "${EXCLUDE_LINES[@]}"; do
+            printf '%s\n' "$line"
+        done
+        printf '%s\n' "$CREDO_BLOCK_END"
+    } >> "$tmp"
+
+    mv -f "$tmp" "$EXCLUDE_FILE"
 else
     echo "credo-init: not a git repo, skipped git-exclude setup" >&2
 fi
