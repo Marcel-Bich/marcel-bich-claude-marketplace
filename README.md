@@ -69,7 +69,7 @@ They don't replace Claude. They make Claude manageable.
 | [**hydra**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Hydra-Plugin) | The Project Manager | Parallel workstreams. Isolated branches. No stepping on toes. |
 | [**signal**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Signal-Plugin) | The Receptionist | "Claude needs you." Ding. Simple. |
 | [**limit**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Limit-Plugin) | The Accountant | Tracks every token. Shows the burn rate and limits. No surprises. |
-| [**credo**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Credo-Plugin) | The Mentor | Best practices. Workflows. "Here's how we do things." |
+| [**credo**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Credo-Plugin) | The Mentor | Session modes. A work-item lifecycle with a hard Definition of Done. Rules that travel into every subagent. |
 | [**import**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Import-Plugin) | The Librarian | External docs, locally cached. No annoying "site blocked AI." |
 | [**marketplace**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Marketplace-Plugin) | The Intern | Development tools for local plugin testing. |
 
