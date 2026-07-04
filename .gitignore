@@ -9,6 +9,11 @@
 # Live-Hack for less versioning headaches:
 # Everything prefixed with "**/" to catch subdirectories too.
 
+### ---------------------- Repo-local work notes ----------------------- ###
+# Local-only investigation notes (issue triage, PR analysis) - not versioned
+**/.issue/
+**/.pr/
+
 ### ------------------------- Flutter.gitignore ------------------------ ###
 
 # Miscellaneous
