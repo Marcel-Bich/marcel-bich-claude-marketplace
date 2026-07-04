@@ -25,6 +25,14 @@ windows:
   # to a documented default and continuing autonomously.
   deferred_question_minutes: 5
 
+# --- ntfy notifications (hybrid model) ---------------------------------------
+# Universal default. The ntfy TOPIC is personal and lives under personal.ntfy_topic
+# (empty -> notifications are skipped). This interval is the progress-digest cadence:
+# come-to-PC events are sent immediately, progress events are bundled into one digest.
+ntfy:
+  # Progress digest bundling interval (minutes).
+  digest_interval_minutes: 60
+
 # --- session-context compact trigger (not budget) ----------------------------
 compact:
   # Session-context fill thresholds (percent) that auto-run compact-plus.
