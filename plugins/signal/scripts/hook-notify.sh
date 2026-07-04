@@ -138,10 +138,22 @@ if is_wsl; then
     # WSL: Use Windows system sound with volume
     windows_sound "$SOUND_TYPE" "$SOUND_VOLUME"
 elif command -v paplay &> /dev/null && [ "$(echo "$SOUND_VOLUME > 0" | bc 2>/dev/null)" = "1" ]; then
-    # Linux: Original paplay code
+    # Linux (PulseAudio): paplay uses pactl for current sink volume + paplay --volume
     CURRENT_VOL=$(pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | grep -oP '\d+(?=%)' | head -1)
     PLAY_VOL=$(echo "${CURRENT_VOL:-50} * $SOUND_VOLUME * 655.36" | bc 2>/dev/null | cut -d. -f1)
     [ -n "$PLAY_VOL" ] && paplay --volume="$PLAY_VOL" "$SOUND_FILE" 2>/dev/null &
+elif command -v pw-play &> /dev/null && [ "$(echo "$SOUND_VOLUME > 0" | bc 2>/dev/null)" = "1" ]; then
+    # Linux (PipeWire): fallback when paplay is not installed.
+    # pw-play --volume takes a float 0.0-1.0; use SOUND_VOLUME directly if in range, else play without it.
+    if [ "$(echo "$SOUND_VOLUME <= 1" | bc 2>/dev/null)" = "1" ]; then
+        pw-play --volume="$SOUND_VOLUME" "$SOUND_FILE" 2>/dev/null &
+    else
+        pw-play "$SOUND_FILE" 2>/dev/null &
+    fi
+elif command -v ffplay &> /dev/null && [ "$(echo "$SOUND_VOLUME > 0" | bc 2>/dev/null)" = "1" ]; then
+    # Linux (ffmpeg): last-resort fallback. ffplay has no simple linear volume flag,
+    # so sound plays at full volume - sound without exact volume beats no sound at all.
+    ffplay -nodisp -autoexit -loglevel quiet "$SOUND_FILE" 2>/dev/null &
 fi
 
 exit 0
