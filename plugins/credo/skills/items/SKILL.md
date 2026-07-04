@@ -119,6 +119,14 @@ Wiring matters: new code with no caller / not reachable is a gap, not "done". At
 is `present`. The DoD requires `exercised`, which forces the wiring to exist and to run.
 If you find unwired code, that is a gap - raise or reopen an item for it.
 
+Before you record `failed` or "not started" for a capability, you MUST first run a wiring
+check against the real code: search the source for the endpoint, class, function, or
+tests that would implement it. This matters most for items cut from older specs - the
+feature may already have been built under a DIFFERENT task or item number, so assuming it
+is missing is often simply wrong. If the check shows it is built but its runtime behavior
+has not been observed, record `wired-but-behavior-unverified`, not `failed`. Reserve
+`failed` for a real defect actually surfaced by exercising the code.
+
 ## Definition of Done (the gate into 2_done/)
 
 An item may move into `2_done/` ONLY when ALL of these hold. This gate is hard.

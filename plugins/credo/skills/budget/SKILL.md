@@ -229,9 +229,15 @@ Rules for this gate:
 - No hardcoded name or email anywhere in this skill. Identity provisioning stays
   dogma-first: rely on dogma, the git config, and the gh logins already in place. Inspect
   dogma first; credo is only the gate, not the provisioner.
+- The `git log` comparison against the repo's own history is ALWAYS the primary source
+  and is run for every repo at commit time - never skip it, and never let a hint stand in
+  for it. On a mismatch, do NOT commit; warn.
 - An optional expected-identity hint may live in the config
-  (`personal.commit_identity_hint`); when set, use it as an additional cross-check, not as
-  a replacement for the `git log` comparison. Empty means rely on git/dogma.
+  (`personal.commit_identity_hint`); when set, use it only as an additional cross-check on
+  top of the `git log` comparison, never as a replacement. It is runtime-decidable and
+  cascades global < project: a global hint is a default identity that a per-project value
+  overrides, so a work repo vs a private repo each get the right identity. Empty means
+  rely on git/dogma.
 
   ```
   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get personal.commit_identity_hint

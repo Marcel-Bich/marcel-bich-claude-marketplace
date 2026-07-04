@@ -1,6 +1,6 @@
 {
   "name": "credo",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "Self-contained process framework for Claude Code: per-session modes, a work-item lifecycle with a hard Definition of Done, budget-aware autonomy, visual verification, and safety rules that travel into every subagent",
   "keywords": [
     "workflow",

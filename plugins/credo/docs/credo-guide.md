@@ -64,6 +64,8 @@ All credo state is per project under `.credo/` (see section 3) or per user under
   id-counter           deterministic integer counter
 ```
 
+By default `credo-init.sh` excludes all of `.credo/**` from git. Opt-in versioning is a per-project decision: run `credo-init.sh` with `CREDO_VERSION_TRACKED=1` to version `.credo/**` in the repo EXCEPT the per-project `config` and the `screenshots/`, which stay local always. This is useful when the team should see items and process in the repo's own history; `config` (may hold machine-specific overrides) and `screenshots/` (verify evidence, often large) remain excluded either way. The default (variable unset) keeps `.credo/` fully unversioned.
+
 ### 3.1 Config cascade
 
 YAML, merged lowest to highest:

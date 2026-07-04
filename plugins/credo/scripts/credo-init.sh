@@ -63,12 +63,20 @@ EOF
 fi
 
 # --- git-exclude lines (idempotent, no duplicates on re-run) -----------------
-# .credo/ is intentionally kept out of git; agents version nothing by default.
+# By default .credo/ is kept entirely out of git; agents version nothing.
+# Opt-in (per project): set CREDO_VERSION_TRACKED=1 to version .credo/** in the repo
+# EXCEPT the per-project config and the screenshots, which stay local always. Default
+# (variable unset) = previous behaviour, all of .credo/** excluded.
+if [ "${CREDO_VERSION_TRACKED:-}" = "1" ]; then
+    EXCLUDE_LINES=(".credo/config" ".credo/config/" ".credo/screenshots/")
+else
+    EXCLUDE_LINES=(".credo/**" ".credo/screenshots/**")
+fi
 if GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)"; then
     EXCLUDE_FILE="$GIT_DIR/info/exclude"
     mkdir -p "$(dirname "$EXCLUDE_FILE")"
     [ -f "$EXCLUDE_FILE" ] || : > "$EXCLUDE_FILE"
-    for line in ".credo/**" ".credo/screenshots/**"; do
+    for line in "${EXCLUDE_LINES[@]}"; do
         if ! grep -qxF "$line" "$EXCLUDE_FILE" 2>/dev/null; then
             printf '%s\n' "$line" >> "$EXCLUDE_FILE"
         fi

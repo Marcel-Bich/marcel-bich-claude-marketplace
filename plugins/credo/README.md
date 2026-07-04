@@ -64,6 +64,8 @@ Each command sets the mode and loads its skill. The three session skills share o
 
 `.credo/**` is deliberately kept out of git. Persistence across a compact is disk plus your normal backups, not commits.
 
+**Opt-in versioning (per project).** The default (all of `.credo/**` excluded) is right for solo or private work. If you want the items and process visible in the team's history, run `credo-init.sh` with `CREDO_VERSION_TRACKED=1`: it then versions `.credo/**` in the repo except the per-project `config` and the `screenshots/`, which stay local always. This is a deliberate per-project decision; the default is unversioned.
+
 ### Config cascade
 
 Config is YAML, merged lowest to highest:

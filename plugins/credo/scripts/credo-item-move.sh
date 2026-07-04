@@ -94,7 +94,21 @@ fi
 
 # --- atomic move (never delete) ----------------------------------------------
 mkdir -p "$DEST_DIR"
-mv -f "$SRC" "$DEST"
+
+# Case-only rename guard: on case-insensitive filesystems (NTFS, default APFS) a source
+# and destination that differ ONLY in letter case name the SAME file. A direct mv can
+# then be a no-op or silently drop the file, and an "overwrite" cleanup could rm the
+# case-twin of a file we just wrote. If src and dest are the same path case-insensitively,
+# move via a temp name in two steps and NEVER rm the twin.
+src_lc="$(printf '%s' "$SRC" | tr '[:upper:]' '[:lower:]')"
+dest_lc="$(printf '%s' "$DEST" | tr '[:upper:]' '[:lower:]')"
+if [ "$src_lc" = "$dest_lc" ]; then
+    tmp="$DEST_DIR/.move.tmp.$$-$BASENAME"
+    mv -f "$SRC" "$tmp"
+    mv -f "$tmp" "$DEST"
+else
+    mv -f "$SRC" "$DEST"
+fi
 
 echo "moved #$ID: ${SRC#"$CREDO_DIR"/} -> ${DEST#"$CREDO_DIR"/}"
 echo "credo-item-move: remember to update the item's History section with this transition."

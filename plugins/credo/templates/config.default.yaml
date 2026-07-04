@@ -132,12 +132,32 @@ budget_failsafe:
 personal:
   # ntfy topic for push notifications. Empty -> notifications are skipped.
   ntfy_topic: ""
-  # Expected commit-identity hint (optional). Empty -> rely on git/dogma.
+  # Expected commit-identity hint (optional). Empty (recommended when you use more than
+  # one identity) -> rely on the repo's git-log history plus its local gitconfig. It MAY
+  # be set here as a default identity, but it is then overridden per project (cascade:
+  # global < project). WARNING: a global hint applies to ALL repos and can clash with a
+  # repo that uses a different identity (e.g. a work repo vs a private repo) - override it
+  # per project there. The git-log comparison is always the primary check; the hint is
+  # only an optional cross-check on top.
   commit_identity_hint: ""
   # WSL / Windows-side reachability hints.
+  #
+  # lan_ip is dynamic (the host's real LAN address); leave it empty - it is resolved at
+  # runtime and never hardcoded. endpoints is a named list of Windows-side services, each
+  # carrying its own reach path (different services on one machine bind differently):
+  #   reach: lan_ip    -> service binds 0.0.0.0; reached from WSL via the Windows LAN-IP
+  #                       plus its port, never via localhost/127.0.0.1.
+  #   reach: localhost -> Windows-localhost-only service; reached via powershell.exe.
+  # Example (commented, generic - fill with real names/ports just-in-time):
+  #   endpoints:
+  #     - name: panel      # a UI/panel bound to 0.0.0.0
+  #       port: 0
+  #       reach: lan_ip
+  #     - name: core       # an API bound to Windows localhost only
+  #       port: 0
+  #       reach: localhost
   wsl:
-    lan_ip: ""
-    host: ""
-    port: ""
+    lan_ip: ""            # dynamic, resolved at runtime, never hardcoded
+    endpoints: []         # list of {name, port, reach}; reach: lan_ip | localhost
   # Living-docs file list (relative names). Empty -> ask when first needed.
   docs: []

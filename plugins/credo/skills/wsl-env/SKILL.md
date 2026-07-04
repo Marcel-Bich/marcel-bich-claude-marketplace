@@ -52,17 +52,34 @@ before reporting the service as down.
 
 ## Getting the values: config first, then discover
 
-The LAN-IP, host, and port are environment-specific and live in the credo config, never
-hardcoded in this skill:
+The LAN-IP is environment-specific and DYNAMIC - the host's real LAN address. Resolve it
+at runtime, never hardcode it; the config only caches it:
 
 ```
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get personal.wsl.lan_ip
-"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get personal.wsl.host
-"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get personal.wsl.port
 ```
 
-(Config keys: `personal.wsl.lan_ip`, `personal.wsl.host`, `personal.wsl.port`. Empty by
-default - fill just-in-time with the user's permission.)
+Windows-side services are configured as a named endpoint list under
+`personal.wsl.endpoints`, each entry `{name, port, reach}`. The `reach` field records how
+that one endpoint is reached, because different services on the same machine bind
+differently:
+
+- `reach: lan_ip` - the service binds `0.0.0.0`; reach it from WSL via the Windows LAN-IP
+  plus its port, never via `localhost`/`127.0.0.1`.
+- `reach: localhost` - the service is Windows-localhost-only; reach it by running the
+  request on the Windows side through `powershell.exe`.
+
+So a single repo can have several endpoints, each with its own reach path - for example a
+UI/panel via `lan_ip` and an API via `localhost` - and you pick the method per endpoint
+from its `reach` field, not one method for the whole machine. Read the list with:
+
+```
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get personal.wsl.endpoints
+```
+
+(Config keys: `personal.wsl.lan_ip` and `personal.wsl.endpoints`. Empty by default - fill
+just-in-time with the user's permission. Never conclude a service is unreachable without
+having tried both reach methods for its endpoint.)
 
 If the LAN-IP is not configured, discover it generically on the Windows side rather than
 guessing. Query the Windows adapters and pick the real physical LAN adapter (Wi-Fi or
