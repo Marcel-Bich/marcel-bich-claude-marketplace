@@ -66,7 +66,7 @@ credo runs a session in one of three exclusive modes. The active mode is re-inje
 
 - `/credo:session-active` - intensive live collaboration, you at the keyboard, no keep-alive.
 - `/credo:session-passive` - the agent carries most of the work; you stay reachable for clarifications only, no keep-alive.
-- `/credo:session-autonomous` - approved GO items worked unattended, keep-alive intent on (best-effort, the agent schedules its own wake-ups), budget caps enforced, ntfy per task and question, progress secured via compact-plus.
+- `/credo:session-autonomous` - approved GO items worked unattended, keep-alive on (hook-enforced: a registered Stop hook blocks a stop without a scheduled wake-up), budget caps enforced, ntfy per task and question, progress secured via compact-plus.
 
 Pick the mode that matches how present you are. Switch any time by running the matching command.
 

@@ -20,11 +20,13 @@ Design principles:
 
 - **commands/** - six slash commands: `psalm`, `setup`, `session-init`, and the three mode setters `session-active`, `session-passive`, `session-autonomous`.
 - **skills/** - fourteen auto-discovered skills (see section 6). Each auto-triggers when it applies, including inside subagents.
-- **hooks/** - exactly two hooks are registered in `hooks/hooks.json`:
+- **hooks/** - four hooks are registered in `hooks/hooks.json`:
   - `session-mode-inject.sh` (`UserPromptSubmit`) - re-injects the active session mode on every prompt and names the skill to load.
+  - `credo-autonomy-clear.sh` (`UserPromptSubmit`) - a real user message turns autonomy off (drops the flag, sets the paused opt-out).
   - `credo-subagent-inject.sh` (`SubagentStart`) - primes every subagent with the load-bearing rules.
+  - `credo-autonomy-keepalive.sh` (`Stop`) - in autonomous mode, blocks a stop that has no scheduled self-wake and instructs the agent to call ScheduleWakeup.
 
-  The autonomy scripts (`credo-autonomy-on.sh`, `credo-autonomy-off.sh`, `credo-autonomy-clear.sh`, `credo-autonomy-keepalive.sh`, `credo-autonomy-wake-mark.sh`) and `session-mode-set.sh` are plain helper scripts invoked by the session commands and skills - they are NOT registered as hooks. In particular `credo-autonomy-keepalive.sh` is written as a `Stop` hook and `credo-autonomy-clear.sh` as a `UserPromptSubmit` companion, but neither is wired into `hooks.json`. So there is no runtime Stop-hook enforcement of keep-alive today; autonomous keep-alive is best-effort and instruction-driven (see section 4).
+  The remaining autonomy scripts (`credo-autonomy-on.sh`, `credo-autonomy-off.sh`, `credo-autonomy-wake-mark.sh`) and `session-mode-set.sh` are plain helper scripts invoked by the session commands and skills - they are NOT hooks. Because the `Stop` and second `UserPromptSubmit` hooks are now wired into `hooks.json`, autonomous keep-alive is hook-enforced at runtime (loop-safe, and inert outside autonomy - see section 4).
 - **scripts/** - `check-setup.sh`, `credo-init.sh`, `credo-id-next.sh`, `credo-config.sh`, `credo-budget-read.sh`, `credo-item-move.sh`.
 - **templates/** - `config.default.yaml` (builtin config defaults) and `item.template.md` (the work-item template).
 
@@ -96,11 +98,11 @@ Set the mode with a command; it also loads the matching skill.
 
 - `/credo:session-active` - intensive live collaboration, user at the keyboard, no keep-alive.
 - `/credo:session-passive` - agent carries most work, user reachable for clarifications only, no keep-alive.
-- `/credo:session-autonomous` - approved GO items worked unattended, best-effort keep-alive (the model schedules its own `ScheduleWakeup` wake-ups; there is no Stop hook that forces it), budget caps enforced, ntfy per task and question, progress secured via compact-plus.
+- `/credo:session-autonomous` - approved GO items worked unattended, hook-enforced keep-alive (a registered `Stop` hook blocks a stop with no scheduled `ScheduleWakeup` and instructs the model to set one), budget caps enforced, ntfy per task and question, progress secured via compact-plus.
 
 The active skill defines the common core shared by all three; passive and autonomous layer their differences on top. On every prompt the inject line reminds you of the current mode, so it cannot be silently forgotten.
 
-Honest note on keep-alive: autonomous mode sets the `credo-autonomy-active` flag and instructs the model to keep itself awake by scheduling its own wake-ups, but nothing enforces this at runtime - the `Stop`/`UserPromptSubmit` autonomy hooks are shipped as helper scripts and are not registered (section 2.1). Keep-alive is therefore best-effort: it works as long as the model follows the instruction and calls `ScheduleWakeup` itself.
+Honest note on keep-alive: autonomous mode sets the `credo-autonomy-active` flag, and a registered `Stop` hook (`credo-autonomy-keepalive.sh`) enforces the keep-alive discipline - if you try to end the turn without a marked self-wake, it blocks the stop and instructs you to call `ScheduleWakeup` now; the registered `UserPromptSubmit` hook (`credo-autonomy-clear.sh`) turns autonomy off on any real user message (section 2.1). This is enforcement of the nudge, not a guarantee of infinite wakefulness: the hook forces the block plus instruction, but staying awake still depends on the model then calling `ScheduleWakeup`. It is loop-safe (at most one forced continuation per stop attempt, via the `stop_hook_active` guard) and completely inert outside autonomous mode.
 
 ## 5. The item workflow: how-to
 

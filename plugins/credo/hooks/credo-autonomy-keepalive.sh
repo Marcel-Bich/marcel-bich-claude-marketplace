@@ -9,9 +9,9 @@
 #
 # Failure-safe: any error -> exit 0 (never hang a stop).
 #
-# NOTE: this is a coupling helper built in Phase 2. It is not registered in the
-# plugin hooks manifest yet; the live Stop registration is part of the later
-# switchover phase.
+# NOTE: this is registered in the plugin hooks manifest (hooks/hooks.json) as a
+# Stop hook, together with credo-autonomy-clear.sh on UserPromptSubmit. It
+# actively enforces the keep-alive discipline at runtime.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
