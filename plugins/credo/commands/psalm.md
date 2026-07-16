@@ -15,18 +15,19 @@ allowed-tools:
 
 # Credo - The Preacher's Guide
 
-## Step 0: Run Setup (MANDATORY)
+credo is the mentor: a self-contained process framework. This guide starts with credo's own teachings and only then points to the wider marketplace. The other plugins are recommended or optional and slot in around credo.
 
-Before the faithful can walk the path, ensure the project is properly set up.
+## Step 0: Run Setup (Recommended)
+
+Before the faithful walk the path, ensure the project is set up.
 
 **Invoke /credo:setup via Skill tool.**
 
 This handles:
-- Plugin installation (dogma, get-shit-done)
-- Recommended plugins and MCPs
-- Claude instructions sync (/dogma:sync)
-- Project initialization (/gsd:new-project or /gsd:map-codebase)
-- Roadmap creation
+- Initializing the credo framework (`.credo/` tree) - the core, self-contained.
+- Optional companions: dogma (recommended), get-shit-done (optional, spec-driven alternative to credo items).
+- Claude instructions sync (`/dogma:sync`, if dogma is installed).
+- Choosing a task system (credo items by default).
 
 **After setup completes, continue to Entry Point.**
 
@@ -34,7 +35,7 @@ This handles:
 
 ## Entry Point
 
-After setup is complete, help the user discover available topics.
+After setup, help the user discover topics. credo's own capabilities come first.
 
 **If user runs `/credo:psalm` without arguments:**
 
@@ -43,39 +44,147 @@ Use AskUserQuestion to show available topics:
 ```
 What would you like to explore?
 
-- Parallel Development: Run multiple features simultaneously with hydra
-- Code Quality: Automatic linting and formatting
-- Debugging: Systematic debugging methodology
-- Decision Making: Mental frameworks for tough choices
-- Prioritization: Find what matters most with Eisenhower matrix
+- Session Modes: active / passive / autonomous working modes
+- Item Lifecycle: work items with a hard Definition of Done
+- Budget and Autonomy: unattended work within 5h and weekly caps
+- Verify and Safety: visual verify, filesystem protection, subagent priming
+- The Wider Marketplace: hydra, dogma, import, limit and more (optional)
 - Something else: Ask your own question
 ```
 
-**If arguments provided:** The user already has a question. Answer it directly using this guide's best practices, or navigate to the most relevant section.
+**If arguments provided:** The user already has a question. Answer it directly using this guide, or navigate to the most relevant section.
 
 ---
 
-## The Project is Blessed
+## Credo's Own Teachings
 
-After completing all steps, the project is anointed and ready to serve.
+These are the heart of the framework. Everything below lives inside credo - no foreign plugin required.
 
-### For Development Projects
+### Topic: Session Modes
 
-Use these commands as needed:
+credo runs a session in one of three exclusive modes. The active mode is re-injected on every prompt, so it is never silently forgotten.
 
-- `/gsd:new-milestone` - Plan next milestone
-- `/gsd:verify-work` - Manual acceptance tests
-- `/hydra:create` - Create worktree for parallel work
+- `/credo:session-active` - intensive live collaboration, you at the keyboard, no keep-alive.
+- `/credo:session-passive` - the agent carries most of the work; you stay reachable for clarifications only, no keep-alive.
+- `/credo:session-autonomous` - approved GO items worked unattended, keep-alive intent on (best-effort, the agent schedules its own wake-ups), budget caps enforced, ntfy per task and question, progress secured via compact-plus.
 
-### The Preacher's Tips
+Pick the mode that matches how present you are. Switch any time by running the matching command.
 
-**Worktree settings BEFORE spawn:** When using hydra, configure `.claude/settings.json` in the worktree BEFORE spawning agents. This ensures agents start with the correct environment:
+### Topic: Item Lifecycle and Definition of Done
 
-1. Create worktree: `/hydra:create`
-2. Navigate to worktree and adjust `.claude/settings.json`
-3. Then spawn agent: `/hydra:spawn`
+Work lives as items under `.credo/`, where the folder is the status - no separate field that can drift:
 
-Example settings to disable linting for agents that don't need it:
+```
+items/1_todo/1_clarify -> items/1_todo/2_go -> items/2_done -> items/3_verified
+```
+
+The path of an item:
+
+1. Get an id (`scripts/credo-id-next.sh`), copy the item template into `1_clarify/`.
+2. Capture the requirement verbatim and draft observable success criteria (the Definition of Done).
+3. On an explicit GO, move to `2_go/` and build - wiring the new code so a caller actually reaches it.
+4. Run the Definition of Done gate. Only on a pass does it move to `2_done/`.
+5. Only the user files an item under `3_verified/`.
+
+To onboard an existing repository into this structure, run `/credo:migrate` - it sets up `.credo/` and walks the repo through the migration procedure once.
+
+**The Definition of Done is hard:** success criteria observably met, code wired in, an independent audit subagent (not the builder) passed it, UI work visually verified in a real browser with screenshot evidence, and docs updated in the same change. "The test passed" is not done.
+
+### Topic: Budget and Autonomy
+
+credo is limit-aware. In autonomous mode it reads the 5-hour and weekly usage caps (via the `limit` plugin cache), sizes tasks to fit the remaining budget, and pauses or hands off before a wall is hit. Approved GO items are worked unattended with keep-alive; each task and question fires an ntfy push so you can step away and still be called back.
+
+### Topic: Verify and Safety
+
+- **Verify** - for any runtime surface, done means a real browser drove the actual UI across the configured viewports and captured evidence, not a claim.
+- **Safety** - filesystem protection and no-autonomous-installs rules are the highest priority, and they are re-injected into EVERY subagent. Delegation cannot dilute them.
+- **Subagent priming** - every subagent starts with the load-bearing security, quality, honesty, and output-hygiene rules already in context, so a delegation-first main agent stays safe even when its own context has rotted.
+
+### Topic: PR Vetting and Issue Triage
+
+Two orchestration skills for maintaining a public repo. They trigger on their own, but you can also ask for them by name.
+
+- **pr-vetting** - rigorous multi-subagent vetting of external pull requests across technical, security, value/fit, contributor reputation, and license/compliance dimensions, with automated mass-PR / product-injection detection. Merges the findings into one decision-ready report; the merge/close decision stays with the maintainer.
+- **issue-triage** - selection-first GitHub issue triage: shortlist and prioritize before deep-triaging chosen issues via parallel subagents, then recommend close/fix/keep/needs-info for the owner to approve before any action.
+
+### The Full Commandments (credo)
+
+| Command | Purpose |
+| --------------------------- | -------------------------------------------------------------- |
+| `/credo:setup`              | Initialize the framework and offer recommended/optional tools  |
+| `/credo:migrate`            | Migrate an existing repo into the `.credo/` structure          |
+| `/credo:psalm`              | This guide - credo topics first, then the wider marketplace    |
+| `/credo:session-init`       | Load the main-agent delegation-first workflow                  |
+| `/credo:session-active`     | Set the session to active (live collaboration)                 |
+| `/credo:session-passive`    | Set the session to passive (clarifications only)               |
+| `/credo:session-autonomous` | Set the session to autonomous (unattended GO items, keep-alive)|
+
+credo also ships auto-discovered skills that trigger on their own (audit, diag, verify, items, requirements-verbatim, budget, compact-plus, orchestration, safety, cross-cutting-checklist-generator, wsl-env, pr-vetting, issue-triage, and the three session-mode skills). You do not call them by hand; they apply when they apply, including inside subagents.
+
+---
+
+## Optional: A Spec-Driven Task System (get-shit-done)
+
+credo's items are the recommended default. If you prefer up-front decomposition of a large, well-understood project - or you already know and like the original GSD flow - get-shit-done is an optional alternative execution core. Pick ONE task system per project (credo items OR GSD phases), never both, to avoid competing sources of truth. credo's session modes, budget, safety, and verify still apply on top of either.
+
+If you chose GSD, its hierarchy is:
+
+```
+PROJECT.md          <- What is the project?
+ROADMAP.md          <- All milestones
+  Milestone v1.0
+    Phase 1-9
+      Plans         <- Executable work packages
+```
+
+Typical GSD flow: `/gsd:new-project` (or `/gsd:map-codebase` for existing code) -> `/gsd:create-roadmap` -> `/clear` then `/gsd:plan-phase N` -> `/clear` then `/gsd:execute-phase N` (repeat) -> `/gsd:complete-milestone`. See `/gsd:help` for the full command set.
+
+---
+
+## The Wider Marketplace (Optional)
+
+credo governs the session; these plugins each solve one problem around it. Ask the user which interest them:
+
+**Use AskUserQuestion with these options:**
+
+```
+Which marketplace topics would you like to explore?
+
+- Parallel Development: Run multiple features simultaneously with hydra
+- Code Quality: Automatic linting and formatting with dogma
+- Documentation: Cache and search API docs locally with import
+- Resource Monitoring: Track tokens, costs, and rate limits with limit
+- Decision Making: Mental frameworks for tough choices
+- Prioritization: Find what matters most with the Eisenhower matrix
+- Git Ignore Patterns: Never forget an ignore location
+- Something else: Ask your own question
+```
+
+Only explain the topics the user selects.
+
+### Topic: Parallel Development (hydra)
+
+Run multiple features simultaneously without Git conflicts:
+
+```
+Use all fitting /hydra commands to complete the following tasks
+as parallel as possible. Use as many subagents as makes sense:
+
+- Feature A: Add authentication
+- Feature B: Create API endpoints
+- Feature C: Build UI components
+```
+
+Hydra handles worktree creation, agent spawning, and cleanup. After completion:
+
+```
+/hydra:merge feature-auth
+/hydra:cleanup
+```
+
+`/hydra:delete` and `/hydra:cleanup` will never accidentally delete the main worktree.
+
+**Worktree settings BEFORE spawn:** configure `.claude/settings.json` in the worktree before spawning agents, e.g. to disable linting for agents that do not need it:
 
 ```json
 {
@@ -87,129 +196,12 @@ Example settings to disable linting for agents that don't need it:
 }
 ```
 
-**Agent failures:** If an agent fails due to hooks, adjust settings in the worktree and respawn the agent.
+If an agent fails due to hooks, adjust settings in the worktree and respawn.
 
-**Environment variables:** See `~/.claude/settings.json` for available options - use as template for worktree settings.
-
-**Avoid interrupting running processes:** The preacher recommends NOT adding intermediate messages while Claude is working (even though the temptation is strong). Only add messages that REALLY contribute to the current topic in a focused way. Don't fix off-topic bugs or address unrelated issues mid-process.
-
-Instead:
-
-1. Open a notepad (or similar) alongside Claude
-2. Write down everything that comes to mind while waiting
-3. Once all tasks for the current topic are complete, work through your notes
-4. Use the hydra example prompt below for parallel processing of collected notes
-5. Alternative without hydra: process them one by one, ideally after `/clear`
-
-Discipline brings clarity. Chaos breeds confusion.
-
-### Hydra Example Prompt: Complete Workflow
-
-```
-Use /hydra to work on a feature in a worktree:
-
-plugin signal improvement:
-Add sound notification when user input is required, so user hears
-when they need to act (ensure cross-platform: Linux, macOS, Windows)
-
-For worktrees, adjust .claude/settings.json BEFORE spawning:
-Example if agent would be disturbed by linting:
-{
-  "env": {
-    "CLAUDE_MB_DOGMA_LINT_ON_STOP": "false",
-    "CLAUDE_MB_DOGMA_PRE_COMMIT_LINT": "false",
-    "CLAUDE_MB_DOGMA_SKIP_LINT_CHECK": "true"
-  }
-}
-
-The env variables in ~/.claude/settings.json serve as template.
-Adjust per worktree as needed (only disable what's necessary!).
-
-If agent fails due to hooks: fix settings in worktree and respawn.
-```
-
----
-
-## Plugin Showcase: Optional Topics
-
-Before diving into examples, ask the user which topics interest them:
-
-**Use AskUserQuestion with these options:**
-
-```
-Which productivity topics would you like to explore?
-
-- Parallel Development: Run multiple features simultaneously with hydra
-- Brownfield Onboarding: Understand existing codebases quickly
-- Code Quality: Automatic linting and formatting
-- Debugging: Systematic debugging methodology
-- Documentation: Cache and search API docs locally
-- Decision Making: Use mental frameworks for tough choices
-- Prioritization: Find what matters most with Eisenhower matrix
-- Resource Monitoring: Track tokens, costs, and rate limits
-- Custom Configuration: Per-project and per-worktree settings
-- Git Ignore Patterns: Never forget an ignore location
-- Something else: Ask your own question
-```
-
-Only explain the topics the user selects. For custom questions, help based on project structure and configuration files.
-
-### Topic: Parallel Development (hydra)
-
-Run multiple features simultaneously without Git conflicts:
-
-```
-Use all fitting /hydra commands to complete the following tasks
-as parallel as possible. Use as many subagents as makes sense
-(even minimal benefit is worth it):
-
-- Feature A: Add authentication
-- Feature B: Create API endpoints
-- Feature C: Build UI components
-```
-
-Hydra handles worktree creation, agent spawning, and cleanup automatically.
-
-After completion:
-
-```
-/hydra:merge feature-auth
-/hydra:cleanup
-```
-
-**Safety:** `/hydra:delete` and `/hydra:cleanup` will never accidentally delete the main worktree.
-
-**Read-only verification:** Hydra also works for parallel checking tasks:
-
-```
-Use hydra to verify in parallel (read-only):
-- Check if all tests pass
-- Verify documentation is complete
-- Confirm no TODO comments remain
-- Check for security issues
-```
-
-**Pro tip:** You don't need to run `/credo` (or any other command/skill) - just mention it in your prompt:
+**Pro tip:** you do not need to run `/credo` (or any command) to benefit from it - just mention it in your prompt:
 
 ```
 Follow the patterns from /credo to verify these requirements...
-```
-
-Claude will apply the best practices without executing the command.
-
-### Topic: Brownfield Onboarding (gsd)
-
-Join an existing project and need context fast:
-
-```
-/gsd:map-codebase
-```
-
-Creates documentation in `.planning/codebase/`. Then:
-
-```
-/gsd:discuss-phase 1
-/gsd:plan-phase 1
 ```
 
 ### Topic: Code Quality (dogma)
@@ -220,27 +212,11 @@ Automatic formatting and linting on every commit:
 /dogma:lint:setup
 ```
 
-Sets up ESLint + Prettier. Hooks enforce clean code automatically.
-
-For version sync issues:
+For version sync issues across the project:
 
 ```
 /dogma:versioning
 ```
-
-Finds and syncs all version files in the project.
-
-### Topic: Debugging (gsd)
-
-Stuck on a hard bug:
-
-```
-/gsd:debug
-```
-
-Activates systematic debugging with hypotheses, tests, and logging.
-
-When breakthrough happens or user input needed, signal plugin plays a sound.
 
 ### Topic: Documentation (import)
 
@@ -248,14 +224,19 @@ Need current docs for a library:
 
 ```
 /import:url-or-path https://docs.example.com/api
-```
-
-Caches docs locally. Later:
-
-```
 /import:search "authentication"
 /import:update
 ```
+
+### Topic: Resource Monitoring (limit + hydra)
+
+The limit plugin shows token usage, rate limits, and costs in the statusline. For parallel agents:
+
+```
+/hydra:watch
+```
+
+Live table with the status of all worktree agents.
 
 ### Topic: Decision Making (taches-cc-resources)
 
@@ -267,50 +248,13 @@ Facing an architecture decision:
 /consider:10-10-10
 ```
 
-Claude analyzes options using proven mental frameworks.
-
 ### Topic: Prioritization (taches-cc-resources)
 
-Too many tasks, unclear what's urgent:
+Too many tasks, unclear what is urgent:
 
 ```
 /consider:eisenhower-matrix
 ```
-
-Categorizes tasks by urgency and importance.
-
-### Topic: Resource Monitoring (limit + hydra)
-
-Multiple agents running in parallel:
-
-```
-/hydra:watch
-```
-
-Live table with status of all worktree agents.
-
-In the status line (limit plugin) you see:
-
-- Token usage
-- Rate limits
-- Costs
-
-### Topic: Custom Configuration
-
-Different settings per worktree (e.g., disable linting for a subagent):
-
-```json
-// In worktree .claude/settings.local.json:
-{
-    "env": {
-        "CLAUDE_MB_DOGMA_LINT_ON_STOP": "false",
-        "CLAUDE_MB_DOGMA_PRE_COMMIT_LINT": "false",
-        "CLAUDE_MB_DOGMA_SKIP_LINT_CHECK": "true"
-    }
-}
-```
-
-Respawn agent - done.
 
 ### Topic: Git Ignore Patterns (dogma)
 
@@ -318,314 +262,29 @@ Never forget an ignore location when adding patterns:
 
 ```
 /dogma:ignore
-```
-
-Adds patterns to all relevant locations at once:
-
-- `.gitignore` (versioned, shared with team)
-- `.git/info/exclude` (local only, not versioned)
-
-To audit which patterns are missing where:
-
-```
 /dogma:ignore:audit
 ```
 
-Shows gaps across all ignore locations so nothing is forgotten.
+Adds patterns to `.gitignore` (shared) and `.git/info/exclude` (local only), and audits which are missing where.
 
----
+### The Full Commandments (Wiki Reference)
 
-## Further Help
+Deeper command tables for the wider marketplace:
 
-- `/gsd:help` - All GSD commands
-- `/hydra:help` - Worktree management
+**Dogma:**
 
-### Wiki (Fallback for Details)
-
-If information is missing or more details are needed, check the marketplace wiki:
-
-**URL:** https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki
-
-Use WebFetch to retrieve specific wiki pages when users ask for more details about a plugin or feature not fully covered here.
-
----
-
-## Preacher's Complete Workflow (Real-World Example)
-
-This is how the preacher handles most new projects - a complete demonstration including all repetitions like `/clear` commands. Walk this path.
-
-### New Project Setup
-
-```bash
-# Create project directory
-mkdir -p my-project
-cd my-project
-git init
-
-# Start Claude
-claude update
-claude --dangerously-skip-permissions
-```
-
-**Warning:** See disclaimer above regarding `--dangerously-skip-permissions`.
-
-### Update Marketplaces and Plugins
-
-```
-# Manually update marketplaces if needed (git pull in marketplace directories)
-# Install missing/new plugins from available marketplaces
-```
-
-### Restart Claude (Required After Plugin Changes)
-
-```bash
-# Exit Claude, then:
-claude update
-claude --dangerously-skip-permissions
-```
-
-### Set Project Language
-
-Tell Claude the main language, e.g.:
-
-```
-The main language of this project is German, we don't need any English at all.
-```
-
-### Sync Claude Instructions
-
-```
-/dogma:sync
-```
-
-When prompted for DOGMA-PERMISSIONS.md:
-
-- add: true
-- commit: true
-- rm: ask
-
-### Disable Features for This Project (Optional)
-
-**To disable PARTS of a plugin** (e.g., no linting for non-code projects):
-
-Create `.claude/settings.local.json`:
-
-```json
-{
-    "env": {
-        "CLAUDE_MB_DOGMA_LINT_ON_STOP": "false",
-        "CLAUDE_MB_DOGMA_PRE_COMMIT_LINT": "false",
-        "CLAUDE_MB_DOGMA_SKIP_LINT_CHECK": "true"
-    }
-}
-```
-
-**To disable ENTIRE plugins** (e.g., no dogma rules for acquisition projects - though the preacher recommends keeping dogma and just disabling hooks):
-
-```json
-{
-    "enabledPlugins": {
-        "dogma@marcel-bich-claude-marketplace": false
-    }
-}
-```
-
-### Restart Claude (Required After Settings Changes)
-
-```bash
-# Exit Claude, then:
-claude update
-claude --dangerously-skip-permissions
-```
-
-### Initialize Project with GSD
-
-```
-/gsd:new-project
-```
-
-Describe what the entire project represents (not individual tasks, but the purpose):
-
-```
-Example for an acquisition project:
-
-In this project I provide acquisition data, e.g., in the form of tickets or
-ticket comments, containing various tasks that are defined or emerge from them.
-The project serves to fulfill these tasks (mostly customer acquisition through
-analysis and assessments).
-
-The project is offline and will never be pushed.
-
-Suggested folder structure:
-./archive/ => completed/cancelled projects no longer being worked on but useful as future references
-  ./archive/completed/project-x/
-  ./archive/cancelled/project-a/
-./ => projects in progress
-  ./project-y/
-
-The structure within project folders can be designed as you see fit.
-Further project info will be conveyed through roadmaps/milestones/phases/plans.
-```
-
-### GSD Hierarchy - The Structure of Things
-
-```
-PROJECT.md          <- What is the project? (created once)
-ROADMAP.md          <- Entire project roadmap (all milestones)
-  Milestone v1.0    <- A coherent block of work
-    Phase 1-9       <- Individual steps within a milestone
-      Plans         <- Executable work packages per phase
-  Milestone v1.1    <- Next block of work
-    Phase 10-15
-  Milestone v2.0
-    Phase 16-22
-```
-
-**Key points:**
-
-- ROADMAP.md is **project-wide**, not milestone-specific
-- Each new milestone is appended via `/gsd:new-milestone`
-- Completed milestones are collapsed in `<details>` tags
-- `/gsd:new-project` creates both PROJECT.md and ROADMAP.md
-- You can skip PROJECT.md and jump straight to milestones - it works, but the preacher recommends creating it for long-term context
-
-### Create Roadmap
-
-```
-/gsd:create-roadmap
-```
-
-If the result doesn't fit, have it adjusted as needed.
-
-### Plan Phases
-
-Once the roadmap is satisfactory:
-
-```
-/clear
-/gsd:plan-phase 1
-```
-
-Plan all phases. Use `/hydra` commands for parallel work IF BENEFICIAL (not when worktree setup overhead exceeds the benefit). If parallel doesn't work, do it sequentially.
-
-### Execute Phases
-
-```
-/clear
-/gsd:execute-phase 1
-/clear
-/gsd:execute-phase 2
-/clear
-/gsd:execute-phase 3
-/clear
-...
-```
-
-Continue until all phases are complete.
-
-### Complete Milestone
-
-```
-/clear
-/gsd:complete-milestone
-```
-
-Choose: yes / wait / adjust
-
----
-
-**The project is now initialized and ready for use.**
-
-### For This Acquisition Example
-
-Start working directly without needing additional skills.
-
-### For Development Projects (Code and Features)
-
-Continuously use these to extend/debug/develop code:
-
-```
-/clear
-/gsd:new-milestone   # Plan next milestone
-```
-
-or
-
-```
-/clear
-/gsd:verify-work     # Manual acceptance tests
-```
-
-### Hydra Example Prompt
-
-```
-Use /hydra to do the following in a worktree:
-
-plugin signal improvement:
-permission required signals - where user REALLY needs to act, play the same
-sound as on finish, so user hears they're up again (ensure cross-platform
-compatibility: Linux, macOS, Windows)
-
-For worktrees, adjust .claude/settings.json BEFORE spawning:
-Example if agent would be disturbed by linting:
-{
-  "env": {
-    "CLAUDE_MB_DOGMA_LINT_ON_STOP": "false",
-    "CLAUDE_MB_DOGMA_PRE_COMMIT_LINT": "false",
-    "CLAUDE_MB_DOGMA_SKIP_LINT_CHECK": "true"
-  }
-}
-
-The env variables in ~/.claude/settings.json serve as template.
-Adjust per worktree as needed (only disable what's truly necessary,
-e.g., debug or linting!).
-
-If an agent fails due to hooks: fix settings and respawn the agent.
-```
-
----
-
-## The Full Commandments (Wiki Reference)
-
-The preacher's guide above covers the blessed path. But the faithful may seek deeper knowledge of all available commands. Here lies the complete scripture.
-
-### Dogma - The Full Arsenal
-
-Beyond what the main workflow covers, dogma offers these additional rituals:
-
-| Command                  | Purpose                                                           |
-| ------------------------ | ----------------------------------------------------------------- |
-| `/dogma:lint`            | Run linting and formatting on staged files (non-interactive)      |
-| `/dogma:cleanup`         | Find and purge AI-typical patterns from your code                 |
-| `/dogma:permissions`     | Create or update DOGMA-PERMISSIONS.md interactively               |
-| `/dogma:force`           | Apply all CLAUDE rules to your project with full control          |
-| `/dogma:sanitize-git`    | Cleanse git history from Claude/AI traces                         |
+| Command                    | Purpose                                                           |
+| -------------------------- | ----------------------------------------------------------------- |
+| `/dogma:lint`              | Run linting and formatting on staged files (non-interactive)      |
+| `/dogma:cleanup`           | Find and purge AI-typical patterns from your code                 |
+| `/dogma:permissions`       | Create or update DOGMA-PERMISSIONS.md interactively               |
+| `/dogma:force`             | Apply all CLAUDE rules to your project with full control          |
+| `/dogma:sanitize-git`      | Cleanse git history from Claude/AI traces                         |
 | `/dogma:docs-update`       | Synchronize documentation across README and wiki                  |
 | `/dogma:recommended:setup` | Check and install recommended plugins and MCP servers             |
 | `/dogma:ignore:sync-all`   | Sync ignore patterns to all local repositories (marketplace only) |
 
-**The preacher's wisdom:**
-
-```
-# After making changes, ensure code is clean
-/dogma:lint
-
-# Suspicious AI traces in your codebase? Purify it
-/dogma:cleanup src/
-
-# Setting up a new project? Create permissions first
-/dogma:permissions
-
-# Apply all rules at once with review
-/dogma:force
-
-# Before pushing to public: cleanse the history
-/dogma:sanitize-git
-```
-
-### Hydra - The Complete Spawning Ritual
-
-The parallel development section showed individual commands. Here is the full liturgy:
+**Hydra:**
 
 | Command           | Purpose                                               |
 | ----------------- | ----------------------------------------------------- |
@@ -633,28 +292,7 @@ The parallel development section showed individual commands. Here is the full li
 | `/hydra:list`     | Show all worktrees with paths and branches            |
 | `/hydra:status`   | Detailed status including uncommitted changes         |
 
-**The preacher's preferred invocation for parallel work:**
-
-```
-# Create worktrees for each feature
-/hydra:create feature-auth
-/hydra:create feature-api
-/hydra:create feature-ui
-
-# Spawn all agents at once (the true power of hydra)
-/hydra:parallel feature-auth:Implement login | feature-api:Create endpoints | feature-ui:Build components
-
-# Monitor the congregation
-/hydra:watch
-
-# Check individual progress
-/hydra:status feature-auth
-
-# See all worktrees
-/hydra:list
-```
-
-### Import - The Complete Scrolls
+**Import:**
 
 | Command               | Purpose                            |
 | --------------------- | ---------------------------------- |
@@ -663,21 +301,22 @@ The parallel development section showed individual commands. Here is the full li
 | `/import:search`      | Search within cached docs          |
 | `/import:update`      | Re-fetch from original source      |
 
-### Signal - Silent Watcher
+**Signal:** no user-invocable commands - it works through hooks that notify you when Claude needs attention or completes work.
 
-Signal has no user-invocable commands - it works through hooks that notify you when Claude needs attention or completes work. The faithful need not call upon it directly; it watches over them.
-
-### Limit - The Measure of All Things
-
-Limit displays in your statusline automatically. One command available:
-
-| Command | Purpose |
-|---------|---------|
-| `/limit:highscore` | Display all highscores and LimitAt achievements |
-
-Observe your API usage, tokens, costs, and track your personal highscores.
+**Limit:** displays in your statusline automatically. One command: `/limit:highscore` shows highscores and LimitAt achievements.
 
 ---
 
-**For the complete scripture of each plugin, consult the wiki:**
-https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki
+## Further Help
+
+- `/credo:session-init` - load the delegation-first main-agent workflow
+- `/gsd:help` - all GSD commands (if the optional GSD path is used)
+- `/hydra:help` - worktree management
+
+### Wiki (Fallback for Details)
+
+If more detail is needed, check the marketplace wiki:
+
+**URL:** https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki
+
+Use WebFetch to retrieve specific wiki pages when users ask for more details not covered here.

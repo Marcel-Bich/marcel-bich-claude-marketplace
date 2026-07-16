@@ -12,7 +12,7 @@ allowed-tools:
 
 # Credo Setup
 
-Set up Claude Code with the preacher's recommended tools, instructions, and project structure.
+Set up Claude Code with the preacher's recommended tools, instructions, and project structure. credo is the core; everything else is recommended or optional and slots in around it.
 
 **Goal:** Only ask about things that are NOT yet done. Skip everything already configured.
 
@@ -26,45 +26,75 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-setup.sh"
 
 This outputs structured results for all checks. Parse the output to determine:
 
-- `plugins.dogma` / `plugins.gsd` - Are required plugins installed?
+- `plugins.dogma` - Is the recommended dogma plugin installed?
+- `plugins.gsd` - Is the optional get-shit-done plugin installed?
 - `directories.claude` - Are Claude instructions present?
-- `files.project_md` - Does PROJECT.md exist?
-- `directories.codebase_map` - Is codebase mapped?
-- `files.roadmap` - Does ROADMAP.md exist?
+- `files.project_md` - Does PROJECT.md exist? (only relevant if GSD is used)
+- `directories.codebase_map` - Is codebase mapped? (only relevant if GSD is used)
+- `files.roadmap` - Does ROADMAP.md exist? (only relevant if GSD is used)
 - `project.state` - Overall state (needs_setup, needs_mapping, needs_project, needs_roadmap, ready)
 
 **If project.state = ready:** Skip directly to "Setup Complete" section. Do NOT ask any questions.
 
-## Step 2: Install Required Plugins
+## Step 2: Initialize the credo Framework (Core)
 
-**Skip if:** `plugins.dogma = true AND plugins.gsd = true`
+This is the real first step - credo's own state tree. It is self-contained and needs no other plugin.
 
-**If plugins are missing (dogma: false OR gsd: false):**
+Run the init script (idempotent - safe to run again):
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-init.sh"
+```
+
+This creates the `.credo/` structure (items, process, screenshots, checklists, config, id-counter) and adds the git-exclude lines. `.credo/**` stays local by default. For teams that want items and process versioned in the repo, run it with `CREDO_VERSION_TRACKED=1` instead (per-project `config` and `screenshots/` stay local either way).
+
+After this, credo's session modes, item lifecycle, Definition of Done, budget awareness, verify, and safety are ready. Pick a session mode when you start working:
+
+- `/credo:session-active` - intensive live collaboration.
+- `/credo:session-passive` - agent carries most work, you answer clarifications.
+- `/credo:session-autonomous` - approved GO items worked unattended.
+
+## Step 3: Install Recommended and Optional Plugins
+
+**Skip if:** `plugins.dogma = true` (and, if the user wants GSD, `plugins.gsd = true`)
+
+credo works on its own. These plugins complement it:
+
+- **dogma** (recommended) - syncs and enforces Claude instructions.
+- **get-shit-done** (optional) - a spec-driven planning system, an alternative to credo's own item workflow. Only install it if you prefer up-front project decomposition or already like the GSD flow. See "credo vs Get-Shit-Done" in the marketplace README.
+
+**If dogma is missing (dogma: false):**
 
 Use AskUserQuestion:
 
 ```
-The preacher's teachings require sacred tools that are not yet installed:
+The preacher recommends dogma to sync and enforce your Claude instructions.
 
-Missing: [list missing plugins based on check output]
-
-Shall the preacher summon them for you?
-- Yes, install now (Recommended)
-- No, I will gather them myself
-- Proceed without (the path will be incomplete)
+Shall the preacher summon it for you?
+- Yes, install dogma (Recommended)
+- Also install get-shit-done (optional spec-driven planning, alternative to credo items)
+- No, I will gather tools myself
+- Proceed without (credo alone still works)
 ```
 
-**The Faithful Choose: "Yes, install now"**
+**The Faithful Choose: "Yes, install dogma"**
 
-Summon the missing tools:
+Summon the tool:
 
 ```bash
-# Only for those not yet present:
+claude plugin install dogma@marcel-bich-claude-marketplace
+```
+
+**The Faithful Choose: "Also install get-shit-done"**
+
+Summon both:
+
+```bash
 claude plugin install dogma@marcel-bich-claude-marketplace
 claude plugin install get-shit-done@marcel-bich-claude-marketplace
 ```
 
-Then speak:
+After installing any plugin, speak:
 
 ```
 The tools have been summoned.
@@ -80,7 +110,7 @@ Then seek /credo:setup once more.
 
 **Halt here** - the tools must awaken before the journey continues.
 
-**The Faithful Choose: "No, I will gather them myself"**
+**The Faithful Choose: "No, I will gather tools myself"**
 
 Provide the incantations:
 
@@ -88,6 +118,7 @@ Provide the incantations:
 Gather the tools yourself with these commands:
 
 claude plugin install dogma@marcel-bich-claude-marketplace
+# Optional, only if you want the GSD planning workflow:
 claude plugin install get-shit-done@marcel-bich-claude-marketplace
 
 Then restart Claude and return to /credo:setup.
@@ -97,20 +128,17 @@ Then restart Claude and return to /credo:setup.
 
 **The Faithful Choose: "Proceed without"**
 
-Warn of the incomplete path:
-
 ```
-You walk an incomplete path. Many teachings will fail:
-- /dogma:* commands will not respond
-- /gsd:* commands will not respond
-- The Project Setup workflow will be broken
+You proceed with credo alone - that is a complete, self-contained setup.
 
-The preacher advises returning later with proper tools.
+Note: without dogma, /dogma:* commands will not respond. Without get-shit-done,
+/gsd:* commands will not respond and the optional GSD planning path is unavailable.
+credo's own workflow (session modes, items, Definition of Done) is unaffected.
 ```
 
-Continue, but the journey will be hindered.
+Continue.
 
-## Step 3: Install Recommended Plugins and MCPs (Recommended)
+## Step 4: Install Recommended Plugins and MCPs (Recommended)
 
 **Skip if:** `directories.claude = true` (user already ran setup before - recommended plugins were offered then)
 
@@ -134,11 +162,11 @@ If user chooses option 1:
 
 **After installing new plugins:** Restart Claude (Ctrl+C, then `claude`) to load them.
 
-## Step 4: Sync Claude Instructions
+## Step 5: Sync Claude Instructions
 
-**Skip if:** `directories.claude = true` (dogma already configured)
+**Skip if:** `directories.claude = true` (dogma already configured) OR dogma is not installed.
 
-**If directories.claude is false:**
+**If directories.claude is false and dogma is installed:**
 
 Use AskUserQuestion:
 
@@ -171,45 +199,49 @@ When prompted for DOGMA-PERMISSIONS.md, the preacher's recommended settings:
 
 Legend: `[x]` = auto, `[?]` = ask, `[ ]` = deny
 
-## Step 5: Initialize Project with GSD
+## Step 6: Choose a Task System (Optional)
 
-**Skip if:** `files.project_md = true OR directories.codebase_map = true`
+credo's item lifecycle (from Step 2) is the recommended default and needs no further setup - just create items as you work.
+
+**Only relevant if the user installed get-shit-done and prefers spec-driven planning.** Pick ONE task system per project (credo items OR GSD phases), never both, to avoid competing sources of truth.
+
+**If the user picks GSD as the task system:** advise them to set `CREDO_TASK_BACKEND=gsd` so credo's own item features stand down (no `.credo/items/` vs `.planning/` double-bookkeeping). credo's operating layer - session modes, budget, safety, verify, subagent priming - keeps working on top of GSD regardless. Leaving the variable unset (or `credo`) keeps credo items as the task system.
+
+**Skip if:** GSD is not installed, OR `files.project_md = true`, OR `directories.codebase_map = true`, OR the user is happy with credo items.
 
 **For NEW projects (project.is_greenfield = true AND no existing code):**
 
 Use AskUserQuestion:
 ```
-The project directory appears to be new.
+You have get-shit-done installed. For this project, which task system?
 
-Would you like to initialize it with GSD?
-- Yes, run /gsd:new-project (Recommended) - Creates PROJECT.md with project context
-- No, skip for now - I will set it up later with /gsd:new-project
+- credo items (Recommended) - lightweight, already set up, no further action
+- GSD: run /gsd:new-project - up-front spec-driven planning (creates PROJECT.md)
 ```
 
-If user chooses "Yes": Run `/gsd:new-project` via Skill tool.
+If user chooses GSD: Run `/gsd:new-project` via Skill tool, then advise setting `CREDO_TASK_BACKEND=gsd`.
 
 **For EXISTING projects (project.is_greenfield = false):**
 
 Use AskUserQuestion:
 ```
-I detected existing code that hasn't been mapped yet.
+You have get-shit-done installed and existing code that hasn't been mapped.
 
-Would you like to map the codebase?
-- Yes, run /gsd:map-codebase (Recommended) - Analyzes codebase and creates documentation
-- No, skip for now - I will map it later with /gsd:map-codebase
+- credo items (Recommended) - lightweight, already set up, no further action
+- GSD: run /gsd:map-codebase - analyze the codebase for spec-driven planning
 ```
 
-If user chooses "Yes": Run `/gsd:map-codebase` via Skill tool.
+If user chooses GSD: Run `/gsd:map-codebase` via Skill tool, then advise setting `CREDO_TASK_BACKEND=gsd`.
 
-## Step 6: Create Roadmap (Optional)
+## Step 7: Create Roadmap (Optional, GSD only)
 
-**Skip if:** `files.roadmap = true`
+**Skip if:** GSD is not being used, OR `files.roadmap = true`.
 
-If no roadmap yet:
+If the user chose the GSD path and has no roadmap yet:
 
 Use AskUserQuestion:
 ```
-Would you like to create a project roadmap?
+Would you like to create a GSD project roadmap?
 
 - Yes, run /gsd:create-roadmap - Plan milestones and phases
 - No, skip for now
@@ -233,9 +265,10 @@ Proceeding to workflow guides...
 Setup complete!
 
 Your project now has:
-- Required plugins installed
-- Claude instructions synced
-- Project structure initialized
+- The credo framework initialized (.credo/ ready)
+- Recommended plugins installed (if chosen)
+- Claude instructions synced (if chosen)
+- A task system selected (credo items by default)
 
 Proceeding to workflow guides...
 ```

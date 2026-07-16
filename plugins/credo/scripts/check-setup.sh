@@ -7,6 +7,8 @@ JQ_INSTALLED=$(command -v jq >/dev/null 2>&1 && echo "true" || echo "false")
 CURL_INSTALLED=$(command -v curl >/dev/null 2>&1 && echo "true" || echo "false")
 
 # Plugin checks (read JSON directly - claude plugin list fails inside active sessions)
+# credo is self-contained: dogma is recommended, get-shit-done is optional.
+# These are reported as informational hints only - neither is required for credo to work.
 PLUGINS_JSON="$HOME/.claude/plugins/installed_plugins.json"
 DOGMA_INSTALLED=$(grep -q '"dogma@marcel-bich-claude-marketplace"' "$PLUGINS_JSON" 2>/dev/null && echo "true" || echo "false")
 GSD_INSTALLED=$(grep -q '"get-shit-done@marcel-bich-claude-marketplace"' "$PLUGINS_JSON" 2>/dev/null && echo "true" || echo "false")
@@ -37,19 +39,29 @@ if [ "$FILE_COUNT" -eq 0 ] || [ "$GIT_INIT" = "false" ]; then
 fi
 
 # Project state summary
+# GSD is OPTIONAL: the PROJECT.md / codebase-map / ROADMAP.md states only apply when
+# get-shit-done is actually installed and used as the task system. A credo-only setup is
+# self-contained and is "ready" once the Claude instructions are present - it never fails
+# for missing GSD planning artifacts.
 PROJECT_STATE="unknown"
 if [ "$CLAUDE_EXISTS" = "false" ]; then
     PROJECT_STATE="needs_setup"
-elif [ "$PROJECT_MD_EXISTS" = "false" ] && [ "$CODEBASE_MAPPED" = "false" ]; then
-    # Neither PROJECT.md nor codebase map exists
-    if [ "$HAS_CODE" = "true" ]; then
-        PROJECT_STATE="needs_mapping"
+elif [ "$GSD_INSTALLED" = "true" ]; then
+    # GSD installed: apply the GSD project-planning state machine.
+    if [ "$PROJECT_MD_EXISTS" = "false" ] && [ "$CODEBASE_MAPPED" = "false" ]; then
+        # Neither PROJECT.md nor codebase map exists
+        if [ "$HAS_CODE" = "true" ]; then
+            PROJECT_STATE="needs_mapping"
+        else
+            PROJECT_STATE="needs_project"
+        fi
+    elif [ "$ROADMAP_EXISTS" = "false" ]; then
+        PROJECT_STATE="needs_roadmap"
     else
-        PROJECT_STATE="needs_project"
+        PROJECT_STATE="ready"
     fi
-elif [ "$ROADMAP_EXISTS" = "false" ]; then
-    PROJECT_STATE="needs_roadmap"
 else
+    # credo-only: no GSD planning artifacts required.
     PROJECT_STATE="ready"
 fi
 

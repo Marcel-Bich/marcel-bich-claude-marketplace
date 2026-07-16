@@ -1,14 +1,20 @@
 {
   "name": "credo",
-  "version": "0.3.2",
-  "description": "Opinionated workflow guides and best practices - the preacher's proven patterns for Claude Code projects",
+  "version": "0.17.0",
+  "description": "The mentor framework for Claude Code: a self-contained process layer with per-session modes, a work-item lifecycle with a hard Definition of Done, budget-aware autonomy, visual verification, and safety rules that travel into every subagent",
   "keywords": [
     "workflow",
-    "template",
-    "guide",
-    "best-practices",
-    "onboarding",
-    "help"
+    "process",
+    "framework",
+    "session-modes",
+    "work-items",
+    "definition-of-done",
+    "autonomy",
+    "budget",
+    "verification",
+    "safety",
+    "subagents",
+    "best-practices"
   ],
   "license": "MIT"
 }

@@ -66,7 +66,7 @@ Each subagent tells you the next step:
 ### Rule 5: Review Before Completion
 
 After implementation:
-1. Spawn code-reviewer agent
+1. Spawn a review agent (code-reviewer if available, otherwise general-purpose)
 2. Apply corrections via subagents
 3. Run `/dogma:lint` if available
 4. If Hydra: merge worktrees
@@ -75,10 +75,12 @@ After implementation:
 
 ## Available Agents
 
-**Code Analysis:** code-reviewer, code-architect, code-explorer, silent-failure-hunter
-**Development:** agent-creator, plugin-validator, skill-reviewer
-**Auditing:** skill-auditor, slash-command-auditor, subagent-auditor
-**Built-in:** Explore, Plan, general-purpose
+credo ships no agents of its own. Always delegate to the built-in agents, which are guaranteed to exist. The specialized agents below only exist if another installed plugin provides them - use them ONLY if available, otherwise fall back to a built-in agent.
+
+**Built-in (always available):** Explore, Plan, general-purpose
+**Specialized (only if a plugin provides them):** code-reviewer, code-architect, code-explorer, silent-failure-hunter, agent-creator, plugin-validator, skill-reviewer, skill-auditor, slash-command-auditor, subagent-auditor
+
+Before naming a specialized agent, confirm it is available; if in doubt, delegate to `general-purpose`.
 
 ## Your Response
 
