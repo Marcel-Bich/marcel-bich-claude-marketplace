@@ -2,7 +2,7 @@
 name: session-autonomous
 description: >
   The credo behavior for a session running in AUTONOMOUS mode - work approved GO items
-  unattended while the user is away, best-effort self-scheduled keep-alive, budget caps always on. Load this when
+  unattended while the user is away, hook-enforced self-scheduled keep-alive, budget caps always on. Load this when
   the session-mode inject line says "Load skill session-autonomous", right after the
   /credo:session-autonomous command, or whenever you are working autonomously and unattended.
   Shares the canonical common core defined in the credo session-active skill, then adds the
@@ -62,23 +62,33 @@ commit-identity gate before every commit. Before starting an autonomous run, the
 first confirms with the user whether the default caps fit or need a temporary override, and
 until when (per the budget skill). Never exceed a cap to finish "just one more thing".
 
-### Keep-alive (best-effort, only while credo-autonomy-active is set)
+### Keep-alive (hook-enforced, only while credo-autonomy-active is set)
 
 Keep the session awake so an unattended run does not fall asleep while there is open work
-and budget. Keep-alive is best-effort and instruction-driven: YOU schedule your own
-wake-ups. There is no registered Stop hook that forces the turn to continue, so upholding
-the discipline below is what actually keeps an unattended run alive.
+and budget. This discipline is now hook-enforced. A registered `Stop` hook
+(`credo-autonomy-keepalive.sh`, wired in `hooks/hooks.json`) fires when you try to end the
+turn: if autonomy is active and no self-wake is marked, it blocks the stop and instructs you
+to call ScheduleWakeup now (and mark it). Paired with the registered `UserPromptSubmit` hook
+(`credo-autonomy-clear.sh`), any real user message turns autonomy off. The enforcement is a
+nudge, not a guarantee of infinite wakefulness: the hook forces the block plus instruction,
+but actually staying awake still relies on you then calling ScheduleWakeup. It is loop-safe -
+the hook forces AT MOST ONE continuation per stop attempt (via the `stop_hook_active` guard)
+and lets the stop through once a future wake is marked, so it can NOT spin forever. Outside
+autonomous mode (no flag set) the hook is completely inert - a plain no-op stop.
 
 - ScheduleWakeup is the PRIMARY self-wake mechanism. Its single delay is clamped to
   [60, 3600] seconds, so for a longer pause CHAIN several wake-ups rather than one long one.
-- Record each planned wake with `credo-autonomy-wake-mark.sh` so your own tracking stays
-  consistent. It is a plain helper script, not a registered hook, so it does not enforce
-  anything by itself - it just keeps a record of the next wake.
+- Record each planned wake with `credo-autonomy-wake-mark.sh` (same delaySeconds as the
+  ScheduleWakeup call). This is what the Stop hook checks to let the turn stop, so marking the
+  wake is what satisfies the enforcement.
 - On each wake, re-check the flag. If autonomy has been turned off (the user returned, or
   the run ended), do not keep building - end quietly.
 - Never end a turn without a scheduled wake-up while the flag is set and there is open work
-  plus budget. This is the standing keep-alive duty; because nothing enforces it for you,
-  you must uphold it yourself.
+  plus budget. The Stop hook enforces this nudge, but uphold the duty yourself rather than
+  relying on the block.
+- When the run is truly finished, on a showstopper, or at the weekly hard limit, end the mode
+  deliberately with `credo-autonomy-off.sh` - it clears the flag and sets the paused opt-out
+  so the Stop hook stays inert and you may stop.
 
 Wake-up offsets after a limit reset (default 5 minutes, fallback 1) come from the budget
 skill's `wakeup.*` config - use them when you pause for a limit to reset.

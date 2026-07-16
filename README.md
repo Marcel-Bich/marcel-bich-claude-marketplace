@@ -90,7 +90,7 @@ credo is the mentor - a self-contained process framework that governs how a whol
 - **Budget and limit awareness** - credo reads the 5-hour and weekly usage caps, sizes tasks to fit, and pauses or hands off before a wall is hit.
 - **Verify and wiring checks** - "done" means the code is actually wired in and observably works, not just "the test passed".
 - **Safety that travels** - filesystem protection and no-autonomous-installs rules are re-injected into every subagent, so delegation cannot dilute them.
-- **Autonomy handling** - approved GO items are worked unattended with best-effort self-scheduled wake-ups, budget caps, and ntfy notifications per task and question.
+- **Autonomy handling** - approved GO items are worked unattended with hook-enforced self-scheduled wake-ups (a registered Stop hook blocks a stop without a scheduled ScheduleWakeup), budget caps, and ntfy notifications per task and question.
 - **Subagent priming** - every subagent starts with the load-bearing security, quality, and honesty rules already in context.
 - **WSL environment awareness** - reach Windows-side services and launchers from WSL, self-detecting.
 - **Opt-in versioning** - keep `.credo/` local by default, or version items and process in the repo with a single flag.

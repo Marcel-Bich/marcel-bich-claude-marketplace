@@ -14,9 +14,9 @@
 #
 # Failure-safe: any error -> exit 0 (never block a prompt).
 #
-# NOTE: this is a coupling helper built in Phase 2. It is not registered in the
-# plugin hooks manifest yet; the live UserPromptSubmit registration is part of
-# the later switchover phase.
+# NOTE: this is registered in the plugin hooks manifest (hooks/hooks.json) as a
+# UserPromptSubmit hook, together with credo-autonomy-keepalive.sh on Stop. A
+# real user message thus turns autonomy off at runtime.
 set -u
 
 FLAG="$HOME/.claude/credo-autonomy-active"
