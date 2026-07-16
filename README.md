@@ -61,15 +61,17 @@ Born from real pain points. Built for developers who learned the hard way - sinc
 
 **Each plugin works independently - pick what you need. But together, they form a solid framework for developers who want control, quality, and security over pure YOLO mode.**
 
+credo is the mentor - it governs how a whole session runs, and the other tools slot in around it.
+
 They don't replace Claude. They make Claude manageable.
 
 | Plugin | Role | What they do |
 |--------|------|--------------|
+| [**credo**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Credo-Plugin) | The Mentor | "Here is how we run a session." Modes, work-items with a hard Definition of Done, budgeted autonomy, verify, and safety everywhere. |
 | [**dogma**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Dogma-Plugin) | The Compliance Officer | Intelligent rule sync from any source, with enforcement hooks. Opinionated defaults included. |
 | [**hydra**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Hydra-Plugin) | The Project Manager | Parallel workstreams. Isolated branches. No stepping on toes. |
 | [**signal**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Signal-Plugin) | The Receptionist | "Claude needs you." Ding. Simple. |
 | [**limit**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Limit-Plugin) | The Accountant | Tracks every token. Shows the burn rate and limits. No surprises. |
-| [**credo**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Credo-Plugin) | The Mentor | Session modes. A work-item lifecycle with a hard Definition of Done. Rules that travel into every subagent. |
 | [**import**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Import-Plugin) | The Librarian | External docs, locally cached. No annoying "site blocked AI." |
 | [**marketplace**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Marketplace-Plugin) | The Intern | Development tools for local plugin testing. |
 
@@ -77,7 +79,38 @@ They don't replace Claude. They make Claude manageable.
 
 | Plugin | Author | Role | What they do |
 |--------|--------|------|--------------|
-| [**get-shit-done**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Get-Shit-Done-Plugin) | Marcel-Bich (secured fork) | The Taskmaster | Specs first. Implementation second. Ship third. |
+| [**get-shit-done**](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Get-Shit-Done-Plugin) | Marcel-Bich (secured fork) | The Taskmaster | Specs first. Implementation second. Ship third. An optional alternative to credo's item workflow for spec-driven planning. |
+
+## credo - the mentor
+
+credo is the mentor - a self-contained process framework that governs how a whole session runs. Where the other plugins each solve one problem, credo sets the working discipline for the whole session and the rest slot in around it:
+
+- **Session modes** - `active`, `passive`, and `autonomous`. Each mode changes how much Claude does on its own and whether it keeps itself alive for unattended work. The current mode is re-injected on every prompt, so it is never silently forgotten.
+- **Work-item lifecycle with a hard Definition of Done** - items live under `.credo/`, where the folder is the status (clarify -> go -> done -> verified). Nothing reaches "done" until an independent audit subagent signs off and, for UI work, a real browser verify captured screenshot evidence.
+- **Budget and limit awareness** - credo reads the 5-hour and weekly usage caps, sizes tasks to fit, and pauses or hands off before a wall is hit.
+- **Verify and wiring checks** - "done" means the code is actually wired in and observably works, not just "the test passed".
+- **Safety that travels** - filesystem protection and no-autonomous-installs rules are re-injected into every subagent, so delegation cannot dilute them.
+- **Autonomy handling** - approved GO items are worked unattended with best-effort self-scheduled wake-ups, budget caps, and ntfy notifications per task and question.
+- **Subagent priming** - every subagent starts with the load-bearing security, quality, and honesty rules already in context.
+- **WSL environment awareness** - reach Windows-side services and launchers from WSL, self-detecting.
+- **Opt-in versioning** - keep `.credo/` local by default, or version items and process in the repo with a single flag.
+
+Start here: install credo, run `/credo:setup`, then pick a session mode. The rest of the marketplace slots in around it.
+
+## credo vs Get-Shit-Done
+
+credo has two layers, and only one of them is a task system:
+
+- **Operating layer (always on)** - session modes, WSL environment awareness, budget and limit awareness, subagent orchestration and priming, safety that travels into every subagent, and the session-mode switch. This layer is orthogonal: it sits on top of whatever task system you use.
+- **Task model** (`.credo/items/` plus a hard Definition of Done) - this is an ALTERNATIVE to GSD, not a layer on top of it. Use one task system per project.
+
+**credo is the recommended default and is self-contained for day-to-day work** - items, bug fixes, incremental features, each gated by an observable Definition of Done. credo deliberately has NO large up-front project bootstrap or roadmap; it stays flat and reactive.
+
+**GSD is optional** for heavy up-front planning (PROJECT -> ROADMAP -> milestones -> phases -> plans), or if you already know and prefer the original GSD flow. Pick ONE task system per project, never both at once.
+
+If you run GSD as your task system, set `CREDO_TASK_BACKEND=gsd` so credo's own item features stand down - that avoids two competing sources of truth (`.credo/` items vs GSD's `.planning/`). The default `CREDO_TASK_BACKEND=credo` keeps credo's items active; the operating layer above stays on regardless of the value.
+
+Technically the two do not collide: their hooks are disjoint, and their commands and directories are separate. The one point of friction is the status line - it is a single slot - so in a combined credo + GSD + `limit` setup keep the `limit` status line (let GSD skip installing its own) so credo's budget and auto-compact features keep their data source.
 
 ## Requirements
 

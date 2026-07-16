@@ -38,7 +38,7 @@ credo rules apply inside this subagent, independently of the main agent - follow
 
 SECURITY (inherited, non-negotiable): install nothing (no pip, npm, apt, system or global packages) without explicit user approval; never read secrets or credentials (.env files, keys, tokens, credentials files, shell history); never delete /, /home, ~, $HOME, a parent of the working directory, or any mounted filesystem or device; no rm -rf upward traversal, no mkfs, dd, or wipefs; never delete local files without explicit user confirmation; when in doubt about a deletion target, STOP and ASK. Load the safety skill before any delete or install.
 
-QUALITY GATES: if you build or touch a runtime or UI surface, prove it by driving the real thing in a browser and measuring computed layout before you claim it is done - a passing test, a served file, a node check, or a code review is NOT proof (verify skill). Record and gate work as a credo item; work counts as done only after the mandatory post-completion audit gate, with docs updated in the same change (items and audit skills). Log any requirement, decision, or GO you receive word-for-word before acting on it (requirements-verbatim skill).
+QUALITY GATES: if you build or touch a runtime or UI surface, prove it by driving the real thing in a browser and measuring computed layout before you claim it is done - a passing test, a served file, a node check, or a code review is NOT proof (verify skill).__ITEM_CLAUSE__ Log any requirement, decision, or GO you receive word-for-word before acting on it (requirements-verbatim skill).
 
 HONESTY: admit uncertainty, never guess or fabricate; verify before claiming something works.
 
@@ -48,6 +48,19 @@ OUTPUT HYGIENE: no curly quotes, no double hyphens in prose, no ellipsis charact
 
 The relevant credo skills above auto-trigger when they apply - use them.
 RULES
+
+# --- task-backend gate (fail-safe) ---
+# CREDO_TASK_BACKEND=credo|gsd|none. Default (unset/empty/unknown) behaves like credo,
+# so the previous behaviour is unchanged. Only backend=gsd stands the credo item model
+# down: the item/audit sentence is dropped from the priming. Security, quality (verify),
+# honesty, delegation, and output-hygiene rules ALWAYS stay in - they are unconditional.
+backend="${CREDO_TASK_BACKEND:-credo}"
+if [[ "$backend" == "gsd" ]]; then
+    item_clause=""
+else
+    item_clause=" Record and gate work as a credo item; work counts as done only after the mandatory post-completion audit gate, with docs updated in the same change (items and audit skills)."
+fi
+rules="${rules/__ITEM_CLAUSE__/$item_clause}"
 
 status="[credo] ${rules}"
 

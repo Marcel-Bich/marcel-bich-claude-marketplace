@@ -1,6 +1,6 @@
 # Credo
 
-Credo (Latin: "I believe") is a self-contained process framework for Claude Code. It turns a loose set of good habits into an enforced, project-local workflow: a per-session working mode, a work-item lifecycle with a hard Definition of Done, budget-aware autonomy, visual verification, and safety rules that travel into every subagent.
+Credo (Latin: "I believe") is the mentor framework for Claude Code: a self-contained process layer that governs how a whole session runs. It turns a loose set of good habits into an enforced, project-local workflow: a per-session working mode, a work-item lifecycle with a hard Definition of Done, budget-aware autonomy, visual verification, and safety rules that travel into every subagent.
 
 It is opinionated by design and stands alone. Two external touchpoints are documented honestly below: the `limit` plugin (recommended prerequisite for a few features) and `ntfy` (optional push notifications). Everything else lives inside this plugin.
 
@@ -35,7 +35,7 @@ The mode is per session and set with a command. It is stored on disk keyed by th
 
 - **active** (`/credo:session-active`) - intensive live collaboration with the user at the keyboard. Progress is logged via the limit thresholds and compact-plus, open GO items are picked up alongside, clarifications happen during subagent waits. No keep-alive.
 - **passive** (`/credo:session-passive`) - the agent carries most of the work while the user is reachable only for clarifications. Every item is pushed toward a full GO; less is more, so only genuinely ambiguous items go back to the user. No keep-alive.
-- **autonomous** (`/credo:session-autonomous`) - approved GO items are worked unattended. Keep-alive is ON (ScheduleWakeup plus a wake marker), budget caps are enforced, ntfy fires per task and per question, and progress is secured via compact-plus.
+- **autonomous** (`/credo:session-autonomous`) - approved GO items are worked unattended. Keep-alive is best-effort: the model schedules its own wake-ups via ScheduleWakeup (there is no registered Stop hook that forces it). Budget caps are enforced, ntfy fires per task and per question, and progress is secured via compact-plus.
 
 Each command sets the mode and loads its skill. The three session skills share one canonical common core (defined in the session-active skill) and layer their mode-specific rules on top.
 

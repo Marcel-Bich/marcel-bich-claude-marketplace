@@ -51,7 +51,7 @@ case "$mode" in
         rules="passive: handle most work alongside, actively push every item to a 100 percent GO, less is more (only ambiguous items via the Ask tool), no keep-alive. Load skill session-passive."
         ;;
     autonomous)
-        rules="autonomous: work approved GO items only, keep-alive ON (ScheduleWakeup plus wake marker), budget caps enforced, ntfy per task and question, secure progress via compact-plus. Load skill session-autonomous."
+        rules="autonomous: work approved GO items only, best-effort keep-alive (you schedule your own ScheduleWakeup plus wake marker; not hook-enforced), budget caps enforced, ntfy per task and question, secure progress via compact-plus. Load skill session-autonomous."
         ;;
     *)
         # Unknown value -> do not invent a rule set, stay silent.

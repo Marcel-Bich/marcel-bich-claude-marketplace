@@ -23,29 +23,41 @@ else
     CREDO_DIR="$(pwd)/.credo"
 fi
 
+# --- task backend (fail-safe) ------------------------------------------------
+# CREDO_TASK_BACKEND=credo|gsd|none. Default (unset/empty/unknown) behaves like credo,
+# so the previous behaviour is unchanged. Only backend=gsd skips the item/ subtree and
+# id-counter, because with GSD as the task system the .credo/items/ model stands down and
+# the base tree (docs, screenshots, process, checklists, config) is all that is needed.
+BACKEND="${CREDO_TASK_BACKEND:-credo}"
+
 # --- directory structure -----------------------------------------------------
 DIRS=(
     "docs"
     "screenshots"
-    "items/1_todo/1_clarify"
-    "items/1_todo/2_go"
-    "items/2_done"
-    "items/3_verified"
-    "items/4_archived"
-    "items/parked/hold"
-    "items/parked/future"
     "process/requirements"
     "process/handoffs/archive"
     "process/reports"
     "checklists"
 )
+if [ "$BACKEND" != "gsd" ]; then
+    DIRS+=(
+        "items/1_todo/1_clarify"
+        "items/1_todo/2_go"
+        "items/2_done"
+        "items/3_verified"
+        "items/4_archived"
+        "items/parked/hold"
+        "items/parked/future"
+    )
+fi
 
 for d in "${DIRS[@]}"; do
     mkdir -p "$CREDO_DIR/$d"
 done
 
 # --- id-counter (empty = 0; credo-id-next manages issuance) ------------------
-if [ ! -f "$CREDO_DIR/id-counter" ]; then
+# Only meaningful for the credo item model; skipped when GSD is the task backend.
+if [ "$BACKEND" != "gsd" ] && [ ! -f "$CREDO_DIR/id-counter" ]; then
     : > "$CREDO_DIR/id-counter"
 fi
 

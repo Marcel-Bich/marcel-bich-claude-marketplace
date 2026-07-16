@@ -10,6 +10,10 @@ judges whether it actually satisfies its stated requirement and Definition of Do
 BEFORE the item is allowed into `2_done/`. The output is a decision proposal for the
 user, never a change.
 
+> **Task backend.** If `CREDO_TASK_BACKEND=gsd`, the credo item lifecycle is inactive and
+> there is no `2_done/` gate to run - GSD owns task tracking. audit is still usable as a
+> standalone read-only review tool, but it does not gate credo items in that mode.
+
 ## Scope boundary (read this first)
 
 `audit` judges whether FINISHED work is genuinely done and correct against its

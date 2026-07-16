@@ -1,6 +1,9 @@
 #!/bin/bash
 # credo-item-move - move a work item between status folders atomically.
 #
+# Note: when CREDO_TASK_BACKEND=gsd the credo item model is inactive (GSD owns task
+# tracking) and this helper is not used; it applies for the default credo backend.
+#
 # The folder an item file lives in is the ONLY source of truth for its status.
 # Changing status means physically moving the file. This helper does that safely:
 # it locates the item by id, refuses to clobber, moves atomically with mv -f, and

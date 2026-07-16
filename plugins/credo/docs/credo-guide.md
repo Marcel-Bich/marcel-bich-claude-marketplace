@@ -20,10 +20,11 @@ Design principles:
 
 - **commands/** - six slash commands: `psalm`, `setup`, `session-init`, and the three mode setters `session-active`, `session-passive`, `session-autonomous`.
 - **skills/** - fourteen auto-discovered skills (see section 6). Each auto-triggers when it applies, including inside subagents.
-- **hooks/** - registered via `hooks/hooks.json`:
+- **hooks/** - exactly two hooks are registered in `hooks/hooks.json`:
   - `session-mode-inject.sh` (`UserPromptSubmit`) - re-injects the active session mode on every prompt and names the skill to load.
   - `credo-subagent-inject.sh` (`SubagentStart`) - primes every subagent with the load-bearing rules.
-  - autonomy helpers: `credo-autonomy-on.sh`, `credo-autonomy-off.sh`, `credo-autonomy-clear.sh`, `credo-autonomy-keepalive.sh`, `credo-autonomy-wake-mark.sh`, and `session-mode-set.sh`.
+
+  The autonomy scripts (`credo-autonomy-on.sh`, `credo-autonomy-off.sh`, `credo-autonomy-clear.sh`, `credo-autonomy-keepalive.sh`, `credo-autonomy-wake-mark.sh`) and `session-mode-set.sh` are plain helper scripts invoked by the session commands and skills - they are NOT registered as hooks. In particular `credo-autonomy-keepalive.sh` is written as a `Stop` hook and `credo-autonomy-clear.sh` as a `UserPromptSubmit` companion, but neither is wired into `hooks.json`. So there is no runtime Stop-hook enforcement of keep-alive today; autonomous keep-alive is best-effort and instruction-driven (see section 4).
 - **scripts/** - `check-setup.sh`, `credo-init.sh`, `credo-id-next.sh`, `credo-config.sh`, `credo-budget-read.sh`, `credo-item-move.sh`.
 - **templates/** - `config.default.yaml` (builtin config defaults) and `item.template.md` (the work-item template).
 
@@ -83,7 +84,7 @@ The builtin template holds universal defaults only:
 - `budget.*`: the 5-hour soft/hard band, the work-hours 09:00 guard reserve, task-sizing bands, and the day-by-day cap schedule
 - `budget_failsafe`: absolute caps used if an explicit order is lost to a compact
 
-Personal fields under `personal:` (ntfy topic, commit-identity hint, WSL lan_ip/host/port, living-docs list) ship empty. They are filled just-in-time by the skill that needs them, with permission per change. `/credo:setup` can pre-initialize the global config.
+Personal fields under `personal:` (ntfy topic, commit-identity hint, WSL `lan_ip` plus an `endpoints[]` list of `{name, port, reach}`, living-docs list) ship empty. They are filled just-in-time by the skill that needs them, with permission per change. `/credo:setup` can pre-initialize the global config.
 
 ### 3.2 Deterministic id-counter
 
@@ -95,11 +96,20 @@ Set the mode with a command; it also loads the matching skill.
 
 - `/credo:session-active` - intensive live collaboration, user at the keyboard, no keep-alive.
 - `/credo:session-passive` - agent carries most work, user reachable for clarifications only, no keep-alive.
-- `/credo:session-autonomous` - approved GO items worked unattended, keep-alive ON, budget caps enforced, ntfy per task and question, progress secured via compact-plus.
+- `/credo:session-autonomous` - approved GO items worked unattended, best-effort keep-alive (the model schedules its own `ScheduleWakeup` wake-ups; there is no Stop hook that forces it), budget caps enforced, ntfy per task and question, progress secured via compact-plus.
 
 The active skill defines the common core shared by all three; passive and autonomous layer their differences on top. On every prompt the inject line reminds you of the current mode, so it cannot be silently forgotten.
 
+Honest note on keep-alive: autonomous mode sets the `credo-autonomy-active` flag and instructs the model to keep itself awake by scheduling its own wake-ups, but nothing enforces this at runtime - the `Stop`/`UserPromptSubmit` autonomy hooks are shipped as helper scripts and are not registered (section 2.1). Keep-alive is therefore best-effort: it works as long as the model follows the instruction and calls `ScheduleWakeup` itself.
+
 ## 5. The item workflow: how-to
+
+**Task backend (`CREDO_TASK_BACKEND`).** credo's item model is the default task system, but it can stand down in favour of get-shit-done. The variable takes `credo` (default), `gsd`, or `none`; anything unset, empty, or unknown behaves like `credo`, so the default behaviour is unchanged.
+
+- `credo` (or unset / `none`) - the item lifecycle below is active. `credo-init.sh` creates the `items/` tree and id-counter, and the subagent priming tells delegated agents to record and gate work as credo items.
+- `gsd` - the credo item model stands down: `credo-init.sh` skips the `items/` tree and id-counter, the subagent priming drops the item/audit sentence, and the items/audit/verify skills note that they do not gate credo items. GSD's phases own task tracking; set this when you run GSD as the task system so there is no `.credo/items/` vs `.planning/` double-bookkeeping. The operating layer (session modes, budget, safety, verify, subagent priming) stays on regardless.
+
+The rest of this section describes the `credo` backend.
 
 1. Get an id: `scripts/credo-id-next.sh`.
 2. Copy `templates/item.template.md` to `items/1_todo/1_clarify/<id>-<slug>.md`. Fill the mandatory frontmatter: `id`, `title`, `created`, `type`, `ui`.

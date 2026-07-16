@@ -2,7 +2,7 @@
 name: session-autonomous
 description: >
   The credo behavior for a session running in AUTONOMOUS mode - work approved GO items
-  unattended while the user is away, keep-alive ON, budget caps always on. Load this when
+  unattended while the user is away, best-effort self-scheduled keep-alive, budget caps always on. Load this when
   the session-mode inject line says "Load skill session-autonomous", right after the
   /credo:session-autonomous command, or whenever you are working autonomously and unattended.
   Shares the canonical common core defined in the credo session-active skill, then adds the
@@ -62,20 +62,23 @@ commit-identity gate before every commit. Before starting an autonomous run, the
 first confirms with the user whether the default caps fit or need a temporary override, and
 until when (per the budget skill). Never exceed a cap to finish "just one more thing".
 
-### Keep-alive (only while credo-autonomy-active is set)
+### Keep-alive (best-effort, only while credo-autonomy-active is set)
 
 Keep the session awake so an unattended run does not fall asleep while there is open work
-and budget:
+and budget. Keep-alive is best-effort and instruction-driven: YOU schedule your own
+wake-ups. There is no registered Stop hook that forces the turn to continue, so upholding
+the discipline below is what actually keeps an unattended run alive.
 
 - ScheduleWakeup is the PRIMARY self-wake mechanism. Its single delay is clamped to
   [60, 3600] seconds, so for a longer pause CHAIN several wake-ups rather than one long one.
-- Pair each ScheduleWakeup with a wake marker so the Stop-hook coupling (built in Phase 2)
-  sees a future wake and lets the turn stop cleanly; the Stop hook only enforces keep-alive
-  while `credo-autonomy-active` is set and a future wake is marked.
+- Record each planned wake with `credo-autonomy-wake-mark.sh` so your own tracking stays
+  consistent. It is a plain helper script, not a registered hook, so it does not enforce
+  anything by itself - it just keeps a record of the next wake.
 - On each wake, re-check the flag. If autonomy has been turned off (the user returned, or
   the run ended), do not keep building - end quietly.
 - Never end a turn without a scheduled wake-up while the flag is set and there is open work
-  plus budget. This is the standing keep-alive duty, backed by the Phase 2 hooks.
+  plus budget. This is the standing keep-alive duty; because nothing enforces it for you,
+  you must uphold it yourself.
 
 Wake-up offsets after a limit reset (default 5 minutes, fallback 1) come from the budget
 skill's `wakeup.*` config - use them when you pause for a limit to reset.
