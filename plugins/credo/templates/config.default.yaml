@@ -9,6 +9,14 @@
 # that need them (permission per change). Never put personal values or absolute
 # machine paths into this shipped template.
 
+# --- project targeting (hub guard) -------------------------------------------
+# hub: true  -> this directory is a launch hub; credo never auto-targets its .credo,
+#               an explicit target (CREDO_DIR or /credo:project) is always required.
+# This flag is read from THIS directory's own .credo/config only (the project layer),
+# never the merged cascade, so it can never leak from a global default. Leave it unset
+# (the shipped default) for normal repos where credo operates in place.
+# hub: true
+
 # --- task backend ------------------------------------------------------------
 # Which task system credo runs on. Core project choice.
 #   credo (default) - credo's item lifecycle is active.

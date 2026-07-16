@@ -9,21 +9,34 @@
 #   credo-init.sh                 operate on the current git repo (or cwd)
 #   CREDO_DIR=/path credo-init.sh operate on an explicit .credo directory
 #
-# Exit codes: 0 on success, 1 on hard error.
+# Target resolution is delegated to `credo-config.sh resolve-project` so init and
+# config agree. It is fail-safe: when the cwd is a launch hub or has no credo
+# project and no explicit target was given, init creates NOTHING and exits 4.
+#
+# Exit codes: 0 on success, 1 on hard error, 4 needs explicit target.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# --- locate the target .credo directory -------------------------------------
-# Precedence: explicit CREDO_DIR > git toplevel/.credo > ./.credo
-if [ -n "${CREDO_DIR:-}" ]; then
-    CREDO_DIR="$CREDO_DIR"
-elif REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    CREDO_DIR="$REPO_ROOT/.credo"
-else
-    CREDO_DIR="$(pwd)/.credo"
+# --- locate the target .credo directory (shared resolver) -------------------
+# Precedence (see credo-config.sh resolve-project): explicit CREDO_DIR > session
+# pin (/credo:project) > cwd git-toplevel/.credo when it already exists and is not
+# a hub. A new .credo is only ever created when an explicit target is given.
+set +e
+RESOLVED="$("$SCRIPT_DIR/credo-config.sh" resolve-project 2>/dev/null)"
+RESOLVE_RC=$?
+set -e
+if [ "$RESOLVE_RC" -eq 4 ]; then
+    TARGET_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    echo "credo-init: cwd '$TARGET_DIR' is a hub or has no credo project, and no explicit target was given. Set CREDO_DIR to the target repo, or pin it with /credo:project <path>, then retry." >&2
+    exit 4
 fi
+if [ "$RESOLVE_RC" -ne 0 ] || [ -z "$RESOLVED" ]; then
+    echo "credo-init: could not resolve a target .credo directory" >&2
+    exit 1
+fi
+CREDO_DIR="$RESOLVED"
 
 # --- task backend (fail-safe) ------------------------------------------------
 # Resolved via credo-config.sh: env CREDO_TASK_BACKEND override (set + non-empty)

@@ -18,7 +18,7 @@ Design principles:
 
 ### 2.1 Components
 
-- **commands/** - six slash commands: `psalm`, `setup`, `session-init`, and the three mode setters `session-active`, `session-passive`, `session-autonomous`.
+- **commands/** - eight slash commands: `psalm`, `setup`, `migrate`, `project`, `session-init`, and the three mode setters `session-active`, `session-passive`, `session-autonomous`.
 - **skills/** - fourteen auto-discovered skills (see section 6). Each auto-triggers when it applies, including inside subagents.
 - **hooks/** - four hooks are registered in `hooks/hooks.json`:
   - `session-mode-inject.sh` (`UserPromptSubmit`) - re-injects the active session mode on every prompt and names the skill to load.
@@ -26,7 +26,7 @@ Design principles:
   - `credo-subagent-inject.sh` (`SubagentStart`) - primes every subagent with the load-bearing rules.
   - `credo-autonomy-keepalive.sh` (`Stop`) - in autonomous mode, blocks a stop that has no scheduled self-wake and instructs the agent to call ScheduleWakeup.
 
-  The remaining autonomy scripts (`credo-autonomy-on.sh`, `credo-autonomy-off.sh`, `credo-autonomy-wake-mark.sh`) and `session-mode-set.sh` are plain helper scripts invoked by the session commands and skills - they are NOT hooks. Because the `Stop` and second `UserPromptSubmit` hooks are now wired into `hooks.json`, autonomous keep-alive is hook-enforced at runtime (loop-safe, and inert outside autonomy - see section 4).
+  The remaining autonomy scripts (`credo-autonomy-on.sh`, `credo-autonomy-off.sh`, `credo-autonomy-wake-mark.sh`), `session-mode-set.sh`, and `session-project-set.sh` are plain helper scripts invoked by the session commands and skills - they are NOT hooks. Because the `Stop` and second `UserPromptSubmit` hooks are now wired into `hooks.json`, autonomous keep-alive is hook-enforced at runtime (loop-safe, and inert outside autonomy - see section 4).
 - **scripts/** - `check-setup.sh`, `credo-init.sh`, `credo-id-next.sh`, `credo-config.sh`, `credo-budget-read.sh`, `credo-item-move.sh`.
 - **templates/** - `config.default.yaml` (builtin config defaults) and `item.template.md` (the work-item template).
 
@@ -91,6 +91,23 @@ Personal fields under `personal:` (ntfy topic, commit-identity hint, WSL `lan_ip
 ### 3.2 Deterministic id-counter
 
 `scripts/credo-id-next.sh` owns id allocation. The counter file holds the last id given out. Allocation is atomic under flock: read (0 if empty), increment, write, print. It never scans folders to choose a number, so a deleted item id is never reused. A recovery fallback (max existing id plus one) applies only if the counter file is missing. Never derive an id from folder contents; always call the helper.
+
+### 3.3 Project resolution (hub-aware)
+
+The PROJECT layer (`.credo/`, config, items) is resolved by one shared function, `scripts/credo-config.sh resolve-project`, used by `credo-init.sh` (where to create/operate) and `check-setup.sh` (reporting). This is separate from the AUTONOMY layer, which is HOME-global keep-alive state and is never affected by project resolution. Precedence:
+
+1. `CREDO_DIR` env (explicit) - use it.
+2. Session pin, if set and resolvable - use it (see below).
+3. cwd git-toplevel (or cwd if not in a repo):
+   - if that directory's OWN project config (`<dir>/.credo/config`) has `hub: true` - it is a launch hub, so credo does NOT auto-target it and signals "needs explicit target";
+   - else if `<dir>/.credo/` already exists - use it (established project);
+   - else (a new `.credo` would be created and no explicit target was given) - signal "needs explicit target".
+
+The `hub` flag is read from the PROJECT layer file directly (that dir's `.credo/config`), never the merged cascade, so a global default can never mark every directory a hub.
+
+`resolve-project` prints the target `.credo` directory and exits 0, or prints nothing and exits 4 ("needs explicit target", distinct from the 1/3 codes of `get`). When it signals 4, `credo-init.sh` creates nothing and exits 4 with an actionable message; this is fail-safe and non-interactive-safe (it fails rather than creating `.credo/` in the wrong place). The config-READ path (`get`, `backend`) is unchanged and still falls back to the builtin defaults for the normal case.
+
+**Session pin (`/credo:project`).** When the shell cwd is a launch hub rather than the repo you are working on, pin the real target with `/credo:project <abs-path>`. This mirrors the session-mode mechanic: `hooks/session-project-set.sh` writes the absolute repo path atomically to a file keyed by session_id under `${CREDO_SESSION_PROJECTS_DIR:-$HOME/.claude/credo/session-projects}/<session_id>`. The session_id is resolved as arg > `$CREDO_SESSION_ID` > `$CLAUDE_CODE_SESSION_ID`. The resolver reads the pin as layer 2; a missing or unresolvable pin never errors the resolver, it just falls through to layer 3. `/credo:project` without an argument reports the resolved target and whether the cwd is a hub. Mark a hub by setting `hub: true` in that directory's own `.credo/config`.
 
 ## 4. Session modes: how-to
 

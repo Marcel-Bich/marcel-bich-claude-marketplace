@@ -88,6 +88,8 @@ The path of an item:
 
 To onboard an existing repository into this structure, run `/credo:migrate` - it sets up `.credo/` and walks the repo through the migration procedure once.
 
+credo targets the repo you point it at (hub-aware): when your shell cwd is a launch hub rather than the repo you are working on, pin the real target with `/credo:project <path>` so the item tree and config resolve to the right place. A directory marked `hub: true` is never auto-targeted.
+
 **The Definition of Done is hard:** success criteria observably met, code wired in, an independent audit subagent (not the builder) passed it, UI work visually verified in a real browser with screenshot evidence, and docs updated in the same change. "The test passed" is not done.
 
 ### Topic: Budget and Autonomy
@@ -113,6 +115,7 @@ Two orchestration skills for maintaining a public repo. They trigger on their ow
 | --------------------------- | -------------------------------------------------------------- |
 | `/credo:setup`              | Initialize the framework and offer recommended/optional tools  |
 | `/credo:migrate`            | Migrate an existing repo into the `.credo/` structure          |
+| `/credo:project`            | Pin the active repo credo targets (hub-aware) or show it       |
 | `/credo:psalm`              | This guide - credo topics first, then the wider marketplace    |
 | `/credo:session-init`       | Load the main-agent delegation-first workflow                  |
 | `/credo:session-active`     | Set the session to active (live collaboration)                 |

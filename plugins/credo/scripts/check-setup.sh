@@ -92,6 +92,19 @@ case "$RESOLVED_BACKEND" in
         ;;
 esac
 
+# Resolved credo project dir + hub state (fail-safe, additive report)
+# Reuses credo-config.sh resolve-project: prints the target .credo dir, or the
+# needs_explicit_target state when the cwd is a hub or has no credo project.
+CREDO_PROJECT_RESOLVED="$("$CHECK_DIR/credo-config.sh" resolve-project 2>/dev/null)"
+CREDO_PROJECT_RC=$?
+CREDO_CWD_IS_HUB="$("$CHECK_DIR/credo-config.sh" is-hub 2>/dev/null || echo false)"
+[ -n "$CREDO_CWD_IS_HUB" ] || CREDO_CWD_IS_HUB="false"
+if [ "$CREDO_PROJECT_RC" -eq 0 ] && [ -n "$CREDO_PROJECT_RESOLVED" ]; then
+    CREDO_PROJECT_REPORT="$CREDO_PROJECT_RESOLVED"
+else
+    CREDO_PROJECT_REPORT="needs_explicit_target"
+fi
+
 # Output structured results
 cat <<EOF
 CREDO_SETUP_CHECK_V1
@@ -117,6 +130,9 @@ project:
   is_greenfield: $IS_GREENFIELD
   state: $PROJECT_STATE
 task_backend: $TASK_BACKEND_REPORT
+credo_project:
+  resolved: $CREDO_PROJECT_REPORT
+  cwd_is_hub: $CREDO_CWD_IS_HUB
 EOF
 
 # Output warnings for missing requirements
