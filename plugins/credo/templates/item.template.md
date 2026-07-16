@@ -65,7 +65,7 @@ ui: true
 ## Requirement (verbatim)
 
 > "the panel should update by itself when a job finishes, i dont want to hit F5 every time"
-> Source: chat 2026-07-04, Marcel.
+> Source: chat 2026-07-04, the user.
 
 Proposal (assistant): push updates over the existing websocket and patch the DOM in place.
 
@@ -90,7 +90,7 @@ Proposal (assistant): push updates over the existing websocket and patch the DOM
 ## History
 
 - created (clarify) 2026-07-04
-- go 2026-07-04 (Marcel gave explicit GO)
+- go 2026-07-04 (the user gave explicit GO)
 - done 2026-07-05 (DoD met; audit passed by a dedicated subagent, not the builder; docs + version bumped)
 ================================================================================
 -->
