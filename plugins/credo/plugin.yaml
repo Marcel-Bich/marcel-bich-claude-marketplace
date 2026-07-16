@@ -1,6 +1,6 @@
 name: credo
 description: "Self-contained process framework for Claude Code: per-session modes, a work-item lifecycle with a hard Definition of Done, budget-aware autonomy, visual verification, and safety rules that travel into every subagent"
-version: 0.14.1
+version: 0.15.0
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
@@ -11,6 +11,9 @@ commands:
   setup:
     description: Interactive setup wizard - install plugins, sync instructions, init project
     source: commands/setup.md
+  migrate:
+    description: Migrate an existing repo into the .credo/ structure
+    source: commands/migrate.md
   session-init:
     description: Initialize session with main agent workflow instructions
     source: commands/session-init.md
