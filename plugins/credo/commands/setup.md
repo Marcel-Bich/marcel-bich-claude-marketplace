@@ -48,6 +48,40 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-init.sh"
 
 This creates the `.credo/` structure (items, process, screenshots, checklists, config, id-counter) and adds the git-exclude lines. `.credo/**` stays local by default. For teams that want items and process versioned in the repo, run it with `CREDO_VERSION_TRACKED=1` instead (per-project `config` and `screenshots/` stay local either way).
 
+### Handling the target guard (fail-safe)
+
+credo-init is fail-safe: it never creates `.credo/` in the wrong place. If the current directory is a launch hub, or is ambiguous (no `.credo/` yet and no explicit target given), the script exits non-zero (code 4) with a message like:
+
+```
+credo-init: cwd '<path>' is a hub or has no credo project, and no explicit target was given.
+Set CREDO_DIR to the target repo, or pin it with /credo:project <path>, then retry.
+```
+
+**If you see this (a non-zero exit), do NOT force a directory.** The user must not have to know about env vars or config keys - guide them with AskUserQuestion:
+
+```
+credo could not decide which repo to target from here.
+
+Where should credo set up its project layer (.credo/)?
+- This directory - the current working directory IS the repo I want credo in
+- Another repo - I will give you the absolute path of the target repo
+- This is a launch hub - I start other repos from here; never auto-target it
+```
+
+Then act on the answer:
+
+- **This directory:** re-run init pinned to the cwd, which creates `.credo/` here:
+  ```bash
+  CREDO_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.credo" bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-init.sh"
+  ```
+- **Another repo:** ask for the absolute path, pin it, then re-run init:
+  ```bash
+  "${CLAUDE_PLUGIN_ROOT}/hooks/session-project-set.sh" "<abs-path>"
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-init.sh"
+  ```
+  (The pin is layer 2 of the resolver, so plain `credo-init.sh` now finds the target.)
+- **This is a launch hub:** mark the cwd as a hub so credo never auto-targets it. Write `hub: true` at the top level of `<cwd>/.credo/config` (create the file if missing) with Read + Edit or Write, then tell the user to pin the real repo with `/credo:project <path>` whenever they work. Do NOT create the full `.credo/` item tree here - a hub is not a work repo.
+
 **Existing repository with prior work?** Instead of the fresh-init path above, run `/credo:migrate` once to onboard the existing codebase into the `.credo/` structure (it inventories current state and seeds items rather than assuming a blank slate).
 
 After this, credo's session modes, item lifecycle, Definition of Done, budget awareness, verify, and safety are ready. Pick a session mode when you start working:

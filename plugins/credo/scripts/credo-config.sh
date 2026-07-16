@@ -16,15 +16,22 @@
 #   credo-config.sh backend            print resolved task backend (fail-safe)
 #   credo-config.sh ensure-global      create global config if missing
 #   credo-config.sh paths              print the three layer paths + existence
+#   credo-config.sh resolve-project    print the target .credo dir (exit 4 if a
+#                                       hub or ambiguous cwd needs an explicit target)
+#   credo-config.sh is-hub             print true/false: is the cwd repo a hub
 #
 # Env overrides (mainly for testing):
-#   CLAUDE_PLUGIN_ROOT  plugin root (locates the builtin template)
-#   CREDO_GLOBAL        path to the global config file
-#   CREDO_PROJECT       path to the project config file
-#   CREDO_DIR           project .credo dir (project config = $CREDO_DIR/config)
-#   CREDO_SKIP_ENSURE   if set to 1, "get" does not auto-create the global layer
+#   CLAUDE_PLUGIN_ROOT        plugin root (locates the builtin template)
+#   CREDO_GLOBAL              path to the global config file
+#   CREDO_PROJECT             path to the project config file
+#   CREDO_DIR                 project .credo dir (project config = $CREDO_DIR/config)
+#   CREDO_SKIP_ENSURE         if set to 1, "get" does not auto-create the global layer
+#   CREDO_SESSION_PROJECTS_DIR session-pin dir (default ~/.claude/credo/session-projects)
+#   CREDO_SESSION_ID           session id for the pin lookup (test override)
+#   CLAUDE_CODE_SESSION_ID     session id for the pin lookup (set by Claude Code)
 #
-# Exit codes: 0 ok, 1 hard error, 3 key not found.
+# Exit codes: 0 ok, 1 hard error, 3 key not found, 4 needs explicit target
+#   (resolve-project only: cwd is a hub or has no credo project).
 
 set -euo pipefail
 
@@ -62,6 +69,47 @@ ensure_global() {
     local tmp="$GLOBAL.tmp.$$"
     cp "$BUILTIN" "$tmp"
     mv -f "$tmp" "$GLOBAL"
+}
+
+# --- read the top-level `hub` flag from ONE project config file directly ------
+# The hub flag is deliberately read from the PROJECT layer file only (that dir's
+# .credo/config), NOT the merged cascade, so a global default can never mark
+# every directory a hub. Missing file / key -> false.
+read_hub() {
+    local f="$1"
+    python3 - "$f" <<'PY'
+import sys
+path = sys.argv[1]
+val = False
+try:
+    with open(path, encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.rstrip("\n")
+            # top-level only: skip indented lines, comments and blanks
+            if line[:1] in (" ", "\t", "#", ""):
+                continue
+            if ":" not in line:
+                continue
+            k, _, v = line.partition(":")
+            if k.strip() != "hub":
+                continue
+            v = v.split("#", 1)[0].strip().strip('"').strip("'").lower()
+            val = v in ("true", "yes", "on", "1")
+            break
+except OSError:
+    pass
+print("true" if val else "false")
+PY
+}
+
+# --- resolve the repo base for cwd-based lookups (git toplevel or cwd) --------
+cwd_base() {
+    local top
+    if top="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+        printf '%s\n' "$top"
+    else
+        pwd
+    fi
 }
 
 CMD="${1:-}"
@@ -277,8 +325,54 @@ else:
     print(node)
 PY
         ;;
+    resolve-project)
+        # Resolve the target .credo directory for credo-init / reporting.
+        # Precedence:
+        #   1. CREDO_DIR env (explicit)              -> print it.
+        #   2. session pin (per session_id)          -> print <pin>/.credo.
+        #   3. cwd git-toplevel (or cwd):
+        #        - PROJECT-layer hub: true           -> exit 4 (needs target).
+        #        - <base>/.credo/ exists             -> print it.
+        #        - otherwise (would create a new one) -> exit 4 (needs target).
+        # Exit 4 = "needs explicit target" (distinct from 1/3). Never errors out
+        # because of a missing pin; it just falls through to layer 3.
+        if [ -n "${CREDO_DIR:-}" ]; then
+            printf '%s\n' "$CREDO_DIR"
+            exit 0
+        fi
+        pin_sid="${CREDO_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
+        if [ -n "$pin_sid" ]; then
+            case "$pin_sid" in
+                *[!A-Za-z0-9._-]*) : ;;   # invalid session id -> skip the pin
+                *)
+                    pin_root="${CREDO_SESSION_PROJECTS_DIR:-$HOME/.claude/credo/session-projects}"
+                    pin_file="$pin_root/$pin_sid"
+                    if [ -f "$pin_file" ]; then
+                        pinned="$(sed -n '1p' "$pin_file" 2>/dev/null | tr -d '\r')"
+                        if [ -n "$pinned" ] && [ -d "$pinned" ]; then
+                            printf '%s\n' "$pinned/.credo"
+                            exit 0
+                        fi
+                    fi
+                    ;;
+            esac
+        fi
+        base="$(cwd_base)"
+        if [ "$(read_hub "$base/.credo/config")" = "true" ]; then
+            exit 4
+        fi
+        if [ -d "$base/.credo" ]; then
+            printf '%s\n' "$base/.credo"
+            exit 0
+        fi
+        exit 4
+        ;;
+    is-hub)
+        base="$(cwd_base)"
+        read_hub "$base/.credo/config"
+        ;;
     ""|-h|--help|help)
-        echo "usage: credo-config.sh {get <key>|backend|ensure-global|paths}" >&2
+        echo "usage: credo-config.sh {get <key>|backend|ensure-global|paths|resolve-project|is-hub}" >&2
         [ -z "$CMD" ] && exit 1 || exit 0
         ;;
     *)
