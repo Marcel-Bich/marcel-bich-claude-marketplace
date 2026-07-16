@@ -50,11 +50,14 @@ The relevant credo skills above auto-trigger when they apply - use them.
 RULES
 
 # --- task-backend gate (fail-safe) ---
-# CREDO_TASK_BACKEND=credo|gsd|none. Default (unset/empty/unknown) behaves like credo,
-# so the previous behaviour is unchanged. Only backend=gsd stands the credo item model
-# down: the item/audit sentence is dropped from the priming. Security, quality (verify),
+# Resolved via credo-config.sh: env CREDO_TASK_BACKEND override (set + non-empty)
+# > merged config task_backend (.credo/config cascade) > credo default. Any error
+# falls back to credo. Only backend=gsd stands the credo item model down: the
+# item/audit sentence is dropped from the priming. Security, quality (verify),
 # honesty, delegation, and output-hygiene rules ALWAYS stay in - they are unconditional.
-backend="${CREDO_TASK_BACKEND:-credo}"
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || HOOK_DIR=""
+backend="$("$HOOK_DIR/../scripts/credo-config.sh" backend 2>/dev/null || echo credo)"
+[[ -n "$backend" ]] || backend="credo"
 if [[ "$backend" == "gsd" ]]; then
     item_clause=""
 else

@@ -9,6 +9,15 @@
 # that need them (permission per change). Never put personal values or absolute
 # machine paths into this shipped template.
 
+# --- task backend ------------------------------------------------------------
+# Which task system credo runs on. Core project choice.
+#   credo (default) - credo's item lifecycle is active.
+#   gsd             - the credo item model stands down (get-shit-done owns tasks).
+#   none            - same as credo (items active).
+# Anything unset, empty, or unknown behaves like credo, so the default is safe.
+# The CREDO_TASK_BACKEND env var overrides this value when set and non-empty.
+task_backend: credo
+
 # --- visual verify -----------------------------------------------------------
 verify:
   # Fixed viewport widths (px) for visual verification.

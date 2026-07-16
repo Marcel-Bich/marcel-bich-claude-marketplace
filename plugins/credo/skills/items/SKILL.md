@@ -18,7 +18,7 @@ task-tracker entry - an item changes status by physically moving between folders
 deliberate anti-drift: multiple status sources drift out of sync, one physical location
 cannot. `.credo/items/` IS the task system; do not mirror items into a separate task list.
 
-> **Task backend.** If `CREDO_TASK_BACKEND=gsd`, the credo item system is inactive - GSD's
+> **Task backend.** If the task backend is `gsd` (set in `.credo/config` as `task_backend`, or via the `CREDO_TASK_BACKEND` env override; resolve with `credo-config.sh backend`), the credo item system is inactive - GSD's
 > phases are the task system for this project. Do NOT create or move `.credo/items/`; use
 > GSD's workflow instead. This skill applies only when the backend is `credo` (the default)
 > or `none`.

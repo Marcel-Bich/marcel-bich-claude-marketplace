@@ -13,6 +13,7 @@
 #
 # Usage:
 #   credo-config.sh get <dotted.key>   print merged value (exit 3 if absent)
+#   credo-config.sh backend            print resolved task backend (fail-safe)
 #   credo-config.sh ensure-global      create global config if missing
 #   credo-config.sh paths              print the three layer paths + existence
 #
@@ -66,6 +67,24 @@ ensure_global() {
 CMD="${1:-}"
 
 case "$CMD" in
+    backend)
+        # Resolve the task backend. Fail-safe: always prints a value, never exits
+        # non-zero for a missing key. Precedence:
+        #   1. env CREDO_TASK_BACKEND set AND non-empty -> use it (override)
+        #   2. merged config task_backend (via the cascade)
+        #   3. credo (default)
+        if [ -n "${CREDO_TASK_BACKEND:-}" ]; then
+            printf '%s\n' "$CREDO_TASK_BACKEND"
+            exit 0
+        fi
+        val="$("${BASH_SOURCE[0]}" get task_backend 2>/dev/null)" || val=""
+        if [ -n "$val" ]; then
+            printf '%s\n' "$val"
+        else
+            printf '%s\n' "credo"
+        fi
+        exit 0
+        ;;
     ensure-global)
         ensure_global && echo "$GLOBAL"
         ;;
@@ -259,7 +278,7 @@ else:
 PY
         ;;
     ""|-h|--help|help)
-        echo "usage: credo-config.sh {get <key>|ensure-global|paths}" >&2
+        echo "usage: credo-config.sh {get <key>|backend|ensure-global|paths}" >&2
         [ -z "$CMD" ] && exit 1 || exit 0
         ;;
     *)

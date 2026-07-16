@@ -31,6 +31,8 @@ Before ANY implementation action, ask yourself:
 **Forbidden without delegation:** Bash (for implementation), Write, Edit
 **Allowed directly:** Read, Glob, Grep (research), user questions, Skill tool
 
+**Respect the task backend:** it is set in `.credo/config` (`task_backend`) and can be overridden by the `CREDO_TASK_BACKEND` env var; resolve it with `${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh backend`. When it is `gsd`, GSD is the task system - do NOT create or move `.credo/items/`. When it is `credo` (the default) or `none`, the credo item workflow is active.
+
 ### Rule 2: Parallelization Analysis
 
 For every user prompt, immediately analyze:
