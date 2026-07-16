@@ -18,7 +18,7 @@ user action, it is not done until that behavior has been observed - either by th
 in a real browser, or by a reliable automated Playwright check that drives the real
 build. This skill is the DoD gate that `ui: true` items require.
 
-> **Task backend.** If `CREDO_TASK_BACKEND=gsd`, the credo item lifecycle is inactive, so
+> **Task backend.** If the task backend is `gsd` (`.credo/config: task_backend`, or the `CREDO_TASK_BACKEND` env override), the credo item lifecycle is inactive, so
 > there is no credo item to move to done - GSD owns task tracking. The verification method
 > here still applies as a general "prove it renders" tool; just do not gate a credo item
 > with it in that mode.

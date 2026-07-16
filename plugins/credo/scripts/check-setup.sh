@@ -74,6 +74,24 @@ if [ "$CURL_INSTALLED" = "false" ]; then
     MISSING_WARNINGS="${MISSING_WARNINGS}  - curl: limit (install: sudo apt install curl)\n"
 fi
 
+# Active task backend (resolved, fail-safe)
+# Resolver: env CREDO_TASK_BACKEND override > .credo/config task_backend > credo.
+# unset/empty/credo/none -> credo items active; exactly "gsd" -> credo items stand down.
+CHECK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || CHECK_DIR="."
+RESOLVED_BACKEND="$("$CHECK_DIR/credo-config.sh" backend 2>/dev/null || echo credo)"
+[ -n "$RESOLVED_BACKEND" ] || RESOLVED_BACKEND="credo"
+case "$RESOLVED_BACKEND" in
+    gsd)
+        TASK_BACKEND_REPORT="gsd (credo items stand down)"
+        ;;
+    none)
+        TASK_BACKEND_REPORT="credo (none set - items active)"
+        ;;
+    *)
+        TASK_BACKEND_REPORT="credo (items active)"
+        ;;
+esac
+
 # Output structured results
 cat <<EOF
 CREDO_SETUP_CHECK_V1
@@ -98,6 +116,7 @@ project:
   file_count: $FILE_COUNT
   is_greenfield: $IS_GREENFIELD
   state: $PROJECT_STATE
+task_backend: $TASK_BACKEND_REPORT
 EOF
 
 # Output warnings for missing requirements

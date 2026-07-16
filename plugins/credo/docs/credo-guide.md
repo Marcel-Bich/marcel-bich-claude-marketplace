@@ -106,7 +106,7 @@ Honest note on keep-alive: autonomous mode sets the `credo-autonomy-active` flag
 
 ## 5. The item workflow: how-to
 
-**Task backend (`CREDO_TASK_BACKEND`).** credo's item model is the default task system, but it can stand down in favour of get-shit-done. The variable takes `credo` (default), `gsd`, or `none`; anything unset, empty, or unknown behaves like `credo`, so the default behaviour is unchanged.
+**Task backend (`.credo/config: task_backend`).** credo's item model is the default task system, but it can stand down in favour of get-shit-done. It is config-driven: set `task_backend` in `.credo/config` (via the config cascade builtin < global < project) to `credo` (default), `gsd`, or `none`. The `CREDO_TASK_BACKEND` env var overrides the config when set and non-empty. Anything unset, empty, or unknown behaves like `credo`, so the default behaviour is unchanged, and any resolution error falls back to `credo`. `/credo:setup` writes `task_backend: gsd` for you when you choose GSD.
 
 - `credo` (or unset / `none`) - the item lifecycle below is active. `credo-init.sh` creates the `items/` tree and id-counter, and the subagent priming tells delegated agents to record and gate work as credo items.
 - `gsd` - the credo item model stands down: `credo-init.sh` skips the `items/` tree and id-counter, the subagent priming drops the item/audit sentence, and the items/audit/verify skills note that they do not gate credo items. GSD's phases own task tracking; set this when you run GSD as the task system so there is no `.credo/items/` vs `.planning/` double-bookkeeping. The operating layer (session modes, budget, safety, verify, subagent priming) stays on regardless.

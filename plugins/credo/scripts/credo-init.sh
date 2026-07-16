@@ -13,6 +13,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # --- locate the target .credo directory -------------------------------------
 # Precedence: explicit CREDO_DIR > git toplevel/.credo > ./.credo
 if [ -n "${CREDO_DIR:-}" ]; then
@@ -24,11 +26,16 @@ else
 fi
 
 # --- task backend (fail-safe) ------------------------------------------------
-# CREDO_TASK_BACKEND=credo|gsd|none. Default (unset/empty/unknown) behaves like credo,
-# so the previous behaviour is unchanged. Only backend=gsd skips the item/ subtree and
-# id-counter, because with GSD as the task system the .credo/items/ model stands down and
-# the base tree (docs, screenshots, process, checklists, config) is all that is needed.
-BACKEND="${CREDO_TASK_BACKEND:-credo}"
+# Resolved via credo-config.sh: env CREDO_TASK_BACKEND override (set + non-empty)
+# > merged config task_backend (.credo/config cascade) > credo default. Any error
+# falls back to credo. Chicken-and-egg is fine: when this runs before any project
+# config exists, the resolver falls back to global/builtin (task_backend: credo) and
+# the items tree is created (correct default). Only backend=gsd skips the item/
+# subtree and id-counter, because with GSD as the task system the .credo/items/ model
+# stands down and the base tree (docs, screenshots, process, checklists, config) is all
+# that is needed.
+BACKEND="$("$SCRIPT_DIR/credo-config.sh" backend 2>/dev/null || echo credo)"
+[ -n "$BACKEND" ] || BACKEND="credo"
 
 # --- directory structure -----------------------------------------------------
 DIRS=(

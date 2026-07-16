@@ -48,6 +48,8 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-init.sh"
 
 This creates the `.credo/` structure (items, process, screenshots, checklists, config, id-counter) and adds the git-exclude lines. `.credo/**` stays local by default. For teams that want items and process versioned in the repo, run it with `CREDO_VERSION_TRACKED=1` instead (per-project `config` and `screenshots/` stay local either way).
 
+**Existing repository with prior work?** Instead of the fresh-init path above, run `/credo:migrate` once to onboard the existing codebase into the `.credo/` structure (it inventories current state and seeds items rather than assuming a blank slate).
+
 After this, credo's session modes, item lifecycle, Definition of Done, budget awareness, verify, and safety are ready. Pick a session mode when you start working:
 
 - `/credo:session-active` - intensive live collaboration.
@@ -205,7 +207,13 @@ credo's item lifecycle (from Step 2) is the recommended default and needs no fur
 
 **Only relevant if the user installed get-shit-done and prefers spec-driven planning.** Pick ONE task system per project (credo items OR GSD phases), never both, to avoid competing sources of truth.
 
-**If the user picks GSD as the task system:** advise them to set `CREDO_TASK_BACKEND=gsd` so credo's own item features stand down (no `.credo/items/` vs `.planning/` double-bookkeeping). credo's operating layer - session modes, budget, safety, verify, subagent priming - keeps working on top of GSD regardless. Leaving the variable unset (or `credo`) keeps credo items as the task system.
+**If the user picks GSD as the task system:** write `task_backend: gsd` into the project `.credo/config` for them (see "Writing the GSD backend" below) so credo's own item features stand down (no `.credo/items/` vs `.planning/` double-bookkeeping). credo's operating layer - session modes, budget, safety, verify, subagent priming - keeps working on top of GSD regardless. Leaving the config untouched (backend `credo`) keeps credo items as the task system, no action needed. The `CREDO_TASK_BACKEND` env var still overrides the config if ever needed.
+
+**Writing the GSD backend.** `.credo/config` already exists (credo-init created it in Step 2). Read it: if a top-level `task_backend:` line is present, update its value to `gsd`; otherwise append a `task_backend: gsd` line at the top level. Use Read + Edit (or Write) to make the change - do not shell out to a config setter. Example resulting line:
+
+```yaml
+task_backend: gsd
+```
 
 **Skip if:** GSD is not installed, OR `files.project_md = true`, OR `directories.codebase_map = true`, OR the user is happy with credo items.
 
@@ -219,7 +227,7 @@ You have get-shit-done installed. For this project, which task system?
 - GSD: run /gsd:new-project - up-front spec-driven planning (creates PROJECT.md)
 ```
 
-If user chooses GSD: Run `/gsd:new-project` via Skill tool, then advise setting `CREDO_TASK_BACKEND=gsd`.
+If user chooses GSD: Run `/gsd:new-project` via Skill tool, then write `task_backend: gsd` into `.credo/config` (see "Writing the GSD backend" above).
 
 **For EXISTING projects (project.is_greenfield = false):**
 
@@ -231,7 +239,7 @@ You have get-shit-done installed and existing code that hasn't been mapped.
 - GSD: run /gsd:map-codebase - analyze the codebase for spec-driven planning
 ```
 
-If user chooses GSD: Run `/gsd:map-codebase` via Skill tool, then advise setting `CREDO_TASK_BACKEND=gsd`.
+If user chooses GSD: Run `/gsd:map-codebase` via Skill tool, then write `task_backend: gsd` into `.credo/config` (see "Writing the GSD backend" above).
 
 ## Step 7: Create Roadmap (Optional, GSD only)
 
