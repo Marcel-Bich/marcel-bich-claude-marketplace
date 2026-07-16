@@ -40,10 +40,10 @@ caller reaches the new code).
 
 ## Verify
 
-Honest 3-valued state per layer: present | wired-but-behavior-unverified | exercised.
+Honest 4-valued state per layer: not-started | present | wired-but-behavior-unverified | exercised.
 
-- backend: present
-- ui: present            # only relevant if ui: true; drive via the credo verify skill
+- backend: not-started
+- ui: not-started        # only relevant if ui: true; drive via the credo verify skill
 - human-only: n/a        # if used, add why_human: <what the user must confirm and why>
 
 ## History

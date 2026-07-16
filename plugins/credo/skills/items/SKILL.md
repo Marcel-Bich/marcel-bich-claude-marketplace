@@ -91,16 +91,18 @@ Use these English headings in this order. A blank template ships at
    be observed are not acceptable; make each one exercisable.
 3. **Implemented** - what was actually built, with concrete `file:line` references. This
    is where the wiring is recorded (which caller reaches the new code).
-4. **Verify** - the honest 3-valued verification state, per layer. See below.
+4. **Verify** - the honest 4-valued verification state, per layer. See below.
 5. **History** - the folder journey with dates, e.g.
    `created (clarify) 2026-07-04 -> go 2026-07-04 -> done 2026-07-05`. Record why an item
    moved, especially any move backwards.
 
-## The 3-valued Verify (honest, per layer)
+## The 4-valued Verify (honest, per layer)
 
-For each relevant layer (`backend`, `ui`, `human-only`), record exactly one of three
+For each relevant layer (`backend`, `ui`, `human-only`), record exactly one of four
 states - honestly, never optimistically:
 
+- **not-started** - the code/behavior for this layer does not exist yet; work on it has
+  not begun. Distinct from `n/a`, which means the layer does not apply at all.
 - **present** - the code/behavior exists in the source, but has not been shown to run.
 - **wired-but-behavior-unverified** - it is reachable and called (wired into a real code
   path), but its actual runtime behavior has not been observed.
@@ -111,7 +113,7 @@ For any `human-only` layer that only a person can confirm, add a `why_human` not
 explaining what the user must check and why an agent cannot.
 
 A verify attempt that surfaces a defect is a **failed** verify: that is not one of the
-three progress states above, it is a defect outcome that sends the item back (see "Bug
+four progress states above, it is a defect outcome that sends the item back (see "Bug
 found during verify"). Only `exercised` (or a user-confirmed human-only criterion) counts
 toward the Definition of Done.
 
@@ -132,7 +134,8 @@ has not been observed, record `wired-but-behavior-unverified`, not `failed`. Res
 An item may move into `2_done/` ONLY when ALL of these hold. This gate is hard.
 
 1. **Every Success Criterion is `exercised`** (or, for a human-only criterion, explicitly
-   confirmed by the user). Nothing left at `present` or `wired-but-behavior-unverified`.
+   confirmed by the user). Nothing left at `not-started`, `present`, or
+   `wired-but-behavior-unverified`.
 2. **If `ui: true`, a passing visual verify is mandatory** - the credo `verify` skill at
    every configured viewport (measured layout, real interaction, live update where
    required, hard reload after rebuild), with screenshots saved under

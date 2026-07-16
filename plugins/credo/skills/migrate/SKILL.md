@@ -168,9 +168,9 @@ These two interleave; run them together.
   the item `id`; new items draw the next `id` from `credo-id-next.sh`. Frontmatter:
   `id, title, created, type, ui` (no `status` / `marker` field - the folder is the status).
   Body sections, exactly as in the `items` model: `Requirement (verbatim)`,
-  `Success Criteria (= DoD)`, `Implemented`, `Verify` (3-valued per layer: present /
-  wired-but-behavior-unverified / exercised - `failed` is a defect outcome, not one of the
-  three states), `History`. These are the canonical English names; a project writes them in
+  `Success Criteria (= DoD)`, `Implemented`, `Verify` (4-valued per layer: not-started /
+  present / wired-but-behavior-unverified / exercised - `failed` is a defect outcome, not
+  one of the four states), `History`. These are the canonical English names; a project writes them in
   its own working language (for example a German project localizes the headings), but the
   model and order stay the same.
 - **GO rule.** Only a 100% clarified item goes to `1_todo/2_go`. Anything with an open
