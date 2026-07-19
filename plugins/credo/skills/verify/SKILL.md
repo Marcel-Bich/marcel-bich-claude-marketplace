@@ -101,3 +101,8 @@ layout, real interaction, live update where required, hard reload after rebuild,
 saved screenshots - is mandatory before the item may move to done. If verification
 surfaces a defect, the item is not done: it goes back to clarification with a note on
 what was missed, per the credo item model. Never downgrade or self-approve this gate.
+
+Visual proof is not the whole DoD: the same change must also carry its docs currency -
+including the project wiki (a separate repo), via `/dogma:docs-update` where dogma is
+installed or a best-effort manual update otherwise. The credo items skill owns that
+requirement; this gate does not restate it.

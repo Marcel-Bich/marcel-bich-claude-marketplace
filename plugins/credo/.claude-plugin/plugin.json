@@ -1,6 +1,6 @@
 {
   "name": "credo",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "The mentor framework for Claude Code: a self-contained process layer with per-session modes, a work-item lifecycle with a hard Definition of Done, budget-aware autonomy, visual verification, and safety rules that travel into every subagent",
   "keywords": [
     "workflow",

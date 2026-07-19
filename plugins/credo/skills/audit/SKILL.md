@@ -63,7 +63,10 @@ For the item under review, gather the ground truth first (read, do not guess):
 Then compare the actual built result (files, wiring, tests, verify evidence) against
 that ground truth. Confirm each success criterion is genuinely met, that new code is
 reachable and wired (not present-but-unreachable), and that documentation was updated
-in the same change (stale docs = incomplete).
+in the same change (stale docs = incomplete). Docs currency includes the project wiki
+(a separate repo) and in-repo READMEs, not just files inside the commit; where dogma is
+present, check that `/dogma:docs-update` was the mechanism (or an equivalent manual
+update happened). audit checks and flags stale docs - it does not run the update itself.
 
 ## Severity levels
 
@@ -100,6 +103,47 @@ No evidence -> not a finding. A verdict without evidence is not acceptable.
   completion needs, it is part of this item, not a new one.
 - The auditor never silently downgrades or repairs; it proposes, the move follows the
   verdict.
+
+## Disposition of findings (nothing is silently dropped)
+
+EVERY finding - at every severity, MINOR and NIT included - must be explicitly
+DISPOSITIONED. Dropping a finding with no disposition is not allowed. The three allowed
+dispositions are:
+
+1. **Fixed now** - the finding is corrected at its root.
+2. **Deferred** - captured as a tracked item (see the credo items skill) with a recorded
+   reason for deferring.
+3. **Wontfix** - a conscious decision by the USER not to act (in autonomous mode, a
+   documented default stands in for the user's call).
+
+The severity levels and the evidence rule above are unchanged; this governs what happens
+to a finding AFTER it is reported, not whether it is reported.
+
+**Code fix beats a doc workaround.** When a finding can be fixed cleanly in code, fix it at
+the root rather than bloating the docs to describe or justify the messiness. Follow the
+language and project best practices and do not mix conventions - for example a config
+getter should emit canonical lowercase booleans rather than leaking Python-style
+`True`/`False` and then documenting the leak. A doc-only workaround is a fallback only when
+a clean code fix genuinely harms (a real, stated reason - e.g. it would break other
+callers) or is impossible. Convenience is not such a reason.
+
+**audit still only proposes.** audit is read-only: it names each finding and its
+recommended disposition, but it never edits, fixes, or commits. The disposition is carried
+out by the acting/building agent per the audit's proposal - that separation is the point of
+the gate.
+
+**How the acting agent acts on it, by session mode:**
+
+- **Presence modes (active, passive)** - the acting agent EXPLAINS each finding to the user
+  and recommends the fix via a question. Default recommendation: fix. The user may deem a
+  finding unimportant; borderline calls go to the user, never to the agent's own
+  convenience.
+- **Autonomous mode** - the acting agent fixes the findings inline BY DEFAULT without
+  asking (asking would block an unattended run), and records what was fixed in the item
+  and the digest. Where a clean fix is genuinely impossible or harmful (a real, stated
+  reason), or the finding is genuinely independent of the audited item's core, it records
+  a documented wontfix (the documented default standing in for the user) or defers it as a
+  tracked item with the reason - never blocking the unattended run to ask.
 
 ## Result: a decision proposal
 
