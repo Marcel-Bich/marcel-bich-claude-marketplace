@@ -28,6 +28,7 @@ This handles:
 - Optional companions: dogma (recommended), get-shit-done (optional, spec-driven alternative to credo items).
 - Claude instructions sync (`/dogma:sync`, if dogma is installed).
 - Choosing a task system (credo items by default).
+- Autonomy preferences and, when the limit plugin is present, wiring its auto-compact trigger to `credo:compact-plus`.
 
 **After setup completes, continue to Entry Point.**
 
@@ -44,6 +45,7 @@ Use AskUserQuestion to show available topics:
 ```
 What would you like to explore?
 
+- The credo workflow: how a piece of work flows end to end
 - Session Modes: active / passive / autonomous working modes
 - Item Lifecycle: work items with a hard Definition of Done
 - Budget and Autonomy: unattended work within 5h and weekly caps
@@ -60,13 +62,28 @@ What would you like to explore?
 
 These are the heart of the framework. Everything below lives inside credo - no foreign plugin required.
 
+### Topic: The credo workflow (end to end)
+
+How one piece of work flows through credo, tying the topics below into one path:
+
+1. Set up once: `/credo:setup` - framework, optional companions, autonomy and compact preferences.
+2. Pick a session mode for how present you are: active / passive / autonomous (see Session Modes).
+3. Capture the work as an item: requirement verbatim, plus observable success criteria (the Definition of Done). Clarify first; nothing is built before an explicit GO (see Item Lifecycle).
+4. On GO, build - delegation-first via subagents (load `/credo:session-init` for the main-agent workflow), wiring new code so a caller actually reaches it.
+5. Pass the hard Definition of Done gate: an independent audit subagent (not the builder), visual verify for any runtime surface, docs updated in the same change. Findings are dispositioned, not dropped.
+6. Only the user files the item as verified.
+
+Cross-cutting throughout: budget caps, filesystem safety, and subagent priming apply the whole way, especially in autonomous mode (see Budget and Autonomy plus Verify and Safety).
+
+Load `/credo:session-init` to bring in the delegation-first working workflow; the individual topics below drill into each step.
+
 ### Topic: Session Modes
 
 credo runs a session in one of three exclusive modes. The active mode is re-injected on every prompt, so it is never silently forgotten.
 
 - `/credo:session-active` - intensive live collaboration, you at the keyboard, no keep-alive.
 - `/credo:session-passive` - the agent carries most of the work; you stay reachable for clarifications only, no keep-alive.
-- `/credo:session-autonomous` - approved GO items worked unattended, keep-alive on (hook-enforced: a registered Stop hook blocks a stop without a scheduled wake-up), budget caps enforced, ntfy per task and question, progress secured via compact-plus.
+- `/credo:session-autonomous` - approved GO items worked unattended, keep-alive on (hook-enforced: a registered Stop hook blocks a stop without a scheduled wake-up), budget caps enforced, ntfy per task and question, progress secured via compact-plus. It self-bootstraps on an unambiguous full-autonomy grant, needing no host CLAUDE.md line.
 
 Pick the mode that matches how present you are. Switch any time by running the matching command.
 
@@ -90,11 +107,11 @@ To onboard an existing repository into this structure, run `/credo:migrate` - it
 
 credo targets the repo you point it at (hub-aware): when your shell cwd is a launch hub rather than the repo you are working on, pin the real target with `/credo:project <path>` so the item tree and config resolve to the right place. A directory marked `hub: true` is never auto-targeted.
 
-**The Definition of Done is hard:** success criteria observably met, code wired in, an independent audit subagent (not the builder) passed it, UI work visually verified in a real browser with screenshot evidence, and docs updated in the same change - including the project wiki, via `/dogma:docs-update` where dogma is installed (a best-effort manual update otherwise). "The test passed" is not done.
+**The Definition of Done is hard:** success criteria observably met, code wired in, an independent audit subagent (not the builder) passed it, UI work visually verified in a real browser with screenshot evidence, and docs updated in the same change - including the project wiki, via `/dogma:docs-update` where dogma is installed (a best-effort manual update otherwise). The audit gate dispositions every finding down to NITs and prefers a real code fix over a doc-only workaround. "The test passed" is not done.
 
 ### Topic: Budget and Autonomy
 
-credo is limit-aware. In autonomous mode it reads the 5-hour and weekly usage caps (via the `limit` plugin cache), sizes tasks to fit the remaining budget, and pauses or hands off before a wall is hit. Approved GO items are worked unattended with keep-alive; each task and question fires an ntfy push so you can step away and still be called back. Autonomous machine power-down (sleep) is opt-in (default off, server-safe): the mode (StandBy / suspend or Ruhezustand / hibernate) and the exact command are chosen per platform at `/credo:setup`. ntfy is used only if you configured a topic.
+credo is limit-aware. In autonomous mode it reads the 5-hour and weekly usage caps (via the `limit` plugin cache), sizes tasks to fit the remaining budget, and pauses or hands off before a wall is hit. When the limit cache is absent it asks for a budget decision rather than running blind, and the weekly reset is handled as a pause-and-resume, not a showstopper. Approved GO items are worked unattended with keep-alive; each task and question fires an ntfy push so you can step away and still be called back. Autonomous machine power-down (sleep) is opt-in (default off, server-safe): the mode (StandBy / suspend or Ruhezustand / hibernate) and the exact command are chosen per platform at `/credo:setup`. ntfy is used only if you configured a topic.
 
 ### Topic: Verify and Safety
 
