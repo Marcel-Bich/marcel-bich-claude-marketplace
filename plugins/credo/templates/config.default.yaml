@@ -64,6 +64,23 @@ wakeup:
   # Fallback delay (minutes) if the preferred offset cannot be used.
   fallback_offset_minutes: 1
 
+# --- sleep (autonomous end-of-run / weekly-cap machine power-down) ------------
+# Default OFF for safety: a server running autonomous work must NEVER be powered
+# down unexpectedly. Enable only on a personal machine you want powered down when
+# autonomous work finishes or hits the weekly cap. Opt in via /credo:setup, which
+# detects the platform and stores the exact command.
+#   mode:    "suspend" (standby / suspend-to-RAM) or "hibernate" (suspend-to-disk).
+#            On native Linux, hibernate is often unavailable (needs swap >= RAM) -
+#            suspend is the reliable default there; on WSL, hibernate (shutdown.exe /h)
+#            is the norm. Empty until chosen at setup.
+#   command: the exact shell command run to power down. Filled at setup; empty means
+#            not configured (an enabled-but-empty command is a misconfig - the run then
+#            ends cleanly WITHOUT powering down, never a guessed command).
+sleep:
+  enabled: false
+  mode: ""
+  command: ""
+
 # --- budget (consumed by the budget skill, Phase 5) --------------------------
 # Universal default cap schedule. Values are percent. Off-hours five_hour_cap
 # uses the soft/hard band (soft warn, hard stop); work-hours (Mon-Fri 09-17)
@@ -82,6 +99,15 @@ budget:
   task_sizing:
     large_below_percent: 60
     medium_below_percent: 80
+  # Weekly reset handling in autonomous mode. When the weekly reset is NEAR
+  # (seven_day.resets_at falls on the same local calendar day - read dynamically
+  # from the limit cache, never hardcoded) and weekly usage reaches switch_percent,
+  # the agent pauses via chained wake-ups until the reset and then resumes with a
+  # fresh weekly budget, instead of hibernating. The 99% weekly fail-safe hibernate
+  # (budget_failsafe.weekly_percent) always remains the last-resort net.
+  weekly_pause:
+    enabled: true
+    switch_percent: 97
   # Cap schedule. five_hour_cap is the hard cap for that window; off-hours use
   # the soft/hard band above (95 hard). weekly_cap is the weekly ceiling.
   schedule:
@@ -149,6 +175,11 @@ budget_failsafe:
 personal:
   # ntfy topic for push notifications. Empty -> notifications are skipped.
   ntfy_topic: ""
+  # ntfy opt-out marker. Setup-only: distinguishes "user declined notifications"
+  # from "never asked" so /credo:setup stops re-asking. true -> setup skips the ntfy
+  # question. It does NOT add any runtime prompt (runtime still just skips ntfy
+  # silently when the topic is empty).
+  ntfy_optout: false
   # Expected commit-identity hint (optional). Empty (recommended when you use more than
   # one identity) -> rely on the repo's git-log history plus its local gitconfig. It MAY
   # be set here as a default identity, but it is then overridden per project (cascade:

@@ -94,7 +94,7 @@ credo targets the repo you point it at (hub-aware): when your shell cwd is a lau
 
 ### Topic: Budget and Autonomy
 
-credo is limit-aware. In autonomous mode it reads the 5-hour and weekly usage caps (via the `limit` plugin cache), sizes tasks to fit the remaining budget, and pauses or hands off before a wall is hit. Approved GO items are worked unattended with keep-alive; each task and question fires an ntfy push so you can step away and still be called back.
+credo is limit-aware. In autonomous mode it reads the 5-hour and weekly usage caps (via the `limit` plugin cache), sizes tasks to fit the remaining budget, and pauses or hands off before a wall is hit. Approved GO items are worked unattended with keep-alive; each task and question fires an ntfy push so you can step away and still be called back. Autonomous machine power-down (sleep) is opt-in (default off, server-safe): the mode (StandBy / suspend or Ruhezustand / hibernate) and the exact command are chosen per platform at `/credo:setup`. ntfy is used only if you configured a topic.
 
 ### Topic: Verify and Safety
 
