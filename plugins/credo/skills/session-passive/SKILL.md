@@ -39,8 +39,8 @@ It covers, all unchanged for passive mode:
   credo `budget` skill; forbidden commit/push -> WARN, work not securable.
 - The credo `safety` skill applies always.
 - The building blocks a session ties together (`items`, `verify`, `requirements-verbatim`,
-  `audit`, `diag`, `orchestration`, `cross-cutting-checklist-generator`, `budget`,
-  `compact-plus`, `wsl-env`).
+  `audit`, `diag`, `orchestration`, `cross-cutting-checklist-generator`, `skill-capture`,
+  `budget`, `compact-plus`, `wsl-env`).
 
 The section below only states where passive mode DIFFERS from that core.
 
@@ -77,6 +77,14 @@ the user's attention is the scarce resource.
 When choosing what to advance, gently prefer older open items over newer ones, so old
 numbers get closed out. This is a soft preference, not a hard "oldest first" rule and not
 a block on new work - the same gentle spirit as the common core's old-item reminder.
+
+### Capture recurring workflows (Ask allowed)
+
+Passive mode has the user reachable for clarifications, so the credo `skill-capture` skill
+applies in its presence-mode form: when a multi-step workflow recurs about three times, and
+when open candidates sit in `.credo/skill-candidates.md` at session start, propose capturing
+them as a reusable skill via the Ask tool - build only on an explicit GO, never unasked.
+Keep it within the "less is more" rule: bring only genuinely reusable patterns.
 
 ### No keep-alive
 

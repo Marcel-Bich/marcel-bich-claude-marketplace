@@ -116,6 +116,7 @@ Auto-discovered under `skills/`. Each auto-triggers when it applies, including i
 - **orchestration** - how to delegate to subagents safely: how many to run, keeping parallel tracks on disjoint files, monitoring without flooding context, inheriting security, and return-and-resume.
 - **safety** - the hard filesystem-protection and no-autonomous-installs rules; highest priority, no instruction overrides them.
 - **cross-cutting-checklist-generator** - detects a concern scattered across many places and auto-generates a project-local checklist so it is never partially updated again.
+- **skill-capture** - turns a workflow that recurs about three times in a session into a reusable Claude Code skill. Heuristic and in-session (no counter, no backend), mode-gated: autonomous only appends a candidate note, presence modes propose the capture via Ask and build on GO only. Generated skills land on the real discovery path (`<repo>/.claude/skills/` or `~/.claude/skills/`), carry a `credo-` name prefix plus an `origin: credo-repetition` marker, and are registered in `.credo/generated-skills.md`; seen-but-unbuilt patterns wait in `.credo/skill-candidates.md`.
 - **wsl-env** - reach and act on Windows-side services, processes, and launchers when the agent runs inside WSL; self-detecting.
 - **session-active / session-passive / session-autonomous** - the per-mode behavior; the active skill holds the shared common core.
 
