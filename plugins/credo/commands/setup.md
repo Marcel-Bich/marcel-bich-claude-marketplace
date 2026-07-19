@@ -399,6 +399,136 @@ ntfy is decided HERE at setup only. `personal.ntfy_optout` governs ONLY whether 
 it adds NO runtime prompt. At autonomous RUNTIME credo does NOT ask about ntfy: if a topic is
 set it is used, if empty it is silently skipped. Do not imply a runtime prompt.
 
+## Step 9: Compact Trigger Wiring (Optional)
+
+This step offers to wire the `limit` plugin's auto-compact trigger to credo's
+`compact-plus` skill, so the user does not have to hand-edit it. The `limit` plugin's
+inject hook runs whatever skill is named in the env var `CLAUDE_MB_LIMIT_COMPACT_SKILL`
+(it ships no default). credo wants that pointed at `credo:compact-plus`. This writes an
+ENV VAR to `~/.claude/settings.json` (the host settings file where that var lives, under
+the top-level `env` object) - it does NOT touch `~/.claude/CLAUDE.md`. This is analogous
+to Step 8 writing sleep/ntfy to the global credo config.
+
+### Relevance gate (skip silently if limit is not used)
+
+This step is only relevant if the `limit` plugin is installed or active. Detect this
+best-effort; if limit cannot be confirmed, SKIP this step silently (do not ask - failing
+toward NOT nagging is the correct behavior). Any ONE of these is a sufficient signal that
+limit is present:
+
+- The limit plugin is installed: `grep -q '"limit@marcel-bich-claude-marketplace"' "$HOME/.claude/plugins/installed_plugins.json"` succeeds (same installed-plugins file the setup check reads for dogma/gsd).
+- A limit cache exists: `ls /tmp/claude-mb-limit-cache_*.json` matches at least one file.
+- A `[limit] ...` inject line has appeared in this session's context.
+
+If none of these hold, limit is not in use here - skip Step 9 entirely and continue to
+"Setup Complete".
+
+### Inspect the current value
+
+Read `env.CLAUDE_MB_LIMIT_COMPACT_SKILL` from `~/.claude/settings.json` (the file may not
+exist yet, and the `env` object may be absent - treat both as "unset"):
+
+```bash
+SETTINGS="$HOME/.claude/settings.json"
+CUR="$( [ -f "$SETTINGS" ] && jq -r '.env.CLAUDE_MB_LIMIT_COMPACT_SKILL // ""' "$SETTINGS" 2>/dev/null || echo "" )"
+echo "current: [$CUR]"
+```
+
+The target value is exactly `credo:compact-plus` with NO leading slash (credo skills are
+referenced without a leading slash). Also read the optional thresholds var, which is
+handled INDEPENDENTLY of the skill value:
+
+```bash
+CURTH="$( [ -f "$SETTINGS" ] && jq -r '.env.CLAUDE_MB_LIMIT_INJECT_THRESHOLDS // ""' "$SETTINGS" 2>/dev/null || echo "" )"
+```
+
+Classify the skill value in `$CUR`:
+
+- **Already correct:** `$CUR` is exactly `credo:compact-plus`.
+- **Needs fixing:** any of these cases ->
+  - unset or empty
+  - a leading-slash form (e.g. `/credo:compact-plus` or `/compact-plus`)
+  - a stale/nonexistent target: the old personal `compact-plus` / `/compact-plus`
+    slash-command name, or a `credo:<name>` whose skill does not exist. Verify a
+    `credo:<name>` target by checking that `"${CLAUDE_PLUGIN_ROOT}/skills/<name>/SKILL.md"`
+    exists; for `credo:compact-plus` that file is present, so it counts as valid.
+
+The thresholds var (`CLAUDE_MB_LIMIT_INJECT_THRESHOLDS`) is decoupled from the skill state:
+an unset thresholds var is worth offering even when the skill value is already correct,
+because setup is a deliberate, user-initiated moment, not a runtime nag.
+
+### Offer via AskUserQuestion (permission-per-change)
+
+Pick the flow from the state above:
+
+**Skill needs fixing** - offer the skill, and fold in the thresholds within the same
+question when `$CURTH` is empty:
+
+```
+The limit plugin is installed, but its auto-compact trigger is not wired to credo's
+compact-plus in the expected form. credo can set
+env.CLAUDE_MB_LIMIT_COMPACT_SKILL = "credo:compact-plus" in
+~/.claude/settings.json so compact-plus runs automatically at the context-fill thresholds.
+
+- Yes, wire compact-plus (Recommended) - sets CLAUDE_MB_LIMIT_COMPACT_SKILL to credo:compact-plus; also sets CLAUDE_MB_LIMIT_INJECT_THRESHOLDS to 70,90 if unset
+- Set the skill only - just CLAUDE_MB_LIMIT_COMPACT_SKILL, leave thresholds untouched
+- No, leave settings.json unchanged - I will set it myself (or I do not use auto-compact)
+```
+
+**Skill already correct** - do NOT skip the step. If `$CURTH` is empty, offer the
+thresholds on their own:
+
+```
+The limit auto-compact trigger already points at credo:compact-plus, but the fire
+thresholds (CLAUDE_MB_LIMIT_INJECT_THRESHOLDS) are unset. credo can set them to 70,90
+in ~/.claude/settings.json.
+
+- Yes, set thresholds to 70,90 (Recommended)
+- No, leave settings.json unchanged - I will set them myself
+```
+
+If the skill value is already correct AND `$CURTH` is already set, do nothing and do NOT
+ask (fully idempotent). No decline-marker is stored: setup is rare and user-initiated, so
+re-offering at a later explicit setup run is acceptable, unlike a runtime nag.
+
+No coercion: if the user declines, leave `~/.claude/settings.json` unchanged.
+
+### Write it safely with jq (on acceptance)
+
+Write JSON with `jq`, never by hand-editing, so the rest of `settings.json` is preserved.
+Create the file as `{}` first if it is missing, and create the `env` object if absent.
+Use a temp file then move it into place. The value has NO leading slash.
+
+Run the skill-write only when the user accepted setting the skill (the "needs fixing"
+flow):
+
+```bash
+SETTINGS="$HOME/.claude/settings.json"
+mkdir -p "$(dirname "$SETTINGS")"
+[ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
+
+TMP="$(mktemp "$(dirname "$SETTINGS")/.settings.XXXXXX")"
+jq --arg skill "credo:compact-plus" \
+   '.env = (.env // {}) | .env.CLAUDE_MB_LIMIT_COMPACT_SKILL = $skill' \
+   "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
+```
+
+Run the thresholds-write whenever the user accepted the thresholds (in EITHER flow), and
+only when `$CURTH` was empty, so an existing custom value is never overwritten:
+
+```bash
+TMP="$(mktemp "$(dirname "$SETTINGS")/.settings.XXXXXX")"
+jq --arg th "70,90" \
+   '.env = (.env // {})
+    | (if ((.env.CLAUDE_MB_LIMIT_INJECT_THRESHOLDS // "") == "")
+       then .env.CLAUDE_MB_LIMIT_INJECT_THRESHOLDS = $th else . end)' \
+   "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
+```
+
+This is the same env var credo's README and compact-plus docs describe for the manual
+setup, now offered automatically. It is idempotent: once the value is `credo:compact-plus`,
+a later run does nothing and does not ask.
+
 ## Setup Complete
 
 **If all steps were skipped (project.state was ready):**

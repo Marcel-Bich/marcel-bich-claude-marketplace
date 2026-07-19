@@ -56,6 +56,9 @@ To point that mechanism at this skill, the limit plugin configuration must set:
 - `CLAUDE_MB_LIMIT_COMPACT_SKILL=credo:compact-plus` - names this skill in the ACTION line.
 - `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS=70,90` - the session-context fill percentages that fire.
 
+`/credo:setup` offers to set these in `~/.claude/settings.json` for you (Step 9) when the
+limit plugin is installed, so setting them by hand is optional.
+
 The intended thresholds also live in credo config under `compact.thresholds` (default
 70 and 90) as the documented source of truth. Read them with:
 

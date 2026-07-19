@@ -175,6 +175,7 @@ Required for two features:
 - **Context-percent triggers.** Auto-running compact-plus at the session-context fill thresholds relies on the limit plugin's inject hook. Point it at credo:
   - `CLAUDE_MB_LIMIT_COMPACT_SKILL=credo:compact-plus`
   - `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS=70,90`
+  - `/credo:setup` offers to set these for you (Step 9, when the limit plugin is present); the manual values above still apply if you do not run setup.
 - **Budget data.** The budget skill reads the limit cache (`/tmp/claude-mb-limit-cache_*.json`) via `scripts/credo-budget-read.sh` for the 5-hour and weekly utilization and reset times. That helper exits with a distinct code when no fresh cache is present.
 
 Without the `limit` plugin these features are silently unavailable. No error is raised; credo just does not run logic that has no data.
