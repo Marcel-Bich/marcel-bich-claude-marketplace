@@ -90,7 +90,7 @@ To onboard an existing repository into this structure, run `/credo:migrate` - it
 
 credo targets the repo you point it at (hub-aware): when your shell cwd is a launch hub rather than the repo you are working on, pin the real target with `/credo:project <path>` so the item tree and config resolve to the right place. A directory marked `hub: true` is never auto-targeted.
 
-**The Definition of Done is hard:** success criteria observably met, code wired in, an independent audit subagent (not the builder) passed it, UI work visually verified in a real browser with screenshot evidence, and docs updated in the same change. "The test passed" is not done.
+**The Definition of Done is hard:** success criteria observably met, code wired in, an independent audit subagent (not the builder) passed it, UI work visually verified in a real browser with screenshot evidence, and docs updated in the same change - including the project wiki, via `/dogma:docs-update` where dogma is installed (a best-effort manual update otherwise). "The test passed" is not done.
 
 ### Topic: Budget and Autonomy
 

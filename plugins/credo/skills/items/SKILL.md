@@ -152,8 +152,14 @@ An item may move into `2_done/` ONLY when ALL of these hold. This gate is hard.
    passive, autonomous), no exceptions. Only a passing audit lets the item enter
    `2_done/`.
 5. **Docs updated in the same change** - documentation is part of the change, not a
-   follow-up. Stale docs = incomplete (C14). Search `docs/**` and `.credo/docs/` for what
-   the change affects and update it now.
+   follow-up. Any change that affects documented behavior MUST update the docs in the same
+   change; stale docs = incomplete (C14). Prefer `/dogma:docs-update` when dogma is
+   installed - it is the canonical README + wiki sync; if dogma is not installed, do a
+   best-effort manual update of the affected docs (companion tool when present, graceful
+   degrade when not). Scope explicitly includes the project wiki (a separate repo) and
+   in-repo READMEs, not just files inside this commit - "same change" is not "same repo
+   only". Search `docs/**`, `.credo/docs/`, in-repo READMEs, and the wiki for what the
+   change affects and update it now.
 6. **Version bump as part of the DoD** - bump the version as part of completing the work,
    dogma-first (follow dogma's versioning if present), credo as fallback only.
 
