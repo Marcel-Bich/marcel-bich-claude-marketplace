@@ -314,15 +314,20 @@ for part in key.split("."):
     else:
         sys.exit(3)
 
+def _emit(x):
+    if x is None:
+        return ""
+    if isinstance(x, bool):
+        return "true" if x else "false"
+    return x
+
 if isinstance(node, (dict,)) or (isinstance(node, list) and any(isinstance(x, (dict, list)) for x in node)):
     print(json.dumps(node, ensure_ascii=False))
 elif isinstance(node, list):
     for x in node:
-        print("" if x is None else x)
-elif node is None:
-    print("")
+        print(_emit(x))
 else:
-    print(node)
+    print(_emit(node))
 PY
         ;;
     resolve-project)

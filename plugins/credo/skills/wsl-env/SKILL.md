@@ -95,7 +95,7 @@ address is a private LAN address. Do not assume any particular subnet - what is 
 LAN range on one machine is not on another. Confirm the choice by reachability, then
 offer to store it in config so it need not be rediscovered.
 
-## Windows processes, launchers, logs, hibernate: use powershell.exe
+## Windows processes, launchers, logs, power-down: use powershell.exe
 
 Anything on the Windows side is driven through `powershell.exe`, which runs in the
 Windows context and can see Windows localhost, processes, and scripts:
@@ -108,9 +108,12 @@ Windows context and can see Windows localhost, processes, and scripts:
 - Stop a Windows-side process: `powershell.exe -NoProfile -Command "Stop-Process -Id <pid>"`
   or the project's stop script.
 - Read Windows logs by having `powershell.exe` read them on the Windows side.
-- Hibernate: `shutdown.exe /h` (subject to the credo autonomous-session hibernate rules -
-  veto window and double-hibernate protection; never hibernate on the agent's own
-  initiative outside those rules).
+- Machine power-down on the Windows side runs through `powershell.exe` too, but the ACTUAL
+  autonomous power-down command credo runs is NOT hardcoded here - it comes from the credo
+  `sleep.command` config (set at `/credo:setup`; on WSL that is typically `shutdown.exe /h`).
+  It is governed by the credo autonomous-session sleep rules (veto window and double-fire
+  protection; never on the agent's own initiative outside those rules). `sleep.command` is the
+  source of truth.
 
 If a Windows-side service must accept inbound connections from WSL and still cannot be
 reached after both methods above, a Windows Firewall inbound rule for that port may be

@@ -291,6 +291,114 @@ Would you like to create a GSD project roadmap?
 
 If user chooses "Yes": Run `/gsd:create-roadmap` via Skill tool.
 
+## Step 8: Autonomy Preferences (Optional)
+
+These two preferences are personal / machine-level, so they belong in the GLOBAL credo
+config (all repos inherit them), NOT the project `.credo/config`. Get or create the global
+config path, then Read + Edit that file to set the keys directly (same approach as the
+`task_backend` write in Step 6 - do NOT shell out to a setter):
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" ensure-global
+```
+
+That prints (and creates if missing) the global config path. Only ask each question below if
+it was not already chosen - but detect "already chosen" from the GLOBAL config FILE itself
+(the ensure-global path), NOT from `credo-config.sh get`:
+
+- Sleep (machine power-down): to decide whether it was already chosen, check the GLOBAL
+  config file itself (the ensure-global path) for a top-level `sleep:` block (e.g. grep the
+  file for a `sleep:` line). Do NOT use `credo-config.sh get sleep.enabled` for this decision -
+  it returns the builtin template default `false` via the config cascade even when the global
+  file never set it, so it would wrongly look "already configured" and skip the question on
+  first-ever setup. Ask the sleep question UNLESS the global file already contains a `sleep:`
+  block.
+- ntfy: check the same GLOBAL config file for a non-empty `personal.ntfy_topic:` value OR
+  `personal.ntfy_optout: true`. Skip the ntfy question if EITHER is present (a set topic means
+  configured; an opt-out means the user already declined). Otherwise ask.
+
+### (a) Machine power-down (sleep)
+
+The power-down command is OS-specific and the right MODE differs by platform, so this is a
+platform-aware flow. It writes `sleep.enabled`, `sleep.mode`, and `sleep.command` to the
+GLOBAL config (Read + Edit the ensure-global path; append or update the `sleep:` block, same
+approach as `task_backend`). Ask only if no `sleep:` block exists (per the detection above).
+
+Step 1 - first AskUserQuestion, may it power down THIS machine at all:
+
+```
+May autonomous work power down THIS machine when it finishes or hits the weekly cap?
+
+- No, never power down this machine (Recommended) - required for servers; autonomous runs just end cleanly
+- Yes, power it down when autonomous work is done - only for a personal machine
+```
+
+- "No" -> write the `sleep:` block with `enabled: false` (leave `mode` and `command` empty).
+  Done - skip the rest of part (a).
+- "Yes" -> continue to Step 2.
+
+Step 2 - detect the platform:
+
+- WSL: `grep -qiE "microsoft|wsl" /proc/version` succeeds.
+- else read `uname -s`: `Linux` -> native Linux, `Darwin` -> macOS.
+
+Step 3 - on native Linux only, check power-state availability before offering modes:
+
+- `grep -qw disk /sys/power/state` -> hibernate (suspend-to-disk) is available.
+- `grep -qw mem /sys/power/state` -> suspend (suspend-to-RAM) is available.
+
+If `disk` is absent, do NOT offer hibernate (it is unavailable, typically because swap is
+smaller than RAM) - steer to suspend and say why.
+
+Step 4 - second AskUserQuestion, which mode, with a PLATFORM-SPECIFIC recommendation and the
+concrete command shown. Per-platform command table:
+
+- WSL: recommended Hibernate (`shutdown.exe /h`); alternative StandBy
+  (`rundll32.exe powrprof.dll,SetSuspendState 0,1,0`).
+- native Linux: recommended StandBy (`systemctl suspend`); alternative Ruhezustand / hibernate
+  (`systemctl hibernate`) - offer the hibernate alternative ONLY if `/sys/power/state` had
+  `disk`.
+- macOS: StandBy (`pmset sleepnow`) - single reasonable option.
+
+Present it like this, adapted to the detected platform (drop the hibernate row where it is
+unavailable, and mark the Recommended one per platform):
+
+```
+Which power-down mode? (detected platform: <WSL|Linux|macOS>)
+
+- StandBy (suspend) - <command> (Recommended on Linux) - low power, reliable, fast resume
+- Ruhezustand (hibernate) - <command> (Recommended on WSL) - writes RAM to disk, zero power
+```
+
+The shown command is a PROPOSAL the user can accept or override with their own command string
+(some machines differ). If the user gives a custom command, take it verbatim.
+
+Step 5 - write to the GLOBAL config: `sleep.enabled: true`, `sleep.mode: suspend` or
+`hibernate` (matching the chosen mode), and `sleep.command:` set to the chosen or custom
+command. Read + Edit the YAML directly (append or update the `sleep:` block).
+
+### (b) ntfy push notifications
+
+Use AskUserQuestion:
+
+```
+credo can send push notifications (via ntfy) so you get called back to the PC during autonomous work. Set it up?
+
+- Yes, I have an ntfy topic - I will paste my topic string
+- No, skip notifications - autonomous work runs without push (silent)
+```
+
+- "Yes" -> ask for the topic string, then write it to `personal.ntfy_topic` in the GLOBAL
+  config AND set `personal.ntfy_optout: false` (Read + Edit both values).
+- "No" -> leave `personal.ntfy_topic` empty and set `personal.ntfy_optout: true` in the GLOBAL
+  config (this explicit opt-out marker is what stops setup re-asking on every future run -
+  symmetric with the `sleep:` block). Note in the setup output that autonomous work will then
+  run without push notifications (silent) - this is fine and purely informational.
+
+ntfy is decided HERE at setup only. `personal.ntfy_optout` governs ONLY whether setup re-asks;
+it adds NO runtime prompt. At autonomous RUNTIME credo does NOT ask about ntfy: if a topic is
+set it is used, if empty it is silently skipped. Do not imply a runtime prompt.
+
 ## Setup Complete
 
 **If all steps were skipped (project.state was ready):**

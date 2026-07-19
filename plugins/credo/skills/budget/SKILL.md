@@ -36,9 +36,19 @@ percent" are unrelated facts with unrelated responses.
 
 ## Data source: the limit-plugin cache only (B8)
 
-The limit plugin is a PREREQUISITE for all budget data. If it is absent, budget features
-are silently unavailable - do not error, just note that budget data cannot be read and
-fall back to the fail-safe caps below.
+The limit plugin is a PREREQUISITE for all budget data. Without a fresh cache, NO
+percentage-based cap is measurable or enforceable - not the schedule caps and not the
+fail-safe caps below, because every one of them is a percentage of a number that only the
+cache provides. Do not treat the fail-safe caps as a substitute; they too are unenforceable
+with no fresh cache. The only guardrail enforceable without the cache is a wall-clock
+timebox.
+
+- For non-autonomous, ad-hoc reads ("how much budget is left"): budget data is simply
+  unavailable - note that it cannot be read, do not error.
+- For AUTONOMOUS mode entry: never run blind and never silently ignore budgets. The
+  guardrail-availability gate in the credo `session-autonomous` skill decides what to do -
+  it asks the user (install the limit plugin, run a wall-clock timebox, or proceed at an
+  explicitly accepted risk). See that skill; this skill only supplies the honesty rationale.
 
 Two ways to read the current numbers:
 
@@ -172,10 +182,49 @@ There is no fixed percent of overshoot beyond the ceiling; do not plan to exceed
 ## Weekly ceiling and hibernate (B4)
 
 When the weekly axis reaches 99 percent (`seven_day.utilization >= 99`), move to rest /
-hibernate as soon as possible. The absolute weekly fail-safe is also 99 (below). The
-hibernate mechanics (veto window, double-hibernate protection, the "never auto-hibernate
-unless autonomous" rule) live in the autonomous session skill; this skill only sets the
-weekly trigger.
+hibernate as soon as possible. This 99 hibernate is the absolute LAST-RESORT net (it equals
+the absolute weekly fail-safe below); it always still triggers if the pause path fails or
+weekly climbs to 99. The hibernate mechanics (veto window, double-hibernate protection, the
+"never auto-hibernate unless autonomous" rule) live in the autonomous session skill; this
+skill only sets the weekly triggers - both the pause path here and the 99 net.
+
+### Weekly pause-and-resume - the PREFERRED path before the net (autonomous mode)
+
+The weekly reset is NOT a default showstopper. In autonomous mode, before falling to the 99
+net, prefer to pause the session across the weekly reset and then resume with a fresh weekly
+budget. Gate the whole path on `budget.weekly_pause.enabled` (default true); when false, only
+the 99 hibernate net applies.
+
+```
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get budget.weekly_pause.enabled
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get budget.weekly_pause.switch_percent
+```
+
+Read `seven_day_utilization` and `seven_day_resets_at` from the limit cache
+(`credo-budget-read.sh` - those are the exact keys it prints). "Reset is near" =
+`seven_day_resets_at` falls on the SAME local
+calendar day as now - read this dynamically from the cache, NEVER a hardcoded weekday (the
+reset day can change).
+
+- Weekly utilization below `switch_percent` (default 97): work normally under the
+  schedule's `weekly_cap`. No pause.
+- Weekly utilization at or above `switch_percent` AND the reset is near: do NOT hibernate.
+  Secure current work first (commit/push per the git-push policy), stop taking new large
+  chunks, then CHAIN ScheduleWakeup until just after `seven_day_resets_at` (use the wake
+  offset `wakeup.reset_offset_minutes`, fallback `wakeup.fallback_offset_minutes`; a single
+  ScheduleWakeup delay is clamped to at most one hour, so CHAIN for the longer wait). After
+  the reset, resume with the fresh weekly budget.
+- Weekly utilization at or above `switch_percent` but the reset is NOT near (a different
+  calendar day): the pause would mean sleeping too long - fall through to the normal
+  hibernate-at-99 path (the last-resort net).
+
+Reserve rule: never burn to 100 percent (the hard API wall). The ~97 switch point must leave
+room for the wake-chain itself (chained wakes cost budget) and a clean resume; that is why
+the switch fires below 99.
+
+The absolute weekly fail-safe (`budget_failsafe.weekly_percent`, default 99) always still
+triggers hibernate as the final net. The hibernate ACTION itself lives in the autonomous
+session skill; this skill only sets the weekly triggers (both the pause path and the 99 net).
 
 ## Wake-up after a reset (B7)
 
@@ -253,6 +302,9 @@ Rules for this gate:
 - `budget.five_hour.soft_percent` / `budget.five_hour.hard_percent` - off-hours 5h band.
 - `budget.nine_oclock_guard_reserve_percent` - reserve that must remain at 09:00.
 - `budget.task_sizing.large_below_percent` / `budget.task_sizing.medium_below_percent`.
+- `budget.weekly_pause.enabled` - gate for the weekly pause-and-resume path (default true).
+- `budget.weekly_pause.switch_percent` - weekly percent at which, if the reset is near, the
+  session pauses across the reset instead of hibernating (default 97).
 - `budget_failsafe.five_hour_percent` / `budget_failsafe.weekly_percent` - absolute caps.
 - `wakeup.reset_offset_minutes` / `wakeup.fallback_offset_minutes`.
 - `personal.commit_identity_hint` - optional identity cross-check.

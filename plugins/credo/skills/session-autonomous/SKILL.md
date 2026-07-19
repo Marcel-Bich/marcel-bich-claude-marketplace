@@ -79,6 +79,24 @@ autonomously.
 
 ### Budget caps are always on
 
+Guardrail-availability gate (autonomy never runs without budgets/limits). At autonomous-mode
+entry, and before any autonomous start, check budget-data availability via the read-only
+`"${CLAUDE_PLUGIN_ROOT}/scripts/credo-budget-read.sh"`:
+
+- Exit 0 (fresh data): percentage caps are measurable and MANDATORY - proceed as today.
+- Exit 3 or 4 (no cache / stale cache): percentage caps CANNOT be enforced (credo `budget`
+  skill, B8 - the fail-safe caps are percentages too, so they are equally unenforceable).
+  Do NOT run blind and do NOT silently ignore budgets. Use AskUserQuestion with three
+  options:
+  a. Install the `limit` plugin for real budget safety, then re-check availability.
+  b. Run with a wall-clock timebox (max X hours / until a clock time) - the only guardrail
+     enforceable without the cache. Record the deadline and self-enforce it: end the run via
+     `credo-autonomy-off.sh` when the clock reaches it.
+  c. Proceed without budget guardrails - an explicit, user-accepted risk.
+
+This gate is what makes "autonomy never runs without budgets/limits" true. Send the
+come-to-PC ntfy before the AskUserQuestion (per the ntfy hybrid).
+
 Budget enforcement is unconditional in autonomous mode. Apply the credo `budget` skill in
 full: the daily cap schedule, the critical 09:00 guard, the 5-hour guard (skill behavior,
 check frequently including while subagents run, stop subagents with TaskStop before the
@@ -152,19 +170,54 @@ the subagent returns `{status: needs_decision, question}`, the main agent obtain
 (user, verbatim log, or documented default) and passes it back via SendMessage so the
 subagent continues with full context.
 
-### Hibernate at the end (I9)
+### Power down the machine at the end (I9)
 
-The global "never auto-hibernate" rule lives HERE now, scoped by mode:
+The machine power-down can be EITHER suspend (standby / suspend-to-RAM) OR hibernate
+(suspend-to-disk), per `sleep.mode`; refer to it generically as "power down / sleep the
+machine". The global "never auto power-down" rule lives HERE now, scoped by mode:
 
-- Non-autonomous modes (active, passive): NEVER auto-hibernate. Only hibernate on an
+- Non-autonomous modes (active, passive): NEVER auto power-down. Only sleep the machine on an
   explicit user request.
-- Autonomous mode: hibernate when EITHER everything is done, OR a showstopper occurs, OR
-  the weekly axis reaches 99 percent (that weekly trigger is set by the credo `budget`
-  skill; this skill owns the hibernate action).
+- Autonomous mode: the end-of-run triggers are EITHER everything is done, OR a showstopper
+  occurs, OR the weekly axis hits its power-down trigger. On the weekly axis the reset is NOT
+  a default showstopper: first PREFER the credo `budget` skill's weekly pause-and-resume
+  (when the reset is near - same local calendar day - and weekly is at or above
+  `switch_percent`, pause via chained ScheduleWakeup across the reset and resume with a fresh
+  weekly budget). Only the weekly last-resort net (99 percent) or a pause path that does not
+  apply (the reset is on a different calendar day) reaches an end-of-run trigger on the
+  weekly axis. The weekly triggers are set by the credo `budget` skill; this skill owns what
+  happens on a trigger - and whether that powers down the machine is gated below.
 
-Hibernate procedure (with protection against a spurious or double hibernate):
+Power-down is OFF by default - it must be opted into (server-safe). Whether an end-of-run
+trigger sleeps the machine is gated on `sleep.enabled`:
 
-1. Send an ntfy `high` announcing the pending hibernate and open a veto window -
+```
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get sleep.enabled
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get sleep.command
+```
+
+- `sleep.enabled` false (the DEFAULT): NEVER power down the machine. This is what keeps a
+  SERVER running autonomous work from being powered down unexpectedly. On every end-of-run
+  trigger (all done / showstopper / weekly cap reached) do NOT sleep - instead end the
+  autonomous run CLEANLY via `credo-autonomy-off.sh` and send a `high` ntfy stating why (run
+  complete, showstopper, or weekly cap reached). The machine stays on.
+- `sleep.enabled` true (opt-in, personal machine only): run the power-down procedure below
+  (veto window, double-fire protection, secure-work-first, then run the EXACT command from
+  `sleep.command`) on those same end-of-run triggers.
+- MISCONFIG guard: if `sleep.enabled` is true but `sleep.command` is EMPTY, that is a
+  misconfiguration. Do NOT guess or hardcode a command. End the run cleanly via
+  `credo-autonomy-off.sh` and send a `high` ntfy warning that sleep is enabled but no command
+  is configured (re-run `/credo:setup`). Never sleep the machine on a guessed command.
+
+Default OFF means autonomous work never powers down the machine unless the user opted in at
+setup (`/credo:setup`). The weekly pause-and-resume path (budget skill) is unaffected either
+way - it never powers down anyway; this gate governs only the last-resort 99 net and the
+end-of-run / showstopper power-down.
+
+Power-down procedure (only when `sleep.enabled` is true AND `sleep.command` is non-empty;
+with protection against a spurious or double power-down):
+
+1. Send an ntfy `high` announcing the pending power-down and open a veto window -
    `windows.veto_minutes` (default 20):
 
    ```
@@ -172,15 +225,17 @@ Hibernate procedure (with protection against a spurious or double hibernate):
    ```
 
 2. During the veto window, watch for the user coming back. If the user responds or
-   otherwise signals presence, CANCEL the hibernate - do not sleep the machine out from
+   otherwise signals presence, CANCEL the power-down - do not sleep the machine out from
    under an active user.
-3. Double-hibernate protection: record a timestamp / flag when a hibernate is initiated and
+3. Double-fire protection: record a timestamp / flag when a power-down is initiated and
    check it (plus whether the user is back) before issuing another, so a repeated trigger
-   cannot fire hibernate twice.
-4. Before hibernating, make sure work is secured (git-push policy and, where relevant, the
+   cannot fire the power-down twice.
+4. Before powering down, make sure work is secured (git-push policy and, where relevant, the
    credo `compact-plus` securing) so nothing is lost across the sleep.
+5. Run the EXACT command from `sleep.command` (read via the config above) to power down. Do
+   NOT hardcode or guess the command - it is platform- and mode-specific and set at setup.
 
-Never hibernate on your own initiative outside these autonomous triggers.
+Never power down the machine on your own initiative outside these autonomous triggers.
 
 ### Authority order when the user is away
 
