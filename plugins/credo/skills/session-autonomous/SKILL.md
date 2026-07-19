@@ -77,6 +77,17 @@ new features, invent scope, or make product decisions on the user's behalf. Anyt
 already GO waits (or becomes a deferred question, below); it does not get built
 autonomously.
 
+### Never build a skill autonomously (hard guarantee)
+
+The credo `skill-capture` skill is mode-gated, and autonomous mode takes its strictest
+branch: autonomous mode NEVER builds a skill from a recurring workflow, no matter how often
+the pattern recurs. Building a skill needs an explicit user GO, which an autonomous run does
+not have; a build-on-detection rule would be a showstopper. When you notice the same
+multi-step workflow recur (about three times), append ONE candidate note to
+`.credo/skill-candidates.md` and continue the actual work - do not stop, do not ask, do not
+create the skill. A later presence-mode session picks the candidate up. This is consistent
+with steward-not-initiator: noticing a pattern is fine, acting on it into new tooling is not.
+
 ### Budget caps are always on
 
 Guardrail-availability gate (autonomy never runs without budgets/limits). At autonomous-mode

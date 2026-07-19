@@ -19,7 +19,7 @@ Design principles:
 ### 2.1 Components
 
 - **commands/** - eight slash commands: `psalm`, `setup`, `migrate`, `project`, `session-init`, and the three mode setters `session-active`, `session-passive`, `session-autonomous`.
-- **skills/** - fourteen auto-discovered skills (see section 6). Each auto-triggers when it applies, including inside subagents.
+- **skills/** - the auto-discovered skills (see the skills reference section). Each auto-triggers when it applies, including inside subagents.
 - **hooks/** - four hooks are registered in `hooks/hooks.json`:
   - `session-mode-inject.sh` (`UserPromptSubmit`) - re-injects the active session mode on every prompt and names the skill to load.
   - `credo-autonomy-clear.sh` (`UserPromptSubmit`) - a real user message turns autonomy off (drops the flag, sets the paused opt-out).
@@ -151,7 +151,17 @@ An item may enter `2_done/` only when all hold:
 - for `ui: true`, a visual verify drove the real surface in a browser across the configured viewports and captured screenshot evidence under `.credo/screenshots/`,
 - docs were updated in the same change.
 
-## 6. Skills reference
+## 6. Capturing recurring workflows into skills
+
+When the same ordered, multi-step workflow recurs in a session, the `skill-capture` skill can turn it into a reusable Claude Code skill. It adds no infrastructure - it is behavior plus two Markdown files.
+
+- **Detection** - heuristic and in-session only: the same multi-step sequence (same ordered steps or commands, small variation allowed) run about three times in the running session. There is no persistent counter and no tracking backend; detection resets with the session.
+- **Mode gating** (mirrors the audit nit-disposition policy): in **autonomous** mode a skill is NEVER built - the run only appends a candidate note to `.credo/skill-candidates.md` and keeps working (a skill needs an explicit GO an autonomous run cannot give). In **active / passive / default** mode the pattern is explained and the capture is proposed via the Ask tool; the skill is built only on an explicit GO.
+- **Location** - a generated skill goes on a real discovery path so Claude Code finds it: `<repo>/.claude/skills/` for a repo-specific workflow, `~/.claude/skills/` for a generally useful one. Scope is derived from the workflow and confirmed via Ask. A plain `.credo/skills/` folder is NOT a discovery path, so generated skills never live there.
+- **Origin marking** (all three): a `credo-<name>` name prefix, an `origin: credo-repetition` frontmatter marker plus a one-line dated body note, and a register line in `.credo/generated-skills.md`.
+- **Two `.credo/` files** (append-only, created on first use, git-excluded like the rest of `.credo/`): `.credo/generated-skills.md` registers skills that were BUILT; `.credo/skill-candidates.md` records patterns that were SEEN but not built. Autonomous mode writes candidates; active / passive read them at session start and gently offer the open ones (analogous to the soft old-item reminder), then append a resolution line - built or discarded - to close each out.
+
+## 7. Skills reference
 
 - **audit** - read-only quality gate against requirement and Definition of Done; severity-ranked decision, never a fix. Mandatory before `2_done/`.
 - **diag** - read-only root-cause diagnosis at file:line; the fix is a separate GO-gated step.
@@ -163,12 +173,13 @@ An item may enter `2_done/` only when all hold:
 - **orchestration** - safe, efficient delegation to subagents (count, disjoint files, monitoring, inherited security, return-and-resume).
 - **safety** - hard filesystem-protection and no-autonomous-installs rules; highest priority.
 - **cross-cutting-checklist-generator** - detects scattered concerns and auto-generates a project-local checklist.
+- **skill-capture** - turns a workflow that recurs ~3x in a session into a reusable skill; heuristic and in-session (no counter, no backend), mode-gated (autonomous only notes a candidate, presence modes propose via Ask and build on GO). See section 6.
 - **wsl-env** - reach Windows-side services, processes, and launchers from WSL; self-detecting.
 - **session-active / session-passive / session-autonomous** - per-mode behavior; the active skill holds the shared core.
 
-## 7. Dependencies (honest)
+## 8. Dependencies (honest)
 
-### 7.1 `limit` plugin - recommended prerequisite
+### 8.1 `limit` plugin - recommended prerequisite
 
 Required for two features:
 
@@ -180,10 +191,10 @@ Required for two features:
 
 Without the `limit` plugin these features are silently unavailable. No error is raised; credo just does not run logic that has no data.
 
-### 7.2 `ntfy` - optional
+### 8.2 `ntfy` - optional
 
 Push notifications use `ntfy`. The topic is `personal.ntfy_topic` in the credo config. Unset means ntfy is silently skipped. Nothing else depends on it.
 
-## 8. Testing conventions
+## 9. Testing conventions
 
 Every hook, state, and config mechanism is testable against a temporary HOME (for example `HOME=$(mktemp -d) bash hook.sh`) so tests never touch the real `~/.claude`. Hooks are failure-safe: any error exits 0 with no output and never blocks a prompt or a subagent.

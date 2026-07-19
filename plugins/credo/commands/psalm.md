@@ -126,6 +126,12 @@ Two orchestration skills for maintaining a public repo. They trigger on their ow
 - **pr-vetting** - rigorous multi-subagent vetting of external pull requests across technical, security, value/fit, contributor reputation, and license/compliance dimensions, with automated mass-PR / product-injection detection. Merges the findings into one decision-ready report; the merge/close decision stays with the maintainer.
 - **issue-triage** - selection-first GitHub issue triage: shortlist and prioritize before deep-triaging chosen issues via parallel subagents, then recommend close/fix/keep/needs-info for the owner to approve before any action.
 
+### Topic: Capturing Recurring Workflows (skill-capture)
+
+When the same multi-step workflow keeps coming back in a session - about three times - credo can turn it into a reusable Claude Code skill instead of re-deriving it each time. Detection is in-session and heuristic; there is no counter and no backend.
+
+It is mode-aware. In autonomous mode credo never builds a skill on its own - it just notes the pattern in `.credo/skill-candidates.md` and keeps working. In active or passive mode it explains the pattern and proposes capturing it via a question, building only on your GO. A built skill lands on the normal discovery path (`<repo>/.claude/skills/` or `~/.claude/skills/`), is marked as credo-generated (a `credo-` name prefix and an `origin: credo-repetition` marker), and is logged in `.credo/generated-skills.md`. Open candidates are offered again gently at the next session start.
+
 ### The Full Commandments (credo)
 
 | Command | Purpose |
@@ -139,7 +145,7 @@ Two orchestration skills for maintaining a public repo. They trigger on their ow
 | `/credo:session-passive`    | Set the session to passive (clarifications only)               |
 | `/credo:session-autonomous` | Set the session to autonomous (unattended GO items, keep-alive)|
 
-credo also ships auto-discovered skills that trigger on their own (audit, diag, verify, items, requirements-verbatim, budget, compact-plus, orchestration, safety, cross-cutting-checklist-generator, wsl-env, pr-vetting, issue-triage, and the three session-mode skills). You do not call them by hand; they apply when they apply, including inside subagents.
+credo also ships auto-discovered skills that trigger on their own (including audit, diag, verify, items, requirements-verbatim, budget, compact-plus, orchestration, safety, cross-cutting-checklist-generator, skill-capture, wsl-env, pr-vetting, issue-triage, and the session-mode skills). You do not call them by hand; they apply when they apply, including inside subagents.
 
 ---
 

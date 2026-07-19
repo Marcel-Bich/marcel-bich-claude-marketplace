@@ -82,6 +82,8 @@ Gently - never as compulsion - surface a few old open items now and then, then l
 Trigger on session start / resume and occasionally during the session. No hook, no
 pushback against new work; the only goal is that old item numbers do not lie forgotten
 forever. The item folders are the source of truth for what is open (credo `items` skill).
+On start / resume, in the same gentle spirit, also offer any open skill candidates left in
+`.credo/skill-candidates.md` - the rule itself lives in the credo `skill-capture` skill.
 
 ## Do not rename or restructure silently (G6, G7)
 
@@ -159,6 +161,8 @@ them - reference each by name when it applies:
 - `orchestration` - how to delegate to subagents safely (disjoint files, sequential
   commit, monitor without flooding, return-and-resume, subagents >= main model).
 - `cross-cutting-checklist-generator` - auto-generated project checklists.
+- `skill-capture` - turn a ~3x-recurring in-session workflow into a reusable skill
+  (mode-gated; propose via Ask in presence modes, candidate-note only in autonomous).
 - `budget` - all API cap / reset rules and the commit-identity gate.
 - `compact-plus` - securing approved work before a context compaction.
 - `wsl-env` - WSL / Windows-side reachability rules (self-detecting; no-op elsewhere).
