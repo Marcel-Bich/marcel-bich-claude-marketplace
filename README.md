@@ -162,11 +162,11 @@ See [TRADEMARK.md](TRADEMARK.md) for the full trademark policy.
 
 ## Star History
 
-<a href="https://www.star-history.com/#Marcel-Bich/marcel-bich-claude-marketplace&type=date&legend=top-left">
+<a href="https://www.star-history.com/?type=date&legend=top-left&repos=Marcel-Bich%2Fmarcel-bich-claude-marketplace">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Marcel-Bich/marcel-bich-claude-marketplace&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Marcel-Bich/marcel-bich-claude-marketplace&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Marcel-Bich/marcel-bich-claude-marketplace&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Marcel-Bich/marcel-bich-claude-marketplace&type=date&theme=dark&legend=top-left&sealed_token=pk1nMbScwWiYUbduZMm66toO-G_qqQs7jEXYKoG47hlHUua7XD0OJZZHFFFSJMltQnr2xsdooUidp4q2sgpAaBjGnf-0Vf8ACQZKoZHCjDhIXNKgm79_HZqS-Rm89_c043T5_SzF1Ric_RBzThnMOogYPFqrCbd_aclTxnkgwQ8w3N4iHhFuqh02QjQ5" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Marcel-Bich/marcel-bich-claude-marketplace&type=date&legend=top-left&sealed_token=pk1nMbScwWiYUbduZMm66toO-G_qqQs7jEXYKoG47hlHUua7XD0OJZZHFFFSJMltQnr2xsdooUidp4q2sgpAaBjGnf-0Vf8ACQZKoZHCjDhIXNKgm79_HZqS-Rm89_c043T5_SzF1Ric_RBzThnMOogYPFqrCbd_aclTxnkgwQ8w3N4iHhFuqh02QjQ5" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Marcel-Bich/marcel-bich-claude-marketplace&type=date&legend=top-left&sealed_token=pk1nMbScwWiYUbduZMm66toO-G_qqQs7jEXYKoG47hlHUua7XD0OJZZHFFFSJMltQnr2xsdooUidp4q2sgpAaBjGnf-0Vf8ACQZKoZHCjDhIXNKgm79_HZqS-Rm89_c043T5_SzF1Ric_RBzThnMOogYPFqrCbd_aclTxnkgwQ8w3N4iHhFuqh02QjQ5" />
  </picture>
 </a>
 
