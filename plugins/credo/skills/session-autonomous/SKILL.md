@@ -2,14 +2,22 @@
 name: session-autonomous
 description: >
   The credo behavior for a session running in AUTONOMOUS mode - work approved GO items
-  unattended while the user is away, hook-enforced self-scheduled keep-alive, budget caps always on. Load this when
-  the session-mode inject line says "Load skill session-autonomous", right after the
-  /credo:session-autonomous command, or whenever you are working autonomously and unattended.
+  unattended while the user is away, hook-enforced self-scheduled keep-alive, budget caps always on.
+  Load this the MOMENT the user hands off full-autonomy, unattended, or AFK work - EVEN BEFORE the
+  mode is set - so this skill can bootstrap autonomous mode itself. Trigger on a semantic
+  full-autonomy / AFK-handoff grant (match the intent, not a rigid phrase list); the skill itself
+  then only ENTERS autonomous mode on an unambiguous, explicit grant and confirms first when unsure.
+  Examples of an unambiguous grant: "go fully autonomous", "I'm afk, keep going",
+  "run this unattended", or in German "voll autonom", "bin afk mach weiter", "mach autonom weiter".
+  A vague or casual "keep going / carry on" is NOT such a grant. Also load it when the session-mode
+  inject line says "Load skill session-autonomous", right after the /credo:session-autonomous
+  command, or whenever you are working autonomously and unattended.
   Shares the canonical common core defined in the credo session-active skill, then adds the
   autonomous-mode specifics: steward not initiator, ScheduleWakeup keep-alive, the
   deferred-question flow, end-of-run hibernate with veto, and per-task ntfy. This is the
   umbrella skill of the credo building blocks - it references them, never duplicates them.
-  Only active while credo-autonomy-active is set. One mode is active at a time.
+  The keep-alive and hibernate RULES apply only while credo-autonomy-active is set, but the skill
+  should still LOAD on the grant intent so it can enter the mode. One mode is active at a time.
 ---
 
 # session-autonomous - work approved GO items unattended
@@ -26,6 +34,23 @@ Autonomous mode is only in force while the autonomy flag `credo-autonomy-active`
 which is what the `/credo:session-autonomous` command sets (and it lifts the
 `credo-autonomy-paused` opt-out). If that flag is not set, do not run the keep-alive or
 hibernate behavior below.
+
+## Bootstrap - enter the mode only on an unambiguous grant
+
+This skill may LOAD on a full-autonomy / AFK-handoff intent, but entering autonomous mode
+requires an unambiguous, explicit user grant. If this skill loaded because the user just handed
+off full-autonomy / unattended / AFK work and the mode is NOT yet set (no `credo-autonomy-active`
+flag), FIRST enter autonomous mode by running `/credo:session-autonomous`. That command runs
+`session-mode-set.sh autonomous`, sets the flag, and activates the rules below - which resolves the
+chicken-and-egg problem of needing the mode set before this skill's keep-alive can apply. Then
+follow the rules below. If the mode is already autonomous, skip this and continue.
+
+Do NOT enter autonomous mode on a vague or casual signal (for example a bare "keep going",
+"carry on", "work on this"); only on an unambiguous full-autonomy / AFK grant such as
+"run this unattended", "go fully autonomous", or a clear AFK handoff. If unsure whether the user
+really wants unattended autonomy, stay in normal (non-autonomous) collaboration and confirm with
+the user first rather than setting the flag. A user who never asks for autonomy is never put into
+autonomous mode.
 
 ## Common core (shared - read the session-active skill)
 

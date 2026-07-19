@@ -39,7 +39,20 @@ esac
 # --- locate the per-session state file ---
 STATE_DIR="${CREDO_SESSION_MODES_DIR:-$HOME/.claude/credo/session-modes}"
 state_file="$STATE_DIR/$session_id"
-[[ -f "$state_file" ]] || exit 0
+
+# No mode set yet -> optionally inject one short, INFORMATIONAL bootstrap hint so
+# the user can hand off unattended / full-autonomy work without any host CLAUDE.md
+# line. The line only states that the option exists; it sets no flag, runs no
+# command, and does NOT change behavior - the default (no mode) is normal,
+# non-autonomous collaboration. Gated by its own toggle (default on); when off,
+# preserve the old silent behavior.
+if [[ ! -f "$state_file" ]]; then
+    [[ "${CREDO_AUTONOMY_BOOTSTRAP:-true}" == "true" ]] || exit 0
+    boot="[credo] No session mode set (default: normal collaboration). To hand off unattended or full-autonomy work you can enter autonomous mode with /credo:session-autonomous (or /credo:session-active | /credo:session-passive)."
+    jq -n --arg ctx "$boot" \
+        '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $ctx}, suppressOutput: true}' 2>/dev/null
+    exit 0
+fi
 
 mode=$(tr -d '[:space:]' < "$state_file" 2>/dev/null | tr '[:upper:]' '[:lower:]') || mode=""
 
