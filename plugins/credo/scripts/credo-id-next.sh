@@ -1,14 +1,21 @@
 #!/bin/bash
 # credo-id-next - issue the next deterministic, never-reused work-item id.
 #
-# The counter file (.credo/id-counter) holds the last issued number. Issuance
-# is atomic under flock: read n (0 if empty or missing content), n = n + 1,
-# write n back atomically, print n. The counter is NEVER derived from folder
-# contents, so a deleted item id is never reissued.
+# The counter file (.credo/id-counter) is the monotone issuing point: it holds
+# the last number given out. Issuance is atomic under flock: read the counter
+# (0 if empty, missing, or non-numeric), scan the items tree for the highest
+# existing id, take base = max(counter, scan), write base + 1 back atomically,
+# print it.
 #
-# Recovery fallback (only when the counter file is entirely MISSING): scan the
-# items tree for existing ids and set n = max(existing) + 1. A present-but-empty
-# file counts as 0 (next id = 1) by design.
+# The counter, not the folder, decides the number: deleting the highest item
+# does NOT lower the next id, so a deleted id is never reissued. The folder scan
+# is a SAFETY FLOOR, not the source of the id - it only guards against a counter
+# that was rolled back or is stale relative to the items on disk (merge, clone,
+# backup restore, NAS sync). Whenever the scan finds ids above the counter, the
+# counter is reconciled up to them and a drift warning is printed to stderr so
+# the reconciliation is visible rather than silent.
+#
+# stdout carries ONLY the issued id (callers parse stdout); warnings go to stderr.
 #
 # Usage:
 #   credo-id-next.sh                 use the current git repo (or cwd)
@@ -33,7 +40,7 @@ ITEMS_DIR="$CREDO_DIR/items"
 
 mkdir -p "$CREDO_DIR"
 
-# --- recovery scan: highest existing id from item files ----------------------
+# --- scan floor: highest existing id from item files -------------------------
 # Looks at filenames like 124-slug.md and any "id: 124" frontmatter line.
 recover_max_id() {
     local max=0 id
@@ -61,15 +68,25 @@ recover_max_id() {
 exec 9>"$LOCK_FILE"
 flock 9
 
-if [ ! -f "$COUNTER_FILE" ]; then
-    # File missing entirely -> recovery fallback.
-    base="$(recover_max_id)"
-else
-    base="$(tr -d '[:space:]' < "$COUNTER_FILE")"
-    # Empty or non-numeric content counts as 0 (per spec).
-    case "$base" in
-        ''|*[!0-9]*) base=0 ;;
+# Read the counter (missing, empty, or non-numeric all count as 0).
+counter=0
+if [ -f "$COUNTER_FILE" ]; then
+    counter="$(tr -d '[:space:]' < "$COUNTER_FILE")"
+    case "$counter" in
+        ''|*[!0-9]*) counter=0 ;;
     esac
+fi
+
+# Always scan the items tree so a stale/rolled-back counter cannot reissue an id.
+scan="$(recover_max_id)"
+
+# base = max(counter, scan). The counter still governs monotonicity (never-reuse);
+# the scan only lifts a counter that fell behind the items on disk.
+base="$counter"
+if [ "$scan" -gt "$base" ]; then
+    base="$scan"
+    printf 'credo-id-next: counter (%s) was behind existing ids (max %s); reconciled to %s.\n' \
+        "$counter" "$scan" "$((base + 1))" >&2
 fi
 
 next=$((base + 1))
