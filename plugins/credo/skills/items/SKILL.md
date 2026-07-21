@@ -49,7 +49,7 @@ Exactly five required fields. Keep it minimal:
 
 ```yaml
 ---
-id: 124                 # integer from credo-id-next.sh, never derived from folder contents
+id: 124                 # integer from credo-id-next.sh (monotone counter, folder is a safety floor)
 title: Short imperative title
 created: 2026-07-04      # YYYY-MM-DD, the day the item was created (in 1_clarify)
 type: feature           # one of: bug | optimization | feature | question | chore
@@ -73,14 +73,18 @@ when it actually applies, free-form in the body.
 - Frontmatter `id:` matches the number in the filename.
 - Reference an item elsewhere as `#124` (plus its date/short context - transcript line
   numbers are not stable references).
-- **Get ids only from the counter, never from folder contents.** Issue the next id with:
+- **Get ids only from the counter helper, never compute one yourself.** Issue the next id with:
 
   ```
   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-id-next.sh"
   ```
 
-  It is deterministic and never-reuse: a deleted `#124` is never reissued. Do not compute
-  an id by scanning existing files or taking `max+1` yourself - that reuses deleted ids.
+  It is deterministic and never-reuse: the monotone counter, not the folder, decides the
+  number, so a deleted `#124` is never reissued. On each call the helper also scans the
+  items tree as a safety floor and takes `max(counter, highest existing id) + 1`, so a
+  stale or rolled-back counter (merge, clone, restore, sync) never hands out an id that is
+  already in use (it warns on stderr when it reconciles). Do not compute an id by scanning
+  files or taking `max+1` yourself - that reuses deleted ids and skips the lock.
 
 ## Body sections
 

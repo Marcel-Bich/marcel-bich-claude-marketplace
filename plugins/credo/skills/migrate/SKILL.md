@@ -99,10 +99,13 @@ item cutting, and the self-audit) to subagents per the `orchestration` skill, an
   and `screenshots` are ALWAYS excluded so personal values and binaries never get
   committed.
 - Also git-exclude the migration working folder (step 4).
-- **`id-counter` = the highest existing legacy id** in the repo, so new ids never collide
-  and old numbers are never reused. If there are no legacy ids, leave it empty (treated as 0).
-  Issue every new id afterwards with `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-id-next.sh"`,
-  never by scanning folders or taking `max+1` yourself.
+- **`id-counter` = at least the highest existing legacy id** in the repo, so new ids never
+  collide and old numbers are never reused. If there are no legacy ids, leave it empty
+  (treated as 0). Issue every new id afterwards with
+  `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-id-next.sh"`, never by scanning folders or taking
+  `max+1` yourself. The helper also scans the items tree on each call as a safety floor, so
+  even if the counter is set too low it reconciles up to the highest existing id (and warns
+  on stderr) rather than reissuing a used id.
 
 ## 4. Working folder (recommended)
 
@@ -205,7 +208,8 @@ agent that did the migration - a fresh reviewer catches self-inconsistencies. Ch
 - file names (lowercase-kebab; `<id>-slug.md` for items);
 - mandatory frontmatter present and no `status` / `marker` field;
 - no duplicate ids; no broken internal references;
-- `id-counter` == the highest id in use;
+- `id-counter` >= the highest id in use (equal in the common case; the helper's scan floor
+  reconciles it up if it ever falls behind);
 - completeness: cross-check every open id / task mentioned in the sources against the
   created items, report real gaps, and confirm items correctly absent because already done.
 

@@ -78,7 +78,7 @@ The builtin template ships universal, safe-for-everyone defaults (viewports 320/
 
 ### Deterministic id-counter
 
-Item ids come from `scripts/credo-id-next.sh`. The counter file holds the last id given out; allocation is atomic (flock): read, increment, write, print. It never reads the folders to pick a number, so a deleted item id is never reused. Always take an id from the helper; never derive it from folder contents.
+Item ids come from `scripts/credo-id-next.sh`. The counter file holds the last id given out; allocation is atomic (flock): read the counter, scan the items tree, take `max(counter, highest existing id) + 1`, write it back, print it. The counter, not the folder, decides the number - deleting the highest item never lowers the next id, so a deleted id is never reused; the folder scan is only a safety floor that lifts a counter which fell behind the items on disk (merge, clone, backup restore, sync) and warns on stderr when it does. Always take an id from the helper; never hand-pick one.
 
 ## The item workflow
 

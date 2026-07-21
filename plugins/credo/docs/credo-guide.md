@@ -92,7 +92,7 @@ Personal fields under `personal:` (ntfy topic, commit-identity hint, WSL `lan_ip
 
 ### 3.2 Deterministic id-counter
 
-`scripts/credo-id-next.sh` owns id allocation. The counter file holds the last id given out. Allocation is atomic under flock: read (0 if empty), increment, write, print. It never scans folders to choose a number, so a deleted item id is never reused. A recovery fallback (max existing id plus one) applies only if the counter file is missing. Never derive an id from folder contents; always call the helper.
+`scripts/credo-id-next.sh` owns id allocation. The counter file is the monotone issuing point and holds the last id given out. Allocation is atomic under flock: read the counter (0 if empty, missing, or non-numeric), scan the items tree for the highest existing id, take `base = max(counter, scan)`, write `base + 1`, print it. The counter, not the folder, decides the number, so deleting the highest item does not lower the next id and a deleted id is never reused. The folder scan is a safety floor, not the source of the id: it only lifts a counter that fell behind the items on disk (merge, clone, backup restore, sync), and when it reconciles up it warns on stderr while stdout stays the bare id. Never derive an id from folder contents by hand; always call the helper.
 
 ### 3.3 Project resolution (hub-aware)
 
