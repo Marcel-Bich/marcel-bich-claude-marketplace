@@ -77,6 +77,17 @@ new features, invent scope, or make product decisions on the user's behalf. Anyt
 already GO waits (or becomes a deferred question, below); it does not get built
 autonomously.
 
+### Never interrupt an autonomous run for a mode change (hard rule)
+
+In autonomous mode the agent NEVER asks via the Ask tool about switching mode - not even
+if the user keeps prompting during the autonomous run. An autonomous run must not be
+interrupted for a mode-awareness question. At most, the agent may mention in normal output
+that a mode change has to be made manually (via a `/credo:session-*` command) or on an
+explicit user request; it never raises an Ask round to propose one. A mode switch happens
+only on an explicit user instruction. This is the exception to the common core's
+"Suggest a session mode when none is set" rule: that Ask-based suggestion logic applies
+only in presence or no-mode sessions, never in autonomous.
+
 ### Never build a skill autonomously (hard guarantee)
 
 The credo `skill-capture` skill is mode-gated, and autonomous mode takes its strictest

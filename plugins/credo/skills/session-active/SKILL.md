@@ -58,6 +58,27 @@ The default channel for a clarification is ALWAYS the Ask tool. Short decisions 
 choices go through Ask. For long lists, use prose in the normal message instead - Ask
 truncates - but the decision itself still comes back through Ask where practical.
 
+## One item per Ask round (active and passive only)
+
+When clarifying or proposing a GO for credo items in a presence session, handle them one
+item at a time. Take a single item, explain it briefly - with concrete examples and the
+consequences of the choice - then put that item's questions and GO proposal into its own
+Ask round, one round per item id. Never bundle several items into one message or a
+flowing-text dump of questions; that floods the user and makes it impossible to respond to
+each point. Prefer many small, focused Ask rounds over one large one.
+
+Within a single Ask round, asking several questions at once (the Ask tool's
+multiple-question form) is allowed and encouraged - it lets the user settle several open
+points in one pass. Only batch questions that are independent of each other; never put a
+question whose framing depends on another question's answer into the same round - split
+those into sequential rounds, or it gets confusing.
+
+This is orthogonal to passive mode's "less is more" (which limits which items reach the
+user at all): still bring only the genuinely ambiguous items and self-resolve the rest, but
+present each one you do bring in its own round. Trivial, self-evident fixes still need no
+question. This rule does not apply in autonomous mode, which runs unattended without
+interactive Ask rounds.
+
 ## A bug report is not an immediate fix (G2)
 
 When the user reports a bug, do not jump straight to fixing it if there is interpretation
@@ -84,6 +105,33 @@ pushback against new work; the only goal is that old item numbers do not lie for
 forever. The item folders are the source of truth for what is open (credo `items` skill).
 On start / resume, in the same gentle spirit, also offer any open skill candidates left in
 `.credo/skill-candidates.md` - the rule itself lives in the credo `skill-capture` skill.
+
+## Suggest a session mode when none is set (active and passive only)
+
+When no session mode is set (the inject line reports the no-mode default), do not silently
+adopt one. Infer from the context which presence mode fits - active for intensive live
+collaboration, passive when you carry most of the work and the user is only reachable for
+clarifications - and propose it to the user via the Ask tool; the user confirms. Use the
+same gentle cadence as the soft old-item reminder: raise it at session start or when the
+work clearly implies a mode, not every turn, and never nag. Autonomous mode is NEVER
+inferred, proposed, or set automatically - it is entered only via
+`/credo:session-autonomous` or on an explicit user request (see the credo
+`session-autonomous` skill).
+
+When the mode is not determinable at all - for example inside a subagent, which gets no
+session-mode inject line - apply the safest branch: do NOT propose a mode and do NOT ask
+via Ask. This mirrors the credo `skill-capture` skill's rule for a subagent without an
+inject line: when you cannot determine the mode, take the safest branch rather than asking.
+
+## Mention the active mode from time to time
+
+Now and then, name the current session mode in your normal output - especially when the
+session has been running for a while, or when the last user prompt is a long time ago (a
+large time gap). credo injects the local date and time on every prompt (the
+`credo-datetime-inject` hook); compare the current injected timestamp with the previous one
+to sense such a gap. This is a lightweight, behavior-based nudge, not a guaranteed-reliable
+timer: the injected timestamps are your only clock signal and you have no other reliable
+clock, so treat this as a soft reminder and do not nag.
 
 ## Do not rename or restructure silently (G6, G7)
 

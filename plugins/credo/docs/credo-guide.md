@@ -20,8 +20,9 @@ Design principles:
 
 - **commands/** - eight slash commands: `psalm`, `setup`, `migrate`, `project`, `session-init`, and the three mode setters `session-active`, `session-passive`, `session-autonomous`.
 - **skills/** - the auto-discovered skills (see the skills reference section). Each auto-triggers when it applies, including inside subagents.
-- **hooks/** - four hooks are registered in `hooks/hooks.json`:
+- **hooks/** - five hooks are registered in `hooks/hooks.json`:
   - `session-mode-inject.sh` (`UserPromptSubmit`) - re-injects the active session mode on every prompt and names the skill to load.
+  - `credo-datetime-inject.sh` (`UserPromptSubmit`) - injects the current local date and time on every prompt, independent of session mode (makes the agent date/time-aware and gives the mode-awareness rules a clock signal). Gated by `CREDO_DATETIME_INJECT` (default on).
   - `credo-autonomy-clear.sh` (`UserPromptSubmit`) - a real user message turns autonomy off (drops the flag, sets the paused opt-out).
   - `credo-subagent-inject.sh` (`SubagentStart`) - primes every subagent with the load-bearing rules.
   - `credo-autonomy-keepalive.sh` (`Stop`) - in autonomous mode, blocks a stop that has no scheduled self-wake and instructs the agent to call ScheduleWakeup.
@@ -123,6 +124,8 @@ The active skill defines the common core shared by all three; passive and autono
 
 Honest note on keep-alive: autonomous mode sets the `credo-autonomy-active` flag, and a registered `Stop` hook (`credo-autonomy-keepalive.sh`) enforces the keep-alive discipline - if you try to end the turn without a marked self-wake, it blocks the stop and instructs you to call `ScheduleWakeup` now; the registered `UserPromptSubmit` hook (`credo-autonomy-clear.sh`) turns autonomy off on any real user message (section 2.1). This is enforcement of the nudge, not a guarantee of infinite wakefulness: the hook forces the block plus instruction, but staying awake still depends on the model then calling `ScheduleWakeup`. It is loop-safe (at most one forced continuation per stop attempt, via the `stop_hook_active` guard) and completely inert outside autonomous mode.
 
+**Mode awareness.** credo injects the current local date and time on every prompt (the `credo-datetime-inject.sh` hook, section 2.1), independent of session mode, so the agent is date/time-aware and can compare successive timestamps to sense how long ago the last user prompt was. Three behavior rules build on this: (1) when no mode is set, the agent infers a fitting presence mode and proposes it via the Ask tool rather than adopting one silently - autonomous is never inferred or auto-set, only entered via `/credo:session-autonomous` or on an explicit request; (2) the agent mentions the active mode in normal output from time to time, especially after a large time gap - a lightweight, behavior-based nudge, not a guaranteed timer; (3) in autonomous mode this is switched off: an autonomous run is NEVER interrupted by an Ask about a mode change, even if the user keeps prompting - a switch happens only on an explicit user instruction. The suggestion cadence is gentle (session start or when the work clearly implies a mode), never per turn.
+
 ## 5. The item workflow: how-to
 
 **Task backend (`.credo/config: task_backend`).** credo's item model is the default task system, but it can stand down in favour of get-shit-done. It is config-driven: set `task_backend` in `.credo/config` (via the config cascade builtin < global < project) to `credo` (default), `gsd`, or `none`. The `CREDO_TASK_BACKEND` env var overrides the config when set and non-empty. Anything unset, empty, or unknown behaves like `credo`, so the default behaviour is unchanged, and any resolution error falls back to `credo`. `/credo:setup` writes `task_backend: gsd` for you when you choose GSD.
@@ -141,6 +144,8 @@ The rest of this section describes the `credo` backend.
 7. Only the user moves an item to `items/3_verified/`.
 
 Parked work goes under `items/parked/{hold,future}`; abandoned work under `items/4_archived/`.
+
+**Ask discipline (presence modes).** When clarifying items or proposing a GO in an active or passive session, handle one item per Ask round: explain the single item with concrete examples and consequences, then put its questions and GO proposal into its own Ask round, one round per item id. Do not bundle several items into one message or a flowing-text dump. Within a single round, asking several independent questions at once is fine and encouraged; a question whose framing depends on another answer goes into a later round. This does not apply in autonomous mode (no interactive Ask rounds). The rule lives in the common core (session-active skill).
 
 ### 5.1 Definition of Done gate
 
