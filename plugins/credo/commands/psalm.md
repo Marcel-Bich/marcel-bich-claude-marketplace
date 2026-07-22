@@ -85,7 +85,9 @@ credo runs a session in one of three exclusive modes. The active mode is re-inje
 - `/credo:session-passive` - the agent carries most of the work; you stay reachable for clarifications only, no keep-alive.
 - `/credo:session-autonomous` - approved GO items worked unattended, keep-alive on (hook-enforced: a registered Stop hook blocks a stop without a scheduled wake-up), budget caps enforced, ntfy per task and question, progress secured via compact-plus. It self-bootstraps on an unambiguous full-autonomy grant, needing no host CLAUDE.md line.
 
-Pick the mode that matches how present you are. Switch any time by running the matching command.
+Pick the mode that matches how present you are. Switch any time by running the matching command. credo injects the local date and time on every prompt, so the agent is time-aware: when no mode is set it proposes a fitting presence mode via Ask (never autonomous, never silently), and it mentions the active mode now and then, especially after a long gap. An autonomous run is never interrupted by a mode-change question - switch it only with an explicit command.
+
+When clarifying or proposing a GO in a presence mode, the agent works one item per Ask round rather than dumping many items at once (see the session-active common core).
 
 ### Topic: Item Lifecycle and Definition of Done
 

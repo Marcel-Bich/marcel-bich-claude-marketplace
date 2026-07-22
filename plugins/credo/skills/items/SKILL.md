@@ -203,7 +203,9 @@ Prefer the move helper - it is atomic, never deletes, and refuses the user-only 
 Valid transitions (folder = status):
 
 - `1_clarify -> 2_go` once the user gives an explicit GO (go-gate: only `2_go` is
-  buildable; `1_clarify` is not).
+  buildable; `1_clarify` is not). In a presence session, clarify and propose that GO one
+  item at a time, each item in its own Ask round - see "One item per Ask round" in the
+  common core (session-active skill).
 - `2_go -> 2_done` only after the full Definition of Done gate above passes.
 - `2_done -> 1_clarify` when a bug is found (see above).
 - any -> `parked/hold` (external block) or `parked/future` (deferred), or `4_archived`

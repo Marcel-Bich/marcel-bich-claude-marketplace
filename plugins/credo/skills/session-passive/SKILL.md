@@ -70,7 +70,8 @@ This is the defining passive-mode rule. Do NOT over-ask. Bring only the genuinel
 ambiguous items to the user, through the Ask tool. Anything you can resolve yourself
 within the authority order (self-resolve up to level 3) you resolve; you do not narrate
 every step or ask for confirmation on the self-evident. Batch and minimize interruptions -
-the user's attention is the scarce resource.
+the user's attention is the scarce resource. Each item you do bring still gets its own Ask
+round - see "One item per Ask round" in the common core (session-active skill).
 
 ### Gently prefer older items first
 
