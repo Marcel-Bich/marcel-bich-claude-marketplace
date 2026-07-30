@@ -313,8 +313,7 @@ if [ "$SUBAGENT_FALLBACK_ENABLED" = "true" ]; then
 DOGMA-PERMISSIONS.md says: [x] spawn subagent for verification (when no tests)
 
 Recommendation:
-- Spawn code-reviewer via Task tool
-- Or silent-failure-hunter for error detection
+- Spawn a review agent via the Task tool (use whatever specialized agent your environment lists; verify the name first, else general-purpose)
 - Or verify manually and confirm
 
 If intentionally without subagent: ignore this warning."
