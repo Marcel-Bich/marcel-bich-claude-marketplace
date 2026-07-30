@@ -121,7 +121,8 @@ All features can be toggled via environment variables. Export them in your shell
 | `CLAUDE_MB_LIMIT_CTX_CACHE` | true | Statusline writes a per-session cache `/tmp/claude-mb-context-cache_${session_id}.json` (window size, limits, cost) |
 | `CLAUDE_MB_LIMIT_INJECT` | true | Inject hook injects a short status line into the agent's context (UserPromptSubmit + PostToolUse) |
 | `CLAUDE_MB_LIMIT_COMPACT_SKILL` | (unset) | The skill the agent should run when a threshold is reached, e.g. `/my-skill`. Empty = status only, no skill named |
-| `CLAUDE_MB_LIMIT_INJECT_INTERVAL` | 180 | Minimum seconds between routine status injects (throttle) |
+| `CLAUDE_MB_LIMIT_INJECT_INTERVAL` | 120 | Minimum seconds between routine status injects (throttle) |
+| `CLAUDE_MB_LIMIT_INJECT_DELTA` | 1 | Minimum change (pct points) in ctx/5h/weekly for a routine re-inject (delta-guard) - quiet phases inject nothing |
 | `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS` | 70,90 | Comma-separated context-fill %% at which the skill hint fires (any count, e.g. `33,66,92`) |
 | `CLAUDE_MB_LIMIT_INJECT_MAX_AGE` | 300 | Ignore the cache (inject nothing) if older than this many seconds - avoids reporting stale numbers |
 
@@ -177,9 +178,12 @@ How it works:
   reads that cache and injects a short status line via `additionalContext` - visible
   to the agent, not flooding the user chat. It skips silently if the cache is missing
   or stale (`CLAUDE_MB_LIMIT_INJECT_MAX_AGE`), so it never reports outdated numbers.
-- It is **throttled** (`CLAUDE_MB_LIMIT_INJECT_INTERVAL`); each threshold in
-  `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS` fires once and adds an action hint to run the
-  skill from `CLAUDE_MB_LIMIT_COMPACT_SKILL`. Thresholds reset after a compact drops the fill.
+- It is **throttled** (`CLAUDE_MB_LIMIT_INJECT_INTERVAL`) and **delta-guarded**
+  (`CLAUDE_MB_LIMIT_INJECT_DELTA`): a routine status is injected only when enough time
+  has passed AND ctx/5h/weekly actually moved, so quiet phases do not grow the context
+  with unchanged lines. Each threshold in `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS` fires once
+  regardless and adds an action hint to run the skill from `CLAUDE_MB_LIMIT_COMPACT_SKILL`.
+  Thresholds reset after a compact drops the fill.
 
 Example injected line (with `CLAUDE_MB_LIMIT_COMPACT_SKILL=/my-skill`):
 

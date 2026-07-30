@@ -32,6 +32,12 @@ INPUT=$(cat 2>/dev/null) || exit 0
 agent_type=$(printf '%s' "$INPUT" | jq -r '.agent_type // ""' 2>/dev/null) || agent_type=""
 [[ "$agent_type" == "null" ]] && agent_type=""
 
+# session_id is used best-effort to read the statusline cache for live budget
+# numbers; may differ from the main agent's session (then the cache is absent and
+# we simply omit the budget part - the time part never depends on it).
+session_id=$(printf '%s' "$INPUT" | jq -r '.session_id // ""' 2>/dev/null) || session_id=""
+[[ "$session_id" == "null" ]] && session_id=""
+
 # --- the credo rule block injected into every subagent ---
 read -r -d '' rules <<'RULES'
 credo rules apply inside this subagent, independently of the main agent - follow them yourself, do not assume the main agent already handled them.
@@ -66,6 +72,42 @@ fi
 rules="${rules/__ITEM_CLAUSE__/$item_clause}"
 
 status="[credo] ${rules}"
+
+# --- fresh time + budget line (Fix B: a subagent must not inherit the main
+#     agent's possibly frozen clock/limit values). The time is always current
+#     (local date call). The budget numbers are best-effort from the statusline
+#     per-session cache; absent (e.g. different session_id) -> time only. This
+#     line is marked authoritative so the subagent prefers it over any older
+#     [credo-time]/[limit] value carried in from the main agent's context. ---
+now_line=$(date '+%Y-%m-%d %H:%M (%a), TZ %Z' 2>/dev/null) || now_line=""
+if [[ -n "$now_line" ]]; then
+    now_line=${now_line//\\/}; now_line=${now_line//\"/}
+    now_line=$(printf '%s' "$now_line" | tr -d '[:cntrl:]' 2>/dev/null) || now_line=""
+fi
+if [[ -n "$now_line" ]]; then
+    budget=""
+    if [[ -n "$session_id" ]]; then
+        case "$session_id" in
+            *[!A-Za-z0-9._-]*) : ;;  # unsafe token -> skip cache read
+            *)
+                cache="/tmp/claude-mb-context-cache_${session_id}.json"
+                if [[ -f "$cache" ]]; then
+                    five_h=$(jq -r '.five_hour_pct // ""' "$cache" 2>/dev/null) || five_h=""
+                    weekly=$(jq -r '.seven_day_pct // ""' "$cache" 2>/dev/null) || weekly=""
+                    [[ "$five_h" == "null" ]] && five_h=""
+                    [[ "$weekly" == "null" ]] && weekly=""
+                    [[ -n "$five_h" ]] && budget="${budget} 5h ${five_h}%,"
+                    [[ -n "$weekly" ]] && budget="${budget} Weekly ${weekly}%,"
+                    budget="${budget%,}"
+                fi
+                ;;
+        esac
+    fi
+    now_status="[credo-now] Current local time: ${now_line}."
+    [[ -n "$budget" ]] && now_status="${now_status} Budget:${budget}."
+    now_status="${now_status} Authoritative as of your start - use these, not any older time/budget values inherited from the main agent's context."
+    status="${status}"$'\n'"${now_status}"
+fi
 
 jq -n --arg ctx "$status" \
     '{hookSpecificOutput: {hookEventName: "SubagentStart", additionalContext: $ctx}, suppressOutput: true}' 2>/dev/null

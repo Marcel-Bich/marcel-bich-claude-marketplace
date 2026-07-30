@@ -22,7 +22,7 @@ Design principles:
 - **skills/** - the auto-discovered skills (see the skills reference section). Each auto-triggers when it applies, including inside subagents.
 - **hooks/** - five hooks are registered in `hooks/hooks.json`:
   - `session-mode-inject.sh` (`UserPromptSubmit`) - re-injects the active session mode on every prompt and names the skill to load.
-  - `credo-datetime-inject.sh` (`UserPromptSubmit`) - injects the current local date and time on every prompt, independent of session mode (makes the agent date/time-aware and gives the mode-awareness rules a clock signal). Gated by `CREDO_DATETIME_INJECT` (default on).
+  - `credo-datetime-inject.sh` (`UserPromptSubmit` + `PostToolUse`) - injects the current local date and time, independent of session mode (makes the agent date/time-aware and gives the mode-awareness rules a clock signal). On every prompt via `UserPromptSubmit`; additionally on `PostToolUse` during long autonomous runs where no user prompt arrives, so the clock does not freeze at the last prompt's value. The `PostToolUse` path is throttled (`CREDO_DATETIME_INJECT_INTERVAL`, default 120s) and delta-guarded (only when the rendered minute changed), and since `PostToolUse` fires only on tool activity, idle waits inject nothing. Gated by `CREDO_DATETIME_INJECT` (default on).
   - `credo-autonomy-clear.sh` (`UserPromptSubmit`) - a real user message turns autonomy off (drops the flag, sets the paused opt-out).
   - `credo-subagent-inject.sh` (`SubagentStart`) - primes every subagent with the load-bearing rules.
   - `credo-autonomy-keepalive.sh` (`Stop`) - in autonomous mode, blocks a stop that has no scheduled self-wake and instructs the agent to call ScheduleWakeup.
