@@ -31,7 +31,7 @@ Skills and hooks are auto-discovered by Claude Code from the `skills/` and `hook
 
 ## Session modes
 
-The mode is per session and set with a command. It is stored on disk keyed by the session id, so it survives compaction, new sessions, and subagents. The `UserPromptSubmit` hook re-injects a one-line reminder of the active mode on every prompt, and names the matching skill to load. A second `UserPromptSubmit` hook injects the current local date and time on every prompt (mode-independent), so the agent is date/time-aware: when no mode is set it proposes a fitting presence mode via Ask (never autonomous, never silently), and it mentions the active mode in normal output now and then, especially after a long gap since the last prompt. An autonomous run is never interrupted by a mode-change question.
+The mode is per session and set with a command. It is stored on disk keyed by the session id, so it survives compaction, new sessions, and subagents. The `UserPromptSubmit` hook re-injects a one-line reminder of the active mode on every prompt, and names the matching skill to load. A second hook injects the current local date and time (mode-independent) - on every prompt via `UserPromptSubmit`, and additionally on `PostToolUse` (throttled + delta-guarded) so the clock stays fresh during long autonomous runs instead of freezing at the last prompt. This keeps the agent date/time-aware: when no mode is set it proposes a fitting presence mode via Ask (never autonomous, never silently), and it mentions the active mode in normal output now and then, especially after a long gap since the last prompt. An autonomous run is never interrupted by a mode-change question.
 
 - **active** (`/credo:session-active`) - intensive live collaboration with the user at the keyboard. Progress is logged via the limit thresholds and compact-plus, open GO items are picked up alongside, clarifications happen during subagent waits. No keep-alive.
 - **passive** (`/credo:session-passive`) - the agent carries most of the work while the user is reachable only for clarifications. Every item is pushed toward a full GO; less is more, so only genuinely ambiguous items go back to the user. No keep-alive.
@@ -122,7 +122,7 @@ Auto-discovered under `skills/`. Each auto-triggers when it applies, including i
 
 ## Subagent self-sufficiency
 
-credo primes every subagent at start. The `SubagentStart` hook (`credo-subagent-inject.sh`) injects the load-bearing rules (security, quality gates, honesty, delegation, output hygiene) into each subagent before its first prompt, for all subagent types. This complements the skill descriptions, which are written to auto-trigger inside subagents as well. So even a main agent that only delegates gets correct results, independently of its own context state.
+credo primes every subagent at start. The `SubagentStart` hook (`credo-subagent-inject.sh`) injects the load-bearing rules (security, quality gates, honesty, delegation, output hygiene) into each subagent before its first prompt, for all subagent types. It also injects a fresh, authoritative time (and best-effort live budget from the statusline cache) so a subagent works from the real clock instead of the possibly frozen time/limit values inherited from the main agent's context. This complements the skill descriptions, which are written to auto-trigger inside subagents as well. So even a main agent that only delegates gets correct results, independently of its own context state.
 
 ## Dependencies
 

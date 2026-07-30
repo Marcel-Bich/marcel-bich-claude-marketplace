@@ -17,9 +17,12 @@
 # context via hookSpecificOutput.additionalContext (visible to the agent, does not
 # flood the user chat).
 #
-# Throttled: a routine status is injected at most every CLAUDE_MB_LIMIT_INJECT_INTERVAL
-# seconds; each threshold in CLAUDE_MB_LIMIT_INJECT_THRESHOLDS fires once and adds an
-# action hint to run CLAUDE_MB_LIMIT_COMPACT_SKILL.
+# Throttled + delta-guarded: a routine status is injected at most every
+# CLAUDE_MB_LIMIT_INJECT_INTERVAL seconds AND only when ctx/5h/weekly actually moved
+# by >= CLAUDE_MB_LIMIT_INJECT_DELTA points since the last inject, so quiet phases do
+# not grow the context with unchanged lines. Each threshold in
+# CLAUDE_MB_LIMIT_INJECT_THRESHOLDS fires once regardless and adds an action hint to
+# run CLAUDE_MB_LIMIT_COMPACT_SKILL.
 #
 # Failure-safe: any problem -> exit 0 with no output. Never disrupt the session.
 
@@ -37,10 +40,16 @@ event=$(printf '%s' "$INPUT" | jq -r '.hook_event_name // "PostToolUse"' 2>/dev/
 [[ "$session_id" == "null" ]] && session_id=""
 [[ "$event" == "null" ]] && event="PostToolUse"
 [[ -n "$session_id" ]] || exit 0
+# Guard against path tricks in the session_id (must be a plain token) before it is
+# interpolated into the /tmp cache/state paths - mirrors the sibling credo hooks.
+case "$session_id" in
+    *[!A-Za-z0-9._-]*) exit 0 ;;
+esac
 
 # --- config (env-overridable) ---
 SKILL="${CLAUDE_MB_LIMIT_COMPACT_SKILL:-}"               # skill to run at thresholds (empty = generic hint only)
-INTERVAL="${CLAUDE_MB_LIMIT_INJECT_INTERVAL:-180}"       # seconds between routine status injects
+INTERVAL="${CLAUDE_MB_LIMIT_INJECT_INTERVAL:-120}"       # seconds between routine status injects
+DELTA="${CLAUDE_MB_LIMIT_INJECT_DELTA:-1}"               # min change (pct points) in ctx/5h/weekly to re-inject a routine status (delta-guard)
 THRESHOLDS="${CLAUDE_MB_LIMIT_INJECT_THRESHOLDS:-70,90}" # comma-separated context-fill % that trigger the skill (e.g. 33,66,92)
 MAX_AGE="${CLAUDE_MB_LIMIT_INJECT_MAX_AGE:-300}"         # ignore the cache if older than this (statusline not rendering)
 
@@ -75,15 +84,31 @@ cost=$(jq -r '.session_cost // "?"' "$meta_file" 2>/dev/null) || cost="?"
 thresh_json=$(printf '%s' "$THRESHOLDS" | jq -R -c 'split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(test("^[0-9]+(\\.[0-9]+)?$")) | tonumber) | sort' 2>/dev/null)
 [[ -n "$thresh_json" ]] || thresh_json='[]'
 
-# --- throttle + threshold state (per session) ---
+# --- throttle + threshold + delta state (per session) ---
 state_file="/tmp/claude-mb-inject-state_${session_id}.json"
-last_ts=0; fired_json='[]'
+last_ts=0; fired_json='[]'; last_ctx=""; last_5h=""; last_weekly=""
 if [[ -f "$state_file" ]]; then
     last_ts=$(jq -r '.last_ts // 0' "$state_file" 2>/dev/null) || last_ts=0
     fired_json=$(jq -c '.fired // []' "$state_file" 2>/dev/null) || fired_json='[]'
     [[ -n "$fired_json" ]] || fired_json='[]'
+    last_ctx=$(jq -r '.last_ctx // ""' "$state_file" 2>/dev/null) || last_ctx=""
+    last_5h=$(jq -r '.last_5h // ""' "$state_file" 2>/dev/null) || last_5h=""
+    last_weekly=$(jq -r '.last_weekly // ""' "$state_file" 2>/dev/null) || last_weekly=""
+    [[ "$last_ctx" == "null" ]] && last_ctx=""
+    [[ "$last_5h" == "null" ]] && last_5h=""
+    [[ "$last_weekly" == "null" ]] && last_weekly=""
 fi
 [[ "$last_ts" =~ ^[0-9]+$ ]] || last_ts=0
+
+# Delta-guard helper: prints "1" when a routine inject is warranted - either no
+# prior value recorded yet (first routine inject) or any of ctx/5h/weekly moved by
+# >= DELTA points. Non-numeric values (e.g. "?") never trigger and never block.
+delta_exceeded() {
+    awk -v c1="$1" -v l1="$2" -v c2="$3" -v l2="$4" -v c3="$5" -v l3="$6" -v d="$7" '
+        function isnum(x){ return (x ~ /^-?[0-9]+(\.[0-9]+)?$/) }
+        function chk(c,l){ if(!isnum(c)) return 0; if(!isnum(l)) return 1; return ((c-l>=d)||(l-c>=d)) }
+        BEGIN{ if(chk(c1,l1)||chk(c2,l2)||chk(c3,l3)) print "1"; else print "0" }' 2>/dev/null
+}
 
 # Reset: drop fired thresholds the fill has fallen back below (e.g. after a compact)
 fired_json=$(printf '%s' "$fired_json" | jq -c --argjson p "${ctx_pct:-0}" '[.[] | select(. <= $p)]' 2>/dev/null) || fired_json='[]'
@@ -104,15 +129,21 @@ if [[ -n "$to_fire" ]]; then
     # Mark all currently crossed thresholds as fired (so lower ones do not re-fire)
     fired_json=$(printf '%s' "$thresh_json" | jq -c --argjson p "${ctx_pct:-0}" '[.[] | select(. <= $p)]' 2>/dev/null) || fired_json='[]'
 elif [[ $((now - last_ts)) -ge "$INTERVAL" ]]; then
-    do_inject=true
+    # Routine inject only when a value actually moved (or nothing recorded yet),
+    # so quiet phases do not accumulate a status line per interval.
+    if [[ "$(delta_exceeded "$ctx_pct" "$last_ctx" "$five_h" "$last_5h" "$weekly" "$last_weekly" "$DELTA")" == "1" ]]; then
+        do_inject=true
+    fi
 fi
 
 [[ "$do_inject" == "true" ]] || exit 0
 
-# Persist state
+# Persist state (record the just-injected values so the delta-guard compares
+# against what the model last actually saw)
 tmp=$(mktemp 2>/dev/null) && {
     jq -n --argjson last_ts "${now:-0}" --argjson fired "$fired_json" \
-        '{last_ts: $last_ts, fired: $fired}' > "$tmp" 2>/dev/null \
+        --arg last_ctx "${ctx_pct:-}" --arg last_5h "${five_h:-}" --arg last_weekly "${weekly:-}" \
+        '{last_ts: $last_ts, fired: $fired, last_ctx: $last_ctx, last_5h: $last_5h, last_weekly: $last_weekly}' > "$tmp" 2>/dev/null \
         && mv -f "$tmp" "$state_file" 2>/dev/null
     rm -f "$tmp" 2>/dev/null
 }
