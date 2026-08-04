@@ -97,12 +97,20 @@ The schedule renews daily. How to pick the row that applies now:
    - `all_day` - the whole day (Sunday).
    - `work_hours` - Mon-Fri, hour in [start, end).
    - `off_hours` - Mon-Thu, outside [start, end).
+   - `before_work` - Friday before `start` (early morning, before the workday).
    - `after_17` - Friday from `end` onward.
    - `before_reset` / `after_reset` - Saturday, split at the weekly reset (`seven_day.resets_at`,
      around 18:00 local): before the reset the weekly ceiling is high (weekend catch-up),
      after the reset the fresh week starts low again.
 4. The matched row's `five_hour_cap` is the hard 5h cap for now; `weekly_cap` is the
    weekly ceiling for now.
+5. **No row matches (schedule gap) - fail-safe.** The schedule MUST cover 24/7: every
+   (weekday, hour) maps to exactly one row. If NONE matches, do NOT silently guess a cap.
+   Apply the MOST RESTRICTIVE caps among that day's adjacent rows (the lowest
+   `five_hour_cap` and the lowest `weekly_cap`) AND surface the gap - a `default` ntfy plus
+   a debug/log note - so the config gap gets fixed. A gap is a config bug, never a normal
+   operating point: treat it safely and make it visible rather than throttling the wrong
+   window or overspending unnoticed (the failure the RETRO caught).
 
 For the 5-hour axis, off-hours use a soft/hard band from `budget.five_hour`:
 `soft_percent` (default 92, warn and start winding down) and `hard_percent` (default 95,
@@ -113,6 +121,7 @@ Worked examples (with the shipped defaults):
 
 - Wednesday 11:00 local -> Wed `work_hours` row -> 5h cap 40, weekly cap 60.
 - Wednesday 21:00 local -> Wed `off_hours` row -> 5h band soft 92 / hard 95, weekly cap 60.
+- Friday 03:00 -> Fri `before_work` -> 5h soft 92 / hard 95, weekly cap 80.
 - Friday 14:00 -> Fri `work_hours` -> 5h cap 40, weekly cap 80.
 - Friday 22:00 -> Fri `after_17` -> 5h soft 92 / hard 95, weekly cap 99.
 - Saturday 15:00 (before the ~18:00 reset) -> Sat `before_reset` -> 5h 95, weekly 99.

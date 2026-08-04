@@ -148,6 +148,10 @@ budget:
       five_hour_cap: 95
       weekly_cap: 70
     - day: friday
+      window: before_work
+      five_hour_cap: 95
+      weekly_cap: 80
+    - day: friday
       window: work_hours
       five_hour_cap: 40
       weekly_cap: 80
