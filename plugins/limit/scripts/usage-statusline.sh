@@ -2185,7 +2185,10 @@ format_output() {
             local_5h_pct="0.0"
         fi
 
-        if [[ -n "$seven_pct" ]] && [[ "$highscore_7d" -gt 0 ]]; then
+        # Local 7d % is purely local (window_tokens_7d / highscore_7d). Do NOT gate it on the
+        # API-derived seven_pct - otherwise the local weekly line vanishes on any API error,
+        # even though it does not depend on the API (mirror the 5h guard above).
+        if [[ "$highscore_7d" -gt 0 ]]; then
             local_7d_pct=$(awk "BEGIN {pct = ($window_tokens_7d * 100) / $highscore_7d; if (pct > 100) pct = 100; printf \"%.1f\", pct}")
             debug_log "7d: window=$window_tokens_7d highscore=$highscore_7d pct=$local_7d_pct"
         fi
@@ -2263,6 +2266,20 @@ EOF
             hs_5h_formatted=$(format_highscore "$highscore_5h")
             # Show without reset time since we don't have fresh API data
             lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "" 1) ${local_5h_color}[Highest:${window_5h_formatted}/${hs_5h_formatted}] (${LOCAL_DEVICE_LABEL})${local_5h_color_reset}")
+        fi
+
+        # Still show the local 7d/weekly highscore line too (also API-independent, without reset)
+        if [[ "$SHOW_LOCAL" == "true" ]] && [[ "$SHOW_7D" == "true" ]] && [[ -n "${local_7d_pct}" ]]; then
+            local local_7d_color="" local_7d_color_reset=""
+            if [[ "$SHOW_COLORS" == "true" ]]; then
+                local_7d_color=$(get_color "${local_7d_pct}")
+                local_7d_color_reset="${COLOR_RESET}"
+            fi
+            local window_7d_formatted hs_7d_formatted
+            window_7d_formatted=$(format_highscore "$window_tokens_7d")
+            hs_7d_formatted=$(format_highscore "$highscore_7d")
+            # Show without reset time since we don't have fresh API data
+            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "" 1) ${local_7d_color}[Highest:${window_7d_formatted}/${hs_7d_formatted}] (${LOCAL_DEVICE_LABEL})${local_7d_color_reset}")
         fi
     else
         # Normal mode: API available, show all limits
