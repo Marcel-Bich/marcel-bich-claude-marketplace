@@ -140,6 +140,17 @@ Use these English headings in this order. A blank template ships at
    detected mis-move - flag it and correct it. This is the contradiction detector, achieved
    without adding a second status source.
 
+## Item text is perspective-neutral (no "who is doing it")
+
+An item file is durable and read by whoever builds it later - often a different agent or
+session than the one that wrote it. Its text therefore describes the WORK and its
+DEPENDENCIES, never who is currently handling it. Perspective-relative wording like
+"another agent", "hands-off (other agent)", or "I do X, the other agent does Y" breaks
+this: a later builder reads "another agent" as someone other than themselves and misreads
+the item. Keep who-does-what coordination OUT of the item - it belongs only in the session
+task list (the ephemeral coordination layer), not in the durable item. State dependencies
+by item id (for example `blocked_by: [807]`), not by actor.
+
 ## The 4-valued Verify (honest, per layer)
 
 For each relevant layer (`backend`, `ui`, `human-only`), record exactly one of four
