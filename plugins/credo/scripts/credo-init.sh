@@ -63,6 +63,7 @@ if [ "$BACKEND" != "gsd" ]; then
     DIRS+=(
         "items/1_todo/1_clarify"
         "items/1_todo/2_go"
+        "items/1_todo/3_blocked"
         "items/2_done"
         "items/3_verified"
         "items/4_archived"

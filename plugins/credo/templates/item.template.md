@@ -13,8 +13,12 @@ Frontmatter is lean and mandatory: id, title, created, type, ui.
   type: bug | optimization | feature | question | chore
   ui:   true means a visual verify (credo verify skill) is a DoD requirement.
 Do NOT add a status field - the FOLDER the file lives in is the only status truth.
-Add priority / source / blocked_by / relates_to / regression only if they apply, free-form below.
+Add priority / source / relates_to / regression only if they apply, free-form below.
+Blocker relations are structured (not free-form) and REQUIRED only while the item sits in
+1_todo/3_blocked:  blocked_by: [ids] on the blocked item, blocks: [ids] on the blocker.
+They are a dependency graph, not a second status source. Omit them outside 3_blocked.
 Keep the section headings; fill them in as the item progresses.
+History is MANDATORY: every move appends a line  -> <target> <date> (<reason>) .
 -->
 
 ## Requirement (verbatim)
@@ -90,7 +94,7 @@ Proposal (assistant): push updates over the existing websocket and patch the DOM
 ## History
 
 - created (clarify) 2026-07-04
-- go 2026-07-04 (the user gave explicit GO)
-- done 2026-07-05 (DoD met; audit passed by a dedicated subagent, not the builder; docs + version bumped)
+- -> go 2026-07-04 (GO: the user, chat 2026-07-04)
+- -> done 2026-07-05 (DoD met; audit passed by a dedicated subagent, not the builder; docs + version bumped)
 ================================================================================
 -->

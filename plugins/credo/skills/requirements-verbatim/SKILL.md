@@ -52,6 +52,15 @@ for example `.credo/process/requirements/2026-07-04.md`, appended to across the 
   - `Assistant (proposal / finding)` - optional. Your interpretation, proposal, open
     question, or note. Clearly marked as yours, never mixed into the verbatim zone.
 
+## Attribution discipline (every output, not just the log)
+
+Any claim of user intent - "Marcel prefers X", "the user wants Y", "as requested" - in ANY
+output, especially handoffs and not only this requirements log, MUST be traceable to a
+`User (verbatim)` entry. Without such a source it is the agent's OWN recommendation and MUST
+be labelled as such (for example "proposal:" / "my recommendation:"). Do not present your own
+preference as the user's requirement. The two-zone separation (`User (verbatim)` vs
+`Assistant (proposal / finding)`) extends beyond this log to every output the agent produces.
+
 ## Reference convention
 
 Refer to a logged requirement by DATE plus a short context phrase (for example

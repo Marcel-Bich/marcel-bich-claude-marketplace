@@ -77,6 +77,19 @@ new features, invent scope, or make product decisions on the user's behalf. Anyt
 already GO waits (or becomes a deferred question, below); it does not get built
 autonomously.
 
+go=go: a `2_go` item IS buildable by the folder - build it (best effort), never self-skip or
+self-demote it for size, UI, or "not sure it is verifiable". See the go=go build-side anchor
+in the credo `items` skill for the full rule and the hypothesis-vs-open-decision line.
+
+### A non-buildable item in 2_go = flag, do not silently skip
+
+If you meet an item in `2_go` that is genuinely non-buildable (an entry-gate violation that
+slipped through - an open design decision, a hard block on an unbuilt item), FLAG it (in the
+digest and the handoff) rather than silently skipping it. Do NOT self-demote it: placement /
+hygiene is a separate, move-side axis owned by the entry gate (credo `migrate`), not a
+build-side call. Auto-unblock (credo `items`) still applies during the run: when an item
+reaches `2_done`, check its `blocks` and return any now-unblocked `3_blocked` item to `2_go`.
+
 ### Never interrupt an autonomous run for a mode change (hard rule)
 
 In autonomous mode the agent NEVER asks via the Ask tool about switching mode - not even
@@ -130,7 +143,10 @@ until when (per the budget skill). Never exceed a cap to finish "just one more t
 ### Keep-alive (hook-enforced, only while credo-autonomy-active is set)
 
 Keep the session awake so an unattended run does not fall asleep while there is open work
-and budget. This discipline is now hook-enforced. A registered `Stop` hook
+and budget. "Open work" means BUILDABLE work - at least one buildable item remaining - NOT
+"any file physically in `2_go`" (see "Empty buildable queue = end-of-run" below). When no
+buildable item is left, that is an end-of-run condition, not a reason to keep the keep-alive
+spinning. This discipline is now hook-enforced. A registered `Stop` hook
 (`credo-autonomy-keepalive.sh`, wired in `hooks/hooks.json`) fires when you try to end the
 turn: if autonomy is active and no self-wake is marked, it blocks the stop and instructs you
 to call ScheduleWakeup now (and mark it). Paired with the registered `UserPromptSubmit` hook
@@ -192,6 +208,30 @@ the subagent returns `{status: needs_decision, question}`, the main agent obtain
 (user, verbatim log, or documented default) and passes it back via SendMessage so the
 subagent continues with full context.
 
+### Empty buildable queue = end-of-run (kills the idle loop)
+
+No buildable item remaining is an END-OF-RUN condition. The keep-alive notion of "open work"
+means BUILDABLE work, not "any file physically in `2_go`". This closes the limbo where an
+agent keeps the keep-alive alive while refusing to build (the RETRO's ~7h idle loop). A file
+in `2_go` that the agent is treating as non-buildable does NOT count as open work - flag it
+(the section above) and, if it is the only thing left, the buildable queue is empty.
+
+When the buildable queue is empty, run this end-of-run sequence:
+
+1. Send an immediate `default`-priority ntfy stating nothing was buildable - `default`, not
+   `high`, because it need not wake the user.
+2. End autonomous mode via `credo-autonomy-off.sh` (clears the flag, makes the Stop hook
+   inert so the run can stop).
+3. Schedule a ~20 min wake (`windows.veto_minutes`) as a veto window.
+4. No veto within the window -> power down, gated on `sleep.enabled` (default OFF; on the
+   user's personal machine: on). This REUSES the existing power-down procedure below (veto
+   window, double-fire protection, secure-work-first, the exact `sleep.command`) - do not
+   duplicate it.
+
+Distinction: "all work genuinely completed / built" stays a `high` ntfy (come see results).
+Only the nothing-was-buildable case uses `default`. Both are end-of-run and feed the same
+power-down gate below.
+
 ### Power down the machine at the end (I9)
 
 The machine power-down can be EITHER suspend (standby / suspend-to-RAM) OR hibernate
@@ -200,8 +240,9 @@ machine". The global "never auto power-down" rule lives HERE now, scoped by mode
 
 - Non-autonomous modes (active, passive): NEVER auto power-down. Only sleep the machine on an
   explicit user request.
-- Autonomous mode: the end-of-run triggers are EITHER everything is done, OR a showstopper
-  occurs, OR the weekly axis hits its power-down trigger. On the weekly axis the reset is NOT
+- Autonomous mode: the end-of-run triggers are EITHER everything is done (which includes an
+  empty buildable queue - see the section above), OR a showstopper occurs, OR the weekly axis
+  hits its power-down trigger. On the weekly axis the reset is NOT
   a default showstopper: first PREFER the credo `budget` skill's weekly pause-and-resume
   (when the reset is near - same local calendar day - and weekly is at or above
   `switch_percent`, pause via chained ScheduleWakeup across the reset and resume with a fresh

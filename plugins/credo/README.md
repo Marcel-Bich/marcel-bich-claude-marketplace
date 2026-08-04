@@ -48,7 +48,7 @@ Each command sets the mode and loads its skill. The three session skills share o
   docs/                stable "how we work here" conventions
   screenshots/         visual-verify evidence: <task>-<viewport>-<YYYY-MM-DD>.png
   items/
-    1_todo/{1_clarify,2_go}
+    1_todo/{1_clarify,2_go,3_blocked}
     2_done/
     3_verified/        only the user files here
     4_archived/
@@ -87,9 +87,10 @@ A work item is one Markdown file (`templates/item.template.md`). Its frontmatter
 The lifecycle, moving the file with `scripts/credo-item-move.sh`:
 
 1. **clarify** (`items/1_todo/1_clarify/`) - requirement captured verbatim, success criteria drafted.
-2. **go** (`items/1_todo/2_go/`) - the user gave an explicit GO; ready to build.
-3. **done** (`items/2_done/`) - built and wired, and the Definition of Done gate has passed.
-4. **verified** (`items/3_verified/`) - only the user moves an item here.
+2. **go** (`items/1_todo/2_go/`) - the user gave an explicit GO; ready to build. Entry is gated (G1-G6): only a fully clarified, GO'd item with no open build-details or unbuilt-item dependency may enter. Once here it IS buildable by definition (go=go): the building agent never self-skips or self-demotes it for size, UI, or "not sure it is verifiable".
+3. **blocked** (`items/1_todo/3_blocked/`) - GO'd but hard-blocked by another, unbuilt credo item (structured `blocked_by`/`blocks` relations). Auto-returns to `2_go` when the blocker is done. Distinct from `parked/hold`, which is for an external dependency. "Too big / too hard" is never a block.
+4. **done** (`items/2_done/`) - built and wired, and the Definition of Done gate has passed.
+5. **verified** (`items/3_verified/`) - only the user moves an item here.
 
 Parked work lives under `items/parked/{hold,future}`; abandoned work under `items/4_archived/`.
 

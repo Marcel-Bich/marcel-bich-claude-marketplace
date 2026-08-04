@@ -17,10 +17,15 @@
 # <target> one of:
 #   clarify   -> items/1_todo/1_clarify
 #   go        -> items/1_todo/2_go
+#   blocked   -> items/1_todo/3_blocked
 #   done      -> items/2_done
 #   archived  -> items/4_archived
 #   hold      -> items/parked/hold
 #   future    -> items/parked/future
+#
+# Entry-gate helpers (warn / refuse, not a full gate):
+#   target go      -> warns if the item History has no GO-citation line (G1 not provable).
+#   target blocked -> refuses if the item has no blocked_by (a block needs a concrete blocker).
 #
 # NOT a valid target: verified (items/3_verified is USER-ONLY; an agent never
 # places an item there). Move it there yourself with mv if you are the user.
@@ -33,7 +38,7 @@ set -euo pipefail
 die() { echo "credo-item-move: $*" >&2; exit 1; }
 
 # --- args --------------------------------------------------------------------
-[ "$#" -eq 2 ] || die "usage: credo-item-move.sh <id> <target>  (target: clarify|go|done|archived|hold|future)"
+[ "$#" -eq 2 ] || die "usage: credo-item-move.sh <id> <target>  (target: clarify|go|blocked|done|archived|hold|future)"
 ID="$1"
 TARGET="$2"
 
@@ -46,6 +51,7 @@ ID="$((10#$ID))"   # normalize leading zeros
 case "$TARGET" in
     clarify)  REL="items/1_todo/1_clarify" ;;
     go)       REL="items/1_todo/2_go" ;;
+    blocked)  REL="items/1_todo/3_blocked" ;;
     done)     REL="items/2_done" ;;
     archived) REL="items/4_archived" ;;
     hold)     REL="items/parked/hold" ;;
@@ -53,7 +59,7 @@ case "$TARGET" in
     verified|3_verified)
         die "3_verified is USER-ONLY - an agent never moves items there. If you are the user, mv the file yourself." ;;
     *)
-        die "unknown target '$TARGET' (use: clarify|go|done|archived|hold|future)" ;;
+        die "unknown target '$TARGET' (use: clarify|go|blocked|done|archived|hold|future)" ;;
 esac
 
 # --- locate the target .credo directory --------------------------------------
@@ -94,6 +100,31 @@ fi
 if [ -e "$DEST" ]; then
     die "refusing to clobber existing file at $DEST"
 fi
+
+# --- entry-gate helpers (G1 / block-guard) -----------------------------------
+# Lightweight, machine-checkable guards - NOT the full 2_go entry gate (that lives
+# in the credo migrate skill and any GO sweep). They catch the two checkable cases.
+case "$TARGET" in
+    go)
+        # G1: a move into 2_go should be backed by a provable, item-scoped GO, cited in
+        # the item History, e.g.  -> go 2026-08-04 (GO: Marcel, <context>)
+        # Missing it does not block the move (History may be written with the move), but
+        # warn loudly because G1 (a provable GO) is then not verifiable here.
+        if ! grep -Fiq -- '(GO:' "$SRC"; then
+            echo "credo-item-move: WARNING - no GO-citation found in $BASENAME (looked for '(GO:')." >&2
+            echo "credo-item-move: G1 (a provable, item-scoped GO) is NOT verifiable. Add a History line like" >&2
+            echo "credo-item-move:   -> go <date> (GO: <who>, <context>)   with this move." >&2
+        fi
+        ;;
+    blocked)
+        # Block-guard: an item in 3_blocked MUST name a concrete blocker via blocked_by.
+        # "too big / too hard / uncertain" is not a block. Refuse a blocked move with no
+        # blocked_by so buildable work cannot be parked as "blocked" to dodge building it.
+        if ! grep -Eiq -- '^[[:space:]]*blocked_by:.*[0-9]' "$SRC"; then
+            die "target 'blocked' requires a blocked_by referencing an unfinished item (e.g. 'blocked_by: [123]'); '$BASENAME' has none. 'Too big/hard/uncertain' is not a block - build it in 2_go."
+        fi
+        ;;
+esac
 
 # --- atomic move (never delete) ----------------------------------------------
 mkdir -p "$DEST_DIR"

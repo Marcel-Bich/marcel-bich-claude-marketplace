@@ -32,16 +32,41 @@ The folder tree (created by `credo-init`) and what each folder means:
   1_todo/
     1_clarify/     open questions - needs the user, NOT buildable yet
     2_go/          clarified and approved - buildable (go-gate: only 2_go is buildable)
+    3_blocked/     GO'd but hard-blocked by another (unbuilt) credo item; auto-returns to 2_go on unblock
   2_done/          Definition of Done met (agent and/or user), gate passed
   3_verified/      USER-ONLY - human-in-the-loop confirmation (an agent never places here)
   4_archived/      abandoned / deprecated / rejected
   parked/
-    hold/          blocked by an external dependency
+    hold/          blocked by an EXTERNAL dependency (not another credo item)
     future/        deliberately deferred
 ```
 
 Never encode status anywhere else. If you want to know an item's status, look at which
 folder its file is in - nothing else is authoritative.
+
+## go=go - the folder is authoritative for building
+
+An item in `2_go` IS buildable, by definition of the folder. This is the build-side
+counterpart to the entry gate that governs what may enter `2_go` in the first place (the
+credo `migrate` skill owns the G1-G6 entry gate).
+
+- **The folder overrides body-level doubt.** An unproven root-cause hypothesis, a
+  "GO unclear" note, or any hedge in the body does NOT override the folder. If the file is
+  in `2_go`, build it (best effort).
+- **Never self-skip, never self-demote.** The building agent does NOT skip a `2_go` item and
+  does NOT move it down for reasons of size, UI, or "not sure it is verifiable". It MAY
+  re-scope or phase a large item into slices, but it must build.
+- **`ui: true` is not a reason not to build.** UI items are verified via the credo `verify`
+  skill, which is autonomous-capable; a required visual verify does not make an item
+  unbuildable.
+- **Uncertainties are NOTED, not a veto.** Record an uncertainty in the item History or a
+  note; it is never a reason to leave a `2_go` item unbuilt.
+- **Hypothesis vs open decision (the fine line).** An unproven *hypothesis* WITH a clear fix
+  approach (for example a root-cause hypothesis pinned to `file:line`) is buildable - build
+  it. An open *design decision / build-detail* is NOT a build-side call: per the entry gate
+  (G5) such an item should never have entered `2_go`. If one is found in `2_go` anyway, the
+  agent does NOT invent the decision and does NOT silently build on a made-up one - it FLAGS
+  it (a deferred question in autonomous mode, an Ask in a presence session).
 
 ## Mandatory frontmatter (lean)
 
@@ -62,9 +87,15 @@ ui: false               # bool - true means a visual verify is a DoD requirement
   measured layout + real interaction at every configured viewport) is a mandatory part of
   this item's Definition of Done.
 
-Everything else (`priority`, `source`, `blocked_by`, `relates_to`, `regression`, ...) is
+Everything else (`priority`, `source`, `relates_to`, `regression`, ...) is
 **not** a mandatory field. Do not add speculative frontmatter. Write such information only
 when it actually applies, free-form in the body.
+
+The one exception is the blocker relation `blocked_by: [ids]` / `blocks: [ids]`: these are
+structured (not free-form) and are REQUIRED while an item sits in `1_todo/3_blocked` (see
+"GO-but-blocked" below). Outside that state they are omitted. They form a relational
+dependency graph, NOT a second status source, so principle "folder = status" stays intact
+and the lean-frontmatter philosophy is not broken.
 
 ## Filenames and ids
 
@@ -101,9 +132,13 @@ Use these English headings in this order. A blank template ships at
 3. **Implemented** - what was actually built, with concrete `file:line` references. This
    is where the wiring is recorded (which caller reaches the new code).
 4. **Verify** - the honest 4-valued verification state, per layer. See below.
-5. **History** - the folder journey with dates, e.g.
-   `created (clarify) 2026-07-04 -> go 2026-07-04 -> done 2026-07-05`. Record why an item
-   moved, especially any move backwards.
+5. **History (MANDATORY)** - the folder journey with dates. Every move writes a line
+   `-> <target> <date> (<reason>)`, e.g.
+   `created (clarify) 2026-07-04 -> go 2026-07-04 (GO: Marcel, chat) -> done 2026-07-05`.
+   Record why an item moved, especially any move backwards. **Folder<->History invariant:**
+   the folder an item is in MUST match the target of its last History line. A mismatch is a
+   detected mis-move - flag it and correct it. This is the contradiction detector, achieved
+   without adding a second status source.
 
 ## The 4-valued Verify (honest, per layer)
 
@@ -191,13 +226,45 @@ missed. It needs clarification before it is buildable again. **Agents never self
 moves it back to clarify per this rule (or, for a clear and approved fix, the audit skill
 governs whether it returns to `2_go`).
 
+## GO-but-blocked (1_todo/3_blocked)
+
+`3_blocked` holds an item that is fully clarified and the user has GO'd, but which is
+hard-blocked by ANOTHER, still-unbuilt credo item. It is NOT a demotion of the GO - the GO
+stands; the block only pauses it. When the blocking item is done, the item auto-returns to
+`2_go`.
+
+Distinct from `parked/hold`, which is for an EXTERNAL dependency (not another credo item) or
+a block on something not yet GO'd. `3_blocked` is specifically an internal-item block on an
+already-GO'd item, and that internal relation is what enables the automatic return.
+
+### Blocker relations (structured, not a second status)
+
+- `blocked_by: [ids]` on the blocked item, and `blocks: [ids]` on the blocking item.
+- Bidirectional dependency graph, relational only - NOT a second status source. The folder
+  still says "blocked"; the relations only say by which item(s). Keep both sides in sync.
+- Required whenever an item sits in `3_blocked`.
+
+### Block-guard (a block needs a concrete blocker)
+
+An item may move to `3_blocked` ONLY with a concrete `blocked_by` referencing an unfinished
+item. "Too big / too hard / uncertain" is NOT a block: such an item stays in `2_go` and gets
+built (see "go=go" above). This stops an agent from parking buildable work as "blocked" to
+avoid building it - the exact RETRO regression this guards against.
+
+### Auto-unblock (no new GO needed)
+
+When an item B reaches `2_done`, read `B.blocks`. For each referenced item A in `3_blocked`
+whose `blocked_by` set is now fully done, move A `3_blocked -> 2_go` and write the History
+line. This is NOT a new GO - the GO was the user's originally and still stands; the block
+merely paused it, so the automatic return respects "only the user sets GO".
+
 ## Moving items (lifecycle)
 
 Prefer the move helper - it is atomic, never deletes, and refuses the user-only target:
 
 ```
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-item-move.sh" <id> <target>
-# target: clarify | go | done | archived | hold | future
+# target: clarify | go | blocked | done | archived | hold | future
 ```
 
 Valid transitions (folder = status):
@@ -206,10 +273,13 @@ Valid transitions (folder = status):
   buildable; `1_clarify` is not). In a presence session, clarify and propose that GO one
   item at a time, each item in its own Ask round - see "One item per Ask round" in the
   common core (session-active skill).
+- `2_go -> 3_blocked` when a concrete blocker on another unbuilt item is found (block-guard
+  above; requires `blocked_by`). NOT for "too big / too hard".
+- `3_blocked -> 2_go` on auto-unblock when the blocking item(s) are done (not a new GO).
 - `2_go -> 2_done` only after the full Definition of Done gate above passes.
 - `2_done -> 1_clarify` when a bug is found (see above).
 - any -> `parked/hold` (external block) or `parked/future` (deferred), or `4_archived`
-  (abandoned/rejected).
+  (abandoned/rejected); `3_blocked -> parked/*` or `4_archived` as usual.
 - `2_done -> 3_verified` is **user-only** and is never done by an agent or the helper.
 
 After any move, update the item's `History` section with the transition and its date.

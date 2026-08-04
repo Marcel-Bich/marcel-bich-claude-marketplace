@@ -56,7 +56,7 @@ All credo state is per project under `.credo/` (see section 3) or per user under
   docs/                stable "how we work here" conventions
   screenshots/         visual-verify evidence: <task>-<viewport>-<YYYY-MM-DD>.png
   items/
-    1_todo/{1_clarify,2_go}
+    1_todo/{1_clarify,2_go,3_blocked}
     2_done/
     3_verified/        only the user files here
     4_archived/
@@ -138,12 +138,13 @@ The rest of this section describes the `credo` backend.
 1. Get an id: `scripts/credo-id-next.sh`.
 2. Copy `templates/item.template.md` to `items/1_todo/1_clarify/<id>-<slug>.md`. Fill the mandatory frontmatter: `id`, `title`, `created`, `type`, `ui`.
 3. Capture the requirement verbatim and draft observable success criteria (the Definition of Done).
-4. On an explicit GO, move to `items/1_todo/2_go/` (`scripts/credo-item-move.sh`).
-5. Build, wiring the new code so a caller reaches it. Record what was built with file:line references.
-6. Run the Definition of Done gate (section 5.1). On pass, move to `items/2_done/`.
-7. Only the user moves an item to `items/3_verified/`.
+4. On an explicit GO, move to `items/1_todo/2_go/` (`scripts/credo-item-move.sh`). Entry is a gate (G1-G6): a provable item-scoped GO, no deferred/FUTURE marker, no hard dependency on an unbuilt item, no open clarify section, no open build-details, and a sweep cross-check against the folder listing. An item in `2_go` is buildable by definition (go=go): the building agent never self-skips or self-demotes it for size, UI, or verifiability - it may re-scope or phase, but it builds. `credo-item-move.sh go` warns if no GO-citation History line is present.
+5. If a GO'd item is hard-blocked by another, still-unbuilt credo item, move it to `items/1_todo/3_blocked/` (`credo-item-move.sh blocked`, requires a `blocked_by`). It auto-returns to `2_go` when the blocker reaches `2_done`. "Too big / too hard" is never a block.
+6. Build, wiring the new code so a caller reaches it. Record what was built with file:line references.
+7. Run the Definition of Done gate (section 5.1). On pass, move to `items/2_done/`.
+8. Only the user moves an item to `items/3_verified/`.
 
-Parked work goes under `items/parked/{hold,future}`; abandoned work under `items/4_archived/`.
+Parked work goes under `items/parked/{hold,future}` (external / not-GO'd blocks); abandoned work under `items/4_archived/`.
 
 **Ask discipline (presence modes).** When clarifying items or proposing a GO in an active or passive session, handle one item per Ask round: explain the single item with concrete examples and consequences, then put its questions and GO proposal into its own Ask round, one round per item id. Do not bundle several items into one message or a flowing-text dump. Within a single round, asking several independent questions at once is fine and encouraged; a question whose framing depends on another answer goes into a later round. This does not apply in autonomous mode (no interactive Ask rounds). The rule lives in the common core (session-active skill).
 

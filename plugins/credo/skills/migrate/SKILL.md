@@ -88,7 +88,7 @@ item cutting, and the self-audit) to subagents per the `orchestration` skill, an
 
 - **Scaffold the tree.** Run `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-init.sh"`. It is
   idempotent and creates the `.credo/` namespace: `docs/`, `screenshots/`,
-  `items/{1_todo/{1_clarify,2_go},2_done,3_verified,4_archived,parked/{hold,future}}`,
+  `items/{1_todo/{1_clarify,2_go,3_blocked},2_done,3_verified,4_archived,parked/{hold,future}}`,
   `process/{requirements,handoffs/archive,reports}`, `checklists/`, an empty `id-counter`,
   and a per-project `config` stub. Do not hand-create this tree - let the script own the
   layout so it stays the authority.
@@ -176,9 +176,30 @@ These two interleave; run them together.
   one of the four states), `History`. These are the canonical English names; a project writes them in
   its own working language (for example a German project localizes the headings), but the
   model and order stay the same.
-- **GO rule.** Only a 100% clarified item goes to `1_todo/2_go`. Anything with an open
-  question goes to `1_todo/1_clarify` (or split: keep the fully-clarified core in `2_go`
-  and file a separate clarify item for the open part).
+- **GO rule = the 2_go entry gate (G1-G6).** Only a 100% clarified item goes to
+  `1_todo/2_go`. This is an ENTRY gate, enforced at MOVE time (this migration step, any GO
+  sweep, or `credo-item-move.sh`), not discovered later at build time - so a non-buildable
+  item never sits in `2_go`. An item may move into `2_go` ONLY if ALL of these hold:
+  - **G1 - provable GO.** An explicit, item-scoped user GO exists (date + the user as
+    source). Agents never self-GO. The `-> go` History line must cite the GO source, e.g.
+    `-> go 2026-08-04 (GO: Marcel, <short context>)`.
+  - **G2 - not deferred.** No "Bau FUTURE" / deferred marker in the item -> otherwise
+    `parked/future`.
+  - **G3 - no hard block on unbuilt work.** No hard dependency on an unbuilt item ->
+    otherwise `1_todo/3_blocked` (if GO'd, see the `items` skill) or `parked/hold` (external
+    / not GO'd).
+  - **G4 - nothing pending.** No open "CLARIFY / vor GO / noch zu klaeren" section and no
+    "wartet auf X".
+  - **G5 - no open build-details.** No open build-details or design decisions. The
+    intermediate status "GO-reif" does NOT exist: an item with unresolved build-details is
+    `1_clarify` (to be clarified WITH the user), never handed to the building agent to
+    decide.
+  - **G6 - sweep cross-check.** A GO sweep / sighting cross-checks its counted / listed set
+    against the actual folder listing (`ls .credo/items/1_todo/2_go/`) so no item is
+    silently skipped. This is a one-shot check at sweep time (a single shell command), NOT a
+    background process - no ongoing cost.
+  Anything failing a gate goes to `1_todo/1_clarify` (or split: keep the fully-clarified,
+  gate-passing core in `2_go` and file a separate clarify item for the open part).
 - **Wiring / status-verify (mandatory).** Before an item records `failed` / "not started",
   wiring-check the real code (search endpoint / class / function / tests). A feature may
   already be built under a DIFFERENT task id. If built but behavior unobserved, use
