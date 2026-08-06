@@ -2,6 +2,7 @@
 description: credo - Initialize session with main agent workflow instructions
 allowed-tools:
     - Read
+    - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-decision-set.sh:*)
 ---
 
 # Session Initialization
@@ -84,8 +85,25 @@ credo ships no agents of its own. Always delegate to the built-in agents, which 
 
 Before naming a specialized agent, confirm it is actually listed in your environment; if in doubt, delegate to `general-purpose`.
 
+## credo commands + skills (prefer these over the default approach)
+
+These are the credo capabilities available in this session. Prefer them over the generic/default approach so the workflow runs cleanly. Commands are tagged by execution class so it is clear what you may run yourself.
+
+**Skills** (auto-trigger by their description - use them actively whenever they apply): `items` (the work-item model = the task system), `audit` (mandatory post-completion review gate), `verify` (visual Definition of Done for any UI/runtime surface), `diag` (read-only root-cause diagnosis), `safety` (before ANY delete or install), `requirements-verbatim` (log approved intent word-for-word), `orchestration` (delegation rules), `budget` (API cap + reset rules), `compact-plus` (secure approved state before a compact), `pr-vetting`, `issue-triage`, `skill-capture`, `cross-cutting-checklist-generator`, `wsl-env`.
+
+**Commands by execution class:**
+- **[A] may be run by the agent itself when useful:** `/credo:session-init`, `/credo:project` (show only, no path argument).
+- **[B] only on explicit user request** (interactive, or the user's call to make): `/credo:session-active`, `/credo:session-passive`, `/credo:psalm`, `/credo:project <path>` (pin a target).
+- **[C] NEVER run autonomously** - only the user decides these (mode escalation / installs / structural migration): `/credo:session-autonomous`, `/credo:setup`, `/credo:migrate`.
+
 ## Your Response
 
-Confirm you understand these working instructions, then ask how you can help.
+First, record that credo is now active for this session so the SessionStart hook stops asking:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-decision-set.sh" accepted
+```
+
+Then confirm you understand these working instructions, then ask how you can help.
 
 Keep your confirmation brief - one sentence acknowledging you understand the delegation-first workflow, then ask what the user needs.
