@@ -37,7 +37,7 @@ A `SessionStart` hook makes the session credo-aware. Until the session has made 
 
 - **active** (`/credo:session-active`) - intensive live collaboration with the user at the keyboard. Progress is logged via the limit thresholds and compact-plus, open GO items are picked up alongside, clarifications happen during subagent waits. No keep-alive.
 - **passive** (`/credo:session-passive`) - the agent carries most of the work while the user is reachable only for clarifications. Every item is pushed toward a full GO; less is more, so only genuinely ambiguous items go back to the user. No keep-alive.
-- **autonomous** (`/credo:session-autonomous`) - approved GO items are worked unattended. Keep-alive is hook-enforced: a registered Stop hook blocks a stop that has no scheduled ScheduleWakeup and instructs the model to set one (loop-safe, and inert outside autonomy); a registered UserPromptSubmit hook turns autonomy off on any real user message. Budget caps are enforced, ntfy fires per task and per question, and progress is secured via compact-plus.
+- **autonomous** (`/credo:session-autonomous`) - approved GO items are worked unattended. Keep-alive is hook-enforced: a registered Stop hook blocks a stop that has no scheduled ScheduleWakeup and instructs the model to set one (loop-safe, and inert outside autonomy); a registered UserPromptSubmit hook turns autonomy off on any real user message. Budget caps are enforced, ntfy sends immediate come-to-PC pushes (questions, blockers, completion) plus a mandatory content-rich progress digest on a fixed interval, and progress is secured via compact-plus.
 
 Each command sets the mode and loads its skill. The three session skills share one canonical common core (defined in the session-active skill) and layer their mode-specific rules on top.
 
@@ -89,7 +89,7 @@ A work item is one Markdown file (`templates/item.template.md`). Its frontmatter
 The lifecycle, moving the file with `scripts/credo-item-move.sh`:
 
 1. **clarify** (`items/1_todo/1_clarify/`) - requirement captured verbatim, success criteria drafted.
-2. **go** (`items/1_todo/2_go/`) - the user gave an explicit GO; ready to build. Entry is gated (G1-G6): only a fully clarified, GO'd item with no open build-details or unbuilt-item dependency may enter. Once here it IS buildable by definition (go=go): the building agent never self-skips or self-demotes it for size, UI, or "not sure it is verifiable".
+2. **go** (`items/1_todo/2_go/`) - the user gave an explicit GO; ready to build. Entry is gated (G1-G6): only a fully clarified, GO'd item with no open build-details or unbuilt-item dependency may enter. Once here it IS buildable by definition (go=go): the building agent never self-skips or self-demotes it for size, UI, or "not sure it is verifiable". The one sanctioned way back is the **Named-Decision-Test**: a genuine user-only decision surfacing mid-build sends the item to `1_clarify` marked URGENT - never "too big / too hard".
 3. **blocked** (`items/1_todo/3_blocked/`) - GO'd but hard-blocked by another, unbuilt credo item (structured `blocked_by`/`blocks` relations). Auto-returns to `2_go` when the blocker is done. Distinct from `parked/hold`, which is for an external dependency. "Too big / too hard" is never a block.
 4. **done** (`items/2_done/`) - built and wired, and the Definition of Done gate has passed.
 5. **verified** (`items/3_verified/`) - only the user moves an item here.
@@ -111,7 +111,7 @@ Auto-discovered under `skills/`. Each auto-triggers when it applies, including i
 
 - **audit** - read-only quality gate; reviews already-built work against its requirement and Definition of Done before it may move to `2_done/`. Proposes a severity-ranked decision (BLOCKER/MAJOR/MINOR/NIT), never a fix.
 - **diag** - read-only root-cause diagnosis for a symptom; establishes the mechanism at file:line before any fix. The fix is a separate, GO-gated step.
-- **verify** - visual verification as the Definition of Done for any change with a runtime surface; proves behavior in a real browser with computed layout.
+- **verify** - visual verification as the Definition of Done for any change with a runtime surface; proves behavior in a real browser with computed layout. A down surface may be brought up or restarted autonomously ONLY when the target is positively verified local (a process on this machine, not a deployed/remote/shared environment - judged by where it runs, not by the git branch), via `verify.local_bringup`; otherwise the visual verify defers as human-only.
 - **items** - the work-item model where the folder is the status truth, gated by the Definition of Done.
 - **requirements-verbatim** - captures a requirement, decision, approval, or GO word-for-word into an append-only dated log so it survives compaction.
 - **budget** - the single source for API budget caps and reset rules across the 5-hour and weekly limits, plus the commit-identity gate before any commit.
@@ -145,7 +145,7 @@ If the `limit` plugin is absent, these features are silently unavailable. There 
 
 ### `ntfy` - optional
 
-Push notifications use `ntfy`. The topic is a personal field in the credo config (`personal.ntfy_topic`). If it is unset, ntfy is silently skipped; nothing else changes.
+Push notifications use `ntfy`. The topic is a personal field in the credo config (`personal.ntfy_topic`). If it is unset, ntfy is silently skipped; nothing else changes. Progress is bundled into a digest on a fixed interval (`ntfy.digest_interval_minutes`); when a topic is set, sending it is mandatory whenever there is progress (with no topic it stays silently skipped), and each completed item carries a content standard (what / how / where / why, verify state, what needs the user, budget snapshot) so a terse one-liner is never enough. One message is preferred, split into `n/m` when it would exceed ntfy's size limit.
 
 ## Installation
 

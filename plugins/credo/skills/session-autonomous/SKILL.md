@@ -81,14 +81,34 @@ go=go: a `2_go` item IS buildable by the folder - build it (best effort), never 
 self-demote it for size, UI, or "not sure it is verifiable". See the go=go build-side anchor
 in the credo `items` skill for the full rule and the hypothesis-vs-open-decision line.
 
-### A non-buildable item in 2_go = flag, do not silently skip
+### A non-buildable item in 2_go
 
-If you meet an item in `2_go` that is genuinely non-buildable (an entry-gate violation that
-slipped through - an open design decision, a hard block on an unbuilt item), FLAG it (in the
-digest and the handoff) rather than silently skipping it. Do NOT self-demote it: placement /
-hygiene is a separate, move-side axis owned by the entry gate (credo `migrate`), not a
-build-side call. Auto-unblock (credo `items`) still applies during the run: when an item
-reaches `2_done`, check its `blocks` and return any now-unblocked `3_blocked` item to `2_go`.
+An item is normally clarified when it is in `2_go` (GO=GO). If you nonetheless meet one that
+is genuinely non-buildable, act by the reason:
+
+- **Genuine user-only decision** (the Named-Decision-Test in the credo `items` skill passes -
+  typically surfacing mid-build): do NOT guess and do NOT build on an invented decision.
+  Raise a deferred question (below) AND move the item `2_go -> 1_clarify` marked URGENT - the
+  sanctioned carve-out (credo `items`). It probably leaves something broken, so it is top of
+  the clarify queue for when the user returns.
+- **Hard block on another unbuilt item**: this is the `3_blocked` path (credo `items`), not a
+  self-demote.
+- **Anything else** (placement / hygiene, "too big / too hard"): do NOT self-demote -
+  placement is a move-side axis owned by the entry gate (credo `migrate`). FLAG it (in the
+  digest and the handoff) rather than silently skipping it.
+
+Auto-unblock (credo `items`) still applies during the run: when an item reaches `2_done`,
+check its `blocks` and return any now-unblocked `3_blocked` item to `2_go`.
+
+### Bringing up a local surface to verify (autonomous)
+
+A `ui: true` item is not verify-dead in autonomous mode. If its runtime surface is down, and
+you can POSITIVELY verify the target is local (a process on THIS machine, bound to localhost -
+not a deployed, remote, or shared environment), bring it up or restart it per the
+project-declared procedure and then run the credo `verify` skill. Locality is judged by where
+the process runs, NOT by the git branch: a checkout named `main` / `develop` / `prod` does not
+make it remote. If locality cannot be positively established, do NOT restart - defer the
+visual verify as human-only. See the credo `verify` skill for the full rule and the config key.
 
 ### Never interrupt an autonomous run for a mode change (hard rule)
 
@@ -179,9 +199,15 @@ skill's `wakeup.*` config - use them when you pause for a limit to reset.
 Autonomous mode is where the common-core ntfy hybrid does the most work. Send an immediate
 `high` ntfy for come-to-PC events (a deferred question, a blocker / showstopper, a budget
 cap reached, run completion, the pre-hibernate veto) and BEFORE the blocking action.
-Bundle progress (completed items, slices, milestones, findings) into one digest per
-`ntfy.digest_interval_minutes`. If `personal.ntfy_topic` is empty, skip ntfy silently -
-but then note that autonomy is running blind on notifications. Run completion is `high`.
+Progress is bundled into one digest per `ntfy.digest_interval_minutes`, and - when ntfy is
+configured (a `personal.ntfy_topic` is set) - sending that digest is MANDATORY per interval
+whenever there is progress; it is NOT the agent's discretion to judge it "not important
+enough" and stay silent (this is what fixes digests arriving far too rarely). With no topic
+set, ntfy stays silently skipped (see the end of this paragraph). Every completed item in the digest carries the full content
+standard from the common core (what / how / where / why); a terse one-liner is not
+acceptable. Prefer one message; if it exceeds ntfy's size limit, split into `n/m` messages.
+If `personal.ntfy_topic` is empty, skip ntfy silently - but then note that autonomy is
+running blind on notifications. Run completion is `high`.
 
 ### Deferred-question flow (core of autonomous mode)
 

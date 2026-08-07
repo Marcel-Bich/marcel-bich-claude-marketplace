@@ -43,6 +43,34 @@ user. Verification means the rendered surface was exercised and observed.
 
 Anything else is "wired-but-behavior-unverified", not "exercised".
 
+## Bringing up a down surface (local only, autonomous-capable)
+
+Verification needs the surface running. If it is down, locality decides whether you may
+bring it up yourself - this is what keeps a `ui: true` item from being verify-dead in an
+autonomous run:
+
+- **Positively verified local** (the restart affects only a process on THIS machine, bound
+  to localhost / 127.0.0.1 / ::1 - a local dev server or stack): you MAY bring it up or
+  restart it autonomously, then verify. A restart of a confirmed-local runtime is always
+  justified - it affects no deployed environment. The git branch is IRRELEVANT: a checkout
+  named `main`, `develop`, or `prod` does NOT make the runtime remote - only the actual
+  target does. Judge locality by where the process runs, never by the branch name.
+- **Locality NOT positively established** (any doubt, or any sign the target is a deployed,
+  remote, or shared environment - a staging or production server, a shared host): do NOT
+  restart. Defer the visual verify as human-only and record why.
+
+Get the bring-up command from config first; never guess one:
+
+```
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get verify.local_bringup
+```
+
+If `verify.local_bringup` is set, use it. If it is empty, fall back to the project's
+documented local run procedure (a README step, a package script) only when you can identify
+it with confidence; if no safe local command can be established, defer rather than guess -
+the credo `safety` skill forbids running a guessed command. After bringing the surface up -
+or after any rebuild - force a hard reload before measuring, so you verify the new build.
+
 ## Scope of a real verification
 
 - Rendered layout measured via computed layout - read `getBoundingClientRect()` (and

@@ -55,7 +55,9 @@ credo `migrate` skill owns the G1-G6 entry gate).
   in `2_go`, build it (best effort).
 - **Never self-skip, never self-demote.** The building agent does NOT skip a `2_go` item and
   does NOT move it down for reasons of size, UI, or "not sure it is verifiable". It MAY
-  re-scope or phase a large item into slices, but it must build.
+  re-scope or phase a large item into slices, but it must build. The ONE carve-out is a
+  genuine user-only decision that passes the Named-Decision-Test (below) - that is not a
+  size/difficulty demotion and is the only sanctioned `2_go -> 1_clarify` path.
 - **`ui: true` is not a reason not to build.** UI items are verified via the credo `verify`
   skill, which is autonomous-capable; a required visual verify does not make an item
   unbuildable.
@@ -65,8 +67,47 @@ credo `migrate` skill owns the G1-G6 entry gate).
   approach (for example a root-cause hypothesis pinned to `file:line`) is buildable - build
   it. An open *design decision / build-detail* is NOT a build-side call: per the entry gate
   (G5) such an item should never have entered `2_go`. If one is found in `2_go` anyway, the
-  agent does NOT invent the decision and does NOT silently build on a made-up one - it FLAGS
-  it (a deferred question in autonomous mode, an Ask in a presence session).
+  agent does NOT invent the decision and does NOT silently build on a made-up one - it
+  applies the Named-Decision-Test below (a deferred question in autonomous mode, an Ask in a
+  presence session, and a move back to `1_clarify` when the test passes).
+
+## Named-Decision-Test - the only ground for sending a 2_go item back
+
+GO=GO is the norm: an item in `2_go` is clarified and gets built. Sending one back to
+`1_clarify` is a RARE exception, and only this test authorizes it - never "too big / too
+hard / not sure it is verifiable / UI". A `2_go` item may return to `1_clarify` ONLY when
+ALL three hold:
+
+1. **A genuine user-only decision exists** - the requirement does not determine the
+   outcome, and choosing needs product / taste / scope / UX judgement that is the user's to
+   make, not a technical detail the agent can settle with a defensible engineering default.
+2. **It is phrasable as an explicit either/or question** - "decide A vs B, because the
+   requirement is silent on X". If you cannot write it as a concrete choice, you do not have
+   a decision, you have an excuse: build it (go=go).
+3. **It blocks correct completion** - the item's core cannot be finished without that
+   decision (not a cosmetic detail with an obvious default).
+
+Explicitly NOT grounds (these stay in `2_go` and get built): "too big / too hard /
+uncertain whether verifiable", UI, an unproven root-cause *hypothesis that has a clear fix
+approach*, or anything resolvable by a defensible engineering default. The test must be
+well-founded and must NOT be used as an argument against building the item itself.
+
+Typically this surfaces DURING the build, not at read time: an item is normally fully
+clarified when it reaches `2_go`, but something critical can still come up mid-build where
+building on naively would be wrong instead of clarifying. When the test passes, the agent
+MAY move the item back (the one carve-out from "never self-demote" above). Because such an
+item was interrupted for a critical reason and likely leaves something broken, it is
+URGENT - see below.
+
+## URGENT clarify (surfaced first)
+
+An item sent back to `1_clarify` via the Named-Decision-Test - especially one interrupted
+mid-build - is top priority: it probably leaves something broken and must be resolved
+before things run clean again. Mark it in the item body with a short
+`> URGENT: <what is broken / which decision blocks it>` note at the top of the History
+section, rather than adding a priority field or a new folder - "folder = status" and the
+lean frontmatter stay intact. The rule that rides on the marker: when the user is available,
+an agent surfaces these URGENT clarify items FIRST, before any other clarify or build work.
 
 ## Mandatory frontmatter (lean)
 
@@ -237,6 +278,11 @@ missed. It needs clarification before it is buildable again. **Agents never self
 moves it back to clarify per this rule (or, for a clear and approved fix, the audit skill
 governs whether it returns to `2_go`).
 
+This is the DONE-work case. A different case is a critical open user-only decision that
+surfaces while building a `2_go` item (not yet done): that is governed by the
+Named-Decision-Test above, which sends the item `2_go -> 1_clarify` (URGENT), not by this
+done-work rule.
+
 ## GO-but-blocked (1_todo/3_blocked)
 
 `3_blocked` holds an item that is fully clarified and the user has GO'd, but which is
@@ -286,6 +332,9 @@ Valid transitions (folder = status):
   common core (session-active skill).
 - `2_go -> 3_blocked` when a concrete blocker on another unbuilt item is found (block-guard
   above; requires `blocked_by`). NOT for "too big / too hard".
+- `2_go -> 1_clarify` when a genuine user-only decision surfaces (the Named-Decision-Test
+  passes), typically mid-build. Agent-permitted - the one carve-out from "never self-demote";
+  NOT for "too big / too hard". Mark the returned item URGENT (see above) and record why.
 - `3_blocked -> 2_go` on auto-unblock when the blocking item(s) are done (not a new GO).
 - `2_go -> 2_done` only after the full Definition of Done gate above passes.
 - `2_done -> 1_clarify` when a bug is found (see above).

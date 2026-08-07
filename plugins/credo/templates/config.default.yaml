@@ -33,6 +33,15 @@ verify:
     - 320
     - 768
     - 1440
+  # Command to bring up / restart the LOCAL runtime surface for a ui: true verify.
+  # Empty by default. An agent may restart autonomously ONLY when it has positively
+  # verified the target is local (a process on THIS machine, bound to localhost - NOT a
+  # deployed, remote, or shared environment). Locality is judged by where the process
+  # runs, NOT by the git branch: a checkout named main/develop/prod does not make it
+  # remote. Set this to the project's local bring-up command; empty -> the agent falls
+  # back to the documented local run procedure or defers as human-only. A guessed
+  # command is never run (see the credo safety skill).
+  local_bringup: ""
 
 # --- timing windows ----------------------------------------------------------
 windows:

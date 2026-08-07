@@ -166,9 +166,27 @@ The model is hybrid - never spam single events, but never go fully silent either
   budget cap reached, a run completion, and a pre-rest veto. ntfy ALWAYS goes out BEFORE
   the blocking action, not after.
 - Progress (completed items, slices, milestones, findings) is bundled into ONE digest per
-  interval - default 60 minutes, from `ntfy.digest_interval_minutes` in config.
+  interval - default 60 minutes, from `ntfy.digest_interval_minutes` in config. When ntfy is
+  configured (a `personal.ntfy_topic` is set), sending the digest is MANDATORY whenever there
+  is progress in the interval - never skip it as "not important enough". When no topic is set,
+  ntfy stays silently skipped as above (mandatory does not mean "send without a topic").
 - Priorities: `default` = status / digest, `high` = come to the PC, `max` = data loss
   imminent (use rarely). A run completion is `high`.
+
+### ntfy content standard (what / how / where / why)
+
+A notification must let a human know the state WITHOUT a follow-up question. A terse
+one-liner ("item done") is not acceptable. Every completed item in a digest carries:
+
+- `#id` + title (WHAT)
+- what was actually built / changed (HOW), with the area or key files (WHERE)
+- why it matters / what it unblocks (WHY)
+- verify state (backend / ui exercised, or still `wired-but-behavior-unverified`)
+- anything that needs the user (a decision, a re-test, an URGENT clarify)
+- a short budget snapshot (5h / weekly)
+
+Prefer ONE bundled message. If it exceeds ntfy's size limit, split into `n/m` messages
+(e.g. "2/3") rather than dropping detail.
 
 Read the config values with:
 
