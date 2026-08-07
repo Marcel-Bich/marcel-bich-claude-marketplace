@@ -52,3 +52,10 @@ The user gave a path in `$ARGUMENTS`.
    - exit 4: no target resolved - the cwd is a hub (`is-hub` = true) or has no
      credo project yet. Tell the user to pin a repo with `/credo:project <path>`
      or set `CREDO_DIR`, then retry whatever needed the target.
+4. If a target resolved (exit 0), also show whether it carries per-repo special rules:
+   ```bash
+   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" rules
+   ```
+   Report `RULES.md: present` / `RULES.md: none` accordingly, and note that the user can set
+   per-repo rules any time by asking (for example "set a credo rule here that ..."), which
+   the credo `rules` skill captures into `.credo/RULES.md`.

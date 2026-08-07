@@ -18,6 +18,8 @@
 #   credo-config.sh paths              print the three layer paths + existence
 #   credo-config.sh resolve-project    print the target .credo dir (exit 4 if a
 #                                       hub or ambiguous cwd needs an explicit target)
+#   credo-config.sh rules              print the target .credo/RULES.md path plus
+#                                       (present)/(missing) (exit 4 like resolve-project)
 #   credo-config.sh is-hub             print true/false: is the cwd repo a hub
 #
 # Env overrides (mainly for testing):
@@ -31,7 +33,7 @@
 #   CLAUDE_CODE_SESSION_ID     session id for the pin lookup (set by Claude Code)
 #
 # Exit codes: 0 ok, 1 hard error, 3 key not found, 4 needs explicit target
-#   (resolve-project only: cwd is a hub or has no credo project).
+#   (resolve-project and rules: cwd is a hub or has no credo project).
 
 set -euo pipefail
 
@@ -372,12 +374,24 @@ PY
         fi
         exit 4
         ;;
+    rules)
+        # Print the resolved per-repo special-rules file path (.credo/RULES.md),
+        # resolved via the SAME project layer as resolve-project so it works from a
+        # launch hub. Appends " (present)"/" (missing)" so the caller sees whether
+        # rules exist without a second call. Exit 4 (needs explicit target) is
+        # propagated from resolve-project when the cwd is a hub or has no project.
+        if ! credo_dir="$("${BASH_SOURCE[0]}" resolve-project 2>/dev/null)"; then
+            exit 4
+        fi
+        rules_file="$credo_dir/RULES.md"
+        printf '%s (%s)\n' "$rules_file" "$([ -f "$rules_file" ] && echo present || echo missing)"
+        ;;
     is-hub)
         base="$(cwd_base)"
         read_hub "$base/.credo/config"
         ;;
     ""|-h|--help|help)
-        echo "usage: credo-config.sh {get <key>|backend|ensure-global|paths|resolve-project|is-hub}" >&2
+        echo "usage: credo-config.sh {get <key>|backend|ensure-global|paths|resolve-project|rules|is-hub}" >&2
         [ -z "$CMD" ] && exit 1 || exit 0
         ;;
     *)

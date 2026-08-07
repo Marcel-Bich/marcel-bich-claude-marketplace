@@ -89,7 +89,7 @@ Before naming a specialized agent, confirm it is actually listed in your environ
 
 These are the credo capabilities available in this session. Prefer them over the generic/default approach so the workflow runs cleanly. Commands are tagged by execution class so it is clear what you may run yourself.
 
-**Skills** (auto-trigger by their description - use them actively whenever they apply): `items` (the work-item model = the task system), `audit` (mandatory post-completion review gate), `verify` (visual Definition of Done for any UI/runtime surface), `diag` (read-only root-cause diagnosis), `safety` (before ANY delete or install), `requirements-verbatim` (log approved intent word-for-word), `orchestration` (delegation rules), `budget` (API cap + reset rules), `compact-plus` (secure approved state before a compact), `pr-vetting`, `issue-triage`, `skill-capture`, `cross-cutting-checklist-generator`, `wsl-env`.
+**Skills** (auto-trigger by their description - use them actively whenever they apply): `items` (the work-item model = the task system), `audit` (mandatory post-completion review gate), `verify` (visual Definition of Done for any UI/runtime surface), `diag` (read-only root-cause diagnosis), `safety` (before ANY delete or install), `rules` (per-repo special rules from `.credo/RULES.md` - load and honor at start), `requirements-verbatim` (log approved intent word-for-word), `orchestration` (delegation rules), `budget` (API cap + reset rules), `compact-plus` (secure approved state before a compact), `pr-vetting`, `issue-triage`, `skill-capture`, `cross-cutting-checklist-generator`, `wsl-env`.
 
 **Commands by execution class:**
 - **[A] may be run by the agent itself when useful:** `/credo:session-init`, `/credo:project` (show only, no path argument).
@@ -103,6 +103,16 @@ First, record that credo is now active for this session so the SessionStart hook
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-decision-set.sh" accepted
 ```
+
+Then load this repo's per-repo special rules and honor them for the session (credo `rules`):
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" rules
+```
+
+If it prints a `(present)` path, Read that file and honor its grants. If it prints
+`(missing)`, there are none - carry on. Exit 4 means no target is pinned here (a hub); do not
+guess - the user can pin one with `/credo:project <path>`.
 
 Then confirm you understand these working instructions, then ask how you can help.
 

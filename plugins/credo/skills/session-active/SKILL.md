@@ -221,6 +221,9 @@ An active session orchestrates these credo building blocks rather than reimpleme
 them - reference each by name when it applies:
 
 - `items` - the work-item model, folder-as-status, and the Definition-of-Done gate.
+- `rules` - per-repo special rules from `.credo/RULES.md`: load and honor them at session
+  start and pass them to subagents. Grants widen latitude within the safety floor, never
+  lower it (precedence: safety > DOGMA-PERMISSIONS > RULES.md > credo defaults).
 - `verify` - visual verification as DoD for anything with a runtime surface.
 - `requirements-verbatim` - the append-only verbatim log of what the user approved.
 - `audit` and `diag` - read-only completion audit and root-cause diagnosis.

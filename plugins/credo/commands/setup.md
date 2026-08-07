@@ -90,6 +90,26 @@ After this, credo's session modes, item lifecycle, Definition of Done, budget aw
 - `/credo:session-passive` - agent carries most work, you answer clarifications.
 - `/credo:session-autonomous` - approved GO items worked unattended.
 
+## Step 2b: Per-repo special rules (optional)
+
+credo supports per-repo **special rules** - project-local grants that widen credo's autonomy
+for THIS repo (for example "restarting local services is always allowed without asking" in a
+debug-only repo). They live in `.credo/RULES.md`, travel with the repo, and are honored every
+session and inside subagents (credo `rules` skill).
+
+Offer to capture some now with AskUserQuestion:
+
+```
+Do you want to set any per-repo credo rules for this repo? (grants that widen autonomy,
+e.g. "always allowed to restart local services without asking")
+
+- Yes, let me name a rule
+- No, skip (you can add rules any time by just asking)
+```
+
+If yes, invoke the credo `rules` skill (Skill tool) to write the rule verbatim into
+`.credo/RULES.md`. If no, continue - rules can be added later at any time.
+
 ## Step 3: Install Recommended and Optional Plugins
 
 **Skip if:** `plugins.dogma = true` (and, if the user wants GSD, `plugins.gsd = true`)

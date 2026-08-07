@@ -119,6 +119,7 @@ credo is limit-aware. In autonomous mode it reads the 5-hour and weekly usage ca
 
 - **Verify** - for any runtime surface, done means a real browser drove the actual UI across the configured viewports and captured evidence, not a claim.
 - **Safety** - filesystem protection and no-autonomous-installs rules are the highest priority, and they are re-injected into EVERY subagent. Delegation cannot dilute them.
+- **Per-repo rules** - a repo can carry its own credo special rules in `.credo/RULES.md` (grants that widen autonomy for that repo, e.g. "always allowed to restart local services"). They travel with the repo, are honored every session and inside subagents, and can only widen latitude within the safety floor - never lower it. Set one any time by just asking.
 - **Subagent priming** - every subagent starts with the load-bearing security, quality, honesty, and output-hygiene rules already in context, so a delegation-first main agent stays safe even when its own context has rotted.
 
 ### Topic: PR Vetting and Issue Triage
@@ -147,7 +148,7 @@ It is mode-aware. In autonomous mode credo never builds a skill on its own - it 
 | `/credo:session-passive`    | Set the session to passive (clarifications only)               |
 | `/credo:session-autonomous` | Set the session to autonomous (unattended GO items, keep-alive)|
 
-credo also ships auto-discovered skills that trigger on their own (including audit, diag, verify, items, requirements-verbatim, budget, compact-plus, orchestration, safety, cross-cutting-checklist-generator, skill-capture, wsl-env, pr-vetting, issue-triage, and the session-mode skills). You do not call them by hand; they apply when they apply, including inside subagents.
+credo also ships auto-discovered skills that trigger on their own (including audit, diag, verify, items, rules, requirements-verbatim, budget, compact-plus, orchestration, safety, cross-cutting-checklist-generator, skill-capture, wsl-env, pr-vetting, issue-triage, and the session-mode skills). You do not call them by hand; they apply when they apply, including inside subagents.
 
 ---
 

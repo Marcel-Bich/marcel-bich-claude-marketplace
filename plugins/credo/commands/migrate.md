@@ -25,3 +25,7 @@ user) tidy the originals.
 3. The whole procedure is copy-only and additive: originals are never touched until the
    final step. Step 8 (moving originals into `.deleted/`) is ALWAYS user-gated - never move
    or remove any original autonomously; confirm with the user first.
+4. Once `.credo/` is scaffolded, offer to capture per-repo special rules (credo `rules`):
+   ask whether this repo should carry any autonomy-widening grants (for example "restarting
+   local services is always allowed") and, on a yes, write them verbatim into
+   `.credo/RULES.md` via the `rules` skill.

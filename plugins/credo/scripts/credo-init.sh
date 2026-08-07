@@ -96,10 +96,11 @@ EOF
 fi
 
 # --- git-exclude lines (managed block, toggle-safe + idempotent) -------------
-# By default .credo/ is kept entirely out of git; agents version nothing.
+# By default .credo/ is kept out of git EXCEPT .credo/RULES.md (per-repo special rules),
+# which is re-included so it travels with the repo; agents version nothing else.
 # Opt-in (per project): set CREDO_VERSION_TRACKED=1 to version .credo/** in the repo
 # EXCEPT the per-project config and the screenshots, which stay local always. Default
-# (variable unset) = previous behaviour, all of .credo/** excluded.
+# (variable unset) = all of .credo/** excluded except the RULES.md re-include below.
 #
 # The credo entries live inside a marker-delimited managed block. Every run first
 # removes any existing credo block (and legacy loose lines from earlier versions),
@@ -111,7 +112,11 @@ CREDO_BLOCK_END="# <<< credo (managed)"
 if [ "${CREDO_VERSION_TRACKED:-}" = "1" ]; then
     EXCLUDE_LINES=(".credo/config" ".credo/screenshots/")
 else
-    EXCLUDE_LINES=(".credo/**")
+    # .credo/** stays local by default, EXCEPT RULES.md: per-repo special rules are
+    # meant to travel WITH the repo (credo `rules` skill), so re-include that one file
+    # via a trailing negation. Git honors the "!" re-include because .credo/ itself is
+    # not excluded - only its contents are (via the /** glob) - and a later pattern wins.
+    EXCLUDE_LINES=(".credo/**" "!.credo/RULES.md")
 fi
 if GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)"; then
     EXCLUDE_FILE="$GIT_DIR/info/exclude"

@@ -80,6 +80,11 @@ As a backup for environments where the hook is not active, still name the releva
 credo skills (for example `verify`, `audit`, `items`, `requirements-verbatim`) in the
 task you hand each subagent, so a subagent is primed regardless of the hook.
 
+Also pass the project's per-repo special rules to every subagent (credo `rules`): include
+the resolved `.credo/RULES.md` content, or an instruction to load it via
+`scripts/credo-config.sh rules`, in the task. Project grants must not be lost across
+delegation - a subagent has to honor the same widened latitude as the main agent.
+
 ## Model policy (no downgrade, no model-choice logic)
 
 Subagents always run at a model at least as capable as the main agent's model - never

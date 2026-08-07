@@ -43,7 +43,7 @@ Each command sets the mode and loads its skill. The three session skills share o
 
 ## The `.credo/` structure
 
-`scripts/credo-init.sh` creates a per-project `.credo/` tree in the target repo (idempotent) and adds the git-exclude lines so `.credo/**` is not committed. The layout:
+`scripts/credo-init.sh` creates a per-project `.credo/` tree in the target repo (idempotent) and adds the git-exclude lines so `.credo/**` is not committed by default (except `RULES.md`, see below). The layout:
 
 ```
 .credo/
@@ -62,11 +62,12 @@ Each command sets the mode and loads its skill. The three session skills share o
   checklists/          auto-generated cross-cutting checklists
   config               per-project config (YAML)
   id-counter           deterministic integer counter
+  RULES.md             per-repo special rules (grants); versioned by default
 ```
 
-`.credo/**` is deliberately kept out of git. Persistence across a compact is disk plus your normal backups, not commits.
+`.credo/**` is deliberately kept out of git, with ONE exception: `RULES.md` (per-repo special rules) is versioned by default, because those rules are meant to travel with the repo. Everything else's persistence across a compact is disk plus your normal backups, not commits.
 
-**Opt-in versioning (per project).** The default (all of `.credo/**` excluded) is right for solo or private work. If you want the items and process visible in the team's history, run `credo-init.sh` with `CREDO_VERSION_TRACKED=1`: it then versions `.credo/**` in the repo except the per-project `config` and the `screenshots/`, which stay local always. The exclude entries are kept in a marker-delimited managed block in `.git/info/exclude`, so re-running switches the mode cleanly in either direction (drop the variable to go back to fully unversioned). This is a deliberate per-project decision; the default is unversioned.
+**Opt-in versioning (per project).** The default (all of `.credo/**` excluded except `RULES.md`) is right for solo or private work. If you want the items and process visible in the team's history, run `credo-init.sh` with `CREDO_VERSION_TRACKED=1`: it then versions `.credo/**` in the repo except the per-project `config` and the `screenshots/`, which stay local always. The exclude entries are kept in a marker-delimited managed block in `.git/info/exclude`, so re-running switches the mode cleanly in either direction (drop the variable to go back to fully unversioned). This is a deliberate per-project decision; the default is unversioned.
 
 ### Config cascade
 
@@ -113,6 +114,7 @@ Auto-discovered under `skills/`. Each auto-triggers when it applies, including i
 - **diag** - read-only root-cause diagnosis for a symptom; establishes the mechanism at file:line before any fix. The fix is a separate, GO-gated step.
 - **verify** - visual verification as the Definition of Done for any change with a runtime surface; proves behavior in a real browser with computed layout. A down surface may be brought up or restarted autonomously ONLY when the target is positively verified local (a process on this machine, not a deployed/remote/shared environment - judged by where it runs, not by the git branch), via `verify.local_bringup`; otherwise the visual verify defers as human-only.
 - **items** - the work-item model where the folder is the status truth, gated by the Definition of Done.
+- **rules** - per-repo special rules in `.credo/RULES.md`: project-local grants that widen credo's autonomy for that one repo (for example "restarting local services is always allowed without asking" in a debug-only repo). Loaded and honored every session and inside subagents, versioned so they travel with the repo, resolved via the project layer (works from a hub). Grants can only widen latitude within the safety floor (precedence: safety > DOGMA-PERMISSIONS > RULES.md > defaults); set one any time by just asking.
 - **requirements-verbatim** - captures a requirement, decision, approval, or GO word-for-word into an append-only dated log so it survives compaction.
 - **budget** - the single source for API budget caps and reset rules across the 5-hour and weekly limits, plus the commit-identity gate before any commit.
 - **compact-plus** - secures everything the user approved before a context compaction, then reports whether it is safe to compact. It does not run `/compact` itself.
