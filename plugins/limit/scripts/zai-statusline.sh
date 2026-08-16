@@ -117,7 +117,7 @@ format_duration() {
 }
 format_reset_datetime() {
     local ms="${1:-}"; [[ -n "$ms" && "$ms" =~ ^[0-9]+$ ]] || { echo "-"; return; }
-    date -d "@$(( ms/1000 + 1800 ))" "+%Y-%m-%d %H:00" 2>/dev/null || echo "-"
+    date -d "@$(( ms/1000 + 30 ))" "+%Y-%m-%d %H:%M" 2>/dev/null || echo "-"
 }
 ms_to_iso() { local ms="${1:-}"; [[ -n "$ms" && "$ms" =~ ^[0-9]+$ ]] || { echo ""; return; }; date -u -d "@$(( ms/1000 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo ""; }
 # limit line: "<color><label><bar> <pct6>%[ reset: dt]<reset>"

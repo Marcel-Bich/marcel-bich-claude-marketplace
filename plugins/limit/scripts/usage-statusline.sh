@@ -842,8 +842,10 @@ progress_bar() {
     echo "[$bar]"
 }
 
-# Format reset time as "yyyy-mm-dd hh:mm", rounded to nearest hour
-# API sometimes returns :59:59, sometimes :00:00 - we round to the hour
+# Format reset time as "yyyy-mm-dd hh:mm", rounded to the nearest MINUTE.
+# The API returns minute-precise resets with a sub-second tail (e.g. 14:19:59.59
+# means 14:20). Adding 30 seconds absorbs that tail while keeping the real minute,
+# instead of the old hour-rounding that discarded it (16:20 shown as 16:00).
 format_reset_datetime() {
     local reset_at="$1"
 
@@ -854,15 +856,14 @@ format_reset_datetime() {
 
     local formatted
     if date --version >/dev/null 2>&1; then
-        # GNU date (Linux/WSL) - round to nearest hour by adding 30 minutes then truncating
-        # This handles :59:59 -> next hour, :00:00 -> same hour
-        formatted=$(date -d "$reset_at + 30 minutes" "+%Y-%m-%d %H:00" 2>/dev/null) || formatted="-"
+        # GNU date (Linux/WSL) - round to nearest minute by adding 30 seconds
+        formatted=$(date -d "$reset_at + 30 seconds" "+%Y-%m-%d %H:%M" 2>/dev/null) || formatted="-"
     else
         # BSD date (macOS) - same rounding logic
         local epoch
         epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${reset_at%%.*}" "+%s" 2>/dev/null) || { echo "-"; return; }
-        epoch=$((epoch + 1800))  # Add 30 minutes
-        formatted=$(date -r "$epoch" "+%Y-%m-%d %H:00" 2>/dev/null) || formatted="-"
+        epoch=$((epoch + 30))  # Add 30 seconds
+        formatted=$(date -r "$epoch" "+%Y-%m-%d %H:%M" 2>/dev/null) || formatted="-"
     fi
 
     echo "$formatted"

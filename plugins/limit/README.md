@@ -8,7 +8,7 @@ Live API usage in Claude Code statusline - colored progress bars, Git info, toke
 - Real API data from Anthropic (same as `/usage`)
 - Colored progress bars with signal colors (gray/green/yellow/orange/red)
 - Multiple limits: 5-hour, 7-day, Sonnet, Extra Credits
-- Reset times for each limit (rounded to nearest hour)
+- Reset times for each limit (minute-precise)
 
 **Highscore Tracking** (enabled by default, disable with `CLAUDE_MB_LIMIT_LOCAL=false`)
 - Tracks highest token usage per plan (max20, max5, pro)
