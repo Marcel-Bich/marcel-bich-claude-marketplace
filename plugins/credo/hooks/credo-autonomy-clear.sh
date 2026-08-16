@@ -19,8 +19,8 @@
 # real user message thus turns autonomy off at runtime.
 set -u
 
-FLAG="$HOME/.claude/credo-autonomy-active"
-WAKE="$HOME/.claude/credo-wake-scheduled"
+FLAG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo-autonomy-active"
+WAKE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo-wake-scheduled"
 
 input="$(cat 2>/dev/null || true)"
 
@@ -39,5 +39,5 @@ esac
 # paused opt-out. The Stop hook then stays inert until credo-autonomy-on is
 # explicitly called again.
 rm -f "$FLAG" "$WAKE" 2>/dev/null || true
-: > "$HOME/.claude/credo-autonomy-paused" 2>/dev/null || true
+: > "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo-autonomy-paused" 2>/dev/null || true
 exit 0

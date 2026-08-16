@@ -4,7 +4,13 @@
 # Cascade precedence (lowest to highest):
 #   builtin (plugin templates/config.default.yaml)
 #     < global (~/.claude/credo/config)
-#       < project (.credo/config)
+#       < profile ($CLAUDE_CONFIG_DIR/credo/config, per Claude Code profile)
+#         < project (.credo/config)
+#
+# The profile layer lets a second Claude Code profile (a different
+# CLAUDE_CONFIG_DIR, e.g. ~/.claude-private) override the shared global per key,
+# while every key it does not set still falls back to global. It is optional and
+# never auto-created; for the default profile it equals global and is skipped.
 #
 # The global layer is auto-created from the builtin template on first need
 # (universal defaults; personal fields stay empty). YAML is parsed with PyYAML
@@ -25,10 +31,11 @@
 # Env overrides (mainly for testing):
 #   CLAUDE_PLUGIN_ROOT        plugin root (locates the builtin template)
 #   CREDO_GLOBAL              path to the global config file
+#   CREDO_PROFILE             path to the per-profile override config file
 #   CREDO_PROJECT             path to the project config file
 #   CREDO_DIR                 project .credo dir (project config = $CREDO_DIR/config)
 #   CREDO_SKIP_ENSURE         if set to 1, "get" does not auto-create the global layer
-#   CREDO_SESSION_PROJECTS_DIR session-pin dir (default ~/.claude/credo/session-projects)
+#   CREDO_SESSION_PROJECTS_DIR session-pin dir (default $CLAUDE_CONFIG_DIR/credo/session-projects)
 #   CREDO_SESSION_ID           session id for the pin lookup (test override)
 #   CLAUDE_CODE_SESSION_ID     session id for the pin lookup (set by Claude Code)
 #
@@ -47,6 +54,22 @@ else
 fi
 
 GLOBAL="${CREDO_GLOBAL:-$HOME/.claude/credo/config}"
+
+# Per-profile override layer: sits between global and project. Active only when
+# running under a non-default Claude Code profile (CLAUDE_CONFIG_DIR set), where it
+# lets that profile (e.g. ~/.claude-private) override the shared global per key
+# while every unset key still falls back to global. Optional, never auto-created.
+# On the default profile there is no profile layer (empty -> skipped in the merge),
+# so behaviour is unchanged. Deliberately NOT derived from GLOBAL: relocating global
+# via CREDO_GLOBAL must not pull the real profile config into the merge. Set
+# CREDO_PROFILE explicitly to exercise the layer in tests.
+if [ -n "${CREDO_PROFILE:-}" ]; then
+    PROFILE="$CREDO_PROFILE"
+elif [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+    PROFILE="${CLAUDE_CONFIG_DIR%/}/credo/config"
+else
+    PROFILE=""
+fi
 
 if [ -n "${CREDO_PROJECT:-}" ]; then
     PROJECT="$CREDO_PROJECT"
@@ -141,6 +164,11 @@ case "$CMD" in
     paths)
         printf 'builtin: %s (%s)\n' "$BUILTIN" "$([ -f "$BUILTIN" ] && echo present || echo missing)"
         printf 'global:  %s (%s)\n' "$GLOBAL" "$([ -f "$GLOBAL" ] && echo present || echo missing)"
+        if [ -z "$PROFILE" ] || [ "$PROFILE" = "$GLOBAL" ]; then
+            printf 'profile: %s (none - default profile, skipped)\n' "${PROFILE:-<none>}"
+        else
+            printf 'profile: %s (%s)\n' "$PROFILE" "$([ -f "$PROFILE" ] && echo present || echo missing)"
+        fi
         printf 'project: %s (%s)\n' "$PROJECT" "$([ -f "$PROJECT" ] && echo present || echo missing)"
         ;;
     get)
@@ -152,7 +180,9 @@ case "$CMD" in
         if [ "${CREDO_SKIP_ENSURE:-}" != "1" ]; then
             ensure_global || true
         fi
-        CREDO_BUILTIN="$BUILTIN" CREDO_GLOBAL_F="$GLOBAL" CREDO_PROJECT_F="$PROJECT" \
+        PROFILE_F="$PROFILE"
+        [ "$PROFILE_F" = "$GLOBAL" ] && PROFILE_F=""
+        CREDO_BUILTIN="$BUILTIN" CREDO_GLOBAL_F="$GLOBAL" CREDO_PROFILE_F="$PROFILE_F" CREDO_PROJECT_F="$PROJECT" \
             python3 - "$KEY" <<'PY'
 import os, sys, json
 
@@ -304,6 +334,7 @@ def deep_merge(base, over):
 merged = {}
 for p in (os.environ.get("CREDO_BUILTIN"),
           os.environ.get("CREDO_GLOBAL_F"),
+          os.environ.get("CREDO_PROFILE_F"),
           os.environ.get("CREDO_PROJECT_F")):
     layer = load_yaml(p)
     if layer:
@@ -352,7 +383,7 @@ PY
             case "$pin_sid" in
                 *[!A-Za-z0-9._-]*) : ;;   # invalid session id -> skip the pin
                 *)
-                    pin_root="${CREDO_SESSION_PROJECTS_DIR:-$HOME/.claude/credo/session-projects}"
+                    pin_root="${CREDO_SESSION_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-projects}"
                     pin_file="$pin_root/$pin_sid"
                     if [ -f "$pin_file" ]; then
                         pinned="$(sed -n '1p' "$pin_file" 2>/dev/null | tr -d '\r')"

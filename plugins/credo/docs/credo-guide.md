@@ -78,7 +78,7 @@ By default `credo-init.sh` excludes all of `.credo/**` from git. Opt-in versioni
 YAML, merged lowest to highest:
 
 ```
-builtin (templates/config.default.yaml) < global (~/.claude/credo/config) < project (.credo/config)
+builtin (templates/config.default.yaml) < global (~/.claude/credo/config) < profile ($CLAUDE_CONFIG_DIR/credo/config) < project (.credo/config)
 ```
 
 The builtin template holds universal defaults only:

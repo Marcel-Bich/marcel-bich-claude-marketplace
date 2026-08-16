@@ -44,7 +44,7 @@ case "$session_id" in
         ;;
 esac
 
-STATE_DIR="${CREDO_SESSION_PROJECTS_DIR:-$HOME/.claude/credo/session-projects}"
+STATE_DIR="${CREDO_SESSION_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-projects}"
 mkdir -p "$STATE_DIR" || { echo "session-project-set: cannot create state dir $STATE_DIR" >&2; exit 1; }
 
 state_file="$STATE_DIR/$session_id"

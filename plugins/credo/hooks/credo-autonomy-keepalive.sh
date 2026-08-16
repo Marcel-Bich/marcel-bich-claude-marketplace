@@ -15,8 +15,8 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FLAG="$HOME/.claude/credo-autonomy-active"
-WAKE="$HOME/.claude/credo-wake-scheduled"
+FLAG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo-autonomy-active"
+WAKE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo-wake-scheduled"
 
 input="$(cat 2>/dev/null || true)"
 
@@ -38,7 +38,7 @@ fi
 # Hard opt-out: if autonomy was deliberately paused (credo-autonomy-off sets
 # this), never trigger, even if a stale active flag lingers. Only
 # credo-autonomy-on lifts the opt-out.
-[ -f "$HOME/.claude/credo-autonomy-paused" ] && exit 0
+[ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo-autonomy-paused" ] && exit 0
 
 # Not in autonomy mode -> nothing to do (normal stop).
 [ -f "$FLAG" ] || exit 0
@@ -53,5 +53,5 @@ if [ -f "$WAKE" ]; then
 fi
 
 # Autonomy active + no valid wake -> block the stop and instruct.
-echo "ACTION (autonomy keep-alive): You are in full-autonomy mode (flag ~/.claude/credo-autonomy-active is set) but NO ScheduleWakeup is set. Do NOT just end the turn. Set ScheduleWakeup NOW (chain calls for pauses over 1h) and mark the wake time with '$SCRIPT_DIR/credo-autonomy-wake-mark.sh <delaySeconds>' (same delaySeconds as the ScheduleWakeup). If the autonomous work is truly finished OR there is a showstopper / weekly hard limit: end the mode deliberately with '$SCRIPT_DIR/credo-autonomy-off.sh' - then you may stop." >&2
+echo "ACTION (autonomy keep-alive): You are in full-autonomy mode (flag $FLAG is set) but NO ScheduleWakeup is set. Do NOT just end the turn. Set ScheduleWakeup NOW (chain calls for pauses over 1h) and mark the wake time with '$SCRIPT_DIR/credo-autonomy-wake-mark.sh <delaySeconds>' (same delaySeconds as the ScheduleWakeup). If the autonomous work is truly finished OR there is a showstopper / weekly hard limit: end the mode deliberately with '$SCRIPT_DIR/credo-autonomy-off.sh' - then you may stop." >&2
 exit 2

@@ -7,8 +7,8 @@
 # your own.
 # Optional argument: a short reason / repo hint recorded in the flag file.
 set -eu
-FLAG="$HOME/.claude/credo-autonomy-active"
-rm -f "$HOME/.claude/credo-autonomy-paused" 2>/dev/null || true
+FLAG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo-autonomy-active"
+rm -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo-autonomy-paused" 2>/dev/null || true
 mkdir -p "$(dirname "$FLAG")" 2>/dev/null || true
 reason="${*:-}"
 ts="$(date '+%Y-%m-%d %H:%M:%S %z')"

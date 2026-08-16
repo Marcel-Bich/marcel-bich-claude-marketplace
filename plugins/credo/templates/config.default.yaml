@@ -1,7 +1,8 @@
 # credo default configuration (builtin template, read-only).
 #
 # This ships with the plugin and is the lowest layer of the config cascade:
-#   builtin (this file) < global (~/.claude/credo/config) < project (.credo/config)
+#   builtin (this file) < global (~/.claude/credo/config)
+#     < profile ($CLAUDE_CONFIG_DIR/credo/config) < project (.credo/config)
 #
 # On first need the global config is created from this template. It carries
 # UNIVERSAL defaults (safe for everyone). PERSONAL and environment-specific

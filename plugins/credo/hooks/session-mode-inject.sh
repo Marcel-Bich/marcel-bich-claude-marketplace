@@ -37,7 +37,7 @@ case "$session_id" in
 esac
 
 # --- locate the per-session state file ---
-STATE_DIR="${CREDO_SESSION_MODES_DIR:-$HOME/.claude/credo/session-modes}"
+STATE_DIR="${CREDO_SESSION_MODES_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-modes}"
 state_file="$STATE_DIR/$session_id"
 
 # No mode set yet -> optionally inject one short, INFORMATIONAL bootstrap hint so

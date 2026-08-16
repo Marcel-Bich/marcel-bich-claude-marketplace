@@ -74,10 +74,12 @@ Each command sets the mode and loads its skill. The three session skills share o
 Config is YAML, merged lowest to highest:
 
 ```
-builtin (templates/config.default.yaml) < global (~/.claude/credo/config) < project (.credo/config)
+builtin (templates/config.default.yaml) < global (~/.claude/credo/config) < profile ($CLAUDE_CONFIG_DIR/credo/config) < project (.credo/config)
 ```
 
 The builtin template ships universal, safe-for-everyone defaults (viewports 320/768/1440, timing windows, the compact thresholds 70/90, the budget schedule, wakeup offsets). On first need the global config is created from this template. Personal and environment-specific fields (ntfy topic, commit-identity hint, WSL reachability, living-docs list) are intentionally left empty and are filled just-in-time by the skill that needs them, with permission per change. `/credo:setup` is an optional way to pre-initialize this.
+
+The **profile layer** sits between global and project: `$CLAUDE_CONFIG_DIR/credo/config` (for example `~/.claude-private/credo/config`) lets a second Claude Code profile override the shared global per key, while every key it does not set still falls back to global. It is optional and never auto-created; for the default profile it equals global and is skipped. Session state (modes, decisions, project pins) and the autonomy flags likewise follow the active profile, so two profiles run side by side without sharing state.
 
 ### Deterministic id-counter
 

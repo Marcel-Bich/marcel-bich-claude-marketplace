@@ -21,8 +21,8 @@
 #      autonomously.
 #
 # State (keyed by session_id, mirrors session-mode-set.sh / credo-decision-set.sh):
-#   mode      : $HOME/.claude/credo/session-modes/<id>      (active|passive|autonomous)
-#   decision  : $HOME/.claude/credo/session-decisions/<id>  (accepted|declined)
+#   mode      : ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-modes/<id>      (active|passive|autonomous)
+#   decision  : ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-decisions/<id>  (accepted|declined)
 # Derived session state:
 #   active   = a mode is set, OR decision == accepted   -> KNOWLEDGE (any source)
 #   declined = decision == declined (and no mode)        -> stay silent
@@ -60,8 +60,8 @@ source=$(printf '%s' "$INPUT" | jq -r '.source // ""' 2>/dev/null) || source=""
 [[ "$source" == "null" ]] && source=""
 
 # --- read per-session state ---
-MODES_DIR="${CREDO_SESSION_MODES_DIR:-$HOME/.claude/credo/session-modes}"
-DECISIONS_DIR="${CREDO_SESSION_DECISIONS_DIR:-$HOME/.claude/credo/session-decisions}"
+MODES_DIR="${CREDO_SESSION_MODES_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-modes}"
+DECISIONS_DIR="${CREDO_SESSION_DECISIONS_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-decisions}"
 
 mode=""
 [[ -f "$MODES_DIR/$session_id" ]] && \
@@ -105,7 +105,7 @@ ask_enabled=true
 # keep-alive Stop hook uses), never inject the ASK - nobody is at the keyboard
 # to answer AskUserQuestion. This closes the gap where a fresh autonomous
 # session has no mode file yet at its first startup (state would be "open").
-[[ -f "$HOME/.claude/credo-autonomy-active" ]] && ask_enabled=false
+[[ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo-autonomy-active" ]] && ask_enabled=false
 
 emit() {
     jq -n --arg ctx "$1" \

@@ -41,7 +41,7 @@ case "$session_id" in
         ;;
 esac
 
-STATE_DIR="${CREDO_SESSION_MODES_DIR:-$HOME/.claude/credo/session-modes}"
+STATE_DIR="${CREDO_SESSION_MODES_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-modes}"
 mkdir -p "$STATE_DIR" || { echo "session-mode-set: cannot create state dir $STATE_DIR" >&2; exit 1; }
 
 state_file="$STATE_DIR/$session_id"

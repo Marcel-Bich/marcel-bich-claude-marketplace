@@ -89,7 +89,7 @@ if [ ! -f "$CREDO_DIR/config" ]; then
     tmp="$CREDO_DIR/.config.tmp.$$"
     cat > "$tmp" <<'EOF'
 # credo per-project config (YAML).
-# Cascade precedence: builtin < global (~/.claude/credo/config) < this file.
+# Cascade precedence: builtin < global (~/.claude/credo/config) < profile ($CLAUDE_CONFIG_DIR/credo/config) < this file.
 # Add only project-specific overrides here. Leave empty to inherit everything.
 EOF
     mv -f "$tmp" "$CREDO_DIR/config"

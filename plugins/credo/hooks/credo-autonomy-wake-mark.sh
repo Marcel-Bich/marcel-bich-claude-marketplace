@@ -7,7 +7,7 @@
 # lets the turn stop because a self-wake lies in the future. ALWAYS use this
 # together with a ScheduleWakeup call, with the same delaySeconds.
 set -eu
-WAKE="$HOME/.claude/credo-wake-scheduled"
+WAKE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo-wake-scheduled"
 mkdir -p "$(dirname "$WAKE")" 2>/dev/null || true
 delay="${1:-}"
 case "$delay" in
