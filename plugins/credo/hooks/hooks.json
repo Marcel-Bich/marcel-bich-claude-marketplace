@@ -7,6 +7,11 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-session-start.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-bridge.sh",
+            "timeout": 10
           }
         ]
       }
@@ -28,6 +33,11 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-autonomy-clear.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-bridge.sh",
+            "timeout": 10
           }
         ]
       }
@@ -39,6 +49,11 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-datetime-inject.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-bridge.sh",
             "timeout": 10
           }
         ]

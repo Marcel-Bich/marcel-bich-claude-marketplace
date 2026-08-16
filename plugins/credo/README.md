@@ -129,6 +129,17 @@ Auto-discovered under `skills/`. Each auto-triggers when it applies, including i
 
 credo primes every subagent at start. The `SubagentStart` hook (`credo-subagent-inject.sh`) injects the load-bearing rules (security, quality gates, honesty, delegation, output hygiene) into each subagent before its first prompt, for all subagent types. It also injects a fresh, authoritative time (and best-effort live budget from the statusline cache) so a subagent works from the real clock instead of the possibly frozen time/limit values inherited from the main agent's context. This complements the skill descriptions, which are written to auto-trigger inside subagents as well. So even a main agent that only delegates gets correct results, independently of its own context state.
 
+## Cross-profile peer bridge
+
+Cross-session messaging (`ListAgents` / `SendMessage`) only discovers peers that share the same `sessions/` registry, so sessions started under different profiles (different `CLAUDE_CONFIG_DIR`, e.g. `~/.claude` vs `~/.claude-private`) cannot see or message each other by default - even though the inbox sockets live in one shared runtime dir and the transport works across profiles. Because agents talking to each other regardless of profile is part of the workflow, credo bridges this.
+
+The `credo-peer-bridge.sh` hook (SessionStart, UserPromptSubmit, PostToolUse) autodiscovers sibling profiles (`~/.claude*` dirs that own a `sessions/` registry) and mirrors each **live** peer descriptor into the current profile's `sessions/` dir as a per-file **symlink**. That makes cross-profile peers appear in `ListAgents` and become reachable via `SendMessage`.
+
+- **Resume stays clean.** `/resume` reads transcripts under `projects/`, never `sessions/`, so a mirrored descriptor (which has no local transcript) never pollutes the resume picker. Work/private history remain fully separate.
+- **Safe by construction.** The hook only ever creates or removes symlinks that point into a sibling `sessions/` dir; it never touches regular files (real local descriptors), never removes directories, and always exits 0 so it cannot surface as a hook error. Dead/dangling bridge links are pruned on the next run.
+- **Disable** with `CREDO_PEER_BRIDGE=0`.
+- **Caveat:** the descriptor format is internal to Claude Code and undocumented, so a future version may change it. The bridge is fail-safe - if that happens, peers simply stop appearing; nothing is corrupted.
+
 ## Dependencies
 
 credo works on its own. Two touchpoints are external:
