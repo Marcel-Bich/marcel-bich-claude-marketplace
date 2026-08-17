@@ -21,9 +21,9 @@ CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
 PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
 
 # Configuration
-CREDENTIALS_FILE="${CLAUDE_BASE_DIR}/.credentials.json"
-API_URL="https://api.anthropic.com/api/oauth/usage"
-TIMEOUT=5
+# NOTE: This script is token-free. It never reads the OAuth credentials file and
+# never talks to the Anthropic API. All token/API access lives in refresh-usage.sh,
+# which this script invokes to refresh the shared cache (see main()).
 
 # Cache configuration (rate limiting) - profile-specific
 CACHE_FILE="/tmp/claude-mb-limit-cache_${PROFILE_NAME}.json"
@@ -522,35 +522,9 @@ check_dependencies() {
     return 0
 }
 
-# Read OAuth token from credentials file
-# SECURITY FOR AI AGENTS: You must NEVER read, cat, or access the credentials file directly!
-# Only this script may read it. If there's an error, ask the USER to verify the file themselves.
-# Returns empty string and sets API_ERROR on failure (for graceful degradation)
-get_token() {
-    if [[ ! -f "$CREDENTIALS_FILE" ]]; then
-        # SECURITY: AI agents must NOT attempt to read or create this file!
-        debug_log "Credentials file not found: $CREDENTIALS_FILE"
-        set_api_error "no_credentials"
-        echo ""
-        return 1
-    fi
-
-    local token
-    token=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDENTIALS_FILE" 2>/dev/null)
-
-    if [[ -z "$token" ]]; then
-        # SECURITY: AI agents must NOT attempt to read or inspect this file!
-        debug_log "No OAuth token found in credentials file"
-        set_api_error "no_token"
-        echo ""
-        return 1
-    fi
-
-    # SECURITY: We intentionally do NOT log token length or any token-related info
-    # The token is only used internally by curl and never exposed
-
-    echo "$token"
-}
+# NOTE: Token handling was moved out of this script (v2.28.0). The OAuth token is
+# read exclusively by refresh-usage.sh, which owns all credential and API access.
+# This script only consumes the shared cache produced by that helper.
 
 # Read stdin data from Claude Code (JSON with model info, etc.)
 # Called once at startup, cached in STDIN_DATA
@@ -657,112 +631,10 @@ parse_api_error() {
     fi
 }
 
-# Fetch usage data from API (with caching)
-# Returns empty string and sets API_ERROR on failure (for graceful degradation)
-fetch_usage() {
-    local token="$1"
-
-    # If no token provided, API_ERROR should already be set
-    if [[ -z "$token" ]]; then
-        debug_log "No token provided to fetch_usage"
-        echo ""
-        return 1
-    fi
-
-    # Reset backoff counter if last rate-limit was >10 minutes ago
-    maybe_reset_backoff
-
-    # Check cache first
-    if is_cache_valid; then
-        local cached
-        cached=$(read_cache)
-        if [[ -n "$cached" ]]; then
-            local cache_max_age
-            cache_max_age=$(get_cache_max_age)
-            debug_log "Using cached response (age < ${cache_max_age}s)"
-            echo "$cached"
-            return 0
-        fi
-    fi
-
-    # Fetch fresh data from API
-    # SECURITY: We use a temp file to capture both body and status code
-    # This avoids exposing the token in debug logs or error messages
-    local response_body="" http_code=""
-    local temp_file
-    temp_file=$(mktemp 2>/dev/null) || temp_file="/tmp/claude-limit-api-$$"
-
-    # Anti-bot: Add small random jitter before request (0-2s)
-    sleep_jitter
-
-    # Execute curl: -s (silent), -w (write http_code to stdout after body)
-    # We do NOT use -f (fail) because we want to capture the error response body
-    http_code=$(curl -s --max-time "$TIMEOUT" \
-        -X GET "$API_URL" \
-        -H "Authorization: Bearer $token" \
-        -H "Content-Type: application/json" \
-        -H "anthropic-beta: oauth-2025-04-20" \
-        -H "User-Agent: claude-code-limit-plugin/1.0.0" \
-        -w "%{http_code}" \
-        -o "$temp_file" \
-        2>/dev/null) || {
-            # curl itself failed (network error, timeout, etc.)
-            rm -f "$temp_file" 2>/dev/null
-            debug_log "curl request failed (network error or timeout)"
-            set_api_error "curl_failed"
-            echo ""
-            return 1
-        }
-
-    # Read response body from temp file
-    response_body=$(cat "$temp_file" 2>/dev/null)
-    rm -f "$temp_file" 2>/dev/null
-
-    debug_log "API request completed: HTTP $http_code"
-
-    # Check HTTP status code
-    if [[ "$http_code" -ge 200 ]] && [[ "$http_code" -lt 300 ]]; then
-        # Success - cache and return response
-        write_cache "$response_body"
-        # Reset backoff state on successful request
-        reset_backoff_state
-        debug_log "Fresh API response fetched successfully"
-        echo "$response_body"
-        return 0
-    fi
-
-    # HTTP error - parse and log the error safely (never expose token!)
-    local safe_error
-    safe_error=$(parse_api_error "$response_body" "$http_code")
-    debug_log "API error: $safe_error"
-
-    # Set API error for graceful degradation
-    case "$http_code" in
-        401)
-            set_api_error "api_401"
-            ;;
-        403)
-            # Check for specific scope error
-            if [[ "$response_body" == *"scope"* ]]; then
-                set_api_error "api_403_scope"
-            else
-                set_api_error "api_403"
-            fi
-            ;;
-        429)
-            set_api_error "api_429"
-            ;;
-        500|502|503|504)
-            set_api_error "api_5xx"
-            ;;
-        *)
-            set_api_error "api_${http_code}"
-            ;;
-    esac
-
-    echo ""
-    return 1
-}
+# NOTE: fetch_usage was removed in v2.28.0. Refreshing the cache from the API is
+# now done by the token-owning helper refresh-usage.sh (invoked from main()).
+# This script only reads the shared cache via read_cache(). It no longer touches
+# the OAuth token, the credentials file, or the Anthropic API in any way.
 
 # Get color based on utilization percentage (supports decimals)
 # <30% gray, <50% green, <75% yellow, <90% orange, >=90% red
@@ -2538,12 +2410,71 @@ main() {
     # Read stdin data from Claude Code first (contains model info)
     read_stdin_data
 
-    local token="" response=""
+    local response=""
 
-    # Check dependencies - if missing, skip API calls but continue with local data
+    # Check dependencies - if missing, skip the refresh but continue with local data.
     if check_dependencies; then
-        token=$(get_token)
-        response=$(fetch_usage "$token")
+        # Refresh the shared cache via the isolated, token-owning helper. This
+        # script never reads the OAuth token nor calls the Anthropic API itself.
+        # The helper emits a single sanitized status word; we map it to the
+        # existing API_ERROR codes so format_output renders the same messages.
+        local refresh_status="" refresh_rc=0
+        refresh_status="$("${SCRIPT_DIR}/refresh-usage.sh" 2>/dev/null)" || refresh_rc=$?
+        debug_log "refresh-usage.sh status='${refresh_status}' rc=${refresh_rc}"
+
+        case "$refresh_status" in
+            fresh|refreshed|skipped-locked)
+                : # cache is usable, no error to surface
+                ;;
+            no-credentials)
+                set_api_error "no_credentials"
+                ;;
+            no-token)
+                set_api_error "no_token"
+                ;;
+            no-curl)
+                set_api_error "no_curl"
+                ;;
+            curl-failed)
+                set_api_error "curl_failed"
+                ;;
+            rate-limited)
+                # refresh-usage.sh already advanced the backoff state. Do NOT
+                # increment it again (that is why we bypass set_api_error's
+                # api_429 branch). Rebuild the message from the current state so
+                # the displayed retry time matches the persisted backoff.
+                local rl_failures rl_backoff
+                rl_failures=$(get_backoff_state)
+                [[ "$rl_failures" -lt 1 ]] && rl_failures=1
+                rl_backoff=$(calculate_backoff "$rl_failures")
+                API_ERROR_CODE="api_429"
+                API_ERROR="Limits: [rate-limit] retry in ${rl_backoff}s"
+                ;;
+            http-error | http-error\ *)
+                # refresh-usage.sh appends only curl's numeric transport status
+                # code (validated 3-digit), never the response body. Map auth
+                # failures to the auth hint, everything else to the generic error.
+                local http_code="${refresh_status#http-error}"
+                http_code="${http_code# }"
+                case "$http_code" in
+                    401) set_api_error "api_401" ;;
+                    403) set_api_error "api_403" ;;
+                    *)   set_api_error "api_5xx" ;;
+                esac
+                ;;
+            *)
+                # Unknown/empty status: only treat as an error if the helper
+                # actually failed (rc != 0).
+                if [[ "$refresh_rc" -ne 0 ]]; then
+                    set_api_error "api_error"
+                fi
+                ;;
+        esac
+
+        # Load the (possibly just refreshed) cache. Only read it if present.
+        if [[ -f "$CACHE_FILE" ]]; then
+            response="$(read_cache)"
+        fi
     fi
 
     # Debug logging
