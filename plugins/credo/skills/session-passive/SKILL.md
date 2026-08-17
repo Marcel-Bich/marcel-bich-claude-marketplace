@@ -44,6 +44,11 @@ It covers, all unchanged for passive mode:
 
 The section below only states where passive mode DIFFERS from that core.
 
+## Output convention - item references in inline code
+
+Item references are always written in inline-code style: `#37`, `#90`, `#91` (backticks) -
+never bold or plain. This improves scannability of item numbers.
+
 ## Passive-mode specifics (A2)
 
 Passive mode is "you drive, the user reviews". The user is present for clarifications but

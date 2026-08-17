@@ -8,7 +8,9 @@ description: >
   compact safe. Run this only when the limit plugin's injected ACTION line names it
   (session-context fill crossed a configured threshold) or when the user invokes it
   manually. Never self-trigger it proactively - that only wastes tokens. Accepts extra
-  trailing instructions to perform in addition to the securing checklist.
+  trailing instructions to perform in addition to the securing checklist. A minimal
+  mode (invoke as /compact-plus min) secures only intent plus handoff to disk - no
+  audit, no commit or push - for a quick token-cheap save.
 ---
 
 # compact-plus - secure progress before a compact
@@ -107,9 +109,25 @@ the work product persist differently:
   version bumps, and anything else git tracks) in the correct repository. This is the
   channel where commit plus push and the origin verification apply.
 
+## Modes: full (default) vs minimal
+
+- FULL (default): the complete securing checklist below (steps 1-8) - disk securing
+  plus the audit gate and the commit-and-push of the tracked work product.
+- MINIMAL: invoked as `/compact-plus min` (also `minimal`, or a trailing "minimal" /
+  "nur auf platte" instruction). Do ONLY steps 1-3 (capture verbatim intent, append to
+  the requirements-verbatim log, update the rolling handoff - all on disk), then jump
+  straight to the report. SKIP the audit (step 4) and the commit-and-push (steps 5-7).
+  Use it for a quick, token-cheap disk-only securing when there is nothing to commit or
+  the user only wants intent plus handoff preserved. Minimal mode never commits or
+  pushes and never runs the audit subagent.
+
+Pick the mode from the invocation argument BEFORE starting: an argument of `min` /
+`minimal` (or an equivalent trailing instruction) selects MINIMAL; otherwise FULL.
+
 ## Securing checklist
 
-Do every step in the correct repo, then report.
+Do every step in the correct repo, then report. In MINIMAL mode do only steps 1-3,
+then go straight to the report (step 8) and skip steps 4-7.
 
 1. Review THIS conversation for everything the user explicitly approved, requested,
    decided, or corrected since the last secure point - exact wording, concrete examples,

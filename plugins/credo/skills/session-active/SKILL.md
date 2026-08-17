@@ -79,6 +79,11 @@ present each one you do bring in its own round. Trivial, self-evident fixes stil
 question. This rule does not apply in autonomous mode, which runs unattended without
 interactive Ask rounds.
 
+## Output convention - item references in inline code
+
+Item references are always written in inline-code style: `#37`, `#90`, `#91` (backticks) -
+never bold or plain. This improves scannability of item numbers.
+
 ## A bug report is not an immediate fix (G2)
 
 When the user reports a bug, do not jump straight to fixing it if there is interpretation

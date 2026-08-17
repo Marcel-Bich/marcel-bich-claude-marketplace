@@ -145,6 +145,9 @@ and the lean-frontmatter philosophy is not broken.
 - Frontmatter `id:` matches the number in the filename.
 - Reference an item elsewhere as `#124` (plus its date/short context - transcript line
   numbers are not stable references).
+
+> **Output convention.** Item references are always written in inline-code style: `#37`,
+> `#90`, `#91` (backticks) - never bold or plain. This improves scannability of item numbers.
 - **Get ids only from the counter helper, never compute one yourself.** Issue the next id with:
 
   ```

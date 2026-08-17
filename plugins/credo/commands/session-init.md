@@ -96,6 +96,11 @@ These are the credo capabilities available in this session. Prefer them over the
 - **[B] only on explicit user request** (interactive, or the user's call to make): `/credo:session-active`, `/credo:session-passive`, `/credo:psalm`, `/credo:project <path>` (pin a target).
 - **[C] NEVER run autonomously** - only the user decides these (mode escalation / installs / structural migration): `/credo:session-autonomous`, `/credo:setup`, `/credo:migrate`.
 
+## Output convention
+
+Item references are always written in inline-code style: `#37`, `#90`, `#91` (backticks) -
+never bold or plain. This improves scannability of item numbers.
+
 ## Your Response
 
 First, record that credo is now active for this session so the SessionStart hook stops asking:

@@ -70,11 +70,15 @@ Two ways to read the current numbers:
 
 ### Security (hard rule, non-negotiable)
 
-- NEVER read `~/.claude/.credentials.json` or any OAuth token.
-- NEVER run the usage-statusline script (it touches the token).
-- Only read the existing limit cache - it holds display values (percentages, reset times)
-  only, no secrets. The helper above obeys this boundary; if you read the cache by hand,
-  obey it too.
+- NEVER read `~/.claude/.credentials.json` or any OAuth token directly.
+- `usage-statusline.sh` is now TOKEN-FREE - it only reads the cache and never touches the
+  token. Running it is therefore harmless (it cannot leak a secret), but it is also not how
+  you warm the cache.
+- Keeping the cache warm is `limits scripts/refresh-usage.sh`'s job. That script is the
+  ONLY place the token lives; it is token-isolated, emits only sanitised status words, and
+  leaks nothing. Hooks and agents may trigger it to refresh the cache.
+- The cache stays pure display values (percentages, reset times) only, no secrets. The
+  helper above obeys this boundary; if you read the cache by hand, obey it too.
 
 ## The default cap schedule (B1) - config-driven
 
@@ -116,6 +120,16 @@ For the 5-hour axis, off-hours use a soft/hard band from `budget.five_hour`:
 `soft_percent` (default 92, warn and start winding down) and `hard_percent` (default 95,
 stop). The schedule's `five_hour_cap` for off-hours rows equals the hard value. Work-hours
 rows cap the 5h window low (default 40) so the 09:00 guard below can hold.
+
+In AUTONOMOUS mode the 5h pacing is instead driven by a staggered ladder that is ENFORCED
+by the `credo-5h-budget-guard.sh` PreToolUse hook (it fires in the main agent and inside
+subagents). The ladder lives in config as `budget.autonomous_5h.main_ladder` (default
+`[83,87,90,92,97]`) and `budget.autonomous_5h.subagent_ladder` (default `[83,90,92]`). In
+autonomous mode this ladder OVERRIDES the soft/hard band logic above for the 5h axis - one
+coherent number set governs the window, so soft/hard and the ladder never double-fire. The
+remaining budget building blocks (commit-identity gate, weekly, 09:00 guard, task-sizing,
+fail-safe) are unchanged. See the concept `docs/TODO-credo-5h-budget-guard-concept.md` and
+the autonomous-mode section in the credo `session-autonomous` skill.
 
 Worked examples (with the shipped defaults):
 
@@ -308,7 +322,11 @@ Rules for this gate:
 
 - `budget.schedule` - the daily cap rows (day, window, five_hour_cap, weekly_cap).
 - `budget.work_hours.start` / `budget.work_hours.end` - work-hours boundaries (Mon-Fri).
-- `budget.five_hour.soft_percent` / `budget.five_hour.hard_percent` - off-hours 5h band.
+- `budget.five_hour.soft_percent` / `budget.five_hour.hard_percent` - off-hours 5h band
+  (overridden by the autonomous ladder in autonomous mode).
+- `budget.autonomous_5h.main_ladder` / `budget.autonomous_5h.subagent_ladder` - the
+  autonomous-only 5h ladder enforced by `credo-5h-budget-guard.sh` (defaults
+  `[83,87,90,92,97]` / `[83,90,92]`).
 - `budget.nine_oclock_guard_reserve_percent` - reserve that must remain at 09:00.
 - `budget.task_sizing.large_below_percent` / `budget.task_sizing.medium_below_percent`.
 - `budget.weekly_pause.enabled` - gate for the weekly pause-and-resume path (default true).

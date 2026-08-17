@@ -67,6 +67,11 @@ Where the core points at a building block, that still holds here. In particular,
 budget cap / reset / 09:00-guard / task-sizing / weekly-99 / commit-identity rules live in
 the credo `budget` skill; this skill references it and never restates a cap value.
 
+## Output convention - item references in inline code
+
+Item references are always written in inline-code style: `#37`, `#90`, `#91` (backticks) -
+never bold or plain. This improves scannability of item numbers.
+
 ## Autonomous-mode specifics (A3)
 
 ### Steward, not initiator
@@ -193,6 +198,69 @@ autonomous mode (no flag set) the hook is completely inert - a plain no-op stop.
 
 Wake-up offsets after a limit reset (default 5 minutes, fallback 1) come from the budget
 skill's `wakeup.*` config - use them when you pause for a limit to reset.
+
+### 5h-budget-guard (autonomous only, hook-enforced)
+
+Autonomous runs pace the 5h axis on a staggered ladder that the `credo-5h-budget-guard.sh`
+PreToolUse hook enforces (it fires in the main agent AND inside subagents). This applies
+ONLY in autonomous mode; active and passive are unchanged. The ladder OVERRIDES the budget
+skill's soft/hard band on the 5h axis (no double-firing); everything else in the budget
+skill still holds. Full rationale: `docs/TODO-credo-5h-budget-guard-concept.md`.
+
+Two tracks (the main agent orchestrates - spawns, commits, schedules; a subagent runs ONE
+task and reports back):
+
+- **Main track:** 83 soft, 87 soft, 90 soft-strong, 92 HARD, 97 Lockdown.
+- **Subagent track:** 83 soft, 90 HARD, 92 HARD.
+
+Zones:
+
+- **Soft zone** = recommendation only. The hook injects a throttled, concrete instruction
+  (wind down, no big new fan-outs, wrap up running subagents, secure results); the agent
+  stays at the wheel and judges. It does NOT block. Do not capitulate early - the hard zone
+  is the safety net, so exploit the budget deliberately up to it.
+- **Hard zone** = the hook BLOCKS disallowed tool-calls. Still allowed in the hard zone:
+  `git` commit / push, writing under `.credo/`, `TaskStop`, `ScheduleWakeup`, and
+  `credo-autonomy-wake-mark.sh`. New agent spawns and builds are blocked. At 92 the main
+  agent hard-kills running subagents via `TaskStop`, then does only organisational work
+  (commit / push, write the resume block, task status). At 97 (Lockdown) everything is
+  dropped - even an open commit / push - and only the resume wake-up is set.
+
+### resume-after-reset.md protocol
+
+Location `.credo/process/resume-after-reset.md` (durable, git-excluded like the other
+`.credo` process files). It is a ROLLING log of at most TWO blocks: the newest block always
+on top, the previous one below it, and the oldest drops out entirely when a new one is
+added. Each block records:
+
+- the write timestamp (date + time + TZ),
+- the exact 5h-reset time this block is waiting for,
+- the open remaining work + next steps (folded in from the subagents' PAUSE reports and the
+  main agent's own state).
+
+After the wake-up the main agent works EXCLUSIVELY the newest block (the one written just
+before the reset that just happened), never the older one below it; it marks done points as
+done. If it runs into the limit again it writes a new block on top and the oldest drops out.
+
+Exception - 97 % Lockdown: write NO protocol (it costs tokens that are already scarce at
+97 %). Instead set the resume wake-up IMMEDIATELY and stop; after the reset, continue from
+the session context.
+
+### Auto-resume - only the credo method
+
+Pausing across a 5h reset and coming back uses ONLY the credo-documented keep-alive / wake
+method described in the Keep-alive section above: `ScheduleWakeup` as the primary self-wake,
+marked with `credo-autonomy-wake-mark.sh` (same `delaySeconds`) so the Stop hook lets the
+turn stop, and the offset AFTER a reset taken from the budget skill's `wakeup.*` config
+(default 5 minutes, fallback 1). Do not invent any other wake mechanism.
+
+### compact-plus precedence (5h reset wins)
+
+The 5h-reset wake-up takes PRECEDENCE over compact-plus. On a collision - the 5h axis is
+near its cap AND the session-context threshold has been reached - do NOT run compact-plus
+before the reset (it costs tokens and could blow the 5h limit). Set the reset wake-up, stop,
+and run compact-plus only AFTER the reset, once it is safe. The same applies to the weekly
+axis.
 
 ### Per-task and per-question ntfy
 
