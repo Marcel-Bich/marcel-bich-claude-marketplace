@@ -99,6 +99,28 @@ budget:
   five_hour:
     soft_percent: 92
     hard_percent: 95
+  # Autonomous-run 5h pacing ladder (credo-5h-budget-guard.sh PreToolUse hook).
+  # Active ONLY when credo-autonomy-active is set. Two tracks read the live 5h
+  # utilization before each relevant tool call and self-limit; the soft stages
+  # inject a recommendation, the hard stages block disallowed tool calls (concept:
+  # docs/TODO-credo-5h-budget-guard-concept.md, sections 5a/5b/6).
+  #   main_ladder     [soft, soft, soft, HARD, HARD-lockdown]  (percent)
+  #   subagent_ladder [soft, HARD, HARD]                       (percent)
+  #   refresh_floor_seconds: lower bound the guard honors before re-warming the
+  #                          limit cache (refresh-usage.sh owns its own 60s floor;
+  #                          this documents the intended cadence).
+  autonomous_5h:
+    main_ladder:
+      - 83
+      - 87
+      - 90
+      - 92
+      - 97
+    subagent_ladder:
+      - 83
+      - 90
+      - 92
+    refresh_floor_seconds: 60
   work_hours:
     start: 9
     end: 17
