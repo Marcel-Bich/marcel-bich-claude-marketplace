@@ -85,7 +85,7 @@ count=$((count + 1))
 # (count-1) % EVERY == 0 also stays correct for EVERY=1 (fires every turn).
 [[ $(((count - 1) % EVERY)) -eq 0 ]] || exit 0
 
-line="[credo] attended: nie Pause/Break vorschlagen; keine 'darf ich weiter / welches Item'-Meta-Frage; treibe deine Empfehlung weiter (Planung -> naechste Clarify-Runde, Task -> naechstes GO-Item); Ask nur fuer echte Klaerung/GO."
+line="[credo] attended: never suggest a pause/break; no 'may I continue / which item next' meta-question; drive your recommendation forward (planning -> next clarify round, task -> next GO item); use Ask only for genuine clarifications or GO."
 
 jq -n --arg ctx "$line" \
     '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $ctx}, suppressOutput: true}' 2>/dev/null

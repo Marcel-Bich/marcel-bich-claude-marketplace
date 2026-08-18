@@ -113,8 +113,8 @@ the work product persist differently:
 
 - FULL (default): the complete securing checklist below (steps 1-8) - disk securing
   plus the audit gate and the commit-and-push of the tracked work product.
-- MINIMAL: invoked as `/compact-plus min` (also `minimal`, or a trailing "minimal" /
-  "nur auf platte" instruction). Do ONLY steps 1-3 (capture verbatim intent, append to
+- MINIMAL: invoked as `/compact-plus min` (also `minimal`, or an equivalent trailing
+  "minimal" / "min" instruction). Do ONLY steps 1-3 (capture verbatim intent, append to
   the requirements-verbatim log, update the rolling handoff - all on disk), then jump
   straight to the report. SKIP the audit (step 4) and the commit-and-push (steps 5-7).
   Use it for a quick, token-cheap disk-only securing when there is nothing to commit or

@@ -194,7 +194,7 @@ emit_context_throttled() {
 
 # exit 4 = STALE -> SOFT warning only, NEVER a hard block on unsure data.
 if [[ "$read_rc" -eq 4 ]]; then
-    emit_context "[5h ?] Budget-Stand unklar (limit-Cache stale, aelter als ${MAX_AGE}s). Konservativ arbeiten: keine grossen neuen Subagenten/Fan-outs/Builds; kleine Einheiten bevorzugen. Kein Hard-Block auf unsicheren Daten."
+    emit_context "[5h ?] Budget state unclear (limit cache stale, older than ${MAX_AGE}s). Work conservatively: no large new subagents/fan-outs/builds; prefer small units. No hard block on uncertain data."
 fi
 
 # any other non-zero (hard error) -> allow silently.
@@ -286,36 +286,36 @@ if [[ "$TRACK" == "main" ]]; then
     if ge "$util" "$T4"; then
         # ---- 97% LOCKDOWN: only the resume-wakeup path survives -------------
         if [[ "$tool_name" == "Bash" ]] && is_wake_cmd "$cmd"; then
-            emit_context "[5h ${util_disp}%] LOCKDOWN (main >=${T4}%). Nur der Resume-Wakeup ist erlaubt: ScheduleWakeup auf den 5h-Reset legen, mit credo-autonomy-wake-mark.sh markieren, dann stoppen. Danach nichts mehr."
+            emit_context "[5h ${util_disp}%] LOCKDOWN (main >=${T4}%). Only the resume wakeup is allowed: set ScheduleWakeup for the 5h reset, mark it with credo-autonomy-wake-mark.sh, then stop. Nothing after that."
         fi
-        emit_deny "[5h ${util_disp}%] LOCKDOWN (main >=${T4}%). STOP. Erlaubt ist NUR noch der Resume-Wakeup: ScheduleWakeup auf den 5h-Reset setzen, mit credo-autonomy-wake-mark.sh markieren, dann stoppen. Lass ALLES andere sofort fallen - auch einen offenen Commit/Push. Dieser Tool-Call (${tool_name}) ist blockiert."
+        emit_deny "[5h ${util_disp}%] LOCKDOWN (main >=${T4}%). STOP. ONLY the resume wakeup is still allowed: set ScheduleWakeup for the 5h reset, mark it with credo-autonomy-wake-mark.sh, then stop. Drop EVERYTHING else immediately - including an open commit/push. This tool call (${tool_name}) is blocked."
 
     elif ge "$util" "$T3"; then
         # ---- 92% HARD: only organizational actions allowed ------------------
         if is_spawn "$tool_name"; then
-            emit_deny "[5h ${util_disp}%] HART (main >=${T3}%). Keine neuen Subagenten. Jetzt NUR noch: laufende Subagenten per TaskStop beenden, Ergebnisse committen/pushen (Bash 'git ...'), .credo/process/resume-after-reset.md schreiben, Task-Status aktualisieren, ScheduleWakeup setzen. Neuer Agent-Spawn (${tool_name}) ist blockiert."
+            emit_deny "[5h ${util_disp}%] HARD (main >=${T3}%). No new subagents. Now ONLY: stop running subagents via TaskStop, commit/push results (Bash 'git ...'), write .credo/process/resume-after-reset.md, update task status, set ScheduleWakeup. A new agent spawn (${tool_name}) is blocked."
         fi
         if [[ "$tool_name" == "Bash" ]]; then
             if is_git_cmd "$cmd" || is_wake_cmd "$cmd"; then
-                emit_context "[5h ${util_disp}%] HART (main >=${T3}%). Diese organisatorische Aktion (git/commit/push bzw. wake) ist erlaubt. Nichts Neues/Schweres mehr starten - nur abschliessen, sichern, Resume vorbereiten, Wakeup setzen."
+                emit_context "[5h ${util_disp}%] HARD (main >=${T3}%). This organizational action (git/commit/push or wake) is allowed. Do not start anything new/heavy - only finish, secure, prepare resume, set wakeup."
             fi
-            emit_deny "[5h ${util_disp}%] HART (main >=${T3}%). Erlaubt sind nur organisatorische Bash-Aktionen (git commit/push, credo-autonomy-wake-mark/off). Dieser Bash-Call ist blockiert. Jetzt: sichern, .credo/process/resume-after-reset.md schreiben, ScheduleWakeup setzen."
+            emit_deny "[5h ${util_disp}%] HARD (main >=${T3}%). Only organizational Bash actions are allowed (git commit/push, credo-autonomy-wake-mark/off). This Bash call is blocked. Now: secure, write .credo/process/resume-after-reset.md, set ScheduleWakeup."
         fi
         if [[ "$tool_name" == "Edit" || "$tool_name" == "Write" || "$tool_name" == "MultiEdit" || "$tool_name" == "NotebookEdit" ]]; then
             if is_credo_path "$fpath"; then
-                emit_context "[5h ${util_disp}%] HART (main >=${T3}%). Schreiben unter .credo/ (Resume-Block/Task-Status) ist erlaubt. Nichts Neues/Schweres mehr starten."
+                emit_context "[5h ${util_disp}%] HARD (main >=${T3}%). Writing under .credo/ (resume block/task status) is allowed. Do not start anything new/heavy."
             fi
-            emit_deny "[5h ${util_disp}%] HART (main >=${T3}%). Nur Schreiben unter .credo/ (Resume-Block, Task-Status) ist erlaubt. Dieser Schreib-Call auf '${fpath}' ist blockiert."
+            emit_deny "[5h ${util_disp}%] HARD (main >=${T3}%). Only writing under .credo/ (resume block, task status) is allowed. This write call to '${fpath}' is blocked."
         fi
         # any other matched tool (WebFetch/WebSearch/...) -> block.
-        emit_deny "[5h ${util_disp}%] HART (main >=${T3}%). Neue/schwere Arbeit ist blockiert. Erlaubt bleiben: TaskStop, git commit/push, .credo/-Schreiben, ScheduleWakeup, Wakeup-Mark. Dieser Tool-Call (${tool_name}) faellt nicht darunter."
+        emit_deny "[5h ${util_disp}%] HARD (main >=${T3}%). New/heavy work is blocked. Still allowed: TaskStop, git commit/push, .credo/ writes, ScheduleWakeup, wakeup mark. This tool call (${tool_name}) is not one of those."
 
     elif ge "$util" "$T2"; then
-        emit_context_throttled "[5h ${util_disp}%] (main) Subagenten-Ergebnisse reinholen + sichern (commit/push). Resume-Block (.credo/process/resume-after-reset.md) vorbereiten. Nichts Neues mehr starten. Hartes Netz ab ${T3}%." "main_90" 30
+        emit_context_throttled "[5h ${util_disp}%] (main) Bring in subagent results + secure them (commit/push). Prepare the resume block (.credo/process/resume-after-reset.md). Do not start anything new. Hard net from ${T3}%." "main_90" 30
     elif ge "$util" "$T1"; then
-        emit_context_throttled "[5h ${util_disp}%] (main) Fordere laufende Subagenten per SendMessage aktiv zur zeitnahen Pause auf (wrap up + report back, NICHT killen). Selbst nichts Neues ausser Abschluss/Commit kleiner Einheiten. Hartes Netz ab ${T3}%." "main_87" 60
+        emit_context_throttled "[5h ${util_disp}%] (main) Actively tell running subagents via SendMessage to pause soon (wrap up + report back, do NOT kill them). Yourself, nothing new except finishing/committing small units. Hard net from ${T3}%." "main_87" 60
     elif ge "$util" "$T0"; then
-        emit_context_throttled "[5h ${util_disp}%] Soft-Cap (main). Keine grossen neuen Subagenten/Fan-outs/Explores/Parallel-Bursts mehr. Nur kleine gezielte Subagenten (eine Datei / ein Lookup / ein kleiner Fix, grob < 40-60k Tokens) ODER kleine Aenderungen selbst direkt erledigen. Laufende Subagenten zu Ende bringen. Du entscheidest per Urteil; hartes Netz ab ${T3}%." "main_83" 120
+        emit_context_throttled "[5h ${util_disp}%] Soft cap (main). No large new subagents/fan-outs/explores/parallel bursts anymore. Only small targeted subagents (one file / one lookup / one small fix, roughly < 40-60k tokens) OR do small changes yourself directly. Finish running subagents. You decide by judgment; hard net from ${T3}%." "main_83" 120
     fi
     # below T0 -> no output, normal flow.
     exit 0
@@ -326,15 +326,15 @@ else
 
     if ge "$util" "$S2"; then
         # >=92: stop now, minimal report, end. Block every matched tool.
-        emit_deny "[5h ${util_disp}%] HART (subagent >=${S2}%). Sofort stoppen: schreibe einen minimalen Report an den Main-Agent (erledigt / offen / naechste Schritte) und beende dich. Weitere Tools (${tool_name}) sind blockiert."
+        emit_deny "[5h ${util_disp}%] HARD (subagent >=${S2}%). Stop immediately: write a minimal report to the main agent (done / open / next steps) and end yourself. Further tools (${tool_name}) are blocked."
     elif ge "$util" "$S1"; then
         # >=90: only minimal completion - deny the expensive tools.
         if is_spawn "$tool_name" || [[ "$tool_name" == "WebFetch" || "$tool_name" == "WebSearch" ]]; then
-            emit_deny "[5h ${util_disp}%] HART (subagent >=${S1}%). Sofort abschliessen: nur den minimalen aktuellen Schritt finalisieren, Unfertiges + naechste Schritte in deinen Report an den Main-Agent schreiben, dann beenden. Teure Tools (${tool_name}) sind blockiert."
+            emit_deny "[5h ${util_disp}%] HARD (subagent >=${S1}%). Finish immediately: finalize only the minimal current step, write unfinished work + next steps into your report to the main agent, then end. Expensive tools (${tool_name}) are blocked."
         fi
-        emit_context "[5h ${util_disp}%] HART (subagent >=${S1}%). Nur noch den minimalen aktuellen Schritt finalisieren, dann Report an den Main-Agent (erledigt / offen / naechste Schritte) und beenden. Keine teuren Tools/neuen Schritte mehr."
+        emit_context "[5h ${util_disp}%] HARD (subagent >=${S1}%). Finalize only the minimal current step, then report to the main agent (done / open / next steps) and end. No more expensive tools/new steps."
     elif ge "$util" "$S0"; then
-        emit_context_throttled "[5h ${util_disp}%] Soft-Cap (subagent). Innerhalb deiner Aufgabe nichts Grosses/Neues mehr beginnen (keine breiten Sweeps, keine zusaetzlichen teuren Schritte). Geradlinig auf einen sauberen Abschluss deiner konkreten Aufgabe hin. Hartes Netz ab ${S1}%." "sub_83" 120
+        emit_context_throttled "[5h ${util_disp}%] Soft cap (subagent). Within your task, do not start anything big/new (no broad sweeps, no additional expensive steps). Head straight for a clean completion of your specific task. Hard net from ${S1}%." "sub_83" 120
     fi
     # below S0 -> no output, normal flow.
     exit 0

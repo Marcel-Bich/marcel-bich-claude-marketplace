@@ -34,7 +34,7 @@ The folder tree (created by `credo-init`) and what each folder means:
     2_go/          clarified and approved - buildable (go-gate: only 2_go is buildable)
     3_blocked/     GO'd but hard-blocked by another (unbuilt) credo item; auto-returns to 2_go on unblock
   2_done/          Definition of Done met (agent and/or user), gate passed
-  3_verified/      USER-ONLY - human-in-the-loop confirmation (an agent never places here)
+  3_verified/      human-authorized - human-in-the-loop confirmation (main agent moves here only on explicit user instruction)
   4_archived/      abandoned / deprecated / rejected
   parked/
     hold/          blocked by an EXTERNAL dependency (not another credo item)
@@ -261,16 +261,30 @@ An item may move into `2_done/` ONLY when ALL of these hold. This gate is hard.
 `2_done/` folder, reached only after the audit gate passes. The marker is the folder, not
 a claim and not a task-tracker field.
 
-## 3_verified/ is USER-ONLY
+## 3_verified/ is human-authorized
 
-An agent NEVER moves an item into `3_verified/` autonomously. `3_verified/` is
-human-in-the-loop confirmation: only the user places an item there after re-testing it
-themselves. The agent's job is to actively ask the user to re-test items sitting in
-`2_done/` and, when the user confirms, let the user move them to `3_verified/`.
+An agent NEVER moves an item into `3_verified/` on its own initiative. `3_verified/` is
+human-in-the-loop confirmation: the human is the sole authority for it. The agent's job is
+to actively ask the user to re-test items sitting in `2_done/`, handing over a numbered
+step-by-step test list (credo `verify` skill, "Handing a manual test to the user").
 
-(Future option, not built here: a `PreToolUse` hook that blocks any agent write or move
-into `*/3_verified/*`. For now the rule is enforced by this skill and by the move helper
-refusing that target.)
+When the user explicitly instructs the move ("schieb #X nach verified", "item X =
+verified", or similar), the MAIN agent - the one in direct user contact - executes it; it
+does NOT refuse and does NOT tell the user to `mv` the file themselves. It runs:
+
+```
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-item-move.sh" <id> verified --user-authorized
+```
+
+The `--user-authorized` opt-in (or the env `CREDO_VERIFIED_USER_AUTHORIZED=1`) is what the
+move helper requires for this target; without it the helper refuses. This does not weaken
+the rule: the agent still never decides to verify on its own - it only mechanically carries
+out an explicit user instruction. Subagents NEVER perform this move; they report back and
+the main agent does it.
+
+A `PreToolUse` hook (`credo-item-move-guard.sh`) additionally blocks a raw `mv` / `git mv`
+of any item file in the status tree, so status changes go through the helper (which enforces
+this opt-in for `3_verified/`).
 
 ## Bug found during verify -> back to 1_todo/1_clarify
 
@@ -320,12 +334,18 @@ merely paused it, so the automatic return respects "only the user sets GO".
 
 ## Moving items (lifecycle)
 
-Prefer the move helper - it is atomic, never deletes, and refuses the user-only target:
+Prefer the move helper - it is atomic, never deletes, and gates the human-authorized
+`verified` target behind an explicit opt-in:
 
 ```
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-item-move.sh" <id> <target>
-# target: clarify | go | blocked | done | archived | hold | future
+# target: clarify | go | blocked | done | verified | archived | hold | future
+# verified needs the --user-authorized opt-in and only on explicit user instruction:
+#   credo-item-move.sh <id> verified --user-authorized
 ```
+
+A raw `mv` / `git mv` of an item file inside the status tree is blocked by the
+`credo-item-move-guard.sh` PreToolUse hook - always use the helper.
 
 Valid transitions (folder = status):
 
@@ -343,7 +363,11 @@ Valid transitions (folder = status):
 - `2_done -> 1_clarify` when a bug is found (see above).
 - any -> `parked/hold` (external block) or `parked/future` (deferred), or `4_archived`
   (abandoned/rejected); `3_blocked -> parked/*` or `4_archived` as usual.
-- `2_done -> 3_verified` is **user-only** and is never done by an agent or the helper.
+- `2_done -> 3_verified` is **human-authorized**: an agent never does it on its own
+  initiative. Only the MAIN agent, and only on the user's explicit instruction, runs
+  `credo-item-move.sh <id> verified --user-authorized`; subagents never (they report back,
+  the main agent moves it). The human stays the sole authority - the agent only mechanically
+  executes an explicit instruction.
 
 After any move, update the item's `History` section with the transition and its date.
 Whenever you move something by hand instead of the helper, use `mv` (never delete + write)

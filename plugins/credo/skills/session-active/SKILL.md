@@ -79,6 +79,16 @@ present each one you do bring in its own round. Trivial, self-evident fixes stil
 question. This rule does not apply in autonomous mode, which runs unattended without
 interactive Ask rounds.
 
+## Manual tests for the user come as a numbered list
+
+Whenever a verification can only be run by the user - a human-only criterion, or the
+re-test that lets an item move to `3_verified/`, and especially when a task / build agent
+in active or passive mode needs the user to check something - hand it over as a NUMBERED,
+step-by-step list, never a vague "please test this". One concrete action per number, each
+followed by an own `-> Answer:` line saying exactly what to observe or report. The full
+format and an example live in the credo `verify` skill ("Handing a manual test to the
+user").
+
 ## No pause suggestions (attended: active and passive only, NOT autonomous)
 
 In attended modes (active and passive) never proactively suggest a pause, break,

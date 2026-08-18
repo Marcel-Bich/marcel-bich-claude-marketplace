@@ -43,6 +43,31 @@ user. Verification means the rendered surface was exercised and observed.
 
 Anything else is "wired-but-behavior-unverified", not "exercised".
 
+## Handing a manual test to the user
+
+When a verification can ONLY be done by the human (a human-only criterion, or the
+re-test that lets an item move to `3_verified/`), never hand it over as a vague "please
+test this". Always give a NUMBERED, step-by-step list the user can execute one step at a
+time and answer per step:
+
+- One step per number. Each step is a single, concrete, executable action - never bundle
+  several actions into one number.
+- Directly under each step, a separate line starting with `-> Answer:` that states
+  exactly WHAT to observe or report back (a status, a value, yes/no). This lets the user
+  test step by step and answer each step individually.
+
+Example:
+
+```
+Test run B - #37 Auto-Grant + Auto-Submit
+1. Hard-reload localhost:5173 (Ctrl+Shift+R), Network tab, filter api.
+-> Answer: on load, without a click, does a POST /api/games appear? Status? With token+seed?
+2. Win the board (just play).
+-> Answer: on the win, does a POST /api/result fire automatically? Status (201?)?
+```
+
+Use plain `-` and `->`, no special arrow or dash characters.
+
 ## Bringing up a down surface (local only, autonomous-capable)
 
 Verification needs the surface running. If it is down, locality decides whether you may
@@ -129,6 +154,13 @@ layout, real interaction, live update where required, hard reload after rebuild,
 saved screenshots - is mandatory before the item may move to done. If verification
 surfaces a defect, the item is not done: it goes back to clarification with a note on
 what was missed, per the credo item model. Never downgrade or self-approve this gate.
+
+Passing this gate moves an item to `2_done/`, never to `3_verified/`. `3_verified/` is
+human-authorized: an agent never moves an item there on its own initiative. Only the MAIN
+agent, and only on the user's explicit instruction, performs that move (via
+`credo-item-move.sh <id> verified --user-authorized`); subagents never do - they report
+back and the main agent moves it. Hand the user a numbered manual-test list (see "Handing
+a manual test to the user" above) so they can confirm before instructing that move.
 
 Visual proof is not the whole DoD: the same change must also carry its docs currency -
 including the project wiki (a separate repo), via `/dogma:docs-update` where dogma is
