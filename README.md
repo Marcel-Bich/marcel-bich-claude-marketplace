@@ -108,7 +108,7 @@ credo has two layers, and only one of them is a task system:
 
 **GSD is optional** for heavy up-front planning (PROJECT -> ROADMAP -> milestones -> phases -> plans), or if you already know and prefer the original GSD flow. Pick ONE task system per project, never both at once.
 
-If you run GSD as your task system, set `CREDO_TASK_BACKEND=gsd` so credo's own item features stand down - that avoids two competing sources of truth (`.credo/` items vs GSD's `.planning/`). The default `CREDO_TASK_BACKEND=credo` keeps credo's items active; the operating layer above stays on regardless of the value.
+If you run GSD as your task system, set the task backend to `gsd` so credo's own item features stand down - that avoids two competing sources of truth (`.credo/` items vs GSD's `.planning/`). The backend is config-driven: it lives in `.credo/config` as `task_backend` (default `credo`), and `/credo:setup` writes `gsd` there for you when you pick GSD. The `CREDO_TASK_BACKEND` environment variable is an override if you ever need it. Any value other than `gsd` keeps credo's items active; the operating layer above stays on regardless of the value.
 
 Technically the two do not collide: their hooks are disjoint, and their commands and directories are separate. The one point of friction is the status line - it is a single slot - so in a combined credo + GSD + `limit` setup keep the `limit` status line (let GSD skip installing its own) so credo's budget and auto-compact features keep their data source.
 
