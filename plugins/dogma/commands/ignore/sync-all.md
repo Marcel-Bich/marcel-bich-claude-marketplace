@@ -108,9 +108,9 @@ Group patterns by category for better overview:
 ### 2.3 Report Pattern Count
 
 ```
-Sync von X Patterns aus sync.md
+Sync of X patterns from sync.md
 
-Kategorien:
+Categories:
 - Dogma-specific: X patterns
 - Claude Code: X patterns
 - Cursor: X patterns
@@ -139,20 +139,20 @@ done
 ### 3.2 Ask User for Selection
 
 ```
-Auf welche Repos anwenden?
+Which repos to apply to?
 
-Gefundene Repos in ../:
+Found repos in ../:
 1. ../marcel-bich-claude-ideas
 2. ../web-selecta-7850
 3. ../another-project
 
-Optionen:
-A. Alle oben aufgelisteten Repos
-C. Aktuelles Repo (dieses hier)
-P. Eigenen Pfad eingeben
-S. Auswahl (kommagetrennte Nummern, z.B. "1,3")
+Options:
+A. All repos listed above
+C. Current repo (this one)
+P. Enter a custom path
+S. Selection (comma-separated numbers, e.g., "1,3")
 
-Deine Wahl:
+Your choice:
 ```
 
 ### 3.3 Handle Selection
@@ -164,17 +164,17 @@ Deine Wahl:
 
 For custom path:
 ```
-Pfad eingeben (absolut oder relativ):
+Enter path (absolute or relative):
 > ~/projects/my-repo
 
-Validiere...
+Validating...
 ```
 
 ```bash
 # Validate custom path
 CUSTOM_PATH="${CUSTOM_PATH/#\~/$HOME}"
 if [ ! -d "$CUSTOM_PATH/.git" ]; then
-    echo "Fehler: $CUSTOM_PATH ist kein Git-Repository"
+    echo "Error: $CUSTOM_PATH is not a Git repository"
     # Ask again or abort
 fi
 ```
@@ -227,35 +227,35 @@ Only add patterns that don't already exist.
 ../marcel-bich-claude-ideas:
   + .aider* (.gitignore)
   + .continue* (.gitignore)
-  = 2 hinzugefuegt
+  = 2 added
 ```
 
 Or if no changes needed:
 
 ```
 ../marcel-bich-claude-ideas:
-  = Alle Patterns bereits vorhanden
+  = All patterns already present
 ```
 
 ## Step 5: Summary Report
 
 ```
-Sync von 12 Patterns aus sync.md
+Sync of 12 patterns from sync.md
 
 ../marcel-bich-claude-ideas:
   + .aider* (.gitignore)
   + .continue* (.gitignore)
-  = 2 hinzugefuegt
+  = 2 added
 
 ../web-selecta-7850:
   + .aider* (.gitignore)
   + .codeium* (.gitignore)
-  = 2 hinzugefuegt
+  = 2 added
 
 ../already-configured-repo:
-  = Alle Patterns bereits vorhanden
+  = All patterns already present
 
-Gesamt: 4 Patterns zu 2 Repos hinzugefuegt
+Total: 4 patterns added to 2 repos
 ```
 
 ## Important Rules
@@ -272,8 +272,8 @@ Gesamt: 4 Patterns zu 2 Repos hinzugefuegt
 - Not in marketplace: Show error and tip for /dogma:ignore
 - Invalid repo path: Skip and report
 - No write permission: Skip and report
-- No repos found: Report "Keine Repos in ../ gefunden"
-- User cancels: Report "Abgebrochen"
+- No repos found: Report "No repos found in ../"
+- User cancels: Report "Aborted"
 
 ## Pattern Reference
 

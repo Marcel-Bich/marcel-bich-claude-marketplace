@@ -597,7 +597,7 @@ This section contains detailed instructions for manual reference. Use these when
 
 > https://prettier.io/docs/en/why-prettier
 >
-> Der bei weitem wichtigste Grund fuer die Einfuehrung von Prettier ist das Beenden der staendigen Debatten ueber Coding Styles. Es ist allgemein anerkannt, dass ein gemeinsamer Styleguide fuer ein Projekt und ein Team wertvoll ist, aber der Weg dorthin ist ein sehr schmerzhafter und wenig lohnender Prozess. Die Leute werden sehr emotional, wenn es um bestimmte Arten, Code zu schreiben, geht, und niemand verbringt gerne Zeit mit dem Schreiben und dem Empfang von Kritikpunkten.
+> By far the biggest reason for adopting Prettier is to stop all the ongoing debates over coding styles. It is generally accepted that having a common style guide is valuable for a project and team, but getting there is a very painful and unrewarding process. People get very emotional around particular ways of writing code, and nobody enjoys spending time writing and receiving nitpicky comments.
 
 ## Quick Start (Full Stack with PHP)
 

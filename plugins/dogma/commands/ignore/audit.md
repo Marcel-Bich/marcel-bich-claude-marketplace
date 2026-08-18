@@ -181,16 +181,16 @@ done
 Present the audit results in this format:
 
 ```
-Pattern-Audit:
+Pattern Audit:
 
 .aider*
   [OK] .git/info/exclude
-  [!!] .gitignore (FEHLT)
+  [!!] .gitignore (MISSING)
   [OK] sync.md
 
 .continue*
-  [!!] .git/info/exclude (FEHLT)
-  [!!] .gitignore (FEHLT)
+  [!!] .git/info/exclude (MISSING)
+  [!!] .gitignore (MISSING)
   [OK] sync.md
 
 .codeium*
@@ -200,22 +200,22 @@ Pattern-Audit:
 
 ...
 
-Zusammenfassung: X fehlende Eintraege
+Summary: X missing entries
 
-Tipp: /dogma:ignore .aider* .continue* zum Hinzufuegen
+Tip: /dogma:ignore .aider* .continue* to add them
 ```
 
 ### 4.3 Status Indicators
 
 Use these indicators:
 - `[OK]` - Pattern is present
-- `[!!]` - Pattern is MISSING (with "(FEHLT)" suffix)
-- `[--]` - File does not exist (with "(Datei fehlt)" suffix)
+- `[!!]` - Pattern is MISSING (with "(MISSING)" suffix)
+- `[--]` - File does not exist (with "(file missing)" suffix)
 
 ### 4.4 Output Formatting
 
 ```
-echo "Pattern-Audit:"
+echo "Pattern Audit:"
 echo ""
 
 for pattern in "${AUDIT_PATTERNS[@]}"; do
@@ -227,10 +227,10 @@ for pattern in "${AUDIT_PATTERNS[@]}"; do
             echo "  [OK] .git/info/exclude"
             ;;
         "MISSING")
-            echo "  [!!] .git/info/exclude (FEHLT)"
+            echo "  [!!] .git/info/exclude (MISSING)"
             ;;
         "FILE_NOT_FOUND")
-            echo "  [--] .git/info/exclude (Datei fehlt)"
+            echo "  [--] .git/info/exclude (file missing)"
             ;;
     esac
 
@@ -240,10 +240,10 @@ for pattern in "${AUDIT_PATTERNS[@]}"; do
             echo "  [OK] .gitignore"
             ;;
         "MISSING")
-            echo "  [!!] .gitignore (FEHLT)"
+            echo "  [!!] .gitignore (MISSING)"
             ;;
         "FILE_NOT_FOUND")
-            echo "  [--] .gitignore (Datei fehlt)"
+            echo "  [--] .gitignore (file missing)"
             ;;
     esac
 
@@ -254,7 +254,7 @@ for pattern in "${AUDIT_PATTERNS[@]}"; do
                 echo "  [OK] sync.md"
                 ;;
             "MISSING")
-                echo "  [!!] sync.md (FEHLT)"
+                echo "  [!!] sync.md (MISSING)"
                 ;;
         esac
     fi
@@ -268,7 +268,7 @@ done
 ### 5.1 Show Summary
 
 ```
-echo "Zusammenfassung: $MISSING_COUNT fehlende Eintraege"
+echo "Summary: $MISSING_COUNT missing entries"
 ```
 
 ### 5.2 Generate Tip
@@ -285,7 +285,7 @@ done
 
 if [ ${#MISSING_PATTERNS[@]} -gt 0 ]; then
     echo ""
-    echo "Tipp: /dogma:ignore ${MISSING_PATTERNS[*]} zum Hinzufuegen"
+    echo "Tip: /dogma:ignore ${MISSING_PATTERNS[*]} to add them"
 fi
 ```
 
@@ -296,9 +296,9 @@ fi
 After showing the audit for the current repo:
 
 ```
-Soll ich auch parallele Repos scannen?
-1. Ja, alle in diesem Verzeichnis
-2. Nein, nur dieses Repo
+Should I also scan parallel repos?
+1. Yes, all in this directory
+2. No, only this repo
 ```
 
 ### 6.2 Scan Parallel Repos
@@ -322,8 +322,8 @@ done
 
 ```
 if [ ! -d ".git" ]; then
-    echo "Fehler: Kein Git-Repository gefunden."
-    echo "Dieses Kommando muss in einem Git-Repository ausgefuehrt werden."
+    echo "Error: No Git repository found."
+    echo "This command must be run inside a Git repository."
     exit 1
 fi
 ```
@@ -333,7 +333,7 @@ fi
 ```
 if [ "$MISSING_COUNT" -eq 0 ]; then
     echo ""
-    echo "Alle Patterns sind korrekt eingetragen."
+    echo "All patterns are correctly configured."
 fi
 ```
 
@@ -341,6 +341,6 @@ fi
 
 1. **Read-only operation** - This command only checks and reports, never modifies files
 2. **Clear status indicators** - Use [OK], [!!], [--] consistently
-3. **German output** - Summary and tips in German as per project convention
+3. **English output** - Summary and tips in English as per project convention
 4. **Helpful tips** - Always show how to fix missing patterns
 5. **Optional parallel scan** - Only scan other repos if user requests it

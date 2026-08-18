@@ -185,10 +185,10 @@ This is mandatory - a plugin without registry entry will NOT appear in `/plugin`
 
 After version sync, use AskUserQuestion to ask the user interactively:
 
-**Question:** "Soll die Dokumentation (README, Wiki) auch synchronisiert werden?"
+**Question:** "Should the documentation (README, Wiki) also be synchronized?"
 **Options:**
-1. "Ja, /dogma:docs-update ausfuehren (Recommended)" - Checks for missing plugins in docs, outdated descriptions, etc.
-2. "Nein, ueberspringen" - Skip documentation sync
+1. "Yes, run /dogma:docs-update (Recommended)" - Checks for missing plugins in docs, outdated descriptions, etc.
+2. "No, skip" - Skip documentation sync
 
 If user selects yes, run `/dogma:docs-update`.
 

@@ -26,16 +26,16 @@ The user provided: `$ARGUMENTS`
 - Split into individual patterns
 - Confirm understanding with user:
   ```
-  Ich werde folgende Pattern hinzufuegen:
+  I will add the following patterns:
   - .aider*
   - .continue*
   - .codeium*
 
-  Ist das korrekt? [J/n]
+  Is that correct? [Y/n]
   ```
 
 **If no patterns provided:**
-- Ask user: "Welches Pattern moechtest du ignorieren? (z.B. .aider* oder '.aider* .continue*' fuer mehrere)"
+- Ask user: "Which pattern do you want to ignore? (e.g., .aider* or '.aider* .continue*' for multiple)"
 - Wait for response
 - Confirm understanding as above
 
@@ -57,28 +57,28 @@ grep -qxF "<pattern>" .git/info/exclude 2>/dev/null
 
 **If pattern exists:**
 ```
-Pattern "<pattern>" ist bereits in .git/info/exclude vorhanden.
+Pattern "<pattern>" already exists in .git/info/exclude.
 ```
-Add to results: `[OK] .git/info/exclude (bereits vorhanden)`
+Add to results: `[OK] .git/info/exclude (already present)`
 
 **If pattern does NOT exist:**
 Ask user using AskUserQuestion:
 ```
-Soll ich "<pattern>" zu .git/info/exclude hinzufuegen?
+Should I add "<pattern>" to .git/info/exclude?
 
-.git/info/exclude ist lokal und wird nicht versioniert - ideal fuer persoenliche Ignore-Patterns.
+.git/info/exclude is local and not versioned - ideal for personal ignore patterns.
 
-[J/n]
+[Y/n]
 ```
 
-**If user confirms (J or empty):**
+**If user confirms (Y or empty):**
 ```bash
 echo "<pattern>" >> .git/info/exclude
 ```
 Add to results: `[OK] .git/info/exclude`
 
 **If user declines:**
-Add to results: `[--] .git/info/exclude (uebersprungen)`
+Add to results: `[--] .git/info/exclude (skipped)`
 
 ### Step 2.2: .gitignore (versioned)
 
@@ -89,28 +89,28 @@ grep -qxF "<pattern>" .gitignore 2>/dev/null
 
 **If pattern exists:**
 ```
-Pattern "<pattern>" ist bereits in .gitignore vorhanden.
+Pattern "<pattern>" already exists in .gitignore.
 ```
-Add to results: `[OK] .gitignore (bereits vorhanden)`
+Add to results: `[OK] .gitignore (already present)`
 
 **If pattern does NOT exist:**
 Ask user using AskUserQuestion:
 ```
-Soll ich "<pattern>" zu .gitignore hinzufuegen?
+Should I add "<pattern>" to .gitignore?
 
-.gitignore wird versioniert und gilt fuer alle Team-Mitglieder.
+.gitignore is versioned and applies to all team members.
 
-[J/n]
+[Y/n]
 ```
 
-**If user confirms (J or empty):**
+**If user confirms (Y or empty):**
 ```bash
 echo "<pattern>" >> .gitignore
 ```
 Add to results: `[OK] .gitignore`
 
 **If user declines:**
-Add to results: `[--] .gitignore (uebersprungen)`
+Add to results: `[--] .gitignore (skipped)`
 
 ### Step 2.3: sync.md (SECRET - Marketplace Only)
 
@@ -143,11 +143,11 @@ PATH_CHECK=$?
 **If ANY check succeeds:**
 Ask user using AskUserQuestion:
 ```
-Soll ich "<pattern>" auch zur sync.md Exclude-Liste hinzufuegen?
+Should I also add "<pattern>" to the sync.md exclude list?
 
-Dies verhindert, dass das Pattern bei /dogma:sync uebertragen wird.
+This prevents the pattern from being transferred during /dogma:sync.
 
-[J/n]
+[Y/n]
 ```
 
 **If user confirms:**
@@ -158,17 +158,17 @@ Dies verhindert, dass das Pattern bei /dogma:sync uebertragen wird.
 Add to results: `[OK] sync.md`
 
 **If user declines:**
-Add to results: `[--] sync.md (uebersprungen)`
+Add to results: `[--] sync.md (skipped)`
 
 ### Step 2.4: Parallel Repos
 
 Ask user using AskUserQuestion:
 ```
-Soll ich in benachbarten Pfaden nach weiteren Git-Repos suchen?
+Should I search neighboring paths for more Git repos?
 
-1. Ja, im Elternverzeichnis suchen (..)
-2. Ja, anderen Pfad angeben
-3. Nein, nur dieses Repo
+1. Yes, search in the parent directory (..)
+2. Yes, specify a different path
+3. No, only this repo
 
 [1/2/3]
 ```
@@ -190,12 +190,12 @@ find <custom_path> -maxdepth 2 -name ".git" -type d 2>/dev/null | sed 's|/.git$|
 
 **For found repos, present list:**
 ```
-Gefundene Repos:
+Found repos:
 1. ../web-selecta-7850
 2. ../api-backend
 3. ../mobile-app
 
-Welche moechtest du bearbeiten? (z.B. 1,2 oder 'alle' oder 'keine')
+Which do you want to process? (e.g., 1,2 or 'all' or 'none')
 ```
 
 **For each selected repo:**
@@ -208,19 +208,19 @@ Welche moechtest du bearbeiten? (z.B. 1,2 oder 'alle' oder 'keine')
 After processing all patterns and all locations, show a summary:
 
 ```
-Fertig! Pattern <pattern> hinzugefuegt zu:
+Done! Pattern <pattern> added to:
 
   [OK] .git/info/exclude
   [OK] .gitignore
-  [--] sync.md (uebersprungen)
+  [--] sync.md (skipped)
   [OK] ../web-selecta-7850/.git/info/exclude
   [OK] ../web-selecta-7850/.gitignore
-  [--] ../api-backend (uebersprungen)
+  [--] ../api-backend (skipped)
 ```
 
 **If multiple patterns were processed:**
 ```
-Fertig! Alle Pattern verarbeitet:
+Done! All patterns processed:
 
 Pattern .aider*:
   [OK] .git/info/exclude
@@ -228,18 +228,18 @@ Pattern .aider*:
 
 Pattern .continue*:
   [OK] .git/info/exclude
-  [--] .gitignore (uebersprungen)
+  [--] .gitignore (skipped)
 
 Pattern .codeium*:
-  [OK] .git/info/exclude (bereits vorhanden)
-  [OK] .gitignore (bereits vorhanden)
+  [OK] .git/info/exclude (already present)
+  [OK] .gitignore (already present)
 ```
 
 ## Important Rules
 
 1. **Sequential flow** - Ask each location one by one, not all at once
-2. **German language** - All user-facing text in German
-3. **Default to yes** - J or empty input means confirm
+2. **English language** - All user-facing text in English
+3. **Default to yes** - Y or empty input means confirm
 4. **Silent marketplace detection** - Never mention sync.md if not in marketplace repo
 5. **Preserve existing content** - Always append, never overwrite
 6. **No duplicates** - Check before adding to avoid duplicate entries
@@ -256,37 +256,37 @@ Pattern .codeium*:
 ```
 User: /dogma:ignore .aider*
 
-Claude: Ich werde folgendes Pattern hinzufuegen:
+Claude: I will add the following pattern:
 - .aider*
 
-Ist das korrekt? [J/n]
+Is that correct? [Y/n]
 
-User: j
+User: y
 
-Claude: Soll ich ".aider*" zu .git/info/exclude hinzufuegen?
-.git/info/exclude ist lokal und wird nicht versioniert.
-[J/n]
+Claude: Should I add ".aider*" to .git/info/exclude?
+.git/info/exclude is local and not versioned.
+[Y/n]
 
-User: j
+User: y
 
-Claude: Pattern hinzugefuegt zu .git/info/exclude.
+Claude: Pattern added to .git/info/exclude.
 
-Soll ich ".aider*" zu .gitignore hinzufuegen?
-.gitignore wird versioniert und gilt fuer alle Team-Mitglieder.
-[J/n]
+Should I add ".aider*" to .gitignore?
+.gitignore is versioned and applies to all team members.
+[Y/n]
 
 User: n
 
-Claude: Soll ich in benachbarten Pfaden nach weiteren Git-Repos suchen?
-1. Ja, im Elternverzeichnis suchen (..)
-2. Ja, anderen Pfad angeben
-3. Nein, nur dieses Repo
+Claude: Should I search neighboring paths for more Git repos?
+1. Yes, search in the parent directory (..)
+2. Yes, specify a different path
+3. No, only this repo
 [1/2/3]
 
 User: 3
 
-Claude: Fertig! Pattern .aider* hinzugefuegt zu:
+Claude: Done! Pattern .aider* added to:
 
   [OK] .git/info/exclude
-  [--] .gitignore (uebersprungen)
+  [--] .gitignore (skipped)
 ```
