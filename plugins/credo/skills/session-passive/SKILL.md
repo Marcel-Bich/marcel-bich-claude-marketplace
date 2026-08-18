@@ -26,6 +26,10 @@ It covers, all unchanged for passive mode:
 
 - CLARIFY-FIRST and the go-gate (only `1_todo/2_go` is buildable) - credo `items`.
 - Clarify via the Ask tool (G1); a bug report is not an immediate fix (G2).
+- No pause suggestions and drive your recommendation forward - the two attended-only rules
+  (active and passive, NOT autonomous): never proactively suggest a pause / break, and after
+  giving your recommendation drive it forward (planning -> next clarify round, task -> next
+  GO item) instead of asking meta-permission; Ask is only for real clarify / decision / GO.
 - Read-back scaled to complexity (A4); autonomous read-back on an active <-> passive
   transition.
 - The soft old-item reminder (gentle, on start / resume and occasionally).

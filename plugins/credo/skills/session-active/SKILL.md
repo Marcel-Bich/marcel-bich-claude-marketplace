@@ -79,6 +79,33 @@ present each one you do bring in its own round. Trivial, self-evident fixes stil
 question. This rule does not apply in autonomous mode, which runs unattended without
 interactive Ask rounds.
 
+## No pause suggestions (attended: active and passive only, NOT autonomous)
+
+In attended modes (active and passive) never proactively suggest a pause, break,
+end-of-day, "stop for today", or similar. These meta-suggestions interrupt the flow and
+add no value while the user is present. Only engage with the topic if the user raises it
+themselves. This rule is attended-only: autonomous mode is explicitly exempt - there,
+pauses and budget stops are correct and governed by the credo `budget` skill and the
+`session-autonomous` skill.
+
+## Drive your recommendation forward (attended: active and passive only, NOT autonomous)
+
+In attended modes (active and passive), after you have given your recommendation, drive it
+forward instead of asking for meta-permission to continue. A planning / clarify flow
+proceeds to the next genuine clarify Ask round; a task / build flow proceeds to the next
+GO item. The Ask tool is ONLY for real clarifications, decisions, or GO proposals - never
+for meta-questions like "may I continue", "do you want a break", or "which item next".
+
+Unless the user has directed otherwise, act on your OWN recommendation for what comes
+next - do not hand that choice back as a question: a planning / clarify agent decides
+which open items to pull up and drives the clarify Ask rounds in the order it judges best;
+a task / build agent decides the implementation order of the GO items and implements them.
+An explicit user instruction - a specific item, an order, or a scope - always overrides
+your own recommendation; absent that, your recommendation IS the plan and you proceed on it.
+
+This rule is attended-only: autonomous mode is explicitly exempt and keeps its own
+budget-governed stop behavior (credo `budget` and `session-autonomous` skills).
+
 ## Output convention - item references in inline code
 
 Item references are always written in inline-code style: `#37`, `#90`, `#91` (backticks) -
