@@ -183,15 +183,15 @@ These two interleave; run them together.
   - **G1 - provable GO.** An explicit, item-scoped user GO exists (date + the user as
     source). Agents never self-GO. The `-> go` History line must cite the GO source, e.g.
     `-> go 2026-08-04 (GO: Marcel, <short context>)`.
-  - **G2 - not deferred.** No "Bau FUTURE" / deferred marker in the item -> otherwise
+  - **G2 - not deferred.** No "Bau FUTURE" (build FUTURE / deferred) marker in the item -> otherwise
     `parked/future`.
   - **G3 - no hard block on unbuilt work.** No hard dependency on an unbuilt item ->
     otherwise `1_todo/3_blocked` (if GO'd, see the `items` skill) or `parked/hold` (external
     / not GO'd).
-  - **G4 - nothing pending.** No open "CLARIFY / vor GO / noch zu klaeren" section and no
-    "wartet auf X".
+  - **G4 - nothing pending.** No open "CLARIFY / vor GO / noch zu klären" (before GO / to
+    clarify) section and no "wartet auf X" (waiting on X).
   - **G5 - no open build-details.** No open build-details or design decisions. The
-    intermediate status "GO-reif" does NOT exist: an item with unresolved build-details is
+    intermediate status "GO-reif" (GO-ready) does NOT exist: an item with unresolved build-details is
     `1_clarify` (to be clarified WITH the user), never handed to the building agent to
     decide.
   - **G6 - sweep cross-check.** A GO sweep / sighting cross-checks its counted / listed set
