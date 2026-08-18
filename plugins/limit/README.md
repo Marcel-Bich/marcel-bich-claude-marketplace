@@ -74,6 +74,11 @@ The statusline is token-free and reads a cache, and the token-owning refresh has
 throttle (a floor plus a jittered 90-150s cadence, guarded by a lock), so a low interval
 does NOT increase API calls. `setup-combined-statusline.sh` writes this field for you.
 
+If you set the statusline up before this field existed, a SessionStart hook detects the
+gap and the agent offers to add `refreshInterval` for you (with a backup; a restart then
+activates it). Set `CLAUDE_MB_LIMIT_AUTO_REFRESH_INTERVAL=0` to opt out, or to a positive
+integer to choose the value.
+
 ## Configuration
 
 All features can be toggled via environment variables. Export them in your shell profile or set them before running Claude Code.
