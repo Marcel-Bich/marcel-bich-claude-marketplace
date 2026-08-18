@@ -116,7 +116,7 @@ emit() {
 read -r -d '' KNOWLEDGE <<'K'
 [credo] credo workflow is ACTIVE for this session. Prefer these credo skills and commands over the generic/default approach so the workflow runs cleanly.
 
-SKILLS (auto-trigger by their description - use them actively whenever they apply): items (the work-item model = the task system), audit (mandatory post-completion review gate), verify (visual Definition of Done for any UI/runtime surface), diag (read-only root-cause diagnosis), safety (before ANY delete or install), requirements-verbatim (log approved intent word-for-word), orchestration (delegation rules), budget (API cap + reset rules), compact-plus (secure approved state before a compact), pr-vetting, issue-triage, skill-capture, cross-cutting-checklist-generator, wsl-env.
+SKILLS (auto-trigger by their description - use them actively whenever they apply): items (the work-item model = the task system), audit (mandatory post-completion review gate), verify (visual Definition of Done for any UI/runtime surface), diag (read-only root-cause diagnosis), safety (before ANY delete or install), rules (per-repo special rules from .credo/RULES.md - load and honor at start), requirements-verbatim (log approved intent word-for-word), orchestration (delegation rules), budget (API cap + reset rules), compact-plus (secure approved state before a compact), pr-vetting, issue-triage, skill-capture, cross-cutting-checklist-generator, wsl-env.
 
 COMMANDS by execution class:
 [A] may be run by the agent itself when useful: /credo:session-init, /credo:project (show only, no path argument).
@@ -126,26 +126,64 @@ K
 
 # --- ASK block (credo decision still open) ---
 read -r -d '' ASK <<K
-[credo] The credo workflow is available but NOT yet activated for this session. Before doing anything else, ask the user via the AskUserQuestion tool whether to use the credo workflow for this session.
-- If YES: run the /credo:session-init command (it loads the orchestrator role, feeds the credo commands/skills, and records the decision).
-- If NO: run \`"${DECISION_SCRIPT}" declined ${session_id}\` so this is not asked again.
-Do NOT ask this in autonomous/unattended work. This is a one-time setup question - handle it first, then continue with the user's request.
+[credo] The credo workflow is available but NOT yet activated for this session. Before doing anything else, ask the user via the AskUserQuestion tool HOW to work this session (a mode choice, not a plain yes/no). First show this short reminder to the user (render each slash-command in code-style so they read as commands):
+
+Use the credo workflow this session? Quick reminder:
+- work is tracked as "items" with a strict done-gate
+- /compact-plus saves your approved state so a /compact cannot drop it
+- /credo:session-active - intensive live collaboration
+- /credo:session-passive - available only for clarifications
+- /credo:session-autonomous - full unattended work, turn on when needed
+- /credo:psalm - the full credo guide (all commands + workflow); run it anytime you need help or want to learn more
+
+Then offer exactly these AskUserQuestion options:
+- Active  -> run the /credo:session-active command (sets the mode to active and records the credo decision)
+- Passive -> run the /credo:session-passive command (sets the mode to passive and records the credo decision)
+- No      -> run \`"${DECISION_SCRIPT}" declined ${session_id}\` so this is not asked again
+Do NOT offer autonomous as a selectable option - only mention it can be turned on anytime via /credo:session-autonomous. Do NOT ask this in autonomous/unattended work. This is a one-time setup question - handle it first, then continue with the user's request.
 K
 
-# --- decision logic ---
-if [[ "$active" == true ]]; then
-    emit "$KNOWLEDGE"
-    exit 0
-fi
-
-# not active
-[[ "$decision" == "declined" ]] && exit 0
-
-# open decision: ASK only on a human-present (re)start, never in autonomous work
-[[ "$mode" == "autonomous" ]] && exit 0   # defensive; an open decision has no mode
+# --- Gap A: one-shot post-reset rehydrate breadcrumb (left by compact-plus) --
+# After a reset (compact|resume|fork), if compact-plus dropped a breadcrumb for
+# this session, tell the agent to reload the state it secured to disk, then
+# consume (delete) the breadcrumb so it never fires again on stale info.
+REHYDRATE=""
+REHYDRATE_DIR="${CREDO_REHYDRATE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/rehydrate}"
+breadcrumb="$REHYDRATE_DIR/$session_id"
 case "$source" in
-    startup|clear) [[ "$ask_enabled" == true ]] && emit "$ASK" ;;
-    *)             : ;;   # compact | resume | fork | unknown -> stay silent
+    compact|resume|fork)
+        if [[ -f "$breadcrumb" ]]; then
+            handoff_path=$(head -n1 "$breadcrumb" 2>/dev/null)
+            [[ -z "$handoff_path" ]] && handoff_path=".credo/process/handoffs/HANDOFF.md"
+            mode_hint=""
+            [[ -z "$mode" ]] && mode_hint=" (No session mode set - if this is attended work, pick one: /credo:session-active or /credo:session-passive.)"
+            REHYDRATE="[credo] You secured state with /compact-plus before this compaction. Reload it now before continuing: the handoff file at ${handoff_path}, the latest .credo/process/requirements/ entry, and .credo/process/resume-after-reset.md if present. Then resume where you left off.${mode_hint}"
+            rm -f "$breadcrumb" 2>/dev/null || true
+        fi
+        ;;
 esac
 
+# --- decision logic: assemble the output, then emit once ---------------------
+OUT=""
+if [[ "$active" == true ]]; then
+    OUT="$KNOWLEDGE"
+elif [[ "$decision" == "declined" ]]; then
+    OUT=""
+elif [[ "$mode" != "autonomous" ]]; then
+    # open decision: ASK only on a human-present (re)start, never in autonomous work
+    case "$source" in
+        startup|clear) [[ "$ask_enabled" == true ]] && OUT="$ASK" ;;
+    esac
+fi
+
+# Append the rehydrate ACTION (Gap A) to whatever we emit, or emit it alone.
+if [[ -n "$REHYDRATE" ]]; then
+    if [[ -n "$OUT" ]]; then
+        OUT="$OUT"$'\n\n'"$REHYDRATE"
+    else
+        OUT="$REHYDRATE"
+    fi
+fi
+
+[[ -n "$OUT" ]] && emit "$OUT"
 exit 0

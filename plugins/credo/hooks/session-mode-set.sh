@@ -35,8 +35,8 @@ if [ -z "$session_id" ]; then
     exit 1
 fi
 case "$session_id" in
-    *[!A-Za-z0-9._-]*)
-        echo "session-mode-set: invalid session_id (unexpected characters)" >&2
+    *[!A-Za-z0-9._-]*|.|*..*)
+        echo "session-mode-set: invalid session_id (unexpected characters or path traversal)" >&2
         exit 1
         ;;
 esac

@@ -142,6 +142,16 @@ then go straight to the report (step 8) and skip steps 4-7.
    Move the prior handoff into `.credo/process/handoffs/archive/` before overwriting.
    Note any in-flight subagent work explicitly - either finish and fold it in, or record
    that it is still running and what it will produce. This file is git-excluded too.
+   Then drop the one-shot post-compact rehydrate breadcrumb so the next SessionStart
+   (after the compact) reminds you to reload this handoff:
+
+   ```
+   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-rehydrate-mark.sh" .credo/process/handoffs/HANDOFF.md
+   ```
+
+   This also marks the session as credo-engaged if you had not formally opted in, so the
+   credo workflow knowledge is re-fed after the compact. It never overrides an explicit
+   earlier decision.
 4. Run the audit gate before committing. The completed work must pass the credo `audit`
    skill, run by a dedicated subagent (not the builder). Hand the subagent the verbatim
    location of what to audit and let it read the source itself - do not paraphrase the
