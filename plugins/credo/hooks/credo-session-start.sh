@@ -114,7 +114,7 @@ emit() {
 
 # --- KNOWLEDGE block (credo active): full list, tagged by execution class ---
 read -r -d '' KNOWLEDGE <<'K'
-[credo] credo workflow is ACTIVE for this session. Prefer these credo skills and commands over the generic/default approach so the workflow runs cleanly.
+[credo] credo workflow is ACTIVE for this session. On non-trivial or complex work, actively use the fitting credo skill below instead of an ad-hoc approach (skip it for small/trivial changes - your judgment) so the workflow runs cleanly.
 
 SKILLS (auto-trigger by their description - use them actively whenever they apply): items (the work-item model = the task system), audit (mandatory post-completion review gate), verify (visual Definition of Done for any UI/runtime surface), diag (read-only root-cause diagnosis), safety (before ANY delete or install), rules (per-repo special rules from .credo/RULES.md - load and honor at start), requirements-verbatim (log approved intent word-for-word), orchestration (delegation rules), budget (API cap + reset rules), compact-plus (secure approved state before a compact), pr-vetting, issue-triage, skill-capture, cross-cutting-checklist-generator, wsl-env.
 

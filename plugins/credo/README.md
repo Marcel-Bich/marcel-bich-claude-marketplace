@@ -33,6 +33,8 @@ Skills and hooks are auto-discovered by Claude Code from the `skills/` and `hook
 
 The mode is per session and set with a command. It is stored on disk keyed by the session id, so it survives compaction, new sessions, and subagents. The `UserPromptSubmit` hook re-injects a one-line reminder of the active mode on every prompt, and names the matching skill to load. A second hook injects the current local date and time (mode-independent) - on every prompt via `UserPromptSubmit`, and additionally on `PostToolUse` (throttled + delta-guarded) so the clock stays fresh during long autonomous runs instead of freezing at the last prompt. This keeps the agent date/time-aware: when no mode is set it proposes a fitting presence mode via Ask (never autonomous, never silently), and it mentions the active mode in normal output now and then, especially after a long gap since the last prompt. An autonomous run is never interrupted by a mode-change question.
 
+A third `UserPromptSubmit` hook (`credo-skill-nudge.sh`) re-surfaces a single low-cadence self-assess reminder, because the SessionStart knowledge list ages out over a long session and the credo skills get underused. It never forces a skill: the agent is asked to judge by effort and risk and actively use the fitting credo skill (diag / verify / audit / items / requirements-verbatim) on non-trivial or complex work, and skip it on small or trivial changes. It fires in all credo modes. Toggle with `CREDO_SKILL_NUDGE` (default true) and set the cadence with `CREDO_SKILL_NUDGE_EVERY` (default 5); the fire slot is offset by half the window from `credo-attended-reminder.sh` so the two reminders never stack in the same turn.
+
 A `SessionStart` hook makes the session credo-aware. Until the session has made a credo decision, and only on a human-present (re)start (`startup`/`clear`), it asks - via Ask - whether to use the credo workflow (yes runs `/credo:session-init`, no records a marker so it never asks again); it never asks in autonomous work, nor on `compact`/`resume`/`fork`. Once credo is active, the same hook re-injects the full credo command + skill list on every start (including after a compact, when the model context is gone), tagged by execution class so it is clear which commands the agent may run itself, which need the user, and which it must never trigger autonomously. The activation ASK can be turned off on its own with `CREDO_SESSION_START_ASK=false` (the whole hook with `CREDO_SESSION_START_INJECT=false`), and when the task backend is `gsd` the entire hook stays silent, since GSD is then the task system rather than credo.
 
 - **active** (`/credo:session-active`) - intensive live collaboration with the user at the keyboard. Progress is logged via the limit thresholds and compact-plus, open GO items are picked up alongside, clarifications happen during subagent waits. No keep-alive.
@@ -52,7 +54,7 @@ Each command sets the mode and loads its skill. The three session skills share o
   items/
     1_todo/{1_clarify,2_go,3_blocked}
     2_done/
-    3_verified/        only the user files here
+    3_verified/        human-authorized; agent files here only on your explicit instruction
     4_archived/
     parked/{hold,future}
   process/
@@ -95,7 +97,7 @@ The lifecycle, moving the file with `scripts/credo-item-move.sh`:
 2. **go** (`items/1_todo/2_go/`) - the user gave an explicit GO; ready to build. Entry is gated (G1-G6): only a fully clarified, GO'd item with no open build-details or unbuilt-item dependency may enter. Once here it IS buildable by definition (go=go): the building agent never self-skips or self-demotes it for size, UI, or "not sure it is verifiable". The one sanctioned way back is the **Named-Decision-Test**: a genuine user-only decision surfacing mid-build sends the item to `1_clarify` marked URGENT - never "too big / too hard".
 3. **blocked** (`items/1_todo/3_blocked/`) - GO'd but hard-blocked by another, unbuilt credo item (structured `blocked_by`/`blocks` relations). Auto-returns to `2_go` when the blocker is done. Distinct from `parked/hold`, which is for an external dependency. "Too big / too hard" is never a block.
 4. **done** (`items/2_done/`) - built and wired, and the Definition of Done gate has passed.
-5. **verified** (`items/3_verified/`) - only the user moves an item here.
+5. **verified** (`items/3_verified/`) - human-authorized. The agent never self-verifies, but may perform the mechanical move on your explicit instruction (`credo-item-move.sh <id> verified --user-authorized`). Raw `mv`/`git mv` of item files is blocked and redirected to the move helper (enforced by `credo-item-move-guard.sh`).
 
 Parked work lives under `items/parked/{hold,future}`; abandoned work under `items/4_archived/`.
 
@@ -135,10 +137,10 @@ credo primes every subagent at start. The `SubagentStart` hook (`credo-subagent-
 
 Cross-session messaging (`ListAgents` / `SendMessage`) only discovers peers that share the same `sessions/` registry, so sessions started under different profiles (different `CLAUDE_CONFIG_DIR`, e.g. `~/.claude` vs `~/.claude-private`) cannot see or message each other by default - even though the inbox sockets live in one shared runtime dir and the transport works across profiles. Because agents talking to each other regardless of profile is part of the workflow, credo bridges this.
 
-The `credo-peer-bridge.sh` hook (SessionStart, UserPromptSubmit, PostToolUse) autodiscovers sibling profiles (`~/.claude*` dirs that own a `sessions/` registry) and mirrors each **live** peer descriptor into the current profile's `sessions/` dir as a per-file **symlink**. That makes cross-profile peers appear in `ListAgents` and become reachable via `SendMessage`.
+The `credo-peer-bridge.sh` hook (SessionStart, UserPromptSubmit, PostToolUse) autodiscovers sibling profiles (`~/.claude*` dirs that own a `sessions/` registry) and mirrors each **live** peer descriptor into the current profile's `sessions/` dir as a **regular file** tagged with an ownership marker (`credoPeerBridge`). That makes cross-profile peers appear in `ListAgents` and become reachable via `SendMessage`. Regular-file copies are used deliberately: the discovery reader enumerates regular files only and does not follow symlinks, so per-file symlinks are legacy v1 and are not honored by the discovery reader.
 
 - **Resume stays clean.** `/resume` reads transcripts under `projects/`, never `sessions/`, so a mirrored descriptor (which has no local transcript) never pollutes the resume picker. Work/private history remain fully separate.
-- **Safe by construction.** The hook only ever creates or removes symlinks that point into a sibling `sessions/` dir; it never touches regular files (real local descriptors), never removes directories, and always exits 0 so it cannot surface as a hook error. Dead/dangling bridge links are pruned on the next run.
+- **Safe by construction.** The hook only ever removes files that carry its own `credoPeerBridge` marker (plus leftover legacy symlinks and its own temp files). A real local descriptor is an unmarked regular file and is never touched or overwritten; it never removes directories and never touches anything outside the profile's `sessions/` dir, and it always exits 0 so it cannot surface as a hook error. Entries whose source session has ended are pruned on the next run.
 - **Disable** with `CREDO_PEER_BRIDGE=0`.
 - **Caveat:** the descriptor format is internal to Claude Code and undocumented, so a future version may change it. The bridge is fail-safe - if that happens, peers simply stop appearing; nothing is corrupted.
 

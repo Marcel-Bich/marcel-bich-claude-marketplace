@@ -305,11 +305,11 @@ Use AskUserQuestion:
 ```
 Would you like to create a GSD project roadmap?
 
-- Yes, run /gsd:create-roadmap - Plan milestones and phases
+- Yes, run /gsd:new-milestone - Plan milestones and phases
 - No, skip for now
 ```
 
-If user chooses "Yes": Run `/gsd:create-roadmap` via Skill tool.
+If user chooses "Yes": Run `/gsd:new-milestone` via Skill tool.
 
 ## Step 8: Autonomy Preferences (Optional)
 

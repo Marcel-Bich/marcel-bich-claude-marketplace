@@ -166,7 +166,7 @@ ROADMAP.md          <- All milestones
       Plans         <- Executable work packages
 ```
 
-Typical GSD flow: `/gsd:new-project` (or `/gsd:map-codebase` for existing code) -> `/gsd:create-roadmap` -> `/clear` then `/gsd:plan-phase N` -> `/clear` then `/gsd:execute-phase N` (repeat) -> `/gsd:complete-milestone`. See `/gsd:help` for the full command set.
+Typical GSD flow: `/gsd:new-project` (or `/gsd:map-codebase` for existing code) -> `/gsd:new-milestone` -> `/clear` then `/gsd:plan-phase N` -> `/clear` then `/gsd:execute-phase N` (repeat) -> `/gsd:complete-milestone`. See `/gsd:help` for the full command set.
 
 ---
 
