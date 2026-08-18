@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Plan-Detection fuer Limit Plugin
-# Gibt NUR subscriptionType und rateLimitTier aus, KEINE Secrets!
+# Plan detection for Limit Plugin
+# Outputs ONLY subscriptionType and rateLimitTier, NO secrets!
 
 # Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
 CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
@@ -11,16 +11,16 @@ if [[ ! -f "${CREDS_FILE}" ]]; then
   exit 0
 fi
 
-# Extrahiere NUR die zwei relevanten Felder
+# Extract ONLY the two relevant fields
 TIER=$(jq -r '.claudeAiOauth.rateLimitTier // "unknown"' "${CREDS_FILE}" 2>/dev/null)
 SUB=$(jq -r '.claudeAiOauth.subscriptionType // "unknown"' "${CREDS_FILE}" 2>/dev/null)
 
-# Plan-Detection via Ausschlussverfahren:
-# 1. Wenn "20x" enthalten -> max20
-# 2. Wenn "5x" enthalten -> max5
-# 3. Wenn "pro" enthalten -> pro
-# 4. Wenn subscriptionType = "max" -> max5 (Fallback)
-# 5. Sonst -> unknown
+# Plan detection by elimination:
+# 1. If "20x" is present -> max20
+# 2. If "5x" is present -> max5
+# 3. If "pro" is present -> pro
+# 4. If subscriptionType = "max" -> max5 (fallback)
+# 5. Otherwise -> unknown
 
 if [[ "${TIER}" == *"20x"* ]]; then
   echo "max20"
