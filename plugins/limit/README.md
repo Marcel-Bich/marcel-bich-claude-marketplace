@@ -60,10 +60,19 @@ After installation, add to `~/.claude/settings.json`:
 {
   "statusLine": {
     "type": "command",
-    "command": "~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/usage-statusline.sh"
+    "command": "~/.claude/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/usage-statusline.sh",
+    "refreshInterval": 5
   }
 }
 ```
+
+`refreshInterval` (seconds) makes Claude Code re-render the statusline on a timer, not
+just on assistant messages. Without it the statusline goes stale while the main session
+is idle - for example during a long-running subagent - so the remaining budget you see
+can be minutes out of date. With it the usage stays live even while a subagent works.
+The statusline is token-free and reads a cache, and the token-owning refresh has its own
+throttle (a floor plus a jittered 90-150s cadence, guarded by a lock), so a low interval
+does NOT increase API calls. `setup-combined-statusline.sh` writes this field for you.
 
 ## Configuration
 

@@ -27,6 +27,9 @@ PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
 
 # Cache configuration (rate limiting) - profile-specific
 CACHE_FILE="/tmp/claude-mb-limit-cache_${PROFILE_NAME}.json"
+# Sanitized status word from the last (detached) refresh-usage.sh run, consumed
+# by the NEXT render to surface API errors. Profile-specific. Holds "<status>\t<rc>".
+REFRESH_STATUS_FILE="/tmp/claude-mb-limit-refresh-status_${PROFILE_NAME}"
 # Base cache age - actual age is jittered 90-150s to avoid detection patterns
 CACHE_BASE_AGE="${CLAUDE_MB_LIMIT_CACHE_AGE:-120}"
 
@@ -2418,8 +2421,50 @@ main() {
         # script never reads the OAuth token nor calls the Anthropic API itself.
         # The helper emits a single sanitized status word; we map it to the
         # existing API_ERROR codes so format_output renders the same messages.
+        #
+        # The render must stay fast: with statusLine.refreshInterval this script
+        # runs every few seconds (also while the main loop is idle waiting on a
+        # subagent), and Claude Code cancels an in-flight statusline script when
+        # the next tick fires. So the render NEVER blocks on the API:
+        #   - cold start (no cache yet): one synchronous fetch so the first render
+        #     has data.
+        #   - warm: kick refresh-usage.sh off DETACHED (survives cancellation) and
+        #     render from the current cache; the helper's status word is captured
+        #     to REFRESH_STATUS_FILE and surfaced on the NEXT render (~1 tick later).
+        # Either way the helper's own throttle (floor + jittered cadence + flock)
+        # governs the real API cadence unchanged - invoking it more often does NOT
+        # cause extra API calls.
         local refresh_status="" refresh_rc=0
-        refresh_status="$("${SCRIPT_DIR}/refresh-usage.sh" 2>/dev/null)" || refresh_rc=$?
+        if [[ ! -f "$CACHE_FILE" ]]; then
+            # Cold start: synchronous fetch so we have something to show now.
+            refresh_status="$("${SCRIPT_DIR}/refresh-usage.sh" 2>/dev/null)" || refresh_rc=$?
+        else
+            # Warm: consume the previous detached run's status (if any),
+            if [[ -f "$REFRESH_STATUS_FILE" ]]; then
+                local _rline _rrc
+                _rline="$(cat "$REFRESH_STATUS_FILE" 2>/dev/null || true)"
+                refresh_status="${_rline%%$'\t'*}"
+                _rrc="${_rline#*$'\t'}"
+                [[ "$_rrc" =~ ^[0-9]+$ ]] && refresh_rc="$_rrc"
+            fi
+            # and kick off a fresh refresh DETACHED for the next render.
+            if command -v setsid >/dev/null 2>&1; then
+                setsid bash -c '
+                    s="$("$1/refresh-usage.sh" 2>/dev/null)"; rc=$?
+                    printf "%s\t%s\n" "$s" "$rc" > "$2.tmp.$$" 2>/dev/null && mv -f "$2.tmp.$$" "$2" 2>/dev/null
+                ' _ "$SCRIPT_DIR" "$REFRESH_STATUS_FILE" >/dev/null 2>&1 < /dev/null &
+            else
+                # No setsid (e.g. stock macOS): background a subshell that still
+                # captures the status the same way, so warm-path error surfacing
+                # keeps working. It stays in this process group (a killpg-style
+                # cancellation could interrupt it, but tmp+mv+flock make that a
+                # clean skipped tick, never corruption).
+                ( r="$("${SCRIPT_DIR}/refresh-usage.sh" 2>/dev/null)"; rc=$?
+                  printf '%s\t%s\n' "$r" "$rc" > "${REFRESH_STATUS_FILE}.tmp.$$" 2>/dev/null \
+                    && mv -f "${REFRESH_STATUS_FILE}.tmp.$$" "$REFRESH_STATUS_FILE" 2>/dev/null ) < /dev/null &
+            fi
+            disown 2>/dev/null || true
+        fi
         debug_log "refresh-usage.sh status='${refresh_status}' rc=${refresh_rc}"
 
         case "$refresh_status" in
