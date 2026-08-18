@@ -84,7 +84,7 @@ if [[ ! -f "$SETTINGS_FILE" ]]; then
   "statusLine": {
     "type": "command",
     "command": "${WRAPPER_SCRIPT}",
-    "refreshInterval": 5
+    "refreshInterval": 20
   }
 }
 EOF
@@ -96,7 +96,7 @@ else
 
     # Update statusLine in existing settings
     tmp_file=$(mktemp)
-    jq --arg cmd "$WRAPPER_SCRIPT" '.statusLine = {"type": "command", "command": $cmd, "refreshInterval": 5}' "$SETTINGS_FILE" > "$tmp_file"
+    jq --arg cmd "$WRAPPER_SCRIPT" '.statusLine = {"type": "command", "command": $cmd, "refreshInterval": 20}' "$SETTINGS_FILE" > "$tmp_file"
     mv "$tmp_file" "$SETTINGS_FILE"
     echo -e "  Updated statusLine configuration"
 fi

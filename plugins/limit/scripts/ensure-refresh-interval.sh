@@ -46,7 +46,7 @@ set -euo pipefail
 trap 'exit 0' ERR
 
 # --- opt-out / value ---
-optval="${CLAUDE_MB_LIMIT_AUTO_REFRESH_INTERVAL:-5}"
+optval="${CLAUDE_MB_LIMIT_AUTO_REFRESH_INTERVAL:-20}"
 case "$optval" in
     0|off|OFF|false|FALSE|no|NO) _heal_log "?" "opt-out"; exit 0 ;;
 esac
