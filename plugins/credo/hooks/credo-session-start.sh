@@ -140,6 +140,13 @@ Then offer exactly these AskUserQuestion options:
 - Active  -> run the /credo:session-active command (sets the mode to active and records the credo decision)
 - Passive -> run the /credo:session-passive command (sets the mode to passive and records the credo decision)
 - No      -> run \`"${DECISION_SCRIPT}" declined ${session_id}\` so this is not asked again
+
+After the user picks Active or Passive (opting in), also pin the credo project target for this session, so credo operates on the intended repo (this matters when the cwd is a launch hub rather than the work repo):
+1. Run /credo:project with no argument to show the currently resolved target and whether the cwd is a hub.
+2. Ask via AskUserQuestion which repo credo should target this session. If the current directory is a git repo (git rev-parse --show-toplevel succeeds), offer its top-level path as the default option AND an option to enter a different target path. If the cwd is NOT a git repo, ask only for the target repo path (no cwd default).
+3. Pin the chosen repo with /credo:project <absolute path>, then confirm the resolved target.
+Skip this pin step if the user chose No.
+
 Do NOT offer autonomous as a selectable option - only mention it can be turned on anytime via /credo:session-autonomous. Do NOT ask this in autonomous/unattended work. This is a one-time setup question - handle it first, then continue with the user's request.
 K
 
