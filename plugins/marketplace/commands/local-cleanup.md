@@ -44,7 +44,7 @@ PLUGIN_NAME="<from-backup-path>"
 Read the installed plugin info:
 
 ```bash
-cat ~/.claude/plugins/installed_plugins.json
+cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json"
 ```
 
 Find the `installPath` for the plugin.

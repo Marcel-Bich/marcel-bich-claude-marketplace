@@ -45,7 +45,7 @@ ls plugins/*/plugin.yaml 2>/dev/null
 Read the installed plugin info:
 
 ```bash
-cat ~/.claude/plugins/installed_plugins.json
+cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json"
 ```
 
 Search for the plugin with pattern `{plugin-name}@{marketplace-name}`.

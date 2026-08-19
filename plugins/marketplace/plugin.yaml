@@ -1,6 +1,6 @@
 name: marketplace
 description: Development tools for Claude Code plugins - local testing without pushing
-version: 1.0.0
+version: 1.0.1
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
