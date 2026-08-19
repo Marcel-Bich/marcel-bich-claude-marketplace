@@ -1,13 +1,13 @@
 name: get-shit-done
 description: Installer for the Get-Shit-Done workflow system (own secured & frozen fork, markdown skills only) - meta-prompting, context engineering and spec-driven development
-version: 1.3.0
+version: 1.3.1
 author: Marcel-Bich
 repository: https://github.com/Marcel-Bich/get-shit-done
 
 commands:
   gsd:setup:
-    description: Clone GSD to ~/.claude/get-shit-done/ (run once after plugin install)
+    description: Clone GSD into the active Claude config dir (${CLAUDE_CONFIG_DIR:-$HOME/.claude}/get-shit-done/) (run once after plugin install)
     source: commands/setup.md
   gsd:uninstall:
-    description: Remove GSD from ~/.claude/get-shit-done/
+    description: Remove GSD from the active Claude config dir (${CLAUDE_CONFIG_DIR:-$HOME/.claude}/get-shit-done/)
     source: commands/uninstall.md

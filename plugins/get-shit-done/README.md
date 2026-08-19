@@ -4,10 +4,10 @@ Installer for the Get-Shit-Done workflow system - own secured & frozen fork, mar
 
 ## What This Does
 
-This plugin installs GSD by copying commands and resources to:
+This plugin installs GSD by copying commands and resources into the active Claude config dir (`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`):
 
-- `~/.claude/commands/gsd/` (slash commands)
-- `~/.claude/get-shit-done/` (templates, workflows, references)
+- `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/commands/gsd/` (slash commands)
+- `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/get-shit-done/` (templates, workflows, references)
 
 After setup, you use the GSD commands directly. Only markdown skills are installed - no executable code, hooks, or npm packages.
 
@@ -15,8 +15,8 @@ After setup, you use the GSD commands directly. Only markdown skills are install
 
 | Command          | Description                |
 | ---------------- | -------------------------- |
-| `/gsd:setup`     | Install GSD to ~/.claude/  |
-| `/gsd:uninstall` | Remove GSD from ~/.claude/ |
+| `/gsd:setup`     | Install GSD into the active Claude config dir (`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`) |
+| `/gsd:uninstall` | Remove GSD from the active Claude config dir (`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`) |
 
 ## Usage
 

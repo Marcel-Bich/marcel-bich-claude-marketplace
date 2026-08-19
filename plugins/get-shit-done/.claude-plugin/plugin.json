@@ -1,6 +1,6 @@
 {
     "name": "get-shit-done",
-    "version": "1.3.0",
+    "version": "1.3.1",
     "description": "Installer for the Get-Shit-Done workflow system (own secured & frozen fork, markdown skills only) - meta-prompting, context engineering and spec-driven development",
     "keywords": ["meta-prompting", "context-engineering", "spec-driven-development", "project-management"],
     "license": "MIT"

@@ -1,6 +1,6 @@
 ---
 name: gsd:setup
-description: Install GSD resources to ~/.claude/get-shit-done/ (required before using other GSD commands)
+description: Install GSD resources into the active Claude config dir (${CLAUDE_CONFIG_DIR:-$HOME/.claude}/get-shit-done/) (required before using other GSD commands)
 allowed-tools:
     - Bash
     - AskUserQuestion
@@ -8,10 +8,10 @@ allowed-tools:
 
 <objective>
 
-Install GSD by cloning the repo to /tmp and copying resources to the correct locations:
+Install GSD by cloning the repo to /tmp and copying resources to the correct locations under the active Claude config dir (`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`):
 
-- Commands to ~/.claude/commands/gsd/
-- Resources to ~/.claude/get-shit-done/
+- Commands to `$GSD_BASE/commands/gsd/`
+- Resources to `$GSD_BASE/get-shit-done/`
 
 </objective>
 
@@ -22,10 +22,12 @@ Install GSD by cloning the repo to /tmp and copying resources to the correct loc
 Check if GSD is already installed:
 
 ```bash
-if [ -d ~/.claude/commands/gsd ] || [ -d ~/.claude/get-shit-done ]; then
+GSD_BASE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+
+if [ -d "$GSD_BASE/commands/gsd" ] || [ -d "$GSD_BASE/get-shit-done" ]; then
     echo "EXISTS"
-    [ -d ~/.claude/commands/gsd ] && echo "commands: $(ls ~/.claude/commands/gsd/*.md 2>/dev/null | wc -l) files"
-    [ -d ~/.claude/get-shit-done ] && echo "resources: present"
+    [ -d "$GSD_BASE/commands/gsd" ] && echo "commands: $(ls "$GSD_BASE"/commands/gsd/*.md 2>/dev/null | wc -l) files"
+    [ -d "$GSD_BASE/get-shit-done" ] && echo "resources: present"
 else
     echo "NOT_EXISTS"
 fi
@@ -54,27 +56,29 @@ Use AskUserQuestion:
 **If NOT_EXISTS or "Update" selected:**
 
 ```bash
+GSD_BASE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+
 # Clone to temp (own secured, frozen fork - markdown skills only)
 rm -rf /tmp/gsd-install
 git clone --depth 1 https://github.com/Marcel-Bich/get-shit-done.git /tmp/gsd-install
 
 # Create directories
-mkdir -p ~/.claude/commands/gsd
-mkdir -p ~/.claude/get-shit-done
+mkdir -p "$GSD_BASE/commands/gsd"
+mkdir -p "$GSD_BASE/get-shit-done"
 
 # Copy commands (excluding _archive)
-cp /tmp/gsd-install/commands/gsd/*.md ~/.claude/commands/gsd/
+cp /tmp/gsd-install/commands/gsd/*.md "$GSD_BASE/commands/gsd/"
 
 # Copy resources
-cp -r /tmp/gsd-install/get-shit-done/* ~/.claude/get-shit-done/
+cp -r /tmp/gsd-install/get-shit-done/* "$GSD_BASE/get-shit-done/"
 
 # Cleanup
 rm -rf /tmp/gsd-install
 
 # Verify
 echo "Installed:"
-echo "- Commands: $(ls ~/.claude/commands/gsd/*.md | wc -l) files"
-echo "- Resources: $(ls -d ~/.claude/get-shit-done/*/ | wc -l) directories"
+echo "- Commands: $(ls "$GSD_BASE"/commands/gsd/*.md | wc -l) files"
+echo "- Resources: $(ls -d "$GSD_BASE"/get-shit-done/*/ | wc -l) directories"
 ```
 
 </step>
@@ -86,8 +90,9 @@ Present completion:
 ```
 GSD Setup Complete
 
-Commands installed to: ~/.claude/commands/gsd/
-Resources installed to: ~/.claude/get-shit-done/
+Commands installed to: $GSD_BASE/commands/gsd/
+Resources installed to: $GSD_BASE/get-shit-done/
+(GSD_BASE is the active Claude config dir: ${CLAUDE_CONFIG_DIR:-$HOME/.claude})
 
 IMPORTANT: Restart Claude Code to load the new commands.
 
@@ -110,8 +115,8 @@ Update anytime: /gsd:setup -> "Update"
 
 <success_criteria>
 
-- [ ] Commands exist at ~/.claude/commands/gsd/
-- [ ] Resources exist at ~/.claude/get-shit-done/
+- [ ] Commands exist at $GSD_BASE/commands/gsd/
+- [ ] Resources exist at $GSD_BASE/get-shit-done/
 - [ ] User informed of next steps
 
 </success_criteria>
