@@ -94,7 +94,7 @@ get_parent_model() {
 
   # 3. Global settings
   if [[ -z "$settings_model" ]]; then
-    settings_model=$(jq -r '.model // empty' ~/.claude/settings.json 2>/dev/null)
+    settings_model=$(jq -r '.model // empty' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" 2>/dev/null)
   fi
 
   # 4. Fallback to opus (safest default - never downgrade by accident)

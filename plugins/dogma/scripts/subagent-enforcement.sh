@@ -69,10 +69,10 @@ else
 fi
 
 # === PLAN FILE EXCEPTION ===
-# Claude Code plan mode writes to ~/.claude/plans/*.md - always allow
+# Claude Code plan mode writes to ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plans/*.md - always allow
 if [ "$TOOL_NAME" = "Write" ] || [ "$TOOL_NAME" = "Edit" ]; then
     FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
-    if [[ "$FILE_PATH" == "$HOME/.claude/plans/"*.md ]]; then
+    if [[ "$FILE_PATH" == "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plans/"*.md ]]; then
         dogma_debug_log "Plan file write - skip enforcement: $FILE_PATH"
         exit 0
     fi
