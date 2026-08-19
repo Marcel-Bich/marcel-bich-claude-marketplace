@@ -105,9 +105,12 @@ ensure_plugin_dir() {
     fi
 }
 
-# Jittered cache max age (90-150 seconds) - randomizes request patterns.
+# Jittered cache max age - randomizes request patterns. Base is configurable via
+# CLAUDE_MB_LIMIT_REFRESH_CADENCE (default 150), plus 0-60s jitter, so the default
+# cadence is 150-210s (avg ~180). Raise it if you hit usage-endpoint rate limits.
 get_cache_max_age() {
-    echo $((90 + RANDOM % 61))
+    local base="${CLAUDE_MB_LIMIT_REFRESH_CADENCE:-150}"
+    echo $((base + RANDOM % 61))
 }
 
 # Small jitter before the API request (0-2000ms) - avoids predictable timing.

@@ -81,8 +81,23 @@ does NOT increase API calls. `setup-combined-statusline.sh` writes this field fo
 If you set the statusline up before this field existed AND the limit plugin is enabled, a
 SessionStart hook detects the gap and adds `refreshInterval` for you (with a backup; a
 restart then activates it). Set `CLAUDE_MB_LIMIT_AUTO_REFRESH_INTERVAL=0` to opt out, or to
-a positive integer to choose the value. (Plugin hooks do not run when the plugin is
-disabled - a statusline-only setup is healed from the statusline script instead.)
+a positive integer to choose the value. Plugin hooks do not run when the plugin is disabled,
+so a statusline-only setup (plugin installed but disabled) is NOT auto-healed - add
+`refreshInterval` manually as shown above.
+
+**What updates live, and what counts subagents.** On each render the script recomputes its
+self-sourced values: the 5h / 7d / weekly bars (account-wide API usage, so subagent
+consumption IS included), session timing, git, and the JSONL-based lifetime token/cost
+totals (main + subagents). These stay current on every `refreshInterval` tick, even while a
+subagent runs. The values Claude Code passes on stdin behave differently: the session cost
+(`total_cost_usd`) is session-wide and so does include subagent API calls, whereas the
+context-window tokens and percentage reflect only the main conversation's most recent API
+response - subagents have their own separate context windows and are not summed into it.
+Measured behavior: the session cost updates live on each render while a subagent runs - it
+does not wait for the subagent to return (the main context stays frozen meanwhile, since it
+reflects only the main conversation). So the session cost, the account-wide 5h / 7d bars, and
+the lifetime totals all track subagent consumption live; only the context-window
+tokens/percentage stay main-only.
 
 ## Configuration
 
@@ -122,7 +137,8 @@ All features can be toggled via environment variables. Export them in your shell
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLAUDE_MB_LIMIT_CACHE_AGE` | 120 | Cache duration in seconds |
+| `CLAUDE_MB_LIMIT_REFRESH_CADENCE` | 150 | Base seconds between usage-API refreshes; plus 0-60s jitter, so 150-210s (avg ~180). Raise it if you hit usage-endpoint rate limits |
+| `CLAUDE_MB_LIMIT_CACHE_AGE` | 120 | Max age (seconds) of the local JSONL token-accounting scan cache (no API calls; unrelated to rate limits) |
 | `CLAUDE_MB_LIMIT_DEFAULT_COLOR` | `\033[90m` | Default color (ANSI escape sequence) |
 | `CLAUDE_MB_LIMIT_SHOW_ERRORS` | false | Show "limit: error" on failures |
 | `CLAUDE_MB_LIMIT_AVERAGE` | true | Show rolling average display |

@@ -30,8 +30,6 @@ CACHE_FILE="/tmp/claude-mb-limit-cache_${PROFILE_NAME}.json"
 # Sanitized status word from the last (detached) refresh-usage.sh run, consumed
 # by the NEXT render to surface API errors. Profile-specific. Holds "<status>\t<rc>".
 REFRESH_STATUS_FILE="/tmp/claude-mb-limit-refresh-status_${PROFILE_NAME}"
-# Base cache age - actual age is jittered 90-150s to avoid detection patterns
-CACHE_BASE_AGE="${CLAUDE_MB_LIMIT_CACHE_AGE:-120}"
 
 # Context-fill cache - profile-specific, readable by agents (no secrets, numbers only)
 # Single atomic file (no history), refreshed at the same rate as the statusline
@@ -156,10 +154,12 @@ migrate_old_state_files() {
 # Anti-bot-detection: Cache jitter, request jitter, and exponential backoff
 # =============================================================================
 
-# Get jittered cache max age (90-150 seconds)
-# Randomizes request patterns to avoid detection
+# Get jittered cache max age - randomizes request patterns to avoid detection.
+# Base configurable via CLAUDE_MB_LIMIT_REFRESH_CADENCE (default 150) plus 0-60s
+# jitter, so the default cadence is 150-210s (avg ~180). Raise it on rate limits.
 get_cache_max_age() {
-    echo $((90 + RANDOM % 61))
+    local base="${CLAUDE_MB_LIMIT_REFRESH_CADENCE:-150}"
+    echo $((base + RANDOM % 61))
 }
 
 # Small jitter before API request (0-2000ms)
