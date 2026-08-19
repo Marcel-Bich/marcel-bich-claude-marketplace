@@ -194,6 +194,15 @@ These two interleave; run them together.
     intermediate status "GO-reif" (GO-ready) does NOT exist: an item with unresolved build-details is
     `1_clarify` (to be clarified WITH the user), never handed to the building agent to
     decide.
+    - **G5a - measure-then-user-decide is split, never a single blocking point.** A Success
+      Criterion phrased as "measure first, then the USER decides" - a user-only decision that
+      only arises AFTER a measurement the build itself produces - must NOT enter `2_go` as one
+      blocking point. At GO time it has no open decision yet (the decision only arises once the
+      build has produced the measurement), so it would otherwise slip past G4/G5. Split it at
+      GO per the split guidance below: keep the buildable measurement criterion (produce the
+      numbers / the concrete cost-benefit finding) in the item, and file a SEPARATE
+      user-decision item in `1_clarify`, blocked on the measurement until the numbers exist;
+      only then does the user decide.
   - **G6 - sweep cross-check.** A GO sweep / sighting cross-checks its counted / listed set
     against the actual folder listing (`ls .credo/items/1_todo/2_go/`) so no item is
     silently skipped. This is a one-shot check at sweep time (a single shell command), NOT a

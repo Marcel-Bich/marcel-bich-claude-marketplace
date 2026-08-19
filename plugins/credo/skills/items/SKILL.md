@@ -58,6 +58,13 @@ credo `migrate` skill owns the G1-G6 entry gate).
   re-scope or phase a large item into slices, but it must build. The ONE carve-out is a
   genuine user-only decision that passes the Named-Decision-Test (below) - that is not a
   size/difficulty demotion and is the only sanctioned `2_go -> 1_clarify` path.
+- **Verify the real scope before calling a point LARGE.** Before you classify a point as
+  large or move it into a follow-up item for size reasons, FIRST briefly verify feasibility
+  and the real scope - sketch how it would actually be done - instead of guessing. Size must
+  be checked, not assumed: a size claim used to defer must be backed by a quick actual look
+  at the implementation, not an estimate. This does not forbid genuine follow-up items when
+  they are warranted; it only bars deferring on an assumed size ("too big / too hard" is
+  still not grounds - see the Named-Decision-Test).
 - **`ui: true` is not a reason not to build.** UI items are verified via the credo `verify`
   skill, which is autonomous-capable; a required visual verify does not make an item
   unbuildable.
@@ -173,6 +180,17 @@ Use these English headings in this order. A blank template ships at
 2. **Success Criteria (= DoD)** - observable "the user can X" statements, each one
    checkable. These ARE the Definition of Done for this item. Vague criteria that cannot
    be observed are not acceptable; make each one exercisable.
+   - **Measure-then-user-decide is not one blocking DoD point.** A criterion where the
+     decision is the user's alone and only arises AFTER a measurement the build itself
+     produces (for example "measure whether the full solution is worth the cost, then decide
+     build vs skip") is NOT a single blocking criterion. Split it at the GO gate (see the
+     Definition of Done gate below and the `migrate` G4/G5 entry gate): the buildable
+     MEASUREMENT (produce the numbers / the concrete cost-benefit finding) stays in this item
+     as a criterion the builder CAN complete; the user-only decision becomes a SEPARATE item
+     in `1_clarify`, blocked on the measurement until the numbers exist, and only then does
+     the user decide. The parent then stays a clean all-or-nothing item over its buildable
+     criteria (the measurement included); it does not sit stuck half-done and is not bounced
+     whole back to `1_clarify` over a decision that is not yet open.
 3. **Implemented** - what was actually built, with concrete `file:line` references. This
    is where the wiring is recorded (which caller reaches the new code).
 4. **Verify** - the honest 4-valued verification state, per layer. See below.
@@ -298,6 +316,15 @@ An item may move into `2_done/` ONLY when ALL of these hold. This gate is hard.
    change affects and update it now.
 6. **Version bump as part of the DoD** - bump the version as part of completing the work,
    dogma-first (follow dogma's versioning if present), credo as fallback only.
+
+The parent's DoD is all-or-nothing over its BUILDABLE criteria ONLY. A
+"measure-then-user-decide" point (a user-only decision that arises only after a measurement
+the build produces) is NOT a blocking DoD point of the parent: at the GO gate it is split
+into a buildable measurement criterion that stays in this item and a separate user-decision
+item in `1_clarify` blocked on the measurement (see Success Criteria above and the `migrate`
+G4/G5 entry gate). So the parent completes cleanly once its buildable criteria - the
+measurement included - are `exercised`; it does not stay stuck half-done waiting on a
+user-only decision, and it is not bounced whole back to `1_clarify` by the Named-Decision-Test.
 
 `completed != done`: a builder saying "I finished" is not done. Done is the physical
 `2_done/` folder, reached only after the audit gate passes. The marker is the folder, not

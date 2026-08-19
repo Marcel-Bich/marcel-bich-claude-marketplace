@@ -123,6 +123,11 @@ For the 5-hour axis, off-hours use a soft/hard band from `budget.five_hour`:
 stop). The schedule's `five_hour_cap` for off-hours rows equals the hard value. Work-hours
 rows cap the 5h window low (default 40) so the 09:00 guard below can hold.
 
+The WEEKLY axis has NO soft/hard band (B11): `weekly_cap` is a plain per-row ceiling,
+entirely unrelated to the 5h `soft_percent` / `hard_percent`. The numeral 95 showing up in
+both a `five_hour_cap` cell and some `weekly_cap` cells is coincidental - two independent
+columns that happen to share a number, not a shared weekly band.
+
 In AUTONOMOUS mode the 5h pacing is instead driven by a staggered ladder that is ENFORCED
 by the `credo-5h-budget-guard.sh` PreToolUse hook (it fires in the main agent and inside
 subagents). The ladder lives in config as `budget.autonomous_5h.main_ladder` (default

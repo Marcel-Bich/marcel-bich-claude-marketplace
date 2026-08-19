@@ -163,6 +163,9 @@ budget:
     switch_percent: 97
   # Cap schedule. five_hour_cap is the hard cap for that window; off-hours use
   # the soft/hard band above (95 hard). weekly_cap is the weekly ceiling.
+  # Weekly has NO soft/hard band: weekly_cap is a plain ceiling, unrelated to the
+  # 5h soft_percent/hard_percent. A 95 in both a five_hour_cap and a weekly_cap cell
+  # is coincidental, not a shared weekly band.
   schedule:
     - day: sunday
       window: all_day
