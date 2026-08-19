@@ -272,9 +272,14 @@ axis.
 
 ### Per-task and per-question ntfy
 
-Autonomous mode is where the common-core ntfy hybrid does the most work. Send an immediate
-`high` ntfy for come-to-PC events (a deferred question, a blocker / showstopper, a budget
-cap reached, run completion, the pre-hibernate veto) and BEFORE the blocking action.
+Autonomous mode is where the common-core ntfy hybrid does the most work. Send every ntfy
+push through the helper `${CLAUDE_PLUGIN_ROOT}/scripts/credo-ntfy-send.sh "message"` (with
+`-t "Title"` and `CREDO_NTFY_PRIORITY=high` as needed); it resolves the topic/server through
+the cascade internally (`credo-config.sh get personal.ntfy_topic` / `personal.ntfy_server`)
+and is a silent no-op when ntfy is not configured, so you never touch the topic directly.
+Send an immediate `high` ntfy for come-to-PC events (a deferred question, a blocker /
+showstopper, a budget cap reached, run completion, the pre-hibernate veto) and BEFORE the
+blocking action.
 Progress is bundled into one digest per `ntfy.digest_interval_minutes`, and - when ntfy is
 configured (a `personal.ntfy_topic` is set) - sending that digest is MANDATORY per interval
 whenever there is progress; it is NOT the agent's discretion to judge it "not important

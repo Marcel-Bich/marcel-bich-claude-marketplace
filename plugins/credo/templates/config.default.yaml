@@ -232,6 +232,9 @@ budget_failsafe:
 personal:
   # ntfy topic for push notifications. Empty -> notifications are skipped.
   ntfy_topic: ""
+  # ntfy server base URL. Default is the public ntfy.sh server; override in the
+  # personal layer to point at a self-hosted instance.
+  ntfy_server: "https://ntfy.sh"
   # ntfy opt-out marker. Setup-only: distinguishes "user declined notifications"
   # from "never asked" so /credo:setup stops re-asking. true -> setup skips the ntfy
   # question. It does NOT add any runtime prompt (runtime still just skips ntfy

@@ -230,10 +230,20 @@ one-liner ("item done") is not acceptable. Every completed item in a digest carr
 Prefer ONE bundled message. If it exceeds ntfy's size limit, split into `n/m` messages
 (e.g. "2/3") rather than dropping detail.
 
-Read the config values with:
+Send every ntfy push through the helper - it is the single discoverable send path and
+resolves the topic/server from the config cascade (`credo-config.sh get personal.ntfy_topic`
+and `personal.ntfy_server`) internally, so you never touch the topic directly:
 
 ```
-"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get personal.ntfy_topic
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-ntfy-send.sh" "message text"
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-ntfy-send.sh" -t "Title" "message text"
+```
+
+Priority is set via the `CREDO_NTFY_PRIORITY` env var (`default` | `high` | `max`). When the
+topic is empty (ntfy not configured) or curl is missing, the helper is a silent no-op (exit 0)
+- never an error. Read the digest cadence with:
+
+```
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get ntfy.digest_interval_minutes
 ```
 

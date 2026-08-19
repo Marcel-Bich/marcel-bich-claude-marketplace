@@ -37,6 +37,15 @@ the shared project-layer resolver so it also works when you start from a launch 
 When it prints a `(present)` path, Read that file. Resolution precedence is the same as for
 config and items: `CREDO_DIR` env > session pin (`/credo:project`) > repo-root `.credo/`.
 
+## Config values live in the cascade, not the repo folder
+
+All config and personal values (ntfy topic/server, sleep, identities, viewports) live in the
+credo config cascade (builtin < global < profile < project). Resolve them ONLY via
+`credo-config.sh get <dotted.key>` - never grep the plugin/repo folder, the template holds
+empty placeholders. To send an ntfy push, use the helper
+`${CLAUDE_PLUGIN_ROOT}/scripts/credo-ntfy-send.sh "message"` (it resolves the topic/server
+through the cascade and is a silent no-op when ntfy is not configured).
+
 ## Load and honor at session start
 
 At the start of a session, resolve and (if present) Read `.credo/RULES.md`, then honor its
