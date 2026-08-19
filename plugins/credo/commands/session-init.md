@@ -126,6 +126,16 @@ These are the credo capabilities available in this session. Prefer them over the
 - **[B] only on explicit user request** (interactive, or the user's call to make): `/credo:session-active`, `/credo:session-passive`, `/credo:psalm`, `/credo:project <path>` (pin a target).
 - **[C] NEVER run autonomously** - only the user decides these (mode escalation / installs / structural migration): `/credo:session-autonomous`, `/credo:setup`, `/credo:migrate`.
 
+## Harness task list (scratchpad, not the item store)
+
+The Claude Code harness task list (`TaskCreate` / `TaskList`) is a scratchpad, not the task
+system. It holds references to items (not full items), reminders, ordering constraints, and
+HOLD notes. An empty harness list does NOT mean "nothing to do" - the GO folder
+(`.credo/items/1_todo/2_go`) is always the primary work set. Completed entries PERSIST (do
+not clear them) so the user can review completed vs pending after a run. The full model,
+tag convention, and terminology live in the credo `items` skill under "Harness task-list vs
+.credo items".
+
 ## Output convention
 
 Item references are always written in inline-code style: `#37`, `#90`, `#91` (backticks) -

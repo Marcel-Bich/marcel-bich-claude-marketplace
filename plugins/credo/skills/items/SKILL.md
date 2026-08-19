@@ -17,6 +17,9 @@ in is the only source of truth for its status**. There is no status field, no ma
 task-tracker entry - an item changes status by physically moving between folders. This is
 deliberate anti-drift: multiple status sources drift out of sync, one physical location
 cannot. `.credo/items/` IS the task system; do not mirror items into a separate task list.
+"Do not mirror" does NOT mean "never use the harness task list at all" - it means no FULL
+items live there; references to items are fine (see "Harness task-list vs .credo items"
+below).
 
 > **Task backend.** If the task backend is `gsd` (set in `.credo/config` as `task_backend`, or via the `CREDO_TASK_BACKEND` env override; resolve with `credo-config.sh backend`), the credo item system is inactive - GSD's
 > phases are the task system for this project. Do NOT create or move `.credo/items/`; use
@@ -43,6 +46,43 @@ The folder tree (created by `credo-init`) and what each folder means:
 
 Never encode status anywhere else. If you want to know an item's status, look at which
 folder its file is in - nothing else is authoritative.
+
+## Harness task-list vs .credo items
+
+The Claude Code harness has its own task list (the `TaskCreate` / `TaskList` tools). It is
+NOT a second status source and NOT a mirror of `.credo/items/`. This section is the single
+source for how the two relate; the credo `orchestration` and `session-init` docs only point
+here.
+
+1. **The GO folder is always the primary work set.** A task / build agent's PRIMARY work set
+   is ALWAYS the GO folder (`.credo/items/1_todo/2_go`). An EMPTY harness task list does NOT
+   mean "nothing to do" - the agent must always fall back to the GO folder. An empty harness
+   list is never a stop condition; the GO folder is the authority for what to build.
+2. **The harness task list is the ephemeral coordination layer.** It is a temporary,
+   compact-surviving scratchpad: reminders, ordering constraints between item
+   implementations, HOLD conditions, and small things not worth their own `.credo` item. It
+   is NOT a mirror of `.credo` items and must NOT contain full items - only references.
+3. **References are welcome; the substance stays in `.credo`.** An item's substance lives in
+   its `.credo` file, never in the task list; the harness list carries only references to it.
+4. **Completed entries PERSIST - never clear them.** The user reviews the list after an
+   autonomous run to see completed vs pending as a next-day reference, so completed entries
+   must stay. "Tidying" the list means keeping it current and correct, NOT deleting completed
+   entries. This pairs with the end-of-run come-see-results moment and the fresh-listing
+   pending backstop in the credo `session-autonomous` skill (end-of-run), where the user
+   reviews completed vs pending after an unattended run.
+
+Tag convention: each line is one of `[GO]` / `[HOLD]` / `[REMINDER]` / `[DONE]`, then a
+backticked item `#ref`, then a short topic. The `#ref` is written in backticks, matching the
+inline-code item-reference convention used throughout the credo skills. Example lines:
+
+```
+1. [GO] `#xyz` - topic                (an ordering constraint)
+[HOLD] `#xyz` do not build until the user explicitly orders it
+[REMINDER] `#1234` X still needed there, but only later after Y is done
+```
+
+> **Terminology.** "task list" / "task liste" means primarily the harness `TaskCreate` /
+> `TaskList` entries; only if none exist may the agent interpret what was otherwise meant.
 
 ## go=go - the folder is authoritative for building
 
@@ -223,8 +263,9 @@ session than the one that wrote it. Its text therefore describes the WORK and it
 DEPENDENCIES, never who is currently handling it. Perspective-relative wording like
 "another agent", "hands-off (other agent)", or "I do X, the other agent does Y" breaks
 this: a later builder reads "another agent" as someone other than themselves and misreads
-the item. Keep who-does-what coordination OUT of the item - it belongs only in the session
-task list (the ephemeral coordination layer), not in the durable item. State dependencies
+the item. Keep who-does-what coordination OUT of the item - it belongs only in the harness
+task list (the ephemeral coordination layer defined in "Harness task-list vs .credo items"
+above), not in the durable item. State dependencies
 by item id (for example `blocked_by: [807]`), not by actor.
 
 ## The 4-valued Verify (honest, per layer)

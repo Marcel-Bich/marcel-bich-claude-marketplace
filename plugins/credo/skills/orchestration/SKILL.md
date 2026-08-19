@@ -140,3 +140,6 @@ cascade (`builtin template < ~/.claude/credo/config < .credo/config`, read via
 - This skill governs how to delegate. What a subagent should verify, audit, or log is
   covered by the respective credo building-block skills (for example `verify`, `audit`,
   `requirements-verbatim`).
+- Cross-track ordering constraints and HOLD notes between item implementations live in the
+  harness task list (the ephemeral coordination layer), defined in the credo `items` skill
+  ("Harness task-list vs .credo items") - not duplicated here.
