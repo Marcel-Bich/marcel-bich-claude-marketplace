@@ -48,6 +48,23 @@ state_file="$STATE_DIR/$session_id"
 # preserve the old silent behavior.
 if [[ ! -f "$state_file" ]]; then
     [[ "${CREDO_AUTONOMY_BOOTSTRAP:-true}" == "true" ]] || exit 0
+    # Persistent per-directory opt-out: if this directory (git toplevel else PWD)
+    # was declined, stay silent - do NOT inject the [credo] bootstrap line. Only
+    # relevant when no session mode is set (an active mode is a deliberate opt-in
+    # and keeps its own [credo-mode] line below).
+    HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || HOOK_DIR=""
+    DIR_DECISION_SCRIPT="${HOOK_DIR}/../scripts/credo-dir-decision.sh"
+    _scripts_dir="$(cd "${HOOK_DIR}/../scripts" 2>/dev/null && pwd)" || _scripts_dir=""
+    if [[ -n "$_scripts_dir" ]]; then
+        DIR_DECISION_SCRIPT="${_scripts_dir}/credo-dir-decision.sh"
+    elif [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
+        DIR_DECISION_SCRIPT="${CLAUDE_PLUGIN_ROOT}/scripts/credo-dir-decision.sh"
+    fi
+    if [[ -x "$DIR_DECISION_SCRIPT" ]]; then
+        dir_decision=$("$DIR_DECISION_SCRIPT" get 2>/dev/null || echo "")
+        dir_decision="${dir_decision//[[:space:]]/}"
+        [[ "$dir_decision" == "declined" ]] && exit 0
+    fi
     boot="[credo] No session mode set (default: normal collaboration). To hand off unattended or full-autonomy work you can enter autonomous mode with /credo:session-autonomous (or /credo:session-active | /credo:session-passive)."
     jq -n --arg ctx "$boot" \
         '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $ctx}, suppressOutput: true}' 2>/dev/null

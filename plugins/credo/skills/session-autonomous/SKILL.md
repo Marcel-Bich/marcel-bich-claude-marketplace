@@ -86,6 +86,12 @@ go=go: a `2_go` item IS buildable by the folder - build it (best effort), never 
 self-demote it for size, UI, or "not sure it is verifiable". See the go=go build-side anchor
 in the credo `items` skill for the full rule and the hypothesis-vs-open-decision line.
 
+Work the WHOLE queue, not just one thread. After you finish an item, immediately pick the next
+buildable `2_go` item and continue - keep going until the buildable queue is empty (confirmed by
+the fresh listing in "Empty buildable queue = end-of-run" below). Building every buildable GO
+item IS the mandate of autonomous mode, not over-reach. "I built the thread I started with" is
+NOT a reason to stop while other buildable items remain.
+
 ### A non-buildable item in 2_go
 
 An item is normally clarified when it is in `2_go` (GO=GO). If you nonetheless meet one that

@@ -23,10 +23,15 @@
 # State (keyed by session_id, mirrors session-mode-set.sh / credo-decision-set.sh):
 #   mode      : ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-modes/<id>      (active|passive|autonomous)
 #   decision  : ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-decisions/<id>  (accepted|declined)
+# Plus a PERSISTENT per-directory decision (survives across sessions), keyed by
+# the working directory (git toplevel else PWD) via credo-dir-decision.sh:
+#   dir       : ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/dir-decisions/<hash>    (accepted|declined)
 # Derived session state:
-#   active   = a mode is set, OR decision == accepted   -> KNOWLEDGE (any source)
-#   declined = decision == declined (and no mode)        -> stay silent
-#   open     = neither                                   -> ASK on startup/clear only
+#   active   = a mode is set, OR decision == accepted, OR dir == accepted -> KNOWLEDGE (any source)
+#   declined = decision == declined, OR dir == declined (and not active)  -> stay silent
+#   open     = none of the above                                          -> ASK on startup/clear only
+# The per-dir layer makes a "No" stick: once declined for a directory, that
+# directory never ASKs again, in this or any future session.
 #
 # The decision x source matrix (open state only; active always feeds KNOWLEDGE,
 # declined always stays silent):
@@ -87,6 +92,28 @@ elif [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
     DECISION_SCRIPT="${CLAUDE_PLUGIN_ROOT}/scripts/credo-decision-set.sh"
 fi
 
+# --- resolve the per-directory decision helper (persistent per-dir) ----------
+# Same resolution as DECISION_SCRIPT. This helper carries a decision across
+# sessions, keyed by the working directory (git toplevel else PWD), so a "No"
+# stays remembered and this hook never re-asks in that directory.
+DIR_DECISION_SCRIPT="${HOOK_DIR}/../scripts/credo-dir-decision.sh"
+if [[ -n "$_scripts_dir" ]]; then
+    DIR_DECISION_SCRIPT="${_scripts_dir}/credo-dir-decision.sh"
+elif [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
+    DIR_DECISION_SCRIPT="${CLAUDE_PLUGIN_ROOT}/scripts/credo-dir-decision.sh"
+fi
+
+# --- read the persistent per-directory decision (accepted|declined|empty) ----
+# accepted -> treat this dir as opted-in (KNOWLEDGE, no ASK).
+# declined -> stay silent for onboarding (no ASK); KNOWLEDGE only if a session
+#             mode is already active, which is handled by the "active" flag.
+dir_decision=""
+if [[ -x "$DIR_DECISION_SCRIPT" ]]; then
+    dir_decision=$("$DIR_DECISION_SCRIPT" get 2>/dev/null || echo "")
+    dir_decision="${dir_decision//[[:space:]]/}"
+fi
+[[ "$dir_decision" == "accepted" ]] && active=true
+
 # --- gating: whole-hook backend gate + a dedicated ASK toggle ---------------
 # Backend is resolved via credo-config.sh (env CREDO_TASK_BACKEND > .credo/config
 # cascade > default credo); any error falls back to credo. When the backend is
@@ -137,9 +164,9 @@ Use the credo workflow this session? Quick reminder:
 - /credo:psalm - the full credo guide (all commands + workflow); run it anytime you need help or want to learn more
 
 Then offer exactly these AskUserQuestion options:
-- Active  -> run the /credo:session-active command (sets the mode to active and records the credo decision)
-- Passive -> run the /credo:session-passive command (sets the mode to passive and records the credo decision)
-- No      -> run \`"${DECISION_SCRIPT}" declined ${session_id}\` so this is not asked again
+- Active  -> run the /credo:session-active command (sets the mode to active and records the credo decision), then run \`"${DIR_DECISION_SCRIPT}" set accepted\` so this directory is remembered as opted-in
+- Passive -> run the /credo:session-passive command (sets the mode to passive and records the credo decision), then run \`"${DIR_DECISION_SCRIPT}" set accepted\` so this directory is remembered as opted-in
+- No      -> run \`"${DECISION_SCRIPT}" declined ${session_id}\` AND \`"${DIR_DECISION_SCRIPT}" set declined\` so this is never asked again in this directory
 
 After the user picks Active or Passive (opting in), also pin the credo project target for this session, so credo operates on the intended repo (this matters when the cwd is a launch hub rather than the work repo):
 1. Run /credo:project with no argument to show the currently resolved target and whether the cwd is a hub.
@@ -174,7 +201,7 @@ esac
 OUT=""
 if [[ "$active" == true ]]; then
     OUT="$KNOWLEDGE"
-elif [[ "$decision" == "declined" ]]; then
+elif [[ "$decision" == "declined" || "$dir_decision" == "declined" ]]; then
     OUT=""
 elif [[ "$mode" != "autonomous" ]]; then
     # open decision: ASK only on a human-present (re)start, never in autonomous work

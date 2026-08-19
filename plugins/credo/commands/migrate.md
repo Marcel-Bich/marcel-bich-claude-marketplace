@@ -25,7 +25,13 @@ user) tidy the originals.
 3. The whole procedure is copy-only and additive: originals are never touched until the
    final step. Step 8 (moving originals into `.deleted/`) is ALWAYS user-gated - never move
    or remove any original autonomously; confirm with the user first.
-4. Once `.credo/` is scaffolded, offer to capture per-repo special rules (credo `rules`):
+4. Once `.credo/` is scaffolded, record this directory as opted-in. Migrating is an explicit act
+   of setting credo up here, so this FORCES the accepted state, overriding any earlier
+   `/credo:disable` (declined) for this directory:
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-dir-decision.sh" set accepted
+   ```
+5. Once `.credo/` is scaffolded, offer to capture per-repo special rules (credo `rules`):
    ask whether this repo should carry any autonomy-widening grants (for example "restarting
    local services is always allowed") and, on a yes, write them verbatim into
    `.credo/RULES.md` via the `rules` skill.

@@ -84,6 +84,14 @@ Then act on the answer:
 
 **Existing repository with prior work?** Instead of the fresh-init path above, run `/credo:migrate` once to onboard the existing codebase into the `.credo/` structure (it inventories current state and seeds items rather than assuming a blank slate).
 
+Once `.credo/` exists here, record this directory as opted-in. Running setup is an explicit act of
+setting credo up here, so this FORCES the accepted state, overriding any earlier `/credo:disable`
+(declined) for this directory:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-dir-decision.sh" set accepted
+```
+
 After this, credo's session modes, item lifecycle, Definition of Done, budget awareness, verify, and safety are ready. Pick a session mode when you start working:
 
 - `/credo:session-active` - intensive live collaboration.

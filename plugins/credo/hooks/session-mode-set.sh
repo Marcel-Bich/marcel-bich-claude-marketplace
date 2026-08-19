@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# session-mode-set.sh <active|passive|autonomous> [session_id]
+# session-mode-set.sh <active|passive|autonomous|clear> [session_id]
 #
 # Set the persistent, per-session credo mode and couple it to the autonomy
 # keep-alive flags:
@@ -22,9 +22,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mode="${1:-}"
 case "$mode" in
-    active|passive|autonomous) ;;
+    active|passive|autonomous|clear) ;;
     *)
-        echo "Usage: session-mode-set.sh <active|passive|autonomous> [session_id]" >&2
+        echo "Usage: session-mode-set.sh <active|passive|autonomous|clear> [session_id]" >&2
         exit 1
         ;;
 esac
@@ -45,6 +45,15 @@ STATE_DIR="${CREDO_SESSION_MODES_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/
 mkdir -p "$STATE_DIR" || { echo "session-mode-set: cannot create state dir $STATE_DIR" >&2; exit 1; }
 
 state_file="$STATE_DIR/$session_id"
+
+# clear: remove this session's mode file and turn keep-alive off, then done.
+if [ "$mode" = "clear" ]; then
+    rm -f "$state_file"
+    [ -x "$SCRIPT_DIR/credo-autonomy-off.sh" ] && "$SCRIPT_DIR/credo-autonomy-off.sh" || true
+    echo "session-mode cleared (session $session_id)"
+    exit 0
+fi
+
 tmp="$(mktemp "${state_file}.XXXXXX")" || { echo "session-mode-set: mktemp failed" >&2; exit 1; }
 printf '%s\n' "$mode" > "$tmp"
 mv -f "$tmp" "$state_file"
