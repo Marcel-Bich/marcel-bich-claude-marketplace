@@ -2,9 +2,14 @@
 # credo-budget-read - read the limit-plugin usage cache (display values only).
 #
 # The ONLY budget data source is the limit-plugin cache in the temp dir:
-#   /tmp/claude-mb-limit-cache_*.json   (one file per profile)
-# The most recent file by mtime is used. The cache holds DISPLAY values only
-# (utilization percentages and reset timestamps) - no credentials, no tokens.
+#   /tmp/claude-mb-limit-cache_<profile>.json   (one file per Claude Code profile,
+#   the <profile> suffix is basename "$CLAUDE_CONFIG_DIR", e.g. _.claude.json)
+# The cache is pinned to the current profile: when CLAUDE_CONFIG_DIR is set the
+# script reads exactly that profile's file, so it can never return another
+# profile's numbers. Only when an explicit CREDO_LIMIT_CACHE_GLOB override is
+# given (or a single file matches) is the most recent file by mtime used. The
+# cache holds DISPLAY values only (utilization percentages and reset
+# timestamps) - no credentials, no tokens.
 #
 # SECURITY (hard rule, do not change):
 #   This script reads ONLY the cache file above. It NEVER reads
@@ -24,15 +29,38 @@
 #   0  fresh cache found and printed
 #   3  no cache file present (limit plugin absent -> budget data unavailable)
 #   4  newest cache is stale (older than max age -> do not use)
+#   5  multiple cache files match but no profile is pinned (CLAUDE_CONFIG_DIR
+#      unset and no explicit CREDO_LIMIT_CACHE_GLOB) -> refuse to guess
 #
 # Env overrides (mainly for testing):
-#   CREDO_LIMIT_CACHE_GLOB     glob for cache files
-#                              (default /tmp/claude-mb-limit-cache_*.json)
+#   CREDO_LIMIT_CACHE_GLOB     explicit glob for cache files. When set it always
+#                              wins and is never overwritten (newest match used).
+#                              When unset, the glob is pinned to the current
+#                              profile via CLAUDE_CONFIG_DIR (see below); with
+#                              neither set it falls back to
+#                              /tmp/claude-mb-limit-cache_*.json.
+#   CLAUDE_CONFIG_DIR          when set (and no explicit glob), pins the glob to
+#                              /tmp/claude-mb-limit-cache_<basename>.json so only
+#                              this profile's cache is read.
 #   CREDO_BUDGET_MAX_AGE_SECONDS  staleness threshold in seconds (default 300)
 
 set -euo pipefail
 
-GLOB="${CREDO_LIMIT_CACHE_GLOB:-/tmp/claude-mb-limit-cache_*.json}"
+# Resolve the cache glob. Precedence:
+#   1. explicit CREDO_LIMIT_CACHE_GLOB override always wins - never overwritten.
+#   2. otherwise, if CLAUDE_CONFIG_DIR is set, pin to that profile's exact cache
+#      file so another profile's numbers can never be returned.
+#   3. otherwise fall back to the profile-blind default glob (multi-match is
+#      rejected fail-loud in the python step below, no "newest" guessing).
+GLOB_EXPLICIT=0
+if [ -n "${CREDO_LIMIT_CACHE_GLOB:-}" ]; then
+    GLOB="$CREDO_LIMIT_CACHE_GLOB"
+    GLOB_EXPLICIT=1
+elif [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+    GLOB="/tmp/claude-mb-limit-cache_$(basename "$CLAUDE_CONFIG_DIR").json"
+else
+    GLOB="/tmp/claude-mb-limit-cache_*.json"
+fi
 MAX_AGE="${CREDO_BUDGET_MAX_AGE_SECONDS:-300}"
 
 MODE="${1:-kv}"
@@ -43,6 +71,7 @@ case "$MODE" in
 esac
 
 CREDO_LIMIT_CACHE_GLOB="$GLOB" CREDO_BUDGET_MAX_AGE_SECONDS="$MAX_AGE" \
+CREDO_BUDGET_GLOB_EXPLICIT="$GLOB_EXPLICIT" \
 CREDO_BUDGET_MODE="$MODE" python3 - <<'PY'
 import glob
 import json
@@ -52,12 +81,24 @@ import time
 
 pattern = os.environ["CREDO_LIMIT_CACHE_GLOB"]
 max_age = float(os.environ["CREDO_BUDGET_MAX_AGE_SECONDS"])
+glob_explicit = os.environ.get("CREDO_BUDGET_GLOB_EXPLICIT") == "1"
 mode = os.environ["CREDO_BUDGET_MODE"]
 
 files = glob.glob(pattern)
 if not files:
     sys.stderr.write("credo-budget-read: no limit cache found (limit plugin absent)\n")
     sys.exit(3)
+
+# Fail loud instead of guessing: without a pinned profile (CLAUDE_CONFIG_DIR)
+# and without an explicit CREDO_LIMIT_CACHE_GLOB override, several profiles'
+# caches match and picking "newest" could return another profile's numbers.
+if len(files) > 1 and not glob_explicit:
+    sys.stderr.write(
+        "credo-budget-read: %d cache files match and no profile is pinned - "
+        "set CLAUDE_CONFIG_DIR to select the profile, or CREDO_LIMIT_CACHE_GLOB "
+        "to override; refusing to guess\n" % len(files)
+    )
+    sys.exit(5)
 
 newest = max(files, key=os.path.getmtime)
 age = time.time() - os.path.getmtime(newest)

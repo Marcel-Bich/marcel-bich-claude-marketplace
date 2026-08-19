@@ -220,6 +220,26 @@ Wiring matters: new code with no caller / not reachable is a gap, not "done". At
 is `present`. The DoD requires `exercised`, which forces the wiring to exist and to run.
 If you find unwired code, that is a gap - raise or reopen an item for it.
 
+### Wiring items (only for split server/client architectures)
+
+This rule is CONDITIONAL: it applies ONLY when the project actually has a separated
+server/client (or backend/frontend) architecture. Not every repo does - a single-surface
+project has nothing to wire across a boundary, and this rule does not apply to it. State
+the condition explicitly before invoking the rule.
+
+Where the two halves ARE separate, an item without its wiring is useless: a server-side
+capability that no UI ever calls delivers nothing. So when server and client parts are
+split, a SECOND wiring item MUST exist that connects them, with a bidirectional reference
+between the two (`blocked_by` / `blocks`).
+
+- A server-side item MAY reach `2_done` while its UI-wiring item exists but is still in
+  `1_clarify` - the existence of the wiring item is what makes the server work meaningful;
+  it does not have to be built first.
+- Narrowly scoped exception to clarify-first: an agent MAY autonomously create and GO
+  EXACTLY this one wiring-item type and build it best-effort. This carve-out is limited to
+  the cross-boundary wiring item and nothing else - everything else still follows
+  clarify-first (only the user sets GO).
+
 Before you record `failed` or "not started" for a capability, you MUST first run a wiring
 check against the real code: search the source for the endpoint, class, function, or
 tests that would implement it. This matters most for items cut from older specs - the
@@ -227,6 +247,24 @@ feature may already have been built under a DIFFERENT task or item number, so as
 is missing is often simply wrong. If the check shows it is built but its runtime behavior
 has not been observed, record `wired-but-behavior-unverified`, not `failed`. Reserve
 `failed` for a real defect actually surfaced by exercising the code.
+
+## Build-completion gate (record what you built, in the same move)
+
+The moment build code is committed - an item has actually been built, not just planned -
+the building agent MUST, in the SAME turn, bring the item file into line with that reality:
+
+1. Fill `## Implemented` with concrete `file:line` evidence for what was built (which
+   caller reaches the new code).
+2. Update the DoD / Success-Criteria ticks to match what is now true.
+3. Move `## Verify` off `not-started` for the built layer(s) - at minimum to `present`, or
+   `wired-but-behavior-unverified` when the code is reachable and called. (`not-started`
+   means "work has not begun"; a build commit proves it has.)
+
+This is a mandatory step of the build routine, not a new script. An item with a build
+commit that still says "not started" (or "noch nicht begonnen") is a CONTRADICTION between
+the committed code and the item text - flag it and resolve it, exactly as with the
+Folder<->History invariant. Leaving the item stale after committing build code is a
+detected mis-state, never an acceptable end.
 
 ## Definition of Done (the gate into 2_done/)
 
@@ -238,7 +276,11 @@ An item may move into `2_done/` ONLY when ALL of these hold. This gate is hard.
 2. **If `ui: true`, a passing visual verify is mandatory** - the credo `verify` skill at
    every configured viewport (measured layout, real interaction, live update where
    required, hard reload after rebuild), with screenshots saved under
-   `.credo/screenshots/`.
+   `.credo/screenshots/`. Verify screenshots ALWAYS live under `.credo/screenshots/` and
+   follow the name pattern `<slug>-<viewport>-<YYYY-MM-DD>.png` - this holds even when an
+   ad-hoc verifier (not the formal `verify` skill) produces them, so every screenshot is
+   found in one place under one convention. The required level of test obligation is
+   defined by the credo `verify` skill (config `verify.primary_test`), not here.
 3. **No open remainder** - nothing needed for the item's core is still outstanding.
 4. **Mandatory audit-after-completed by a DEDICATED subagent** - the credo `audit` skill
    MUST be run by a subagent that is NOT the builder of this item. A builder auditing
@@ -260,6 +302,17 @@ An item may move into `2_done/` ONLY when ALL of these hold. This gate is hard.
 `completed != done`: a builder saying "I finished" is not done. Done is the physical
 `2_done/` folder, reached only after the audit gate passes. The marker is the folder, not
 a claim and not a task-tracker field.
+
+### Main-agent verification before claiming status or moving
+
+Before the main agent asserts an item's status OR moves it between folders, it MUST read
+the WHOLE item file - especially the latest verbatim statements and decisions in the
+History and Requirement sections - and check the actual code/state against the item's
+INTENT. Inferring status from a commit grep, a commit headline, or a subagent's report
+ALONE is not grounds for approval: those are signals, not verification. Already-committed
+work is not blindly blessed as done just because a commit exists - the main agent confirms
+the built reality matches what the item requires before it claims a status or advances the
+item.
 
 ## 3_verified/ is human-authorized
 

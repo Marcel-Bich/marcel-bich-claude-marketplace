@@ -59,8 +59,10 @@ chosen or the most important issues, with the rest acknowledged as a count.
 
 ### Step 2 - Deep-triage each selected issue (parallel subagents)
 
-Set up a gitignored work dir (`.issue/`; add to `.gitignore`, verify with
-`git check-ignore .issue/x.md`). Then spawn one subagent per selected issue. Each reads the repo's
+Set up a locally excluded work dir (`.issue/`; add to `.git/info/exclude`, the local git exclude,
+NOT `.gitignore`, verify with `git check-ignore .issue/x.md`). These are throwaway analysis files,
+not project artifacts, so they belong in the local `.git/info/exclude` rather than the versioned
+`.gitignore`. Then spawn one subagent per selected issue. Each reads the repo's
 CLAUDE.md / conventions first, writes `.issue/issue-<n>.md`, and reports a 2-3 sentence summary.
 
 Each issue subagent runs these checks (see `references/issue-triage-prompts.md` for the template):

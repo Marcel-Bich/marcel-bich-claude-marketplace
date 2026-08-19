@@ -43,6 +43,18 @@ verify:
   # back to the documented local run procedure or defers as human-only. A guessed
   # command is never run (see the credo safety skill).
   local_bringup: ""
+  # Primary test tier for bringing an item to done. Pre-filled with a default example so
+  # the setting is discoverable rather than silently empty. This value names only the FIRST
+  # tier of a fallback chain that always applies in order:
+  #   1. this primary_test stage, if it exists in the project (adapt the value to name it);
+  #   2. else Playwright with real input (visual/responsive/theme + held-gesture/timing);
+  #   3. else a reviewer/audit agent.
+  # Tiers 2 and 3 are credo built-ins and ALWAYS apply as fallbacks - they are not
+  # either/or with tier 1. If tier 1 is configured but not found in the project, the agent
+  # uses the fallbacks AND asks you once whether to adapt this value or clear it (empty ->
+  # the fallbacks apply with no question). Synthetic dispatchEvent measurements are not
+  # sufficient proof for held-input behavior.
+  primary_test: "tier 1: a debug read/write device driving a state machine (adapt to this project's primary automated test entry point, or clear this tier); if tier 1 is absent, the fallbacks still apply - tier 2: Playwright with real input for visual/responsive/theme and held-gesture/timing; else tier 3: a reviewer/audit agent"
 
 # --- timing windows ----------------------------------------------------------
 windows:
@@ -90,6 +102,15 @@ sleep:
   enabled: false
   mode: ""
   command: ""
+  # Suspend/hibernate retry + success detection. A power-down attempt is retried up to
+  # retry_count times, retry_spacing_s apart, but only while the machine is still awake.
+  # On the next wake/turn the elapsed time since the pending-suspend marker is compared:
+  # a jump larger than success_gap_min minutes means the machine really slept (success) -
+  # the marker is cleared, the intent dropped, and the power-down is NOT retried or
+  # treated as a failure. Applies to both suspend and hibernate.
+  retry_count: 3
+  retry_spacing_s: 30
+  success_gap_min: 5
 
 # --- budget (consumed by the budget skill, Phase 5) --------------------------
 # Universal default cap schedule. Values are percent. Off-hours five_hour_cap

@@ -163,7 +163,9 @@ check frequently including while subagents run, stop subagents with TaskStop bef
 ceiling), the task-sizing recommendation, the absolute fail-safe caps, and the
 commit-identity gate before every commit. Before starting an autonomous run, the main agent
 first confirms with the user whether the default caps fit or need a temporary override, and
-until when (per the budget skill). Never exceed a cap to finish "just one more thing".
+until when (per the budget skill), and performs the mandatory budget-start read-back (see
+"Budget-start read-back" below) - show the schedule row in force and reflect the
+understanding back ONCE before starting. Never exceed a cap to finish "just one more thing".
 
 ### Keep-alive (hook-enforced, only while credo-autonomy-active is set)
 
@@ -310,7 +312,26 @@ agent keeps the keep-alive alive while refusing to build (the RETRO's ~7h idle l
 in `2_go` that the agent is treating as non-buildable does NOT count as open work - flag it
 (the section above) and, if it is the only thing left, the buildable queue is empty.
 
-When the buildable queue is empty, run this end-of-run sequence:
+**Fresh-listing backstop (mandatory before declaring done or powering down).** Before an
+autonomous run declares itself "finished" OR starts the power-down / suspend sequence, it
+MUST FRESHLY list the GO folder right then - do not trust an earlier snapshot:
+
+```
+ls -1 .credo/items/1_todo/2_go/
+```
+
+Judge the actual current contents:
+
+- If buildable, open, autonomous-eligible items are there, the run may NOT stop without a
+  reason. Either build them, or - for every remaining item - name the concrete non-build
+  reason explicitly (a user-only decision, a hard block, or a placement / hygiene flag; see
+  "A non-buildable item in 2_go" above). "I thought I was done" is not a reason.
+- Only once the listing is FACTUALLY empty, or every remaining item is flagged
+  non-buildable WITH its reason, is the buildable queue empty and the end-of-run /
+  power-down sequence allowed to proceed.
+
+When the buildable queue is empty (confirmed by the fresh listing above), run this
+end-of-run sequence:
 
 1. Send an immediate `default`-priority ntfy stating nothing was buildable - `default`, not
    `high`, because it need not wake the user.
@@ -319,8 +340,8 @@ When the buildable queue is empty, run this end-of-run sequence:
 3. Schedule a ~20 min wake (`windows.veto_minutes`) as a veto window.
 4. No veto within the window -> power down, gated on `sleep.enabled` (default OFF; on the
    user's personal machine: on). This REUSES the existing power-down procedure below (veto
-   window, double-fire protection, secure-work-first, the exact `sleep.command`) - do not
-   duplicate it.
+   window, retry plus success detection, secure-work-first, the exact `sleep.command`) - do
+   not duplicate it.
 
 Distinction: "all work genuinely completed / built" stays a `high` ntfy (come see results).
 Only the nothing-was-buildable case uses `default`. Both are end-of-run and feed the same
@@ -372,7 +393,8 @@ way - it never powers down anyway; this gate governs only the last-resort 99 net
 end-of-run / showstopper power-down.
 
 Power-down procedure (only when `sleep.enabled` is true AND `sleep.command` is non-empty;
-with protection against a spurious or double power-down):
+with retry plus timestamp-based success detection so a repeated trigger cannot fire the
+power-down twice and a successful sleep is never miscounted as a failure):
 
 1. Send an ntfy `high` announcing the pending power-down and open a veto window -
    `windows.veto_minutes` (default 20):
@@ -384,13 +406,57 @@ with protection against a spurious or double power-down):
 2. During the veto window, watch for the user coming back. If the user responds or
    otherwise signals presence, CANCEL the power-down - do not sleep the machine out from
    under an active user.
-3. Double-fire protection: record a timestamp / flag when a power-down is initiated and
-   check it (plus whether the user is back) before issuing another, so a repeated trigger
-   cannot fire the power-down twice.
-4. Before powering down, make sure work is secured (git-push policy and, where relevant, the
+3. Before powering down, make sure work is secured (git-push policy and, where relevant, the
    credo `compact-plus` securing) so nothing is lost across the sleep.
-5. Run the EXACT command from `sleep.command` (read via the config above) to power down. Do
-   NOT hardcode or guess the command - it is platform- and mode-specific and set at setup.
+4. Retry with success detection (applies to BOTH power-down modes - `suspend` on native
+   Linux and `hibernate` on WSL / Windows). Read the three thresholds from config, with the
+   named defaults as fallback:
+
+   ```
+   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get sleep.retry_count       # default 3
+   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get sleep.retry_spacing_s   # default 30
+   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get sleep.success_gap_min   # default 5
+   ```
+
+   - BEFORE the first power-down attempt, write the pending-suspend timestamp marker:
+
+     ```
+     "${CLAUDE_PLUGIN_ROOT}/scripts/credo-suspend-mark.sh" write
+     ```
+
+   - Then run the EXACT command from `sleep.command` (read via the config above) to power
+     down. Do NOT hardcode or guess the command - it is platform- and mode-specific and set
+     at setup.
+   - Retry the command up to `sleep.retry_count` times (default 3), waiting
+     `sleep.retry_spacing_s` seconds (default 30) between attempts - but ONLY while the
+     machine is still obviously awake. A further attempt is made only when we clearly did
+     NOT fall asleep (the turn kept running); the moment the machine actually sleeps, the
+     process is frozen and no further attempt is issued.
+
+5. Success detection on the next turn / wakeup (this replaces the old double-fire flag).
+   Ask the helper how long ago the marker was written and compare the jump:
+
+   ```
+   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-suspend-mark.sh" elapsed   # seconds, or exit != 0 / empty if no marker
+   ```
+
+   - If the elapsed jump is GREATER than `sleep.success_gap_min` minutes (default 5, set
+     deliberately well above the retry window) - the helper reports seconds, so compare
+     `elapsed_seconds > success_gap_min * 60` - the machine really slept - the power-down
+     SUCCEEDED. Clear the marker, drop the power-down intent, and do NOT re-suspend and do
+     NOT score it as aborted / failed:
+
+     ```
+     "${CLAUDE_PLUGIN_ROOT}/scripts/credo-suspend-mark.sh" clear
+     ```
+
+   - If the marker is absent (helper exits non-zero / prints nothing), there is no pending
+     power-down - do nothing.
+   - If a user interrupt arrives right after waking (a real user message, which also turns
+     autonomy off), do NOT re-suspend - clear the marker and stay awake for the user.
+   - Only a small elapsed jump (at or below `sleep.success_gap_min`) with the intent still
+     open and no user present means the earlier attempts did not take effect - only then may
+     the power-down be attempted again under the same retry budget.
 
 Never power down the machine on your own initiative outside these autonomous triggers.
 
@@ -409,11 +475,42 @@ commit-identity gate (credo `budget` skill) must pass before every commit. If co
 push is forbidden by permissions, that is a SHOWSTOPPER for autonomous work - the work
 cannot be secured - so warn via ntfy and stop; do not keep building unsecured work.
 
-### Read-back for an overnight run
+### Budget-start read-back (mandatory before any autonomous start)
 
-Per the common-core read-back (A4), a large / overnight autonomous run reads back not just
-the current budgets and the planned rest state but also the next day's budgets before it
-starts, so the whole unattended run stays inside the intended envelope.
+Before starting an autonomous run - always, not only overnight - the agent MUST do two
+things, ONCE, and only then start:
+
+1. **Show the schedule row that applies now.** Read the cap schedule and print the ONE row
+   in force for the current local weekday and hour (day, window, `five_hour_cap`,
+   `weekly_cap`), plus the current live budgets:
+
+   ```
+   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get budget.schedule
+   ```
+
+   Pick the applicable row exactly as the credo `budget` skill's row-selection rule
+   describes (B1); do not re-invent caps.
+2. **Reflect the understanding back once.** State, in one short read-back, what the current
+   row means for this run - specifically whether there is anything to conserve and, if so,
+   how much headroom is left before the cap.
+
+Mental model (this is the point, and it is user-agnostic): the schedule (`budget.schedule`)
+is the SINGLE SOURCE OF TRUTH for how budget is apportioned. Whether there is anything to
+conserve at all is DERIVED FROM THE SCHEDULE, never assumed:
+
+- If the applicable row sets a real cap (some profiles do), budget IS to be conserved -
+  pace against that cap.
+- If the applicable row sets practically no cap, there is nothing to conserve - do not
+  throttle work for a limit the plan does not impose.
+
+Never invent a conservation duty the schedule does not create. In particular, do NOT read a
+weekly / 7-day utilization figure as "budget that must be conserved" when no schedule row
+caps it - that misreads a raw usage number as a self-imposed ceiling the plan never set. The
+schedule row decides; the 7-day number is context, not a cap.
+
+Per the common-core read-back (A4), a large / overnight run additionally reads back the
+next day's schedule rows and the planned rest state before it starts, so the whole
+unattended run stays inside the intended envelope.
 
 ### Marker plus compact-plus
 

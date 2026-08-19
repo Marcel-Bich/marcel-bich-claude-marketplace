@@ -43,6 +43,42 @@ user. Verification means the rendered surface was exercised and observed.
 
 Anything else is "wired-but-behavior-unverified", not "exercised".
 
+## Required test level for done (project-configurable)
+
+Which test level a change must pass before it may move to `done` is resolved by a
+fallback chain, so a project can pin its own primary method without credo hardcoding any
+project-specific tool or device:
+
+1. **Project primary test level.** credo ships `verify.primary_test` pre-filled with a
+   default example (a debug read/write device driving a state machine) so the setting is
+   discoverable instead of silently empty. credo does not know what the stage is; it is
+   referenced only through the config key. Read it with:
+
+   ```
+   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get verify.primary_test
+   ```
+
+   - If the configured stage EXISTS in this project (you can locate the harness it names),
+     THAT is the required level - use it.
+   - If it is configured but you CANNOT find such a harness in this project: (a) fall back
+     down the chain for THIS verification (step 2, then 3), and (b) ask the user once via
+     AskUserQuestion whether to adapt `verify.primary_test` to the project's actual primary
+     test entry point or to clear it (empty -> rely on the fallback). Include a short
+     explanation of what the setting is and what it is for. Never keep a stale value
+     silently.
+   - If it is empty, the fallback chain applies with no question.
+
+2. **Else Playwright.** If no primary test level is configured, drive the real build in a
+   browser with Playwright for the optical, responsive, and theme behavior (measured
+   layout, real interaction, each configured viewport).
+
+3. **Else a reviewer / audit agent.** If neither applies, fall back to a reviewer or
+   audit agent as the last resort.
+
+Passing the applicable level in this chain is the condition for bringing an item to
+`done`. Do not skip up the chain: a configured `verify.primary_test` is not satisfied by
+running Playwright instead.
+
 ## Handing a manual test to the user
 
 When a verification can ONLY be done by the human (a human-only criterion, or the
@@ -109,6 +145,23 @@ or after any rebuild - force a hard reload before measuring, so you verify the n
   result, not just that a handler exists.
 - Hard reload after a rebuild - after rebuilding, force a hard reload (bypass cache)
   before verifying, so you are testing the new build and not a stale cached bundle.
+
+## Real input events (timing, gesture, and hold behavior)
+
+Timing-, gesture-, and hold-dependent behavior - long-press, held chords, drag, and
+anything that depends on an input being held over time - may ONLY be verified through a
+real input path:
+
+- Playwright real mouse / touch: hold the actual input (for example `mouse.down()` held
+  across the duration, real touch), so the press genuinely persists over time, OR
+- a human hands-on test.
+
+Synthetically dispatched events (`dispatchEvent`, hand-constructed `PointerEvent`s) are
+NOT sufficient proof for "holds while held" behavior. A synthetic event fires once and
+does not model an input being held; it can report green while the real held-input path is
+broken. Concretely: a synthetic measurement taken before a 200ms long-press timer falsely
+reported green, and only a real held mouse exposed the bug. For this class of behavior,
+treat synthetic dispatch as no proof at all - use real held input or human hands-on.
 
 ## Viewports
 

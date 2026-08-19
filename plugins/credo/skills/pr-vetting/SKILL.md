@@ -87,14 +87,16 @@ Also read the `authorAssociation` from Step 0 (`FIRST_TIME_CONTRIBUTOR` / `NONE`
 If contributor status genuinely cannot be determined, default to treating them as external
 (maximal depth) - safer.
 
-### Step 1 - Set up a gitignored working directory
+### Step 1 - Set up a locally excluded working directory
 
 Create a local-only directory for the investigation notes and ensure it is git-ignored so the
 analysis never gets committed:
 
 - Suggested path: `.pr-review/` (or `.pr/`). Include the PR number if reviewing several.
-- Add the directory to `.gitignore` (and verify with `git check-ignore <dir>/x.md`).
-- These notes are throwaway analysis, not project artifacts.
+- Add the directory to `.git/info/exclude` (the local git exclude), NOT `.gitignore`, and verify
+  with `git check-ignore <dir>/x.md`.
+- These notes are throwaway analysis, not project artifacts, so they belong in the local
+  `.git/info/exclude` rather than the versioned `.gitignore`.
 
 ### Step 2 - Launch parallel dimension subagents
 

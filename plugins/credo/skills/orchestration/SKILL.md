@@ -52,6 +52,12 @@ large reads or long builds that a subagent can carry.
   subagent's final result (its returned message), plus short status checks. Pulling
   full transcripts is what floods and rots the main context.
 - Check status periodically rather than streaming everything continuously.
+- A subagent's report is NEVER grounds to claim or move an item status. Consuming only
+  the final result keeps context lean, but it does not transfer the subagent's judgment
+  to the main agent. Before the main agent asserts a status or moves an item, it must
+  read the whole item itself and verify the actual code and state against the item's
+  stated intent - a subagent report plus a commit grep is not sufficient evidence. The
+  main agent owns the status decision and must ground it in first-hand verification.
 
 ## Security inheritance (every subagent, always)
 
@@ -84,6 +90,19 @@ Also pass the project's per-repo special rules to every subagent (credo `rules`)
 the resolved `.credo/RULES.md` content, or an instruction to load it via
 `scripts/credo-config.sh rules`, in the task. Project grants must not be lost across
 delegation - a subagent has to honor the same widened latitude as the main agent.
+
+## Delegating verify / UI subagents
+
+When you delegate any verification or UI-checking subagent - the formal credo `verify`
+skill or an ad-hoc one you brief inline - screenshots are saved to `.credo/screenshots/`
+using the naming rule `<slug>-<viewport>-<YYYY-MM-DD>.png` (for example
+`login-form-320-2026-07-04.png`). This is not optional and not limited to the formal
+verify skill: every verify subagent writes there.
+
+The spawn or briefing preamble you hand such a subagent MUST name that target folder
+explicitly, so the subagent saves evidence to the right place even if it never loads the
+verify skill. Do not leave the location implicit. See the credo `verify` skill for the
+full evidence and naming rules.
 
 ## Model policy (no downgrade, no model-choice logic)
 
