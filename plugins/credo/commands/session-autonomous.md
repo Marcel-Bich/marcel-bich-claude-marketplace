@@ -22,4 +22,7 @@ Use this ONLY when full autonomy plus AFK has been explicitly granted.
 2. Load the skill `session-autonomous` and follow its rules strictly (budget
    caps, ntfy per task and question, ScheduleWakeup plus wake marker,
    compact-plus).
-3. Read the approved GO order back verbatim before you start.
+3. Load the `items` skill now (the credo work-item model and done-gate), UNLESS it is
+   already active in your current context - do not reload it if you already have it. This
+   puts the item model and go-gate in context before you act on approved GO items.
+4. Read the approved GO order back verbatim before you start.

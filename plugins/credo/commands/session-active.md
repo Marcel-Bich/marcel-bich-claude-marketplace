@@ -19,4 +19,8 @@ Set the persistent, per-session credo mode to **active**.
    Setting a mode means credo is opted in, so this makes the acceptance durable
    (its knowledge is re-fed after resets even if the mode is ever cleared).
 3. Load the skill `session-active` and work by its rules from now on.
-4. Confirm briefly: mode active, keep-alive off.
+4. Load the `items` skill now (the credo work-item model and done-gate), UNLESS it is
+   already active in your current context - do not reload it if you already have it. This
+   puts the item model and go-gate in context from the start, instead of only when
+   something later happens to trigger them.
+5. Confirm briefly: mode active, keep-alive off.
