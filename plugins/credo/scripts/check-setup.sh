@@ -9,7 +9,7 @@ CURL_INSTALLED=$(command -v curl >/dev/null 2>&1 && echo "true" || echo "false")
 # Plugin checks (read JSON directly - claude plugin list fails inside active sessions)
 # credo is self-contained: dogma is recommended, get-shit-done is optional.
 # These are reported as informational hints only - neither is required for credo to work.
-PLUGINS_JSON="$HOME/.claude/plugins/installed_plugins.json"
+PLUGINS_JSON="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json"
 DOGMA_INSTALLED=$(grep -q '"dogma@marcel-bich-claude-marketplace"' "$PLUGINS_JSON" 2>/dev/null && echo "true" || echo "false")
 GSD_INSTALLED=$(grep -q '"get-shit-done@marcel-bich-claude-marketplace"' "$PLUGINS_JSON" 2>/dev/null && echo "true" || echo "false")
 

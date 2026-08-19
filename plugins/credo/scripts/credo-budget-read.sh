@@ -4,12 +4,14 @@
 # The ONLY budget data source is the limit-plugin cache in the temp dir:
 #   /tmp/claude-mb-limit-cache_<profile>.json   (one file per Claude Code profile,
 #   the <profile> suffix is basename "$CLAUDE_CONFIG_DIR", e.g. _.claude.json)
-# The cache is pinned to the current profile: when CLAUDE_CONFIG_DIR is set the
-# script reads exactly that profile's file, so it can never return another
-# profile's numbers. Only when an explicit CREDO_LIMIT_CACHE_GLOB override is
-# given (or a single file matches) is the most recent file by mtime used. The
-# cache holds DISPLAY values only (utilization percentages and reset
-# timestamps) - no credentials, no tokens.
+# The cache is ALWAYS pinned to the current profile: the script reads exactly
+# that profile's file, so it can never return another profile's numbers. The
+# profile is ${CLAUDE_CONFIG_DIR:-$HOME/.claude} - when CLAUDE_CONFIG_DIR is
+# unset it is the default profile ($HOME/.claude, pinned to _.claude.json).
+# Only an explicit CREDO_LIMIT_CACHE_GLOB override can make several files match;
+# an ambiguous multi-match is then refused (exit 5), never guessed. The cache
+# holds DISPLAY values only (utilization percentages and reset timestamps) - no
+# credentials, no tokens.
 #
 # SECURITY (hard rule, do not change):
 #   This script reads ONLY the cache file above. It NEVER reads
@@ -29,37 +31,40 @@
 #   0  fresh cache found and printed
 #   3  no cache file present (limit plugin absent -> budget data unavailable)
 #   4  newest cache is stale (older than max age -> do not use)
-#   5  multiple cache files match but no profile is pinned (CLAUDE_CONFIG_DIR
-#      unset and no explicit CREDO_LIMIT_CACHE_GLOB) -> refuse to guess
+#   5  multiple cache files match via an explicit CREDO_LIMIT_CACHE_GLOB
+#      wildcard override -> refuse to guess (only reachable with that override;
+#      the profile is otherwise always pinned)
 #
 # Env overrides (mainly for testing):
 #   CREDO_LIMIT_CACHE_GLOB     explicit glob for cache files. When set it always
-#                              wins and is never overwritten (newest match used).
-#                              When unset, the glob is pinned to the current
-#                              profile via CLAUDE_CONFIG_DIR (see below); with
-#                              neither set it falls back to
-#                              /tmp/claude-mb-limit-cache_*.json.
-#   CLAUDE_CONFIG_DIR          when set (and no explicit glob), pins the glob to
-#                              /tmp/claude-mb-limit-cache_<basename>.json so only
-#                              this profile's cache is read.
+#                              wins and is never overwritten. A pattern matching
+#                              exactly one file uses it; a wildcard matching
+#                              several files is refused (exit 5). When unset, the
+#                              glob is pinned to the current profile via
+#                              ${CLAUDE_CONFIG_DIR:-$HOME/.claude} (see below).
+#   CLAUDE_CONFIG_DIR          selects the profile whose cache is read (no
+#                              explicit glob): the glob is pinned to
+#                              /tmp/claude-mb-limit-cache_<basename>.json.
+#                              When unset it defaults to $HOME/.claude, so the
+#                              default profile pins to _.claude.json.
 #   CREDO_BUDGET_MAX_AGE_SECONDS  staleness threshold in seconds (default 300)
 
 set -euo pipefail
 
 # Resolve the cache glob. Precedence:
 #   1. explicit CREDO_LIMIT_CACHE_GLOB override always wins - never overwritten.
-#   2. otherwise, if CLAUDE_CONFIG_DIR is set, pin to that profile's exact cache
-#      file so another profile's numbers can never be returned.
-#   3. otherwise fall back to the profile-blind default glob (multi-match is
-#      rejected fail-loud in the python step below, no "newest" guessing).
+#   2. otherwise, pin to the current profile's exact cache file via
+#      ${CLAUDE_CONFIG_DIR:-$HOME/.claude}, so another profile's numbers can
+#      never be returned. This mirrors the limit plugin's own writer and every
+#      sibling credo script: an unset CLAUDE_CONFIG_DIR is the default profile
+#      ($HOME/.claude), pinned deterministically to _.claude.json - never a
+#      profile-blind wildcard.
 GLOB_EXPLICIT=0
 if [ -n "${CREDO_LIMIT_CACHE_GLOB:-}" ]; then
     GLOB="$CREDO_LIMIT_CACHE_GLOB"
     GLOB_EXPLICIT=1
-elif [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
-    GLOB="/tmp/claude-mb-limit-cache_$(basename "$CLAUDE_CONFIG_DIR").json"
 else
-    GLOB="/tmp/claude-mb-limit-cache_*.json"
+    GLOB="/tmp/claude-mb-limit-cache_$(basename "${CLAUDE_CONFIG_DIR:-$HOME/.claude}").json"
 fi
 MAX_AGE="${CREDO_BUDGET_MAX_AGE_SECONDS:-300}"
 
@@ -89,14 +94,22 @@ if not files:
     sys.stderr.write("credo-budget-read: no limit cache found (limit plugin absent)\n")
     sys.exit(3)
 
-# Fail loud instead of guessing: without a pinned profile (CLAUDE_CONFIG_DIR)
-# and without an explicit CREDO_LIMIT_CACHE_GLOB override, several profiles'
-# caches match and picking "newest" could return another profile's numbers.
-if len(files) > 1 and not glob_explicit:
+# Fail loud instead of guessing: the profile is always pinned (via
+# CLAUDE_CONFIG_DIR or the $HOME/.claude default), so the resolved glob is an
+# exact single-file pattern and matches at most one cache by construction.
+# Several files can therefore only match through an explicit CREDO_LIMIT_CACHE_GLOB
+# wildcard override; picking "newest" across them could return another profile's
+# numbers, so refuse instead of guessing (glob_explicit names the likely cause).
+if len(files) > 1:
+    hint = (
+        "an explicit CREDO_LIMIT_CACHE_GLOB wildcard matched several profiles"
+        if glob_explicit
+        else "the resolved profile glob unexpectedly matched several files"
+    )
     sys.stderr.write(
-        "credo-budget-read: %d cache files match and no profile is pinned - "
-        "set CLAUDE_CONFIG_DIR to select the profile, or CREDO_LIMIT_CACHE_GLOB "
-        "to override; refusing to guess\n" % len(files)
+        "credo-budget-read: %d cache files match (%s) - no single profile is "
+        "pinned; set CLAUDE_CONFIG_DIR or a single-file CREDO_LIMIT_CACHE_GLOB; "
+        "refusing to guess\n" % (len(files), hint)
     )
     sys.exit(5)
 

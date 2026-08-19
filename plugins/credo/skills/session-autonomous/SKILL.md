@@ -488,11 +488,12 @@ cannot be secured - so warn via ntfy and stop; do not keep building unsecured wo
 
 ### Budget-start read-back (mandatory before any autonomous start)
 
-Before starting an autonomous run - always, not only overnight - the agent MUST do two
-things, ONCE, and only then start:
+Before starting an autonomous run - always, not only overnight - the agent MUST give a
+COMPLETE, UPFRONT read-back, ONCE, and only then start. The read-back has four parts (a
+scattered or late partial read-back is not acceptable):
 
-1. **Show the schedule row that applies now.** Read the cap schedule and print the ONE row
-   in force for the current local weekday and hour (day, window, `five_hour_cap`,
+1. **(a) Show the schedule row that applies now.** Read the cap schedule and print the ONE
+   row in force for the current local weekday and hour (day, window, `five_hour_cap`,
    `weekly_cap`), plus the current live budgets:
 
    ```
@@ -501,9 +502,44 @@ things, ONCE, and only then start:
 
    Pick the applicable row exactly as the credo `budget` skill's row-selection rule
    describes (B1); do not re-invent caps.
-2. **Reflect the understanding back once.** State, in one short read-back, what the current
-   row means for this run - specifically whether there is anything to conserve and, if so,
-   how much headroom is left before the cap.
+2. **(b) Reflect the understanding back - COMPLETE, not a one-liner.** State, in one short
+   read-back, what the current row means for this run - specifically whether there is
+   anything to conserve and, if so, how much headroom is left before the cap. This read-back
+   must not be a vague one-liner: it MUST print, explicitly, BOTH live figures (the current
+   5h% AND the weekly%) AND BOTH applicable row caps (`five_hour_cap` AND `weekly_cap`), in
+   addition to naming the binding axis in (c).
+3. **(c) Name the binding axis (the current brake).** The read-back MUST state explicitly
+   which axis is the brake right now = the SCHEDULE-CAPPED axis with the LEAST headroom to
+   its row cap. Read each axis against the correct reference:
+   - The 5h axis is read against the enforced autonomous LADDER rung
+     (`budget.autonomous_5h.main_ladder`), NOT the soft/hard band - in autonomous mode the
+     ladder OVERRIDES that band on the 5h axis (see the "5h-budget-guard" section above and
+     its ladder-overrides-the-band note).
+   - The weekly axis is read against the applicable schedule row's `weekly_cap`.
+   - Binding = whichever CAPPED axis has the LEAST headroom to its cap. If the applicable
+     row imposes no real cap on an axis, that axis is NOT binding; if neither axis is really
+     capped, state plainly "nothing binding right now". This MUST stay consistent with the
+     mental model below - the schedule row decides. Never present the raw 7-day / weekly
+     utilization number as the brake when no row caps it: it is context, not a cap.
+4. **(d) Declare the suspend posture (one line, ALWAYS present - every case, including
+   `sleep.enabled` false).** Read the sleep config at start and declare, in one line, the
+   posture the existing sleep gate (see "Power down the machine at the end" above) will
+   produce. This DECLARES what that gate will do; it does not restate, fork, or duplicate the
+   mechanism or the veto machinery - it reuses them:
+   - `sleep.enabled` false (the DEFAULT): "I will NOT power down; the machine stays on; at
+     end-of-run I end cleanly via `credo-autonomy-off.sh`."
+   - `sleep.enabled` true: "at end-of-run I will `sleep.mode` (suspend or hibernate) per
+     `sleep.command`, gated on `sleep.enabled`, with a `windows.veto_minutes` veto window."
+   - enabled but `sleep.command` EMPTY (misconfig): state it will end WITHOUT powering down
+     (per the misconfig guard above).
+
+**Timing - once upfront, plus a short repeat on genuine transitions.** The full read-back
+above stays mandatory ONCE upfront before the run starts. In ADDITION, give a FRESH, SHORT
+read-back again whenever the binding situation actually changes mid-run - specifically on a
+schedule-row transition (e.g. entering `work_hours`), a user cap-override taking effect or
+expiring, or crossing into a hard / ladder-enforced zone. Keep the repeat short: the (new)
+binding axis + the numbers that changed + the suspend posture only if it changed. This is NOT
+per-turn spam - only on those genuine transitions, never every turn.
 
 Mental model (this is the point, and it is user-agnostic): the schedule (`budget.schedule`)
 is the SINGLE SOURCE OF TRUTH for how budget is apportioned. Whether there is anything to
