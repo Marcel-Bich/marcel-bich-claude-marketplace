@@ -14,6 +14,8 @@ Frontmatter is lean and mandatory: id, title, created, type, ui.
   ui:   true means a visual verify (credo verify skill) is a DoD requirement.
 Do NOT add a status field - the FOLDER the file lives in is the only status truth.
 Add priority / source / relates_to / regression only if they apply, free-form below.
+Optional: clarify_depth: waived  (only the USER sets it, with a short reason) marks that an
+  item skips the deep over-clarify standard + pre-GO self-check. Unset = full clarify applies.
 Blocker relations are structured (not free-form) and REQUIRED only while the item sits in
 1_todo/3_blocked:  blocked_by: [ids] on the blocked item, blocks: [ids] on the blocker.
 They are a dependency graph, not a second status source. Omit them outside 3_blocked.

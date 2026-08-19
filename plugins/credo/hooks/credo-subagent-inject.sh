@@ -28,7 +28,9 @@ command -v jq >/dev/null 2>&1 || exit 0
 INPUT=$(cat 2>/dev/null) || exit 0
 [[ -n "$INPUT" ]] || exit 0
 
-# agent_type is available for future filtering; every subagent is primed today.
+# agent_type drives filtering: the built-in read-only agents Explore and Plan get a
+# lighter priming (only the fresh [credo-now] line, see below); every other type gets
+# the full rule block. Unknown/empty agent_type -> full block (safe default).
 agent_type=$(printf '%s' "$INPUT" | jq -r '.agent_type // ""' 2>/dev/null) || agent_type=""
 [[ "$agent_type" == "null" ]] && agent_type=""
 
@@ -50,28 +52,81 @@ HONESTY: admit uncertainty, never guess or fabricate; verify before claiming som
 
 DELEGATION: if you spawn your own helpers they inherit this same security and run at a model at least as capable as yours, never weaker (orchestration skill). If you hit a blocking decision you cannot resolve, return {status: needs_decision, question: ...} instead of guessing.
 
-OUTPUT HYGIENE: no curly quotes, no double hyphens in prose, no ellipsis character, no emojis in code or logs; ASCII identifiers only.
+GIT: modify files only - do NOT run git add / git commit / git push (the main / task-build agent is the single owner of the working-tree index, which avoids a .git/index.lock race); if you believe a commit is warranted, report that back instead of committing.
+
+OUTPUT HYGIENE: no curly quotes; no ellipsis character (use ...); no emojis in code or logs; ASCII identifiers only; double hyphens (--) only where changing to - would break functionality (CLI flags, argument separators), everywhere in prose use -; no AI-filler phrases (Let me..., I'll..., Sure!, Certainly!).
+
+LANGUAGE: follow the project's own language rules if any exist (read them). If none exist, match the language already established in the file you touch (file-local convention wins). If unclear, write everything in English including code comments; use another language only where deliberately required (UI strings, translation files). Exception: credo items themselves are written in the user's configured language if set, otherwise English.__LANG_CLAUSE__
 
 The relevant credo skills above auto-trigger when they apply - use them.
 RULES
 
-# --- task-backend gate (fail-safe) ---
-# Resolved via credo-config.sh: env CREDO_TASK_BACKEND override (set + non-empty)
-# > merged config task_backend (.credo/config cascade) > credo default. Any error
-# falls back to credo. Only backend=gsd stands the credo item model down: the
-# item/audit sentence is dropped from the priming. Security, quality (verify),
-# honesty, delegation, and output-hygiene rules ALWAYS stay in - they are unconditional.
-HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || HOOK_DIR=""
-backend="$("$HOOK_DIR/../scripts/credo-config.sh" backend 2>/dev/null || echo credo)"
-[[ -n "$backend" ]] || backend="credo"
-if [[ "$backend" == "gsd" ]]; then
-    item_clause=""
-else
-    item_clause=" Record and gate work as a credo item; work counts as done only after the mandatory post-completion audit gate, with docs updated in the same change (items and audit skills)."
-fi
-rules="${rules/__ITEM_CLAUSE__/$item_clause}"
+# --- agent_type filtering (fail-safe) ---
+# Explore and Plan are read-only built-ins that emit only a report to the main agent,
+# no persistent code/output - so the heavy build/output/quality block is noise for
+# them; they get only the fresh [credo-now] line below. Any other type (general-purpose,
+# custom, empty/unknown) gets the full block. Unknown/empty -> full block (safe default).
+case "$agent_type" in
+    Explore|Plan) light_block=1 ;;
+    *)            light_block=0 ;;
+esac
 
-status="[credo] ${rules}"
+status=""
+if [[ "$light_block" -eq 0 ]]; then
+    # --- task-backend gate (fail-safe) ---
+    # Resolved via credo-config.sh: env CREDO_TASK_BACKEND override (set + non-empty)
+    # > merged config task_backend (.credo/config cascade) > credo default. Any error
+    # falls back to credo. Only backend=gsd stands the credo item model down: the
+    # item/audit sentence is dropped from the priming. Security, quality (verify),
+    # honesty, delegation, and output-hygiene rules ALWAYS stay in - they are unconditional.
+    HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || HOOK_DIR=""
+    backend="$("$HOOK_DIR/../scripts/credo-config.sh" backend 2>/dev/null || echo credo)"
+    [[ -n "$backend" ]] || backend="credo"
+    if [[ "$backend" == "gsd" ]]; then
+        item_clause=""
+    else
+        item_clause=" Record and gate work as a credo item; work counts as done only after the mandatory post-completion audit gate, with docs updated in the same change (items and audit skills)."
+    fi
+    rules="${rules/__ITEM_CLAUSE__/$item_clause}"
+
+    # --- language fill-in (best-effort, fail-safe) ---
+    # HONESTY CAVEAT: the `language` key in settings.json is currently UNDOCUMENTED. It
+    # works today but a future Claude Code version may rename or remove it, so this read
+    # is best-effort with an English fallback and must NEVER fail the hook (jq presence is
+    # already checked at top; missing files/keys just skip to the English fallback).
+    # Precedence, highest first: project .claude/settings.local.json > project
+    # .claude/settings.json > active-profile user settings. First non-empty hit wins.
+    # PROFILE CORRECTNESS: the user runs multiple profiles (.claude and .claude-private).
+    # The active profile is $CLAUDE_CONFIG_DIR, which is NOT necessarily $HOME/.claude -
+    # so the user-level read must use $CLAUDE_CONFIG_DIR/settings.json; falling back to
+    # $HOME/.claude on a .claude-private profile would read the WRONG settings.json.
+    # $HOME/.claude/settings.json is only a last resort when CLAUDE_CONFIG_DIR is unset.
+    proj_dir="${CLAUDE_PROJECT_DIR:-$PWD}"
+    if [[ -n "${CLAUDE_CONFIG_DIR:-}" ]]; then
+        user_settings="$CLAUDE_CONFIG_DIR/settings.json"
+    else
+        user_settings="$HOME/.claude/settings.json"
+    fi
+    lang=""
+    for lf in \
+        "$proj_dir/.claude/settings.local.json" \
+        "$proj_dir/.claude/settings.json" \
+        "$user_settings"; do
+        [[ -f "$lf" ]] || continue
+        lang=$(jq -r '.language // empty' "$lf" 2>/dev/null) || lang=""
+        [[ "$lang" == "null" ]] && lang=""
+        lang=$(printf '%s' "$lang" | tr -d '[:cntrl:]' 2>/dev/null) || lang=""
+        [[ -n "$lang" ]] && break
+    done
+    if [[ -n "$lang" ]]; then
+        lang_clause=" The user's configured language is ${lang} - write credo items in ${lang}."
+    else
+        lang_clause=" No configured language is set - the credo-items fallback is English."
+    fi
+    rules="${rules/__LANG_CLAUSE__/$lang_clause}"
+
+    status="[credo] ${rules}"
+fi
 
 # --- fresh time + budget line (Fix B: a subagent must not inherit the main
 #     agent's possibly frozen clock/limit values). The time is always current
@@ -106,8 +161,15 @@ if [[ -n "$now_line" ]]; then
     now_status="[credo-now] Current local time: ${now_line}."
     [[ -n "$budget" ]] && now_status="${now_status} Budget:${budget}."
     now_status="${now_status} Authoritative as of your start - use these, not any older time/budget values inherited from the main agent's context."
-    status="${status}"$'\n'"${now_status}"
+    if [[ -n "$status" ]]; then
+        status="${status}"$'\n'"${now_status}"
+    else
+        status="${now_status}"
+    fi
 fi
+
+# Nothing to inject (e.g. light block and the clock read failed) -> emit no output.
+[[ -n "$status" ]] || exit 0
 
 jq -n --arg ctx "$status" \
     '{hookSpecificOutput: {hookEventName: "SubagentStart", additionalContext: $ctx}, suppressOutput: true}' 2>/dev/null

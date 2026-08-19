@@ -52,6 +52,56 @@ happens only after EXPLICIT user confirmation.
 - The clarify gate is carried physically by the item folders: only `1_todo/2_go` is
   buildable, `1_todo/1_clarify` is not. See the credo `items` skill (the go-gate, C9).
 
+### Rather over-clarify than under-clarify (the standard)
+
+Aim to surface and resolve as much as possible BEFORE proposing GO, so that once an item
+goes `1_clarify -> 2_go` almost nothing new - no fresh problem, no "oh, I need a user
+decision" - surfaces during the build. When in doubt, over-clarify: seriously try to
+capture everything now rather than discover it mid-build. The user can at any time say
+"enough / this is small, skip it" - that is the explicit waiver (the `clarify_depth` field,
+see below); until they do, keep aiming to surface everything. This is DEPTH per item that
+is genuinely brought to the user, NOT a licence to bundle items or to drag trivial,
+self-evident fixes to the user (those still need no question), and it does not relax passive
+mode's "less is more" or the one-item-per-Ask-round hygiene.
+
+Everything here is PRE-GO, inside the `1_clarify` phase. It is NOT a new reason to send a
+`2_go` item back to `1_clarify`: it does not touch the Named-Decision-Test (credo `items`
+skill), and doing it well should make that test fire LESS often, not more.
+
+For each item being brought toward GO, discharge these four LIGHT obligations - light /
+brief, a sanity pass, NOT a deep dive:
+
+(a) **Ask generously.** Prefer more focused, well-aimed clarify questions over too few; do
+    not rush an item to GO by simply not asking. The Ask tool is the channel in presence
+    modes (autonomous defers its questions instead - credo `session-autonomous` skill).
+(b) **Brief pre-measure.** For performance-critical paths or comparisons, do a quick
+    sanity-check measurement DURING clarify. This is deliberately light and is NOT the full
+    post-GO measurement of the measure-then-user-decide split (credo `items` skill, Success
+    Criteria and the DoD gate; migrate G5a) - that full measurement is produced by the
+    build, POST-GO.
+(c) **Brief pre-investigate.** Sketch how it would actually be done and what problems are
+    likely - enough to know the real scope, not a deep implementation dive. This is the
+    pre-GO cousin of the build-time "verify the real scope before calling a point large"
+    rule (credo `items` skill).
+(d) **Cross-item conflict check.** Check for conflicts with OTHER not-yet-built items and
+    with known future items before GO.
+
+### Self-check before proposing GO
+
+Before you propose moving an item to `2_go`, first check its `clarify_depth` frontmatter
+field (credo `items` skill):
+
+- If `clarify_depth: waived`, the depth obligations (a)-(d) and this self-check are
+  intentionally SKIPPED by explicit user decision. Record one line in the item that the
+  depth was waived by user decision (so it is never silently re-done against the user's
+  will) and proceed. Only the USER sets this waiver - an agent never self-waives to save
+  effort (the same spirit as "never self-demote / size is not grounds", credo `items` skill).
+- Otherwise, explicitly go through (a)-(d) and record a brief note in the item - one or two
+  lines: what was investigated / measured / which conflicts were checked, or "n/a" with a
+  reason. That recorded note is the visible, checkable evidence that the clarify was
+  thorough. This is a required PRACTICE with a recorded note, NOT a hard machine gate: it
+  adds no blocking criterion to the migrate entry gate and never bounces a `2_go` item back.
+
 ## Clarify via the Ask tool (G1)
 
 The default channel for a clarification is ALWAYS the Ask tool. Short decisions and

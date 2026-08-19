@@ -40,7 +40,9 @@ large reads or long builds that a subagent can carry.
   independent - sequence them instead.
 - Sequential commit: the MAIN agent commits, one track's result at a time. Subagents do
   not commit in parallel. This keeps history clean and avoids two agents racing on the
-  index or on a shared file.
+  index or on a shared file. (By the same index-race logic, the default agent roles put
+  commits and push with the task / build agent, not the plan / clarify agent - a guiding
+  default, not a constraint; see `session-init`.)
 - If a clean disjoint split is not possible, run the tracks sequentially rather than
   forcing false parallelism.
 

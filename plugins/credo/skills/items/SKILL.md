@@ -64,7 +64,10 @@ credo `migrate` skill owns the G1-G6 entry gate).
   be checked, not assumed: a size claim used to defer must be backed by a quick actual look
   at the implementation, not an estimate. This does not forbid genuine follow-up items when
   they are warranted; it only bars deferring on an assumed size ("too big / too hard" is
-  still not grounds - see the Named-Decision-Test).
+  still not grounds - see the Named-Decision-Test). This build-time scope check has a PRE-GO
+  cousin: obligations (b) brief pre-measure and (c) brief pre-investigate of the over-clarify
+  standard sketch scope and sanity-check measurements DURING clarify, before GO (credo
+  `session-active` skill, CLARIFY-FIRST).
 - **`ui: true` is not a reason not to build.** UI items are verified via the credo `verify`
   skill, which is autonomous-capable; a required visual verify does not make an item
   unbuildable.
@@ -144,6 +147,17 @@ structured (not free-form) and are REQUIRED while an item sits in `1_todo/3_bloc
 "GO-but-blocked" below). Outside that state they are omitted. They form a relational
 dependency graph, NOT a second status source, so principle "folder = status" stays intact
 and the lean-frontmatter philosophy is not broken.
+
+The other documented optional field is `clarify_depth`. It is normally unset/empty, which
+means the full over-clarify standard and the pre-GO self-check apply (credo `session-active`
+skill, CLARIFY-FIRST). The single value `clarify_depth: waived` records that the USER has
+explicitly decided this item does NOT need the deep clarify - a small / easy item, or simply
+their choice - so the depth obligations and the self-check are intentionally skipped and
+never re-done against their will. Add a short reason inline or on an adjacent line, e.g.
+`clarify_depth: waived  # user: trivial rename, no deep clarify`. Only the user sets this;
+an agent NEVER self-waives to save effort (same spirit as "never self-demote / size is not
+grounds"). Like the blocker relations it is optional and adds no second status source - the
+folder still owns status.
 
 ## Filenames and ids
 
@@ -432,7 +446,9 @@ Valid transitions (folder = status):
 - `1_clarify -> 2_go` once the user gives an explicit GO (go-gate: only `2_go` is
   buildable; `1_clarify` is not). In a presence session, clarify and propose that GO one
   item at a time, each item in its own Ask round - see "One item per Ask round" in the
-  common core (session-active skill).
+  common core (session-active skill). Before proposing that GO, discharge the over-clarify
+  standard and its pre-GO self-check unless `clarify_depth: waived` (credo `session-active`
+  skill, CLARIFY-FIRST).
 - `2_go -> 3_blocked` when a concrete blocker on another unbuilt item is found (block-guard
   above; requires `blocked_by`). NOT for "too big / too hard".
 - `2_go -> 1_clarify` when a genuine user-only decision surfaces (the Named-Decision-Test

@@ -1,6 +1,6 @@
 name: credo
 description: "The mentor framework for Claude Code: a self-contained process layer with per-session modes, a work-item lifecycle with a hard Definition of Done, budget-aware autonomy, visual verification, and safety rules that travel into every subagent"
-version: 0.36.9
+version: 0.37.0
 author: Marcel Bich
 repository: https://github.com/Marcel-Bich/marcel-bich-claude-marketplace
 
@@ -29,6 +29,15 @@ commands:
   session-autonomous:
     description: Set the session mode to autonomous (work approved GO items unattended, hook-enforced keep-alive on)
     source: commands/session-autonomous.md
+  role-task:
+    description: Set this session's default role to task/build (owns implementing GO items incl. commits/push per dogma)
+    source: commands/role-task.md
+  role-plan:
+    description: Set this session's default role to plan/clarify (owns clarifying 1_clarify items, no commits/push)
+    source: commands/role-plan.md
+  role-clear:
+    description: Clear this session's default role (back to no role; the agent does everything)
+    source: commands/role-clear.md
   explain:
     description: Explain something in depth (what/why/example/consequences)
     source: commands/explain.md

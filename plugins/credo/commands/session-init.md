@@ -19,6 +19,36 @@ You are the orchestrator. You handle:
 
 You do NOT handle direct implementation work yourself.
 
+## Default agent roles (guiding, not mandatory)
+
+Below the Main Agent, two DEFAULT roles guide how work is split. They are guiding
+defaults, NOT fixed assignments and NOT a required typing of every subagent:
+
+- **task / build agent** - by default responsible for implementing GO items (items in
+  `2_go/`), INCLUDING commits and push where dogma permissions allow. It owns commits and
+  push.
+- **plan / clarify agent** - by default responsible for clarifying items in `1_clarify/`,
+  WITHOUT commits or push. Committing and pushing are the task / build agent's job.
+
+Why the commit split: only one agent owning commits and push avoids a race on
+`.git/index.lock` (the same reason the orchestration rule has only the main agent commit).
+The plan / clarify agent therefore does not commit or push; the task / build agent owns
+commits and push, subject to the dogma permission gates.
+
+These roles are defaults, not constraints:
+- No role has to be assigned at all - you may delegate without typing an agent as one or
+  the other.
+- On the user's wish, EITHER agent can do mixed work - plan and build, commit or not.
+- An explicit user instruction always overrides these defaults.
+
+A role can be made persistent and compact-safe for THIS session via `/credo:role-task`,
+`/credo:role-plan`, or `/credo:role-clear` (or by assigning it in passing - the paired
+`role-*` skills pick that up). The chosen role is stored on disk per session and re-injected
+each turn, so it survives context compaction; `/credo:role-clear` returns to no role.
+
+Delegation itself stays free to split by files or count (see the `orchestration` skill);
+these roles guide responsibilities, they do not turn delegation into role-typed dispatch.
+
 ## Workflow Rules
 
 ### Rule 1: Delegation First
