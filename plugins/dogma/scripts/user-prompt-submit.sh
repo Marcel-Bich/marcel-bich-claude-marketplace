@@ -36,6 +36,20 @@ if [ "$ENABLED" != "true" ]; then
     exit 0
 fi
 
+# ============================================
+# Output convention (UNGATED - fires for every dogma user, every turn)
+# Governed only by the enable / prompt-reminder toggles above, NOT by
+# project-local CLAUDE files. Must sit BEFORE the CLAUDE-dir early-exit.
+# ============================================
+echo ""
+echo "<dogma-output-convention>"
+echo "In your terminal replies to the user, wrap every #N reference (issue, PR, or ticket"
+echo "numbers such as #139 or #9222) and every hashtag (such as #my-tag) in backticks so it"
+echo "renders as inline code (for example: \`#139\`, \`#my-tag\`)."
+echo "Scope: TERMINAL OUTPUT ONLY. This never changes file content - write files exactly as"
+echo "before, with no added backticks. This convention applies only to your chat replies."
+echo "</dogma-output-convention>"
+
 # Read JSON input from stdin (required by hook interface)
 INPUT=$(cat 2>/dev/null || true)
 
