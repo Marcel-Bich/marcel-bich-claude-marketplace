@@ -95,6 +95,16 @@
           },
           {
             "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-skill-nudge.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-plugin-freshness-inject.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-bridge.sh",
             "timeout": 10
           }
