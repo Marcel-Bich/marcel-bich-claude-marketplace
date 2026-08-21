@@ -28,4 +28,11 @@ Use this ONLY when full autonomy plus AFK has been explicitly granted.
 4. Load the `items` skill now (the credo work-item model and done-gate), UNLESS it is
    already active in your current context - do not reload it if you already have it. This
    puts the item model and go-gate in context before you act on approved GO items.
-5. Read the approved GO order back verbatim before you start.
+5. Give the autonomous-start read-back per the `session-autonomous` skill ("Budget-start
+   read-back"). Full four-part read-back on the FIRST start; on every invocation - including
+   this one - emit AT LEAST the three-axis short form and NEVER start without it:
+   - **Budget:** the binding axis + both live figures (5h% and weekly%).
+   - **Suspend/hibernate:** the end-of-run posture (one line).
+   - **ntfy:** whether it is active and what will be reported (normally every go -> done item
+     completion, plus come-to-PC pushes) - or that it runs silent if unconfigured.
+6. Read the approved GO order back verbatim before you start.

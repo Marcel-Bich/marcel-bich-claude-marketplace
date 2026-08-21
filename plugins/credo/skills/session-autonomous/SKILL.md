@@ -171,7 +171,8 @@ commit-identity gate before every commit. Before starting an autonomous run, the
 first confirms with the user whether the default caps fit or need a temporary override, and
 until when (per the budget skill), and performs the mandatory budget-start read-back (see
 "Budget-start read-back" below) - show the schedule row in force and reflect the
-understanding back ONCE before starting. Never exceed a cap to finish "just one more thing".
+understanding back before starting (full read-back on the first start, at least the short
+form on every start). Never exceed a cap to finish "just one more thing".
 
 ### Keep-alive (hook-enforced, only while credo-autonomy-active is set)
 
@@ -489,8 +490,10 @@ cannot be secured - so warn via ntfy and stop; do not keep building unsecured wo
 ### Budget-start read-back (mandatory before any autonomous start)
 
 Before starting an autonomous run - always, not only overnight - the agent MUST give a
-COMPLETE, UPFRONT read-back, ONCE, and only then start. The read-back has four parts (a
-scattered or late partial read-back is not acceptable):
+read-back and only then start: the COMPLETE four-part read-back below on the FIRST start, and
+AT LEAST the short form on every start (see "Timing" below - never start without at least the
+short form). The full read-back has four parts (a scattered or late partial read-back is not
+acceptable):
 
 1. **(a) Show the schedule row that applies now.** Read the cap schedule and print the ONE
    row in force for the current local weekday and hour (day, window, `five_hour_cap`,
@@ -533,13 +536,29 @@ scattered or late partial read-back is not acceptable):
    - enabled but `sleep.command` EMPTY (misconfig): state it will end WITHOUT powering down
      (per the misconfig guard above).
 
-**Timing - once upfront, plus a short repeat on genuine transitions.** The full read-back
-above stays mandatory ONCE upfront before the run starts. In ADDITION, give a FRESH, SHORT
-read-back again whenever the binding situation actually changes mid-run - specifically on a
+**Timing - full read-back on the first start, AT LEAST the short form EVERY time.** The
+COMPLETE four-part read-back above is mandatory before the FIRST autonomous start (whenever
+you have not already given it in this session). On EVERY invocation of
+`/credo:session-autonomous` - including a re-entry, a resume, or a repeat after autonomy was
+turned off - you MUST emit AT LEAST the short form, and NEVER start autonomous work without
+it. The short form is a compact minimum that is ALWAYS present, in every case - three axes:
+
+- **Budget:** the binding axis (part c) AND BOTH current live figures (5h% AND weekly%).
+- **Suspend/hibernate:** the posture (part d), one line - ALWAYS, even when unchanged.
+- **ntfy:** whether ntfy is active (a `personal.ntfy_topic` is set) AND what will be
+  reported - normally a report on every item completion (a go -> done transition), bundled
+  per the digest interval, plus immediate come-to-PC pushes for questions / blockers. If
+  ntfy is NOT configured, say so plainly (autonomy then runs silent - no pushes). See
+  "Per-task and per-question ntfy" above; do not restate the mechanism, just declare it.
+
+So the rule is: first start -> the full four-part read-back (plus the ntfy line); any later
+start -> at minimum the three-axis short form above. In ADDITION, give a fresh short
+read-back whenever the binding situation actually changes mid-run - specifically on a
 schedule-row transition (e.g. entering `work_hours`), a user cap-override taking effect or
-expiring, or crossing into a hard / ladder-enforced zone. Keep the repeat short: the (new)
-binding axis + the numbers that changed + the suspend posture only if it changed. This is NOT
-per-turn spam - only on those genuine transitions, never every turn.
+expiring, or crossing into a hard / ladder-enforced zone; there the (new) binding axis + the
+numbers that changed + the suspend posture (if it changed) suffice. This is NOT per-turn
+spam - the short form fires on each autonomous start and on those genuine transitions, never
+every turn.
 
 Mental model (this is the point, and it is user-agnostic): the schedule (`budget.schedule`)
 is the SINGLE SOURCE OF TRUTH for how budget is apportioned. Whether there is anything to
