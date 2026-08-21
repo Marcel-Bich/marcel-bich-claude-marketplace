@@ -110,7 +110,10 @@ fi
 CREDO_BLOCK_BEGIN="# >>> credo (managed - do not edit)"
 CREDO_BLOCK_END="# <<< credo (managed)"
 if [ "${CREDO_VERSION_TRACKED:-}" = "1" ]; then
-    EXCLUDE_LINES=(".credo/config" ".credo/screenshots/")
+    # Tracked mode versions .credo/** EXCEPT these. sandbox-tmp is WIP sandbox work:
+    # it stays local even in a version-tracked repo, while the promoted sandbox/ folder
+    # is versioned. See the credo `sandbox` skill for the two-folder model.
+    EXCLUDE_LINES=(".credo/config" ".credo/screenshots/" ".credo/sandbox-tmp/")
 else
     # .credo/** stays local by default, EXCEPT RULES.md: per-repo special rules are
     # meant to travel WITH the repo (credo `rules` skill), so re-include that one file
@@ -135,6 +138,8 @@ if GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)"; then
         $0 == ".credo/config"         { next }
         $0 == ".credo/config/"        { next }
         $0 == ".credo/screenshots/"   { next }
+        $0 == ".credo/sandbox-tmp/"   { next }
+        $0 == ".credo/sandbox-tmp/**" { next }
         { print }
     ' "$EXCLUDE_FILE" > "$tmp"
 

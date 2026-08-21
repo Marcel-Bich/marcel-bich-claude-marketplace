@@ -73,6 +73,20 @@ Subagents inherit the same hard security rules as the main agent, with no except
 State these constraints in the task you hand each subagent so they hold even if the
 subagent does not otherwise load them.
 
+## Node / tooling version precheck (before any node run)
+
+Before an agent OR a subagent runs node / npm / pnpm / yarn tooling in a repo, derive the
+repo's Node version deterministically and activate it - do NOT rely on the random system Node
+of the subagent shell:
+
+- Read `.nvmrc` or `.node-version` AND `package.json` `engines.node`, then activate the matching
+  Node (`nvm use`, or the project's equivalent) before running the tooling.
+- Concrete failure this prevents: pre-work ran on the system Node while the repo required a
+  higher major - the `.nvmrc` / `engines` were unambiguous, they just were not switched to, so
+  the run failed for a reason that had nothing to do with the actual task.
+
+This applies to every tooling-running agent, not only sandbox pre-work.
+
 ## Priming subagents with credo rules
 
 credo does not rely on the main agent to remember the rules. Two mechanisms keep a

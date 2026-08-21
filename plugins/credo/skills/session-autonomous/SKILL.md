@@ -92,6 +92,10 @@ the fresh listing in "Empty buildable queue = end-of-run" below). Building every
 item IS the mandate of autonomous mode, not over-reach. "I built the thread I started with" is
 NOT a reason to stop while other buildable items remain.
 
+Autonomous / AFK runs are read-heavy, so isolated writing pre-work has room here: for a clarify
+item blocked by a missing measurement, mockup, or feasibility proof, use the `sandbox` skill
+(`.credo/sandbox-tmp/`, no production code, no commit) rather than making a product decision.
+
 ### A non-buildable item in 2_go
 
 An item is normally clarified when it is in `2_go` (GO=GO). If you nonetheless meet one that

@@ -42,6 +42,13 @@ compaction, new sessions and subagents (stored on disk, not in context):
 "${CLAUDE_PLUGIN_ROOT}/hooks/role-set.sh" plan
 ```
 
+## Sandbox pre-work
+
+For WRITING clarify pre-work that needs no product decision but evidence - a measurement, a
+mockup, a feasibility proof - use the `sandbox` skill. It builds under `.credo/sandbox-tmp/`
+(no production code, no commit); an accepted artifact is promoted via `/credo:sandbox-promote`,
+which the task / build role commits.
+
 ## Confirm
 
 Confirm in one short sentence, for example:

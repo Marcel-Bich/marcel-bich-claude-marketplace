@@ -16,3 +16,6 @@ default, orthogonal to the session mode, and an explicit user instruction always
 **Invoke the `role-plan` skill via the Skill tool.** The skill writes the persistent,
 compact-safe marker (via `role-set.sh plan`, re-injected every turn) and holds the
 confirmation wording. Clear it any time with `/credo:role-clear`.
+
+For writing clarify pre-work without production code (a measurement, mockup, or feasibility
+proof), use the `sandbox` skill; promote accepted artifacts with `/credo:sandbox-promote`.
