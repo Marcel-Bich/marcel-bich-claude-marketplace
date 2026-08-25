@@ -25,19 +25,38 @@
 
 set -euo pipefail
 
-# --- locate the target .credo directory -------------------------------------
-if [ -n "${CREDO_DIR:-}" ]; then
-    CREDO_DIR="$CREDO_DIR"
-elif REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    CREDO_DIR="$REPO_ROOT/.credo"
-else
-    CREDO_DIR="$(pwd)/.credo"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --- locate the target .credo directory (shared resolver) -------------------
+# Precedence (see credo-config.sh resolve-project): explicit CREDO_DIR > session
+# pin (/credo:project) > cwd git-toplevel/.credo when it already exists and is not
+# a hub. Mirrors credo-init.sh so every helper agrees. The old pin-blind
+# $(pwd)/.credo fallback is gone: on a hub / no-project cwd this fails loud
+# (exit 4) instead of issuing an id against the wrong project or creating a
+# stray .credo.
+set +e
+RESOLVED="$("$SCRIPT_DIR/credo-config.sh" resolve-project 2>/dev/null)"
+RESOLVE_RC=$?
+set -e
+if [ "$RESOLVE_RC" -eq 4 ]; then
+    TARGET_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    echo "credo-id-next: cwd '$TARGET_DIR' is a hub or has no credo project, and no explicit target was given. Set CREDO_DIR to the target repo, or pin it with /credo:project <path>, then retry." >&2
+    exit 4
 fi
+if [ "$RESOLVE_RC" -ne 0 ] || [ -z "$RESOLVED" ]; then
+    echo "credo-id-next: could not resolve a target .credo directory" >&2
+    exit 1
+fi
+CREDO_DIR="$RESOLVED"
 
 COUNTER_FILE="$CREDO_DIR/id-counter"
 LOCK_FILE="$CREDO_DIR/id-counter.lock"
 ITEMS_DIR="$CREDO_DIR/items"
 
+# CREDO_DIR is now always a resolved target (explicit CREDO_DIR, session pin, or
+# an existing git-toplevel/.credo). The dangerous $(pwd)/.credo fallback was
+# removed, so this mkdir can no longer materialize a stray .credo in a hub cwd;
+# it only ensures the resolved target's dir exists.
 mkdir -p "$CREDO_DIR"
 
 # --- scan floor: highest existing id from item files -------------------------

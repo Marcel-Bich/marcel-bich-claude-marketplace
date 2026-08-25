@@ -32,6 +32,14 @@ set -eu
 STORE_DIR="${CREDO_DIR_DECISIONS_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/dir-decisions}"
 
 # --- resolve the DIR-KEY: git toplevel if inside a repo, else $PWD -----------
+# INTENTIONAL: this key is the physical WORKING DIRECTORY, NOT the project pin.
+# It is a separate axis from credo-config.sh resolve-project: the pin decides where
+# items/sandbox get written (the target repo), while this decides "may credo run at
+# THIS location" (an opt-in per working dir). It deliberately does NOT honor the
+# session pin - the pin is per-session/ephemeral, whereas this accepted/declined
+# marker is global and persistent, so binding it to the pin would make the key flip
+# mid-session (re-prompting / a vanishing decision). Do not "fix" this to use
+# resolve-project.
 resolve_key() {
     local top
     if top="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -n "$top" ]; then

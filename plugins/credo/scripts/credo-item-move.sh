@@ -42,6 +42,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 die() { echo "credo-item-move: $*" >&2; exit 1; }
 
 # --- args --------------------------------------------------------------------
@@ -86,14 +88,26 @@ case "$TARGET" in
         die "unknown target '$TARGET' (use: clarify|go|blocked|done|verified|archived|hold|future)" ;;
 esac
 
-# --- locate the target .credo directory --------------------------------------
-if [ -n "${CREDO_DIR:-}" ]; then
-    CREDO_DIR="$CREDO_DIR"
-elif REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    CREDO_DIR="$REPO_ROOT/.credo"
-else
-    CREDO_DIR="$(pwd)/.credo"
+# --- locate the target .credo directory (shared resolver) --------------------
+# Precedence (see credo-config.sh resolve-project): explicit CREDO_DIR > session
+# pin (/credo:project) > cwd git-toplevel/.credo when it already exists and is not
+# a hub. Mirrors credo-init.sh so every helper agrees. The old pin-blind
+# $(pwd)/.credo fallback is gone: on a hub / no-project cwd this fails loud
+# (exit 4) instead of moving items in the wrong project.
+set +e
+RESOLVED="$("$SCRIPT_DIR/credo-config.sh" resolve-project 2>/dev/null)"
+RESOLVE_RC=$?
+set -e
+if [ "$RESOLVE_RC" -eq 4 ]; then
+    TARGET_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    echo "credo-item-move: cwd '$TARGET_DIR' is a hub or has no credo project, and no explicit target was given. Set CREDO_DIR to the target repo, or pin it with /credo:project <path>, then retry." >&2
+    exit 4
 fi
+if [ "$RESOLVE_RC" -ne 0 ] || [ -z "$RESOLVED" ]; then
+    echo "credo-item-move: could not resolve a target .credo directory" >&2
+    exit 1
+fi
+CREDO_DIR="$RESOLVED"
 
 ITEMS_DIR="$CREDO_DIR/items"
 [ -d "$ITEMS_DIR" ] || die "no items directory at $ITEMS_DIR (run credo-init first)"
