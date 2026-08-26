@@ -593,6 +593,26 @@ AT LEAST the short form on every start (see "Timing" below - never start without
 short form). The full read-back has four parts (a scattered or late partial read-back is not
 acceptable):
 
+**(0) Read the real numbers first (mandatory - before naming ANY budget figure).** Before
+you state ANY budget number in the read-back - a cap OR a live figure - you MUST read BOTH
+of these fresh, in this moment. A number that was not just read is not stated:
+
+```
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get budget.schedule   # the active profile's real caps, overrides included
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-budget-read.sh"                    # live 5h% / weekly% + resets
+```
+
+- The binding cap axis and every cap value named in the read-back come ONLY from
+  `budget.schedule` (via `credo-config.sh`) - the active profile's own rows, overrides
+  included. NEVER a number from memory, and NEVER a number copied from the credo `budget`
+  skill's worked examples or defaults.
+- The live 5h% / weekly% come ONLY from `credo-budget-read.sh`. If it exits 3 or 4 (no
+  cache / stale cache), do NOT guess the live figures: report them honestly as "not readable
+  (no/stale cache)", still name the static caps from `budget.schedule` (always readable),
+  and act conservatively.
+- This does NOT replace the guardrail-availability gate above (which decides WHETHER to
+  start at all); it governs the read-back numbers - what may be named, and from where.
+
 1. **(a) Show the schedule row that applies now.** Read the cap schedule and print the ONE
    row in force for the current local weekday and hour (day, window, `five_hour_cap`,
    `weekly_cap`), plus the current live budgets:

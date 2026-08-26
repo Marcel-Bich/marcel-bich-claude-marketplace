@@ -92,6 +92,21 @@ do not re-invent it. Each entry has `day`, `window`, `five_hour_cap`, `weekly_ca
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get budget.five_hour
 ```
 
+### Invariant: every budget number is freshly read (B13)
+
+Every budget number you state - a cap OR a live figure - comes EXCLUSIVELY from the two
+reads below, freshly read at the moment you name it:
+
+- Caps: `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get budget.schedule` (the active
+  profile's rows, overrides included).
+- Live 5h% / weekly% + resets: `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-budget-read.sh"`.
+
+NEVER from memory, and NEVER from the worked examples or defaults in THIS skill - those
+illustrate the logic only, they are not your profile's values. Not readable (e.g.
+`credo-budget-read.sh` exit 3/4) -> say "not readable" honestly, never guess. This holds
+everywhere a budget number is named - the autonomous start read-back, the continue/pause
+decision, an ad-hoc "how much budget is left" - in EVERY mode.
+
 The schedule renews daily. How to pick the row that applies now:
 
 1. Take the local weekday and the local hour.
@@ -124,9 +139,9 @@ stop). The schedule's `five_hour_cap` for off-hours rows equals the hard value. 
 rows cap the 5h window low (default 40) so the 09:00 guard below can hold.
 
 The WEEKLY axis has NO soft/hard band (B11): `weekly_cap` is a plain per-row ceiling,
-entirely unrelated to the 5h `soft_percent` / `hard_percent`. The numeral 95 showing up in
-both a `five_hour_cap` cell and some `weekly_cap` cells is coincidental - two independent
-columns that happen to share a number, not a shared weekly band.
+entirely unrelated to the 5h `soft_percent` / `hard_percent`. If the same number happens to
+appear in both a `five_hour_cap` cell and a `weekly_cap` cell, that is coincidental - two
+independent columns that happen to share a value, not a shared weekly band.
 
 In AUTONOMOUS mode the 5h pacing is instead driven by a staggered ladder that is ENFORCED
 by the `credo-5h-budget-guard.sh` PreToolUse hook (it fires in the main agent and inside
@@ -138,16 +153,20 @@ remaining budget building blocks (commit-identity gate, weekly, 09:00 guard, tas
 fail-safe) are unchanged. See the concept `docs/TODO-credo-5h-budget-guard-concept.md` and
 the autonomous-mode section in the credo `session-autonomous` skill.
 
-Worked examples (with the shipped defaults):
+Worked examples (they illustrate the ROW-MATCHING logic only, NOT the values):
 
-- Wednesday 11:00 local -> Wed `work_hours` row -> 5h cap 40, weekly cap 60.
-- Wednesday 21:00 local -> Wed `off_hours` row -> 5h band soft 92 / hard 95, weekly cap 60.
-- Friday 03:00 -> Fri `before_work` -> 5h soft 92 / hard 95, weekly cap 80.
-- Friday 14:00 -> Fri `work_hours` -> 5h cap 40, weekly cap 80.
-- Friday 22:00 -> Fri `after_17` -> 5h soft 92 / hard 95, weekly cap 99.
-- Saturday 15:00 (before the ~18:00 reset) -> Sat `before_reset` -> 5h 95, weekly 99.
-- Saturday 20:00 (after the reset) -> Sat `after_reset` -> 5h 95, weekly 30.
-- Sunday any time -> Sun `all_day` -> 5h 95, weekly 30.
+- Wednesday 11:00 local -> Wed `work_hours` row -> 5h cap <five_hour_cap>, weekly cap <weekly_cap>.
+- Wednesday 21:00 local -> Wed `off_hours` row -> 5h band soft <soft> / hard <hard>, weekly cap <weekly_cap>.
+- Friday 03:00 -> Fri `before_work` row -> 5h band soft <soft> / hard <hard>, weekly cap <weekly_cap>.
+- Friday 14:00 -> Fri `work_hours` row -> 5h cap <five_hour_cap>, weekly cap <weekly_cap>.
+- Friday 22:00 -> Fri `after_17` row -> 5h band soft <soft> / hard <hard>, weekly cap <weekly_cap>.
+- Saturday 15:00 (before the ~18:00 reset) -> Sat `before_reset` row -> 5h cap <five_hour_cap>, weekly cap <weekly_cap>.
+- Saturday 20:00 (after the reset) -> Sat `after_reset` row -> 5h cap <five_hour_cap>, weekly cap <weekly_cap>.
+- Sunday any time -> Sun `all_day` row -> 5h cap <five_hour_cap>, weekly cap <weekly_cap>.
+
+The `<...>` placeholders stand for YOUR profile's values - read them from `budget.schedule`
+(via `credo-config.sh`, per the B13 invariant above); NEVER cite a number from this example
+as a fact. The examples fix the day/window -> row mapping only, not the caps.
 
 ### Explicit user orders override the schedule (temporarily)
 
