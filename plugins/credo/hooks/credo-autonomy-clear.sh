@@ -23,6 +23,14 @@
 #
 # Failure-safe: any error -> exit 0 (never block a prompt).
 #
+# DOES NOT touch the durable suspend-on-idle directive (managed by
+# credo-suspend-directive.sh under credo/suspend-directives/<session_id>). Pausing
+# autonomy on a user message affects ONLY the autonomy flags below
+# (credo-autonomy-active / credo-autonomy-paused / the wake marker), never the
+# directive. The directive persists until an EXPLICIT revocation - user presence is
+# NOT a revocation (see the session-autonomous skill's presence carve-out). Do not
+# add any directive-clearing here.
+#
 # NOTE: this is registered in the plugin hooks manifest (hooks/hooks.json) as a
 # UserPromptSubmit hook, together with credo-autonomy-keepalive.sh on Stop. A
 # real user message thus turns autonomy off at runtime.

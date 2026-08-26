@@ -6,6 +6,13 @@
 # active or passive mode). Removes the active flag plus the wake marker and sets
 # a hard paused opt-out so the Stop keep-alive hook stays inert until
 # credo-autonomy-on.sh is explicitly called again.
+#
+# This stays a PURE, fail-safe flag flip: no ntfy, no Ask, no presence check, and it
+# does NOT delete the durable suspend-on-idle directive (credo-suspend-directive.sh).
+# The directive persists until an explicit revocation, so an end-of-run autonomy-off
+# must never drop it - otherwise it would be lost on every run (the reported bug). The
+# attended "ask before suspend" branch lives in the session-autonomous SKILL, not in
+# this hook.
 set -u
 FLAG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo-autonomy-active"
 WAKE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo-wake-scheduled"

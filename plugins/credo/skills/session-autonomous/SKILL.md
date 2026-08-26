@@ -52,6 +52,25 @@ really wants unattended autonomy, stay in normal (non-autonomous) collaboration 
 the user first rather than setting the flag. A user who never asks for autonomy is never put into
 autonomous mode.
 
+**Capture and persist a suspend-on-idle directive on entry.** If the grant (the
+`/credo:session-autonomous` argument or the user's natural-language handoff) includes an
+explicit suspend-on-idle order ("suspend when done", "power down at the end", "hibernate
+afterwards", German "am Ende suspend", "danach runterfahren"), record it durably right now:
+
+```
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-suspend-directive.sh" set
+```
+
+An explicit revocation ("no suspend", "leave it on", German "kein suspend", "lass an") clears
+it (`... clear`). A directive already set in THIS session stays in force across a re-invoke of
+`/credo:session-autonomous` and across context compaction - do NOT drop it just because the
+latest invocation carried no argument (that persistence is the whole point; it fixes the bug
+where a standing order was silently forgotten on re-invoke). The directive is per-session,
+stored on disk keyed by session_id, and re-injected on every prompt by the session-mode inject
+hook, so it survives compaction. It changes only the end-of-run power-down gate (see "Suspend
+directive: persistence, presence, and the attended/unattended split" below). Never set it from
+mere user presence or a casual remark - only an explicit order.
+
 ## Common core (shared - read the session-active skill)
 
 Autonomous mode uses the same **canonical common core** as every credo session skill. It
@@ -354,10 +373,11 @@ end-of-run sequence:
 2. End autonomous mode via `credo-autonomy-off.sh` (clears the flag, makes the Stop hook
    inert so the run can stop).
 3. Schedule a ~20 min wake (`windows.veto_minutes`) as a veto window.
-4. No veto within the window -> power down, gated on `sleep.enabled` (default OFF; on the
-   user's personal machine: on). This REUSES the existing power-down procedure below (veto
-   window, retry plus success detection, secure-work-first, the exact `sleep.command`) - do
-   not duplicate it.
+4. No veto within the window -> power down, gated by the combined end-of-run gate below:
+   autonomous AND buildable-queue-empty AND (a suspend directive is set OR `sleep.enabled` is
+   true) AND `sleep.command` is present. A set directive OVERRIDES `sleep.enabled: false`.
+   This REUSES the existing power-down procedure below (veto window, retry plus success
+   detection, secure-work-first, the exact `sleep.command`) - do not duplicate it.
 
 Distinction: "all work genuinely completed / built" stays a `high` ntfy (come see results).
 Only the nothing-was-buildable case uses `default`. Both are end-of-run and feed the same
@@ -382,19 +402,34 @@ machine". The global "never auto power-down" rule lives HERE now, scoped by mode
   weekly axis. The weekly triggers are set by the credo `budget` skill; this skill owns what
   happens on a trigger - and whether that powers down the machine is gated below.
 
-Power-down is OFF by default - it must be opted into (server-safe). Whether an end-of-run
-trigger sleeps the machine is gated on `sleep.enabled`:
+Power-down is OFF by default - it must be opted into (server-safe), OR ordered for this
+session via an explicit suspend directive. Whether an end-of-run trigger sleeps the machine is
+decided by the combined gate below (`sleep.enabled` true OR a set directive, plus a non-empty
+`sleep.command`):
 
 ```
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get sleep.enabled
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get sleep.command
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-suspend-directive.sh" get
 ```
 
-- `sleep.enabled` false (the DEFAULT): NEVER power down the machine. This is what keeps a
-  SERVER running autonomous work from being powered down unexpectedly. On every end-of-run
-  trigger (all done / showstopper / weekly cap reached) do NOT sleep - instead end the
-  autonomous run CLEANLY via `credo-autonomy-off.sh` and send a `high` ntfy stating why (run
-  complete, showstopper, or weekly cap reached). The machine stays on.
+**Combined end-of-run gate.** The power-down fires when ALL hold: autonomous mode AND the
+buildable queue is empty (fresh-listing backstop above) AND (`sleep.enabled` is true OR an
+explicit suspend directive is set for this session) AND `sleep.command` is non-empty. A set
+directive OVERRIDES `sleep.enabled: false` (the server-safe default): it is the user's
+explicit, durable order to power down at end-of-run, and announced = committed. The override
+does NOT extend to a missing `sleep.command` - with no command the MISCONFIG guard below still
+wins (end cleanly, warn, never guess a command). The directive persists until an explicit
+revocation; user presence does NOT revoke it (see the presence carve-out below).
+
+- `sleep.enabled` false (the DEFAULT) AND no suspend directive set: NEVER power down the
+  machine. This is what keeps a SERVER running autonomous work from being powered down
+  unexpectedly. On every end-of-run trigger (all done / showstopper / weekly cap reached) do
+  NOT sleep - instead end the autonomous run CLEANLY via `credo-autonomy-off.sh` and send a
+  `high` ntfy stating why (run complete, showstopper, or weekly cap reached). The machine
+  stays on. BUT if a suspend directive IS set, the override applies: run the power-down
+  procedure below (provided `sleep.command` is non-empty), exactly as if `sleep.enabled` were
+  true.
 - `sleep.enabled` true (opt-in, personal machine only): run the power-down procedure below
   (veto window, double-fire protection, secure-work-first, then run the EXACT command from
   `sleep.command`) on those same end-of-run triggers.
@@ -408,7 +443,9 @@ setup (`/credo:setup`). The weekly pause-and-resume path (budget skill) is unaff
 way - it never powers down anyway; this gate governs only the last-resort 99 net and the
 end-of-run / showstopper power-down.
 
-Power-down procedure (only when `sleep.enabled` is true AND `sleep.command` is non-empty;
+Power-down procedure (only when the combined end-of-run gate above holds - (`sleep.enabled`
+true OR a suspend directive is set) AND `sleep.command` non-empty; the directive path routes
+here too, so this is NOT re-gated on `sleep.enabled` alone;
 with retry plus timestamp-based success detection so a repeated trigger cannot fire the
 power-down twice and a successful sleep is never miscounted as a failure):
 
@@ -476,6 +513,53 @@ power-down twice and a successful sleep is never miscounted as a failure):
 
 Never power down the machine on your own initiative outside these autonomous triggers.
 
+### Suspend directive: persistence, presence, and the attended/unattended split
+
+The suspend-on-idle directive (stored by `credo-suspend-directive.sh`, re-injected every
+prompt by the session-mode inject hook) is the durable memory that the user ORDERED a
+power-down at end-of-run. It feeds the combined end-of-run gate above; these rules keep it from
+being silently lost - the exact failure that motivated it (a standing AFK+suspend order was
+dropped on re-invoke, and the agent read user presence as "better hold off" and never
+suspended even though it had announced it would).
+
+- **Persistence.** The directive lasts the whole session and survives re-invokes of
+  `/credo:session-autonomous` and context compaction. A later invocation with no argument does
+  NOT clear it. It is cleared ONLY by an explicit revocation (below). An `credo-autonomy-off`
+  at end-of-run does NOT delete it either - it must outlive each run.
+- **Announced = committed (hard rule).** If you declared in the read-back that you will power
+  down, you MUST carry it out at end-of-run. A read-back that promises a power-down is a
+  commitment, not a maybe. Do not announce a suspend and then not do it.
+- **Presence does NOT revoke it (carve-out).** Active user fixes, context messages, or other
+  user presence DURING the build phase do NOT clear the directive. The user being at the
+  keyboard while you build is not a cancellation of the end-of-run suspend they ordered. The
+  20-minute veto window right before the actual power-down (see the power-down procedure)
+  REMAINS the intervention chance: the user can cancel there. This is not a contradiction -
+  presence mid-build keeps the directive; a veto in the window cancels this one power-down.
+- **Anti-self-talk (hard rule against the reported failure).** You may NOT reason yourself out
+  of a set directive by reading user presence as an implicit "they probably do not want the
+  suspend after all". Presence is not a silent cancellation. When the directive is set and the
+  veto window passes with no cancellation, you power down - full stop.
+- **Explicit revocation** = a natural-language user statement that clearly cancels the order
+  ("no suspend", "do not power down", "leave it on", German "kein suspend", "lass an"). On such
+  a statement run `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-suspend-directive.sh" clear`. Nothing
+  else clears it.
+
+**Trigger split - how end-of-run reaches the power-down differs by attendance:**
+
+- **Unattended (real autonomy / AFK):** end-of-run reached with NO real user prompt in the
+  turn - the keep-alive wake fired, or a self-scheduled wake carrying the `[CREDO-AUTONOMY-WAKE]`
+  marker. This is the EXISTING path: send the `high` ntfy, open the 20-minute veto window
+  (`windows.veto_minutes`), and power down if not vetoed. Do NOT use the Ask tool here - there
+  is no one to answer it, so an Ask would run into the void.
+- **Attended (autonomy-off with the user reachable):** end-of-run reached because a real user
+  prompt ended the run and the user is present and reachable (a real user message just paused
+  autonomy via `credo-autonomy-clear.sh`, as opposed to a `[CREDO-AUTONOMY-WAKE]` self-wake).
+  Here, before powering down, you MUST FIRST ask via AskUserQuestion - e.g. "A suspend-on-idle
+  directive is set for this session. Power down the machine now?" - and power down ONLY on a
+  yes. A "no" is an explicit revocation -> run `credo-suspend-directive.sh clear`. This
+  attended branch lives HERE, in the skill; the fail-safe hook `credo-autonomy-off.sh` never
+  runs this Ask and never touches the directive.
+
 ### Authority order when the user is away
 
 The common-core authority order (E5) applies, with the away-user branch active: self-
@@ -529,16 +613,25 @@ acceptable):
      mental model below - the schedule row decides. Never present the raw 7-day / weekly
      utilization number as the brake when no row caps it: it is context, not a cap.
 4. **(d) Declare the suspend posture (one line, ALWAYS present - every case, including
-   `sleep.enabled` false).** Read the sleep config at start and declare, in one line, the
-   posture the existing sleep gate (see "Power down the machine at the end" above) will
-   produce. This DECLARES what that gate will do; it does not restate, fork, or duplicate the
-   mechanism or the veto machinery - it reuses them:
-   - `sleep.enabled` false (the DEFAULT): "I will NOT power down; the machine stays on; at
-     end-of-run I end cleanly via `credo-autonomy-off.sh`."
-   - `sleep.enabled` true: "at end-of-run I will `sleep.mode` (suspend or hibernate) per
-     `sleep.command`, gated on `sleep.enabled`, with a `windows.veto_minutes` veto window."
-   - enabled but `sleep.command` EMPTY (misconfig): state it will end WITHOUT powering down
-     (per the misconfig guard above).
+   `sleep.enabled` false).** Read BOTH the sleep config AND the persisted suspend directive
+   (`credo-suspend-directive.sh get`) at start, and declare, in one line, the posture the
+   combined end-of-run gate (see "Power down the machine at the end" above) will produce. This
+   DECLARES what that gate will do; it does not restate, fork, or duplicate the mechanism or
+   the veto machinery - it reuses them. Read the directive FIRST, because a set directive
+   OVERRIDES `sleep.enabled: false` and is announced = committed:
+   - **Directive set** (any `sleep.enabled`) AND `sleep.command` present: "a suspend-on-idle
+     directive is IN FORCE; at end-of-run I WILL `sleep.mode` (suspend or hibernate) per
+     `sleep.command`, with a `windows.veto_minutes` veto window - this overrides
+     `sleep.enabled`." Once declared, this is committed: I carry it out unless explicitly
+     revoked or vetoed in the window.
+   - No directive, `sleep.enabled` false (the DEFAULT): "I will NOT power down; the machine
+     stays on; at end-of-run I end cleanly via `credo-autonomy-off.sh`."
+   - No directive, `sleep.enabled` true: "at end-of-run I will `sleep.mode` (suspend or
+     hibernate) per `sleep.command`, gated on `sleep.enabled`, with a `windows.veto_minutes`
+     veto window."
+   - Directive set OR `sleep.enabled` true, but `sleep.command` EMPTY (misconfig): state it
+     will end WITHOUT powering down (per the misconfig guard above) - the directive override
+     does not extend to a missing command.
 
 **Timing - full read-back on the first start, AT LEAST the short form EVERY time.** The
 COMPLETE four-part read-back above is mandatory before the FIRST autonomous start (whenever
@@ -548,7 +641,9 @@ turned off - you MUST emit AT LEAST the short form, and NEVER start autonomous w
 it. The short form is a compact minimum that is ALWAYS present, in every case - three axes:
 
 - **Budget:** the binding axis (part c) AND BOTH current live figures (5h% AND weekly%).
-- **Suspend/hibernate:** the posture (part d), one line - ALWAYS, even when unchanged.
+- **Suspend/hibernate:** the posture (part d), one line - ALWAYS, even when unchanged. It is
+  derived from the persisted suspend directive plus the sleep config; a set directive is
+  announced = committed and overrides `sleep.enabled: false`.
 - **ntfy:** whether ntfy is active (a `personal.ntfy_topic` is set) AND what will be
   reported - normally a report on every item completion (a go -> done transition), bundled
   per the digest interval, plus immediate come-to-PC pushes for questions / blockers. If

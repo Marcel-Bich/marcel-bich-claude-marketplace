@@ -91,6 +91,21 @@ esac
 
 status="[credo-mode] ${mode} (session ${session_id}) - ${rules}"
 
+# --- durable suspend-on-idle directive (survives compaction) ---------------
+# If an explicit suspend-on-idle directive is set for THIS session, re-inject it
+# on every prompt (mirrors the mode/role injection) so it survives compaction and
+# the agent keeps the committed end-of-run posture in context. Only meaningful in
+# autonomous mode; announced = committed. Fail-safe: any problem -> skip silently
+# and still emit the mode line.
+DIRECTIVES_DIR="${CREDO_SUSPEND_DIRECTIVES_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/suspend-directives}"
+directive_file="$DIRECTIVES_DIR/$session_id"
+if [[ "$mode" == "autonomous" && -f "$directive_file" ]]; then
+    directive=$(sed -n '1p' "$directive_file" 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]') || directive=""
+    if [[ "$directive" == "on" ]]; then
+        status="$status [credo-suspend-directive] An explicit suspend-on-idle order is IN FORCE for this session (durable, survives compaction and re-invoke). At end-of-run (autonomous AND buildable queue empty) you WILL power down per the sleep gate, provided sleep.command is set - this directive OVERRIDES sleep.enabled:false. announced = committed: user presence is NOT a silent cancellation; only an explicit revocation clears it, and the 20-minute veto window is the intervention chance (see the session-autonomous skill)."
+    fi
+fi
+
 jq -n --arg ctx "$status" \
     '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $ctx}, suppressOutput: true}' 2>/dev/null
 
