@@ -232,7 +232,13 @@ autonomous mode (no flag set) the hook is completely inert - a plain no-op stop.
   relying on the block.
 - When the run is truly finished, on a showstopper, or at the weekly hard limit, end the mode
   deliberately with `credo-autonomy-off.sh` - it clears the flag and sets the paused opt-out
-  so the Stop hook stays inert and you may stop.
+  so the Stop hook stays inert and you may stop. EXCEPTION: if a suspend-on-idle directive is
+  set, that same deliberate exit MUST first run the power-down sequence (see "Empty buildable
+  queue = end-of-run"); a bare `credo-autonomy-off.sh` refuses (exit 1) while the directive
+  stands, and the clean exit is `credo-autonomy-off.sh --suspend-done` as the final step of
+  the power-down (or `--override` on an explicit user "leave it on"). announced = committed:
+  no deliberate end-of-run - clean-done, showstopper, or weekly hard limit - ends a directive
+  session without the power-down or an explicit override.
 
 Wake-up offsets after a limit reset (default 5 minutes, fallback 1) come from the budget
 skill's `wakeup.*` config - use them when you pause for a limit to reset.
@@ -357,6 +363,16 @@ agent keeps the keep-alive alive while refusing to build (the RETRO's ~7h idle l
 in `2_go` that the agent is treating as non-buildable does NOT count as open work - flag it
 (the section above) and, if it is the only thing left, the buildable queue is empty.
 
+**"Buildable" = can be advanced RIGHT NOW.** An item is buildable only if it can, at this
+moment, actually be built further and moved toward `2_done`. A `2_go` item whose remaining
+work hangs ONLY on an unbuilt dependency, or ONLY on a still-open user decision, is NOT
+buildable - it counts as empty for this gate, exactly like an empty folder. Do NOT read such
+leftovers as "GO is not empty, therefore not finished, therefore no suspend". "GO is not
+empty", a self-declared showstopper (a context showstopper included), and "I was not finished
+yet" are NONE of them a reason to bypass a standing suspend-on-idle directive when nothing is
+factually buildable any more. If the only thing keeping you awake is blocked or
+decision-gated remnants, the buildable queue is empty and end-of-run is reached.
+
 **Fresh-listing backstop (mandatory before declaring done or powering down).** Before an
 autonomous run declares itself "finished" OR starts the power-down / suspend sequence, it
 MUST FRESHLY list the GO folder right then - do not trust an earlier snapshot:
@@ -376,18 +392,32 @@ Judge the actual current contents:
   power-down sequence allowed to proceed.
 
 When the buildable queue is empty (confirmed by the fresh listing above), run this
-end-of-run sequence:
+end-of-run sequence. The ORDER matters: whether a suspend directive is set decides whether
+`credo-autonomy-off.sh` may flip the flag on its own or must ride the power-down first.
+
+**No suspend directive set (and `sleep.enabled` false):**
 
 1. Send an immediate `default`-priority ntfy stating nothing was buildable - `default`, not
    `high`, because it need not wake the user.
 2. End autonomous mode via `credo-autonomy-off.sh` (clears the flag, makes the Stop hook
-   inert so the run can stop).
-3. Schedule a ~20 min wake (`windows.veto_minutes`) as a veto window.
-4. No veto within the window -> power down, gated by the combined end-of-run gate below:
+   inert so the run can stop). The machine stays on.
+
+**A suspend directive IS set (or `sleep.enabled` true) AND `sleep.command` present:** a bare
+`credo-autonomy-off.sh` will REFUSE (exit 1) while the directive stands - the flag flip is the
+LAST step, not the first. Run the power-down sequence:
+
+1. Send an end-of-run ntfy (`default` for nothing-buildable, `high` for all-work-completed).
+2. Schedule a ~20 min wake (`windows.veto_minutes`) as a veto window.
+3. No veto within the window -> power down, gated by the combined end-of-run gate below:
    autonomous AND buildable-queue-empty AND (a suspend directive is set OR `sleep.enabled` is
    true) AND `sleep.command` is present. A set directive OVERRIDES `sleep.enabled: false`.
    This REUSES the existing power-down procedure below (veto window, retry plus success
    detection, secure-work-first, the exact `sleep.command`) - do not duplicate it.
+4. As the FINAL step, AFTER `sleep.command` has run, flip the flag with the bypass:
+   `credo-autonomy-off.sh --suspend-done`. Only an explicit user "leave it on" justifies
+   ending with `credo-autonomy-off.sh --override` instead (that is a revocation - clear the
+   directive too). Never end a directive run with a bare `credo-autonomy-off.sh`; it is
+   designed to refuse.
 
 Distinction: "all work genuinely completed / built" stays a `high` ntfy (come see results).
 Only the nothing-was-buildable case uses `default`. Both are end-of-run and feed the same
@@ -566,9 +596,12 @@ suspended even though it had announced it would).
   autonomy via `credo-autonomy-clear.sh`, as opposed to a `[CREDO-AUTONOMY-WAKE]` self-wake).
   Here, before powering down, you MUST FIRST ask via AskUserQuestion - e.g. "A suspend-on-idle
   directive is set for this session. Power down the machine now?" - and power down ONLY on a
-  yes. A "no" is an explicit revocation -> run `credo-suspend-directive.sh clear`. This
-  attended branch lives HERE, in the skill; the fail-safe hook `credo-autonomy-off.sh` never
-  runs this Ask and never touches the directive.
+  yes. On a yes, run the power-down procedure and end with `credo-autonomy-off.sh
+  --suspend-done` as its final step (the directive still stands, so a bare off would refuse).
+  A "no" is an explicit revocation -> run `credo-suspend-directive.sh clear`, after which a
+  plain `credo-autonomy-off.sh` (or `--override`) ends the run cleanly. This attended branch
+  lives HERE, in the skill; the fail-safe hook `credo-autonomy-off.sh` never runs this Ask and
+  never touches the directive.
 
 ### Authority order when the user is away
 

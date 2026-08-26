@@ -49,7 +49,9 @@ state_file="$STATE_DIR/$session_id"
 # clear: remove this session's mode file and turn keep-alive off, then done.
 if [ "$mode" = "clear" ]; then
     rm -f "$state_file"
-    [ -x "$SCRIPT_DIR/credo-autonomy-off.sh" ] && "$SCRIPT_DIR/credo-autonomy-off.sh" || true
+    # --mode-switch: a legitimate user mode change must never be blocked by the
+    # autonomy-off directive gate (Riegel).
+    [ -x "$SCRIPT_DIR/credo-autonomy-off.sh" ] && "$SCRIPT_DIR/credo-autonomy-off.sh" --mode-switch || true
     echo "session-mode cleared (session $session_id)"
     exit 0
 fi
@@ -62,7 +64,8 @@ mv -f "$tmp" "$state_file"
 if [ "$mode" = "autonomous" ]; then
     [ -x "$SCRIPT_DIR/credo-autonomy-on.sh" ] && "$SCRIPT_DIR/credo-autonomy-on.sh" "session-mode: autonomous set for session $session_id" || true
 else
-    [ -x "$SCRIPT_DIR/credo-autonomy-off.sh" ] && "$SCRIPT_DIR/credo-autonomy-off.sh" || true
+    # --mode-switch: legitimate user switch to active/passive; bypass the gate.
+    [ -x "$SCRIPT_DIR/credo-autonomy-off.sh" ] && "$SCRIPT_DIR/credo-autonomy-off.sh" --mode-switch || true
 fi
 
 echo "session-mode = $mode (session $session_id)"
