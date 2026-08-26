@@ -95,7 +95,7 @@ ctx_pct="$compact_pct"
 [[ "$ctx_window" =~ ^[0-9]+$ ]] || ctx_window=0
 [[ "$compact_ref_tokens" =~ ^[0-9]+$ ]] || compact_ref_tokens=0
 
-# --- parse thresholds (comma-separated, e.g. "70,90" or "33,66,92") ---
+# --- parse thresholds (comma-separated, e.g. "80,92" or "33,66,92") ---
 thresh_json=$(printf '%s' "$THRESHOLDS" | jq -R -c 'split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(test("^[0-9]+(\\.[0-9]+)?$")) | tonumber) | sort' 2>/dev/null)
 [[ -n "$thresh_json" ]] || thresh_json='[]'
 

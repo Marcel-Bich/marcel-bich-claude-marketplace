@@ -201,7 +201,7 @@ You decide what runs at the thresholds: set `CLAUDE_MB_LIMIT_COMPACT_SKILL` to t
 skill you want auto-run (any skill, e.g. `/my-skill`). This plugin ships no skill of
 its own - if the variable is unset, the agent just gets a "secure progress" hint
 without a skill name. Set the threshold points with `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS`
-(comma-separated, any number of values, e.g. `70,90` or `33,66,92`).
+(comma-separated, any number of values, e.g. `80,92` or `33,66,92`).
 
 How it works:
 
