@@ -50,7 +50,7 @@ esac
 SKILL="${CLAUDE_MB_LIMIT_COMPACT_SKILL:-}"               # skill to run at thresholds (empty = generic hint only)
 INTERVAL="${CLAUDE_MB_LIMIT_INJECT_INTERVAL:-120}"       # seconds between routine status injects
 DELTA="${CLAUDE_MB_LIMIT_INJECT_DELTA:-1}"               # min change (pct points) in ctx/5h/weekly to re-inject a routine status (delta-guard)
-THRESHOLDS="${CLAUDE_MB_LIMIT_INJECT_THRESHOLDS:-70,90}" # comma-separated context-fill % that trigger the skill (e.g. 33,66,92)
+THRESHOLDS="${CLAUDE_MB_LIMIT_INJECT_THRESHOLDS:-80,92}" # comma-separated context-fill % (of the way to auto-compact) that trigger the skill (e.g. 33,66,92)
 MAX_AGE="${CLAUDE_MB_LIMIT_INJECT_MAX_AGE:-300}"         # ignore the cache if older than this (statusline not rendering)
 
 # --- read the statusline per-session cache (the canonical source) ---
@@ -71,14 +71,29 @@ fi
 ctx_pct=$(jq -r '.ctx_pct // empty' "$meta_file" 2>/dev/null) || ctx_pct=""
 ctx_tokens=$(jq -r '.ctx_tokens // 0' "$meta_file" 2>/dev/null) || ctx_tokens=0
 ctx_window=$(jq -r '.ctx_window // 0' "$meta_file" 2>/dev/null) || ctx_window=0
+# Tacho values (fill relative to the auto-compact reference). Newer caches only;
+# fall back to the total-window values so an older cache still works.
+compact_pct=$(jq -r '.compact_pct // empty' "$meta_file" 2>/dev/null) || compact_pct=""
+compact_ref_tokens=$(jq -r '.compact_ref_tokens // 0' "$meta_file" 2>/dev/null) || compact_ref_tokens=0
+compact_estimated=$(jq -r '.compact_estimated // false' "$meta_file" 2>/dev/null) || compact_estimated="false"
+compact_disabled=$(jq -r '.compact_disabled // false' "$meta_file" 2>/dev/null) || compact_disabled="false"
 five_h=$(jq -r '.five_hour_pct // "?"' "$meta_file" 2>/dev/null) || five_h="?"
 weekly=$(jq -r '.seven_day_pct // "?"' "$meta_file" 2>/dev/null) || weekly="?"
 cost=$(jq -r '.session_cost // "?"' "$meta_file" 2>/dev/null) || cost="?"
+
+# The tacho percentage drives display AND the threshold logic. Fall back to the
+# total-window percentage / window size when the tacho fields are absent (old cache).
+[[ "$compact_pct" =~ ^[0-9]+(\.[0-9]+)?$ ]] || compact_pct="$ctx_pct"
+[[ "$compact_ref_tokens" =~ ^[0-9]+$ ]] && [[ "$compact_ref_tokens" -gt 0 ]] || compact_ref_tokens="$ctx_window"
+[[ "$compact_estimated" == "true" ]] || compact_estimated="false"
+[[ "$compact_disabled" == "true" ]] || compact_disabled="false"
+ctx_pct="$compact_pct"
 
 # Need a usable percentage to say anything
 [[ -n "$ctx_pct" ]] || exit 0
 [[ "$ctx_tokens" =~ ^[0-9]+$ ]] || ctx_tokens=0
 [[ "$ctx_window" =~ ^[0-9]+$ ]] || ctx_window=0
+[[ "$compact_ref_tokens" =~ ^[0-9]+$ ]] || compact_ref_tokens=0
 
 # --- parse thresholds (comma-separated, e.g. "70,90" or "33,66,92") ---
 thresh_json=$(printf '%s' "$THRESHOLDS" | jq -R -c 'split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(test("^[0-9]+(\\.[0-9]+)?$")) | tonumber) | sort' 2>/dev/null)
@@ -121,9 +136,9 @@ to_fire=$(printf '%s' "$thresh_json" | jq -r --argjson p "${ctx_pct:-0}" --argjs
 action=""; do_inject=false
 if [[ -n "$to_fire" ]]; then
     if [[ -n "$SKILL" ]]; then
-        action="Context-Fill >= ${to_fire}% - run ${SKILL} now to secure progress before an auto-compact."
+        action="Context at >= ${to_fire}% of the way to auto-compact - run ${SKILL} now to secure progress before it triggers."
     else
-        action="Context-Fill >= ${to_fire}% - secure progress now (set CLAUDE_MB_LIMIT_COMPACT_SKILL to a skill to auto-run it here)."
+        action="Context at >= ${to_fire}% of the way to auto-compact - secure progress now (set CLAUDE_MB_LIMIT_COMPACT_SKILL to a skill to auto-run it here)."
     fi
     do_inject=true
     # Mark all currently crossed thresholds as fired (so lower ones do not re-fire)
@@ -150,9 +165,14 @@ tmp=$(mktemp 2>/dev/null) && {
 
 # --- build the status string ---
 fmt_tok() { awk "BEGIN {t=$1; if (t>=1000000) printf \"%.1fM\", t/1000000; else if (t>=1000) printf \"%.0fk\", t/1000; else printf \"%d\", t}" 2>/dev/null; }
-status="[limit] Context ${ctx_pct}%"
-if [[ "$ctx_tokens" -gt 0 && "$ctx_window" -gt 0 ]]; then
-    status="${status} ($(fmt_tok "$ctx_tokens")/$(fmt_tok "$ctx_window"))"
+# The percentage is the tacho (fill relative to the auto-compact point). A "~"
+# marks an estimated reference; a known-exact one (incl. auto-compact disabled)
+# shows no tilde.
+pct_prefix=""
+[[ "$compact_estimated" == "true" ]] && pct_prefix="~"
+status="[limit] Context ${pct_prefix}${ctx_pct}%"
+if [[ "$ctx_tokens" -gt 0 && "$compact_ref_tokens" -gt 0 ]]; then
+    status="${status} ($(fmt_tok "$ctx_tokens")/$(fmt_tok "$compact_ref_tokens"))"
 fi
 [[ "$five_h" != "?" ]] && status="${status} | 5h ${five_h}%"
 [[ "$weekly" != "?" ]] && status="${status} | Weekly ${weekly}%"

@@ -146,8 +146,10 @@ All features can be toggled via environment variables. Export them in your shell
 | `CLAUDE_MB_LIMIT_HISTORY_ENABLED` | true | Enable history tracking for average display |
 | `CLAUDE_MB_LIMIT_HISTORY_INTERVAL` | 600 | Minimum seconds between history writes (10 min) |
 | `CLAUDE_MB_LIMIT_HISTORY_DAYS` | 28 | History retention in days |
-| `CLAUDE_MB_LIMIT_PROGRESSBAR_MODE` | auto-compact | Progress bar mode (auto-compact uses ContextLeft as threshold) |
-| `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | 85 | Auto-compact threshold percentage (used by auto-compact mode) |
+| `CLAUDE_MB_LIMIT_PROGRESSBAR_MODE` | auto-compact | Progress bar mode. `auto-compact`: 100% = the auto-compact trigger point (a tacho); `full`: 100% = the full context window |
+| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | (unset) | Exact auto-compact trigger point in tokens. Highest precedence; capped at the window size. No tilde |
+| `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | (unset) | Exact auto-compact trigger as a percentage (1-100) of the full window. No tilde |
+| `CLAUDE_MB_LIMIT_AUTOCOMPACT_FALLBACK_PCT` | 83 | Conservative fallback percentage used only when the real trigger is unknown. Shown with a leading `~` (estimated) |
 
 **Agent Context Injection** (lets the agent read its own usage and act on it):
 
@@ -158,7 +160,7 @@ All features can be toggled via environment variables. Export them in your shell
 | `CLAUDE_MB_LIMIT_COMPACT_SKILL` | (unset) | The skill the agent should run when a threshold is reached, e.g. `/my-skill`. Empty = status only, no skill named |
 | `CLAUDE_MB_LIMIT_INJECT_INTERVAL` | 120 | Minimum seconds between routine status injects (throttle) |
 | `CLAUDE_MB_LIMIT_INJECT_DELTA` | 1 | Minimum change (pct points) in ctx/5h/weekly for a routine re-inject (delta-guard) - quiet phases inject nothing |
-| `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS` | 70,90 | Comma-separated context-fill %% at which the skill hint fires (any count, e.g. `33,66,92`) |
+| `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS` | 80,92 | Comma-separated %% of the way to auto-compact at which the skill hint fires (any count, e.g. `33,66,92`) |
 | `CLAUDE_MB_LIMIT_INJECT_MAX_AGE` | 300 | Ignore the cache (inject nothing) if older than this many seconds - avoids reporting stale numbers |
 
 **Multi-Account Support:**
@@ -223,9 +225,14 @@ How it works:
 Example injected line (with `CLAUDE_MB_LIMIT_COMPACT_SKILL=/my-skill`):
 
 ```
-[limit] Context 72% (720k/1.0M) | 5h 64% | Weekly 31% | $4.20
-ACTION: Context-Fill >= 70% - run /my-skill now to secure progress before an auto-compact.
+[limit] Context ~85% (170k/200k) | 5h 64% | Weekly 31% | $4.20
+ACTION: Context at >= 80% of the way to auto-compact - run /my-skill now to secure progress before it triggers.
 ```
+
+The percentage is the tacho: the fill relative to the auto-compact trigger point,
+the same number the statusline progress bar shows. The token pair is `fill / trigger
+point`. A leading `~` means the trigger point is an estimate (the conservative
+fallback) rather than a value read from a setting or env override.
 
 ## Debug Scripts
 

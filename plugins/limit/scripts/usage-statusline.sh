@@ -1159,9 +1159,13 @@ get_context_length() {
     echo "0"
 }
 
-# Get max context for model (usable = auto-compact threshold or full)
+# Get the full context window size for the model (in tokens).
+# The progress-bar reference (the auto-compact trigger point) is computed
+# separately by compute_compact_reference; this only reports the raw window size.
+# config_type is kept for backward compatibility - the full window is returned
+# regardless (there is no separate "usable" value here anymore).
 get_model_context_config() {
-    local config_type="$1"  # "max" or "usable"
+    local config_type="$1"  # kept for compat; only the full window is returned
 
     # Get context_window_size from stdin data
     local max_tokens=200000
@@ -1173,52 +1177,115 @@ get_model_context_config() {
         fi
     fi
 
-    # Progressbar mode: "auto-compact" (default) or "full"
-    # - auto-compact: 100% = when auto-compact triggers
-    # - full: 100% = full context window (for users with auto-compact disabled)
-    local progressbar_mode="${CLAUDE_MB_LIMIT_PROGRESSBAR_MODE:-auto-compact}"
+    echo "$max_tokens"
+}
 
-    local usable_tokens
-    if [[ "$progressbar_mode" == "full" ]]; then
-        # Full mode: progressbar shows full context usage
-        usable_tokens="$max_tokens"
+# Compute the auto-compact reference: the token point at which auto-compact
+# triggers. Given the full window (max_tokens), it emits three space-separated
+# values on stdout: "<ref_tokens> <estimated> <disabled>"
+#   - ref_tokens: the token count that maps to 100% on the tacho progress bar
+#   - estimated : "true" when ref is a heuristic fallback (no real setting/env)
+#   - disabled  : "true" when auto-compact is off (ref = full window)
+# Precedence, highest first:
+#   0. auto-compact disabled -> ref = max_tokens, estimated=false, disabled=true
+#        (env DISABLE_COMPACT set and not "0"/"false", OR setting autoCompactEnabled=false)
+#   1. env CLAUDE_CODE_AUTO_COMPACT_WINDOW (absolute tokens) -> min(val, max), exact
+#   2. setting autoCompactWindow (absolute tokens)           -> min(val, max), exact
+#   3. env CLAUDE_AUTOCOMPACT_PCT_OVERRIDE (1-100)           -> max*pct/100, exact
+#   4. fallback CLAUDE_MB_LIMIT_AUTOCOMPACT_FALLBACK_PCT (default 83) -> max*fb/100, estimated
+# Settings are read (failure-safe) from CLAUDE_SETTINGS_FILE first, then
+# ~/.claude.json (where "claude config set" persists); first valid value wins.
+compute_compact_reference() {
+    local max_tokens="${1:-0}"
+    if ! [[ "$max_tokens" =~ ^[0-9]+$ ]] || [[ "$max_tokens" -le 0 ]]; then
+        max_tokens=200000
+    fi
+
+    # Read settings once (jq, failure-safe): first non-null across the two files.
+    local setting_window="" setting_enabled=""
+    if command -v jq >/dev/null 2>&1; then
+        local sf w e
+        for sf in "$CLAUDE_SETTINGS_FILE" "$HOME/.claude.json"; do
+            [[ -f "$sf" ]] || continue
+            if [[ -z "$setting_window" ]]; then
+                w=$(jq -r '.autoCompactWindow // empty' "$sf" 2>/dev/null) || w=""
+                [[ "$w" =~ ^[0-9]+$ ]] && setting_window="$w"
+            fi
+            if [[ -z "$setting_enabled" ]]; then
+                e=$(jq -r '.autoCompactEnabled // empty' "$sf" 2>/dev/null) || e=""
+                [[ "$e" == "true" || "$e" == "false" ]] && setting_enabled="$e"
+            fi
+        done
+    fi
+
+    # 0. Disabled -> reference is the full window.
+    local disabled="false"
+    if [[ -n "${DISABLE_COMPACT:-}" ]] && [[ "$DISABLE_COMPACT" != "0" ]] && [[ "$DISABLE_COMPACT" != "false" ]]; then
+        disabled="true"
+    elif [[ "$setting_enabled" == "false" ]]; then
+        disabled="true"
+    fi
+    if [[ "$disabled" == "true" ]]; then
+        printf '%s %s %s' "$max_tokens" "false" "true"
+        return 0
+    fi
+
+    local ref="" estimated="false"
+    if [[ "${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}" =~ ^[0-9]+$ ]] && [[ "$CLAUDE_CODE_AUTO_COMPACT_WINDOW" -gt 0 ]]; then
+        # 1. Absolute window from env.
+        ref="$CLAUDE_CODE_AUTO_COMPACT_WINDOW"
+        [[ "$ref" -gt "$max_tokens" ]] && ref="$max_tokens"
+    elif [[ -n "$setting_window" ]] && [[ "$setting_window" -gt 0 ]]; then
+        # 2. Absolute window from settings.
+        ref="$setting_window"
+        [[ "$ref" -gt "$max_tokens" ]] && ref="$max_tokens"
+    elif [[ "${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-}" =~ ^[0-9]+$ ]] && [[ "$CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" -ge 1 ]] && [[ "$CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" -le 100 ]]; then
+        # 3. Percentage override from env (exact - user asserted it).
+        ref=$((max_tokens * CLAUDE_AUTOCOMPACT_PCT_OVERRIDE / 100))
     else
-        # Auto-compact mode: progressbar shows distance to auto-compact trigger
-        # Get threshold from env (default: 85% based on observed Claude Code behavior)
-        local auto_compact_pct="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-85}"
-
-        # Validate: must be number between 1-100
-        if ! [[ "$auto_compact_pct" =~ ^[0-9]+$ ]] || [[ "$auto_compact_pct" -lt 1 ]]; then
-            auto_compact_pct=85
-        elif [[ "$auto_compact_pct" -gt 100 ]]; then
-            auto_compact_pct=100
+        # 4. Conservative fallback (estimated).
+        local fb="${CLAUDE_MB_LIMIT_AUTOCOMPACT_FALLBACK_PCT:-83}"
+        if ! [[ "$fb" =~ ^[0-9]+$ ]] || [[ "$fb" -lt 1 ]] || [[ "$fb" -gt 100 ]]; then
+            fb=83
         fi
-
-        # Usable = threshold% of max (point where auto-compact triggers)
-        usable_tokens=$((max_tokens * auto_compact_pct / 100))
+        ref=$((max_tokens * fb / 100))
+        estimated="true"
     fi
 
-    if [[ "$config_type" == "usable" ]]; then
-        echo "$usable_tokens"
-    else
-        echo "$max_tokens"
+    # Guard: reference must be > 0 to avoid division by zero downstream.
+    if ! [[ "$ref" =~ ^[0-9]+$ ]] || [[ "$ref" -le 0 ]]; then
+        ref="$max_tokens"
+        estimated="true"
     fi
+
+    printf '%s %s %s' "$ref" "$estimated" "$disabled"
+    return 0
 }
 
 # Write a per-session status cache for agents (read by the inject hook).
 # Atomic (temp + mv), failure-safe (never crash the statusline), numbers only.
-# The agent-facing inject hook recomputes ctx_tokens live from the transcript;
-# this file's job is mainly to supply the values only the statusline knows:
-# the context WINDOW size (denominator, 200k vs 1M) plus the account-wide limits
-# and session cost. Per session_id so parallel sessions never overwrite each other.
+# This cache is the inject hook's ONLY source: the hook reads it and computes
+# nothing itself. It supplies the context fill (both the total-window percentage
+# and the tacho percentage relative to the auto-compact reference), the token
+# counts, the window size, the account-wide limits and the session cost.
+# Per session_id so parallel sessions never overwrite each other.
 # Args: 1=ctx_tokens 2=ctx_window 3=ctx_pct (total_pct, may be empty)
+#       4=usable_pct (compact_pct, the tacho) 5=ref_tokens (compact reference)
+#       6=estimated (true/false) 7=disabled (true/false)
 write_context_cache() {
     [[ "$CTX_CACHE" == "true" ]] || return 0
 
     local ctx_tokens="${1:-0}" ctx_window="${2:-0}" ctx_pct="${3:-0}"
+    local compact_pct="${4:-}" compact_ref_tokens="${5:-0}"
+    local compact_estimated="${6:-false}" compact_disabled="${7:-false}"
     [[ -n "$ctx_pct" ]] || ctx_pct=0
     [[ -n "$ctx_window" ]] || ctx_window=0
     [[ -n "$ctx_tokens" ]] || ctx_tokens=0
+    # Fall back to the total-window values if the tacho values are missing/invalid.
+    [[ "$compact_pct" =~ ^[0-9]+(\.[0-9]+)?$ ]] || compact_pct="$ctx_pct"
+    [[ "$compact_ref_tokens" =~ ^[0-9]+$ ]] || compact_ref_tokens="$ctx_window"
+    [[ "$compact_estimated" == "true" || "$compact_estimated" == "false" ]] || compact_estimated="false"
+    [[ "$compact_disabled" == "true" || "$compact_disabled" == "false" ]] || compact_disabled="false"
 
     # Session id, model and session-wide totals from the statusline stdin
     local session_id="" model="" total_input=0 total_output=0
@@ -1274,13 +1341,17 @@ write_context_cache() {
         --argjson ctx_tokens "${ctx_tokens:-0}" \
         --argjson ctx_window "${ctx_window:-0}" \
         --argjson ctx_pct "${ctx_pct:-0}" \
+        --argjson compact_pct "${compact_pct:-0}" \
+        --argjson compact_ref_tokens "${compact_ref_tokens:-0}" \
+        --argjson compact_estimated "$compact_estimated" \
+        --argjson compact_disabled "$compact_disabled" \
         --argjson try_compact "$try_compact" \
         --argjson total_input "${total_input:-0}" \
         --argjson total_output "${total_output:-0}" \
         --arg session_cost "$session_cost" \
         --argjson limits "$limits" \
         --arg updated_at "$updated_at" \
-        '{session_id: $sid, model: $model, ctx_tokens: $ctx_tokens, ctx_window: $ctx_window, ctx_pct: $ctx_pct, try_compact: $try_compact, total_input: $total_input, total_output: $total_output, session_cost: $session_cost} + $limits + {updated_at: $updated_at}' \
+        '{session_id: $sid, model: $model, ctx_tokens: $ctx_tokens, ctx_window: $ctx_window, ctx_pct: $ctx_pct, compact_pct: $compact_pct, compact_ref_tokens: $compact_ref_tokens, compact_estimated: $compact_estimated, compact_disabled: $compact_disabled, try_compact: $try_compact, total_input: $total_input, total_output: $total_output, session_cost: $session_cost} + $limits + {updated_at: $updated_at}' \
         > "$tmp_file" 2>/dev/null; then
         mv -f "$tmp_file" "$target_file" 2>/dev/null
     fi
@@ -1681,7 +1752,10 @@ format_output() {
 
     # Context values
     # Store usable percentage and bar for Session line (moved from Context line)
+    # ctx_estimated/ctx_disabled/ctx_ref_tokens describe the progress-bar reference
+    # (the auto-compact point) and stay in scope for the Session-line render below.
     local ctx_usable_pct="" ctx_usable_bar=""
+    local ctx_estimated="false" ctx_disabled="false" ctx_ref_tokens=0
     if [[ "$SHOW_CTX" == "true" ]]; then
         local ctx_len formatted_len max_tokens total_pct="" usable_tokens usable_pct="" tokens_left="" ctx_left_pct=""
         ctx_len=$(get_context_length)
@@ -1712,7 +1786,24 @@ format_output() {
             fi
         fi
 
-        usable_tokens=$(get_model_context_config "usable")
+        # Progress-bar reference (usable_tokens = 100% on the tacho):
+        # - full mode         -> the full window (no auto-compact relation)
+        # - auto-compact mode -> the auto-compact trigger point (real or estimated)
+        local progressbar_mode="${CLAUDE_MB_LIMIT_PROGRESSBAR_MODE:-auto-compact}"
+        if [[ "$progressbar_mode" == "full" ]]; then
+            usable_tokens="$max_tokens"
+            ctx_ref_tokens="$max_tokens"
+            ctx_estimated="false"
+            ctx_disabled="false"
+        else
+            local compact_ref rest
+            compact_ref=$(compute_compact_reference "$max_tokens")
+            usable_tokens="${compact_ref%% *}"
+            rest="${compact_ref#* }"
+            ctx_estimated="${rest%% *}"
+            ctx_disabled="${rest##* }"
+            ctx_ref_tokens="$usable_tokens"
+        fi
         if [[ -n "$usable_tokens" ]] && [[ "$usable_tokens" -gt 0 ]]; then
             usable_pct=$(awk "BEGIN {printf \"%.1f\", ($ctx_len / $usable_tokens) * 100}")
             # Store for Session line progress bar
@@ -1726,7 +1817,8 @@ format_output() {
         ctx_val4="${ctx_left_pct}%"
 
         # Write context-fill to a readable cache file for agents (failure-safe)
-        write_context_cache "$ctx_len" "$max_tokens" "$total_pct"
+        write_context_cache "$ctx_len" "$max_tokens" "$total_pct" \
+            "$usable_pct" "$ctx_ref_tokens" "$ctx_estimated" "$ctx_disabled"
     fi
 
     # Session values
@@ -1767,6 +1859,8 @@ format_output() {
     local sess_pct_len=0
     if [[ -n "$ctx_usable_pct" ]]; then
         sess_pct_len=$((${#ctx_usable_pct} + 1))  # +1 for % suffix
+        # +1 more for the "~" prefix shown when the reference is estimated
+        [[ "$ctx_estimated" == "true" ]] && sess_pct_len=$((sess_pct_len + 1))
     fi
     [[ $sess_pct_len -gt $col4_width ]] && col4_width=$sess_pct_len
 
@@ -1828,9 +1922,12 @@ format_output() {
         # Build session line with progress bar at end (showing usable context percentage)
         local sess_progress_bar="" sess_progress_color="" sess_progress_color_reset=""
         if [[ -n "$ctx_usable_pct" ]] && [[ "$SHOW_PROGRESS" == "true" ]]; then
-            # Format progress bar percentage right-aligned using col4_width
-            local sess_pct_formatted
-            printf -v sess_pct_formatted "%${col4_width}s" "${ctx_usable_pct}%"
+            # Format progress bar percentage right-aligned using col4_width.
+            # The "~" (estimated reference) is part of the value so it sits
+            # directly on the number; right-align pads with leading spaces only.
+            local sess_pct_formatted sess_pct_value="${ctx_usable_pct}%"
+            [[ "$ctx_estimated" == "true" ]] && sess_pct_value="~${ctx_usable_pct}%"
+            printf -v sess_pct_formatted "%${col4_width}s" "$sess_pct_value"
             sess_progress_bar="    ${ctx_usable_bar} ${sess_pct_formatted}"
             if [[ "$SHOW_COLORS" == "true" ]]; then
                 local usable_pct_int="${ctx_usable_pct%%.*}"
