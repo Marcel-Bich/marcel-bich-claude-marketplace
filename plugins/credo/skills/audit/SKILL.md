@@ -68,6 +68,18 @@ in the same change (stale docs = incomplete). Docs currency includes the project
 present, check that `/dogma:docs-update` was the mechanism (or an equivalent manual
 update happened). audit checks and flags stale docs - it does not run the update itself.
 
+**Stale head / body check (the freshness backstop).** As part of this comparison, run the
+Body-freshness invariant from the credo `items` skill against the item: flag any place
+where the item's head or body still claims "open / not built / needs a decision" while the
+requirements log, an audit report, the code, or the version shows it was already clarified,
+built, or shipped. This is the post-completion backstop that catches what the build-time
+Full-body reconciliation sweep and the read/build-gate let through. Severity: a stale claim
+of this kind is a **BLOCKER** when it misrepresents whether the core requirement is met
+(the item text asserts open/unbuilt for something core that is actually done, or vice
+versa), and a **MAJOR** when it materially misleads the next reader without hiding a core
+miss. Evidence is the contradicting `file:line` / log / report location plus the stale
+claim's own location, per the evidence rule below.
+
 ## Severity levels
 
 Rank every finding with exactly one level:

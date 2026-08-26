@@ -93,6 +93,18 @@ credo `migrate` skill owns the G1-G6 entry gate).
 - **The folder overrides body-level doubt.** An unproven root-cause hypothesis, a
   "GO unclear" note, or any hedge in the body does NOT override the folder. If the file is
   in `2_go`, build it (best effort).
+- **A stale-looking body is NEVER grounds to self-skip or self-demote.** A head or a note
+  that still reads "open / not built / needs clarification" is by itself never a reason to
+  skip a `2_go` item or to treat it as not-yet-buildable - such prose goes stale (the item
+  was already built or clarified but the text was not reconciled; see the Full-body
+  reconciliation sweep and the Body-freshness invariant below). Before you treat a `2_go`
+  item as still-open or non-buildable on the strength of its prose, you MUST first read the
+  WHOLE body AND check the requirements log (`.credo/process/requirements/*.md`) and any
+  existing audit reports (`.credo/process/reports/`) - the clarification or the build is
+  often already there, just not written back into the head. This is distinct from the
+  Named-Decision-Test below: stale prose is NOT a Named-Decision. Only a genuine, still-open
+  user-only decision that passes that test sends an item back; a merely stale-looking body
+  is reconciled (Full-body reconciliation sweep) and built.
 - **Never self-skip, never self-demote.** The building agent does NOT skip a `2_go` item and
   does NOT move it down for reasons of size, UI, or "not sure it is verifiable". It MAY
   re-scope or phase a large item into slices, but it must build. The ONE carve-out is a
@@ -256,6 +268,21 @@ Use these English headings in this order. A blank template ships at
    detected mis-move - flag it and correct it. This is the contradiction detector, achieved
    without adding a second status source.
 
+### Body-freshness invariant
+
+A second contradiction detector, a sibling of the Folder<->History invariant above: the
+body must NOT claim open / unbuilt / decision-needed for anything the reality of the item
+contradicts - History `(GO:` and later `-> done` lines, `## Implemented` `file:line`
+evidence, the requirements log (`.credo/process/requirements/*.md`), an audit report
+(`.credo/process/reports/`), or the code / version itself. When the body says
+"open / not built / still to decide" but one of those shows it was already GO'd, built,
+clarified, or shipped, that is a detected contradiction. On such a contradiction, do NOT
+silently build on it and do NOT silently keep reading past it: FLAG it fail-loud AND
+reconcile the body in the SAME move (the Full-body reconciliation sweep in the
+Build-completion gate is what performs that reconciliation). Like the Folder<->History and
+not-started contradictions, this is a skill-level judgement, not a script: the staleness
+lives in free-form prose, so it is caught by reading, not by a mechanical scan.
+
 ## Item text is perspective-neutral (no "who is doing it")
 
 An item file is durable and read by whoever builds it later - often a different agent or
@@ -339,6 +366,31 @@ the committed code and the item text - flag it and resolve it, exactly as with t
 Folder<->History invariant. Leaving the item stale after committing build code is a
 detected mis-state, never an acceptable end.
 
+### Full-body reconciliation sweep (mandatory after every build AND every clarification)
+
+The three steps above cover the fields you just touched. They are the floor, not the
+ceiling: after every build (a build commit) AND after every clarification (a question
+answered, a decision recorded), you MUST additionally reconcile the WHOLE item body against
+the new reality, not only the fields you happened to edit. An item must NEVER be left
+claiming "open / not built / decision needed" for anything that is now built or clarified -
+items must not go stale. Sweep the entire file:
+
+- ALL Success-Criteria / DoD ticks (not just the ones you touched) against what is now true.
+- Every `## Verify` state against the real commit / verify reality.
+- Any free-form "open / not built / still to decide / GO unclear" prose ANYWHERE in the
+  file - including the head, the `Requirement` section, and `History` notes (for example a
+  `> URGENT:` note that a now-answered decision has resolved) - updated or removed.
+- Cross-references to other items that a change has made stale.
+
+"Where needed / sensible": this is not a licence-to-churn - it forces no cosmetic edit and
+no rewrite of prose that is still accurate. But every stale CLAIM must go: nothing in the
+body may still assert open / unbuilt / undecided once the build or the clarification has
+made it true. This applies to CLARIFY as well as BUILD - a clarified question is recorded
+in the body as clarified and the old open-question prose is updated or removed in the SAME
+move, not only after a code build. Leaving stale claims standing after a build or a
+clarification is a detected mis-state, exactly like the Folder<->History invariant and the
+not-started contradiction above - flag it and reconcile it in the same turn.
+
 ## Definition of Done (the gate into 2_done/)
 
 An item may move into `2_done/` ONLY when ALL of these hold. This gate is hard.
@@ -395,6 +447,12 @@ ALONE is not grounds for approval: those are signals, not verification. Already-
 work is not blindly blessed as done just because a commit exists - the main agent confirms
 the built reality matches what the item requires before it claims a status or advances the
 item.
+
+The same whole-file read is required before the READ / BUILD decision, not only before a
+status move: before ANY agent (main or subagent) treats a `2_go` item as still-open or
+not-buildable, it reads the WHOLE body plus the requirements log and existing audit reports
+(the read/build-gate in "go=go" above), never the head alone. A stale-looking head is not a
+build decision - the whole body and the log are.
 
 ## 3_verified/ is human-authorized
 

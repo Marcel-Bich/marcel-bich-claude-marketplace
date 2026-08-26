@@ -49,6 +49,10 @@ happens only after EXPLICIT user confirmation.
 - Clarify anything that is not unambiguous. A whole feature NEVER proceeds without a
   clarify round unless it is already GO.
 - Trivial, self-evident fixes need no question - a syntax error on line 10 is just fixed.
+- Before asking a clarify question about an EXISTING item - or judging it "still open" - read
+  the WHOLE item body plus the requirements log (`.credo/process/requirements/*.md`): a stale
+  head can read open when the point is already clarified and locked. Do not re-ask what is
+  already answered there (read/build-gate + Body-freshness invariant, credo `items` skill).
 - The clarify gate is carried physically by the item folders: only `1_todo/2_go` is
   buildable, `1_todo/1_clarify` is not. See the credo `items` skill (the go-gate, C9).
 
@@ -106,7 +110,10 @@ field (credo `items` skill):
 
 The default channel for a clarification is ALWAYS the Ask tool. Short decisions and
 choices go through Ask. For long lists, use prose in the normal message instead - Ask
-truncates - but the decision itself still comes back through Ask where practical.
+truncates - but the decision itself still comes back through Ask where practical. Before
+raising an Ask about an existing item, apply the CLARIFY-FIRST precondition above: read the
+whole body plus the requirements log so a stale head does not make you re-ask what is
+already clarified (read/build-gate, credo `items` skill).
 
 ## One item per Ask round (active and passive only)
 

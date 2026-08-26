@@ -103,7 +103,10 @@ autonomously.
 
 go=go: a `2_go` item IS buildable by the folder - build it (best effort), never self-skip or
 self-demote it for size, UI, or "not sure it is verifiable". See the go=go build-side anchor
-in the credo `items` skill for the full rule and the hypothesis-vs-open-decision line.
+in the credo `items` skill for the full rule and the hypothesis-vs-open-decision line. A
+stale-looking, open-looking body is not "not buildable" either: before treating a `2_go`
+item as still-open, read the WHOLE body plus the requirements log and audit reports (the
+read/build-gate in the credo `items` skill).
 
 Work the WHOLE queue, not just one thread. After you finish an item, immediately pick the next
 buildable `2_go` item and continue - keep going until the buildable queue is empty (confirmed by
@@ -117,7 +120,10 @@ item blocked by a missing measurement, mockup, or feasibility proof, use the `sa
 
 ### A non-buildable item in 2_go
 
-An item is normally clarified when it is in `2_go` (GO=GO). If you nonetheless meet one that
+An item is normally clarified when it is in `2_go` (GO=GO). First rule out mere staleness: a
+head or note that merely reads "open / not built" is NOT a non-build reason - read the whole
+body plus the requirements log and audit reports before judging (read/build-gate, credo
+`items` skill), because the clarification or build is often already there. Only if the item
 is genuinely non-buildable, act by the reason:
 
 - **Genuine user-only decision** (the Named-Decision-Test in the credo `items` skill passes -
@@ -317,7 +323,11 @@ running blind on notifications. Run completion is `high`.
 ### Deferred-question flow (core of autonomous mode)
 
 When you hit a previously-unknown question that genuinely needs the user - one you cannot
-self-resolve up to authority level 3 - do NOT stop the whole run and do NOT guess:
+self-resolve up to authority level 3 - do NOT stop the whole run and do NOT guess. First
+confirm it is genuinely still open: read the WHOLE item body plus the requirements log and
+existing audit reports before raising it (read/build-gate, credo `items` skill) - a question
+that merely looks open in a stale head is often already clarified there, and must not be
+re-raised. Only if it is truly unanswered:
 
 1. Send an immediate ntfy `high` stating the question clearly (come to the PC).
 2. Schedule a wake-up for the deferred-question window - `windows.deferred_question_minutes`
