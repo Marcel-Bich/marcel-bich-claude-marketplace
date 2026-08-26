@@ -362,7 +362,7 @@ enable keep-alive is an explicit switch to autonomous mode (`/credo:session-auto
 ## Log progress via the compact trigger, not on your own
 
 Progress is secured through the credo `compact-plus` skill, driven by the limit plugin's
-session-context threshold signal (defaults 70 / 90 percent, config `compact.thresholds`).
+session-context threshold signal (defaults 80 / 92 percent, config `compact.thresholds`).
 Do NOT self-trigger compact-plus proactively - run it only when the injected ACTION line
 names it or when the user invokes it. See the `compact-plus` skill.
 

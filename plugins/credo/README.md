@@ -79,7 +79,7 @@ Config is YAML, merged lowest to highest:
 builtin (templates/config.default.yaml) < global (~/.claude/credo/config) < profile ($CLAUDE_CONFIG_DIR/credo/config) < project (.credo/config)
 ```
 
-The builtin template ships universal, safe-for-everyone defaults (viewports 320/768/1440, timing windows, the compact thresholds 70/90, the budget schedule, wakeup offsets). On first need the global config is created from this template. Personal and environment-specific fields (ntfy topic, commit-identity hint, WSL reachability, living-docs list) are intentionally left empty and are filled just-in-time by the skill that needs them, with permission per change. `/credo:setup` is an optional way to pre-initialize this.
+The builtin template ships universal, safe-for-everyone defaults (viewports 320/768/1440, timing windows, the compact thresholds 80/92, the budget schedule, wakeup offsets). On first need the global config is created from this template. Personal and environment-specific fields (ntfy topic, commit-identity hint, WSL reachability, living-docs list) are intentionally left empty and are filled just-in-time by the skill that needs them, with permission per change. `/credo:setup` is an optional way to pre-initialize this.
 
 The **profile layer** sits between global and project: `$CLAUDE_CONFIG_DIR/credo/config` (for example `~/.claude-private/credo/config`) lets a second Claude Code profile override the shared global per key, while every key it does not set still falls back to global. It is optional and never auto-created; for the default profile it equals global and is skipped. Session state (modes, decisions, project pins) and the autonomy flags likewise follow the active profile, so two profiles run side by side without sharing state.
 
@@ -154,7 +154,7 @@ The [`limit`](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki
 
 - **Context-percent triggers** - the auto-run of compact-plus at the configured session-context fill thresholds relies on the limit plugin's inject hook. Point it at credo with:
   - `CLAUDE_MB_LIMIT_COMPACT_SKILL=credo:compact-plus`
-  - `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS=70,90`
+  - `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS=80,92`
   - `/credo:setup` offers to set these for you (Step 9) when the limit plugin is installed, so hand-editing is optional.
 - **Budget data source** - the budget skill reads the limit cache (`/tmp/claude-mb-limit-cache_*.json`) for the 5-hour and weekly utilization and reset times.
 

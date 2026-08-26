@@ -56,13 +56,14 @@ a named skill. That hook is deterministic:
 To point that mechanism at this skill, the limit plugin configuration must set:
 
 - `CLAUDE_MB_LIMIT_COMPACT_SKILL=credo:compact-plus` - names this skill in the ACTION line.
-- `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS=70,90` - the session-context fill percentages that fire.
+- `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS=80,92` - the fire percentages. Since limit v2.32.0
+  these are percent of the way to auto-compact (the tacho), not percent of the full window.
 
 `/credo:setup` offers to set these in `~/.claude/settings.json` for you (Step 9) when the
 limit plugin is installed, so setting them by hand is optional.
 
 The intended thresholds also live in credo config under `compact.thresholds` (default
-70 and 90) as the documented source of truth. Read them with:
+80 and 92) as the documented source of truth. Read them with:
 
 ```
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get compact.thresholds

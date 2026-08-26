@@ -85,7 +85,7 @@ The builtin template holds universal defaults only:
 
 - `verify.viewports`: 320, 768, 1440
 - `windows.veto_minutes`: 20, `windows.deferred_question_minutes`: 5
-- `compact.thresholds`: 70, 90
+- `compact.thresholds`: 80, 92 (percent of the way to auto-compact - the tacho, not the full window; matches limit v2.32.0)
 - `wakeup.reset_offset_minutes`: 5, `wakeup.fallback_offset_minutes`: 1
 - `budget.*`: the 5-hour soft/hard band, the work-hours 09:00 guard reserve, task-sizing bands, and the day-by-day cap schedule
 - `budget_failsafe`: absolute caps used if an explicit order is lost to a compact
@@ -192,7 +192,7 @@ Required for two features:
 
 - **Context-percent triggers.** Auto-running compact-plus at the session-context fill thresholds relies on the limit plugin's inject hook. Point it at credo:
   - `CLAUDE_MB_LIMIT_COMPACT_SKILL=credo:compact-plus`
-  - `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS=70,90`
+  - `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS=80,92`
   - `/credo:setup` offers to set these for you (Step 9, when the limit plugin is present); the manual values above still apply if you do not run setup.
 - **Budget data.** The budget skill reads the limit cache (`/tmp/claude-mb-limit-cache_*.json`) via `scripts/credo-budget-read.sh` for the 5-hour and weekly utilization and reset times. That helper exits with a distinct code when no fresh cache is present.
 

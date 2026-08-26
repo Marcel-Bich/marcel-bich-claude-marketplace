@@ -74,10 +74,12 @@ ntfy:
 
 # --- session-context compact trigger (not budget) ----------------------------
 compact:
-  # Session-context fill thresholds (percent) that auto-run compact-plus.
+  # Session-context fill thresholds that auto-run compact-plus.
+  # Percent of the way to auto-compact (the tacho), not percent of the full
+  # window - matches limit v2.32.0.
   thresholds:
-    - 70
-    - 90
+    - 80
+    - 92
 
 # --- wakeup offsets (relative to a limit reset) ------------------------------
 wakeup:

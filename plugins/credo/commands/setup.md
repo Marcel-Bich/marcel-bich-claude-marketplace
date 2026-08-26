@@ -498,7 +498,7 @@ compact-plus in the expected form. credo can set
 env.CLAUDE_MB_LIMIT_COMPACT_SKILL = "credo:compact-plus" in
 ~/.claude/settings.json so compact-plus runs automatically at the context-fill thresholds.
 
-- Yes, wire compact-plus (Recommended) - sets CLAUDE_MB_LIMIT_COMPACT_SKILL to credo:compact-plus; also sets CLAUDE_MB_LIMIT_INJECT_THRESHOLDS to 70,90 if unset
+- Yes, wire compact-plus (Recommended) - sets CLAUDE_MB_LIMIT_COMPACT_SKILL to credo:compact-plus; also sets CLAUDE_MB_LIMIT_INJECT_THRESHOLDS to 80,92 if unset
 - Set the skill only - just CLAUDE_MB_LIMIT_COMPACT_SKILL, leave thresholds untouched
 - No, leave settings.json unchanged - I will set it myself (or I do not use auto-compact)
 ```
@@ -508,10 +508,10 @@ thresholds on their own:
 
 ```
 The limit auto-compact trigger already points at credo:compact-plus, but the fire
-thresholds (CLAUDE_MB_LIMIT_INJECT_THRESHOLDS) are unset. credo can set them to 70,90
+thresholds (CLAUDE_MB_LIMIT_INJECT_THRESHOLDS) are unset. credo can set them to 80,92
 in ~/.claude/settings.json.
 
-- Yes, set thresholds to 70,90 (Recommended)
+- Yes, set thresholds to 80,92 (Recommended)
 - No, leave settings.json unchanged - I will set them myself
 ```
 
@@ -546,7 +546,7 @@ only when `$CURTH` was empty, so an existing custom value is never overwritten:
 
 ```bash
 TMP="$(mktemp "$(dirname "$SETTINGS")/.settings.XXXXXX")"
-jq --arg th "70,90" \
+jq --arg th "80,92" \
    '.env = (.env // {})
     | (if ((.env.CLAUDE_MB_LIMIT_INJECT_THRESHOLDS // "") == "")
        then .env.CLAUDE_MB_LIMIT_INJECT_THRESHOLDS = $th else . end)' \
