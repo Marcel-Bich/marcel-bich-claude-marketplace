@@ -676,12 +676,17 @@ of these fresh, in this moment. A number that was not just read is not stated:
      mental model below - the schedule row decides. Never present the raw 7-day / weekly
      utilization number as the brake when no row caps it: it is context, not a cap.
 4. **(d) Declare the suspend posture (one line, ALWAYS present - every case, including
-   `sleep.enabled` false).** Read BOTH the sleep config AND the persisted suspend directive
-   (`credo-suspend-directive.sh get`) at start, and declare, in one line, the posture the
-   combined end-of-run gate (see "Power down the machine at the end" above) will produce. This
-   DECLARES what that gate will do; it does not restate, fork, or duplicate the mechanism or
-   the veto machinery - it reuses them. Read the directive FIRST, because a set directive
-   OVERRIDES `sleep.enabled: false` and is announced = committed:
+   `sleep.enabled` false).** Before you declare this posture you MUST read BOTH the sleep
+   config AND the persisted suspend directive fresh, right now: `sleep.enabled`, `sleep.mode`
+   and `sleep.command` (each via `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get <key>`)
+   plus `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-suspend-directive.sh" get`. NEVER state the
+   suspend/hibernate posture from memory or a default: `suspend` vs `hibernate` comes ONLY
+   from a freshly read `sleep.mode`, and whether a power-down happens at all comes ONLY from
+   the freshly read `sleep.enabled` / `sleep.command` plus the directive. Then declare, in one
+   line, the posture the combined end-of-run gate (see "Power down the machine at the end"
+   above) will produce. This DECLARES what that gate will do; it does not restate, fork, or
+   duplicate the mechanism or the veto machinery - it reuses them. Read the directive FIRST,
+   because a set directive OVERRIDES `sleep.enabled: false` and is announced = committed:
    - **Directive set** (any `sleep.enabled`) AND `sleep.command` present: "a suspend-on-idle
      directive is IN FORCE; at end-of-run I WILL `sleep.mode` (suspend or hibernate) per
      `sleep.command`, with a `windows.veto_minutes` veto window - this overrides
@@ -704,14 +709,21 @@ turned off - you MUST emit AT LEAST the short form, and NEVER start autonomous w
 it. The short form is a compact minimum that is ALWAYS present, in every case - three axes:
 
 - **Budget:** the binding axis (part c) AND BOTH current live figures (5h% AND weekly%).
-- **Suspend/hibernate:** the posture (part d), one line - ALWAYS, even when unchanged. It is
-  derived from the persisted suspend directive plus the sleep config; a set directive is
-  announced = committed and overrides `sleep.enabled: false`.
-- **ntfy:** whether ntfy is active (a `personal.ntfy_topic` is set) AND what will be
-  reported - normally a report on every item completion (a go -> done transition), bundled
-  per the digest interval, plus immediate come-to-PC pushes for questions / blockers. If
-  ntfy is NOT configured, say so plainly (autonomy then runs silent - no pushes). See
-  "Per-task and per-question ntfy" above; do not restate the mechanism, just declare it.
+- **Suspend/hibernate:** the posture (part d), one line - ALWAYS, even when unchanged. Read
+  `sleep.enabled` / `sleep.mode` / `sleep.command` plus the persisted suspend directive fresh
+  per part (d); never state it from memory or a default. A set directive is announced =
+  committed and overrides `sleep.enabled: false`.
+- **ntfy:** whether ntfy is active AND what will be reported. Active-or-not is decided ONLY
+  by running `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get personal.ntfy_topic` fresh
+  at this moment - a non-empty value means active, exit 3 or empty means not configured.
+  NEVER state ntfy's status from memory or assumption; read it. The value cascades
+  (global < profile < project), so a topic set only in the global config still resolves under
+  a non-default profile - do not conclude "not configured" without the read. When active,
+  what will be reported: normally a report on every item completion (a go -> done
+  transition), bundled per the digest interval, plus immediate come-to-PC pushes for
+  questions / blockers. If it reads as not configured, say so plainly (autonomy then runs
+  silent - no pushes). See "Per-task and per-question ntfy" above; do not restate the
+  mechanism, just declare it.
 
 So the rule is: first start -> the full four-part read-back (plus the ntfy line); any later
 start -> at minimum the three-axis short form above. In ADDITION, give a fresh short

@@ -107,6 +107,40 @@ the resolved `.credo/RULES.md` content, or an instruction to load it via
 `scripts/credo-config.sh rules`, in the task. Project grants must not be lost across
 delegation - a subagent has to honor the same widened latitude as the main agent.
 
+## The item is the source of truth
+
+When you delegate a build or implementation task that realizes a credo item, the item
+- not your brief - is the authoritative, complete specification. The brief is only a
+pointer, and pointers are lossy.
+
+- Every such brief MUST name the item path. Where the work touches domain rules or logic,
+  it MUST also name the relevant source of truth as `file:symbol`, not just describe it.
+- The subagent MUST read the WHOLE item itself and treat it as the single source of truth:
+  the complete body, the Success Criteria / DoD, the Historie, AND the requirements log
+  under `.credo/process/requirements/` - not just the head, and never the brief alone. It
+  builds against ALL requirements the item states, gaplessly. Nothing the item asks for may
+  be silently dropped.
+- The brief is ORIENTATION, not the authoritative or complete spec (the analogy: a lead
+  hands over a ticket saying "this is roughly about X" - the builder listens, then forms a
+  full picture from the actual requirements). On any imprecision or contradiction between
+  brief and item, the WHOLE item wins. The subagent does not adopt the delegator's summary
+  or paraphrase as fact.
+- Gated tightening - for user-facing text OR logic that encodes a domain rule (grades,
+  thresholds, formulas, enum meanings, marker semantics): the subagent MUST derive each such
+  factual claim from the named code source of truth and verify it itself, citing the source
+  (`file:symbol` + the value) - never from the brief's paraphrase. For example, a brief
+  saying "tier gold / platinum" is a lossy hint; read the rating source and derive which
+  tier is the default and which is gated, rather than restating the hint. A bare file
+  pointer is not enough when the term lives only in client-side presentation and not in the
+  named file - trace it to where the rule is actually defined.
+- The paired audit check (completeness against the whole item, and rule-text correctness
+  against the source) catches such misses downstream; see the `audit` skill.
+
+This is the build-time, subagent-side duty. It is distinct from the main agent reading the
+whole item before it asserts a status or moves it (see "Monitoring without context
+flooding"): that governs the status decision after the fact, this governs building against
+the item before and during the work.
+
 ## Delegating verify / UI subagents
 
 When you delegate any verification or UI-checking subagent - the formal credo `verify`

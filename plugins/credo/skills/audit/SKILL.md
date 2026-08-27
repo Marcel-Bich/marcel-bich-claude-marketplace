@@ -80,6 +80,21 @@ versa), and a **MAJOR** when it materially misleads the next reader without hidi
 miss. Evidence is the contradicting `file:line` / log / report location plus the stale
 claim's own location, per the evidence rule below.
 
+**Completeness against the whole item.** Check that the built work realizes EVERYTHING the
+whole item specifies (body + Success Criteria / DoD + the requirements log), not only what a
+brief or summary happened to mention. A planned requirement that was silently omitted is a
+finding: **BLOCKER** when the omission means the core requirement or a success criterion is
+unmet, otherwise **MAJOR**. Evidence is the exact item / DoD text that is left unfulfilled.
+
+**User-facing rule text vs source of truth.** Check user-facing text or logic that encodes a
+domain rule (grades, thresholds, formulas, enums, marker semantics) substantively against the
+authoritative code source - not merely that something is present. A domain rule presented to
+the user incorrectly is a **BLOCKER**; text that is materially misleading without falsifying
+the core statement is a **MAJOR**. Evidence is the cited `file:symbol` plus the correct value
+versus the shipped text. This differs from the stale head / body check above: that concerns
+stale claims inside the item; these two concern the BUILT work against the item and against
+the code.
+
 ## Severity levels
 
 Rank every finding with exactly one level:
