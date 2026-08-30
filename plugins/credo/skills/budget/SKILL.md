@@ -105,7 +105,9 @@ NEVER from memory, and NEVER from the worked examples or defaults in THIS skill 
 illustrate the logic only, they are not your profile's values. Not readable (e.g.
 `credo-budget-read.sh` exit 3/4) -> say "not readable" honestly, never guess. This holds
 everywhere a budget number is named - the autonomous start read-back, the continue/pause
-decision, an ad-hoc "how much budget is left" - in EVERY mode.
+decision, an ad-hoc "how much budget is left" - in EVERY mode. When you name a cap or live
+number, show the raw output of the command that produced it as the evidence; a number with no
+shown output backing it is invalid and MUST NOT be stated.
 
 The schedule renews daily. How to pick the row that applies now:
 

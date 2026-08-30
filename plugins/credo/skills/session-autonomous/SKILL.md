@@ -643,6 +643,16 @@ of these fresh, in this moment. A number that was not just read is not stated:
   cache / stale cache), do NOT guess the live figures: report them honestly as "not readable
   (no/stale cache)", still name the static caps from `budget.schedule` (always readable),
   and act conservatively.
+- **Show the output (proof obligation, hard MUST).** Reading fresh is not enough - a prose
+  number is indistinguishable from remembered vs. read. The read-back MUST make the raw
+  command output VISIBLE as the evidence: at minimum the applicable line from
+  `credo-config.sh get budget.schedule` AND the `credo-budget-read.sh` live figures,
+  verbatim as printed. EVERY cap or live number named ANYWHERE in the read-back MUST appear
+  in that shown output. A number that does not appear in the output shown in THIS turn is
+  invalid and MUST NOT be stated - never a value from the config template
+  (`config.default.yaml`), from the defaults or annotations of this or the `budget` skill,
+  or from memory. Same standing as "A number that was not just read is not stated": if it is
+  not in the output you just showed, you do not state it.
 - This does NOT replace the guardrail-availability gate above (which decides WHETHER to
   start at all); it governs the read-back numbers - what may be named, and from where.
 
@@ -655,7 +665,9 @@ of these fresh, in this moment. A number that was not just read is not stated:
    ```
 
    Pick the applicable row exactly as the credo `budget` skill's row-selection rule
-   describes (B1); do not re-invent caps.
+   describes (B1); do not re-invent caps. The printed row IS the raw
+   `get budget.schedule` output (the applicable line from it, shown verbatim), NOT a line you
+   typed or recalled yourself - the caps you name come from that shown output only.
 2. **(b) Reflect the understanding back - COMPLETE, not a one-liner.** State, in one short
    read-back, what the current row means for this run - specifically whether there is
    anything to conserve and, if so, how much headroom is left before the cap. This read-back
@@ -708,7 +720,10 @@ you have not already given it in this session). On EVERY invocation of
 turned off - you MUST emit AT LEAST the short form, and NEVER start autonomous work without
 it. The short form is a compact minimum that is ALWAYS present, in every case - three axes:
 
-- **Budget:** the binding axis (part c) AND BOTH current live figures (5h% AND weekly%).
+- **Budget:** the binding axis (part c) AND BOTH current live figures (5h% AND weekly%). The
+  live figures AND any caps named come from the command output shown in THIS turn (per the
+  show-the-output proof obligation in part (0)); a number not present in that shown output is
+  not stated.
 - **Suspend/hibernate:** the posture (part d), one line - ALWAYS, even when unchanged. Read
   `sleep.enabled` / `sleep.mode` / `sleep.command` plus the persisted suspend directive fresh
   per part (d); never state it from memory or a default. A set directive is announced =
@@ -724,6 +739,11 @@ it. The short form is a compact minimum that is ALWAYS present, in every case - 
   questions / blockers. If it reads as not configured, say so plainly (autonomy then runs
   silent - no pushes). See "Per-task and per-question ntfy" above; do not restate the
   mechanism, just declare it.
+
+The same show-the-output proof obligation from part (0) applies to the non-budget reads too:
+the ntfy line (`get personal.ntfy_topic`) and the suspend-posture reads (`sleep.enabled` /
+`sleep.mode` / `sleep.command` plus `credo-suspend-directive.sh get`) - state each value only
+from the freshly shown output of that command, never from memory or a default.
 
 So the rule is: first start -> the full four-part read-back (plus the ntfy line); any later
 start -> at minimum the three-axis short form above. In ADDITION, give a fresh short
