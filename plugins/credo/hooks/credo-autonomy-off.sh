@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# credo-autonomy-off.sh [--suspend-done|--override|--mode-switch] [session_id]
+# credo-autonomy-off.sh [--after-suspend|--override|--mode-switch] [session_id]
 #
 # End the full-autonomy keep-alive mode. Removes the active flag plus the wake
 # marker and sets a hard paused opt-out so the Stop keep-alive hook stays inert
@@ -17,8 +17,8 @@
 # for THIS session and NONE of the bypass flags below is given, this hook REFUSES
 # to flip the flag (fail-loud, exit 1): the keep-alive stays armed so the run
 # cannot just stop. The clean exit is the SKILL power-down sequence, which calls
-# back here with --suspend-done as its final step. Bypass flags:
-#   --suspend-done  the caller (SKILL power-down sequence) JUST ran the power-down
+# back here with --after-suspend as its final step. Bypass flags:
+#   --after-suspend the caller (SKILL power-down sequence) JUST ran the power-down
 #                   (sleep.command executed) -> the normal flag flip is allowed.
 #   --override      explicit user override ("leave it on") -> allowed (a deliberate
 #                   decision to end without suspending).
@@ -44,7 +44,7 @@ bypass=""
 arg_session_id=""
 for a in "$@"; do
     case "$a" in
-        --suspend-done|--override|--mode-switch) bypass="$a" ;;
+        --after-suspend|--override|--mode-switch) bypass="$a" ;;
         --*) : ;;  # unknown flag -> ignore (fail-safe, never block on it)
         *) [ -z "$arg_session_id" ] && arg_session_id="$a" ;;
     esac
@@ -102,7 +102,7 @@ if [ "$directive_set" = true ]; then
         echo ""
         echo "Options:"
         echo "  1. Run the SKILL power-down sequence; its FINAL step calls back here as"
-        echo "       credo-autonomy-off.sh --suspend-done"
+        echo "       credo-autonomy-off.sh --after-suspend"
         echo "     (only after sleep.command actually ran)."
         echo "  2. Explicit user override to leave the machine on:"
         echo "       credo-autonomy-off.sh --override"

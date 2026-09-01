@@ -235,7 +235,7 @@ autonomous mode (no flag set) the hook is completely inert - a plain no-op stop.
   so the Stop hook stays inert and you may stop. EXCEPTION: if a suspend-on-idle directive is
   set, that same deliberate exit MUST first run the power-down sequence (see "Empty buildable
   queue = end-of-run"); a bare `credo-autonomy-off.sh` refuses (exit 1) while the directive
-  stands, and the clean exit is `credo-autonomy-off.sh --suspend-done` as the final step of
+  stands, and the clean exit is `credo-autonomy-off.sh --after-suspend` as the final step of
   the power-down (or `--override` on an explicit user "leave it on"). announced = committed:
   no deliberate end-of-run - clean-done, showstopper, or weekly hard limit - ends a directive
   session without the power-down or an explicit override.
@@ -414,7 +414,7 @@ LAST step, not the first. Run the power-down sequence:
    This REUSES the existing power-down procedure below (veto window, retry plus success
    detection, secure-work-first, the exact `sleep.command`) - do not duplicate it.
 4. As the FINAL step, AFTER `sleep.command` has run, flip the flag with the bypass:
-   `credo-autonomy-off.sh --suspend-done`. Only an explicit user "leave it on" justifies
+   `credo-autonomy-off.sh --after-suspend`. Only an explicit user "leave it on" justifies
    ending with `credo-autonomy-off.sh --override` instead (that is a revocation - clear the
    directive too). Never end a directive run with a bare `credo-autonomy-off.sh`; it is
    designed to refuse.
@@ -597,7 +597,7 @@ suspended even though it had announced it would).
   Here, before powering down, you MUST FIRST ask via AskUserQuestion - e.g. "A suspend-on-idle
   directive is set for this session. Power down the machine now?" - and power down ONLY on a
   yes. On a yes, run the power-down procedure and end with `credo-autonomy-off.sh
-  --suspend-done` as its final step (the directive still stands, so a bare off would refuse).
+  --after-suspend` as its final step (the directive still stands, so a bare off would refuse).
   A "no" is an explicit revocation -> run `credo-suspend-directive.sh clear`, after which a
   plain `credo-autonomy-off.sh` (or `--override`) ends the run cleanly. This attended branch
   lives HERE, in the skill; the fail-safe hook `credo-autonomy-off.sh` never runs this Ask and
