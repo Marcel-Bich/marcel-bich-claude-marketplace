@@ -50,6 +50,12 @@ DEBUG_LOG="/tmp/claude-mb-limit-debug_${PROFILE_NAME}.log"
 
 SCRIPT_DIR="$(dirname "$0")"
 
+# Absolute path to this script's directory, resolved via BASH_SOURCE BEFORE any
+# later cd into the reported cwd. Relative-path lookups (e.g. locating the credo
+# plugin's credo-config.sh for the hub-aware git line) must survive that cd.
+SCRIPT_DIR_ABS="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+[[ -z "$SCRIPT_DIR_ABS" ]] && SCRIPT_DIR_ABS="$SCRIPT_DIR"
+
 # Provider gate: the Anthropic OAuth usage endpoint AND the token/cost accounting
 # below only make sense for the native Anthropic API. For any other provider (z.ai
 # or a custom ANTHROPIC_BASE_URL) hand off to the provider statusline, which does NO
@@ -1667,13 +1673,55 @@ format_output() {
         fi
     fi
 
-    # Git line: worktree + changes + branch
-    # Format: [wt] main (+0,-0)⎇ main
+    # Git line: git: <parent/repo> [wt] + changes + branch
+    # Format: git: Marcel-Bich/marcel-bich-claude-marketplace [wt] main (+0,-0)⎇ main
+    #
+    # The reported repo is the RESOLVED TARGET repo, not necessarily the cwd:
+    #   1. git-discovery from cwd (git rev-parse --show-toplevel)
+    #   2. hub fallback: credo session-pin (soft dependency on the credo plugin)
+    # When neither resolves a repo, the git line is omitted entirely.
     if [[ "$SHOW_GIT" == "true" ]]; then
         local git_line=""
+        local repo_root=""
 
-        # Check if in git repo
-        if git rev-parse --git-dir >/dev/null 2>&1; then
+        # 1. Git discovery from cwd (we already cd'd into cwd above).
+        repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root=""
+
+        # 2. Hub fallback: resolve the target repo via the credo session-pin.
+        #    Soft dependency - locate credo-config.sh relative to THIS script.
+        #    Any failure here must never break the statusline (guards + 2>/dev/null).
+        if [[ -z "$repo_root" ]]; then
+            local credo_config="${SCRIPT_DIR_ABS}/../../credo/scripts/credo-config.sh"
+            if [[ -f "$credo_config" ]] && [[ -x "$credo_config" ]]; then
+                local sid=""
+                if [[ -n "$STDIN_DATA" ]]; then
+                    sid=$(echo "$STDIN_DATA" | jq -r '.session_id // empty' 2>/dev/null) || sid=""
+                    [[ "$sid" == "null" ]] && sid=""
+                fi
+                local credo_dir=""
+                # resolve-project prints "<repo>/.credo" (exit 0) or exits 4 (hub / no pin).
+                credo_dir=$(CLAUDE_CODE_SESSION_ID="$sid" CREDO_SESSION_ID="$sid" \
+                    "$credo_config" resolve-project 2>/dev/null) || credo_dir=""
+                # resolve-project prints "<repo>/.credo" even if that dir does not
+                # exist yet; dirname still yields the target repo root.
+                if [[ -n "$credo_dir" ]]; then
+                    local __candidate
+                    __candidate=$(dirname "$credo_dir")
+                    # Only accept the pinned target if it is an actual git repo -
+                    # a non-git credo project has no git info to show.
+                    if git -C "$__candidate" rev-parse --git-dir >/dev/null 2>&1; then
+                        repo_root="$__candidate"
+                    fi
+                fi
+            fi
+        fi
+
+        # 3. Render only when a git repo was resolved.
+        if [[ -n "$repo_root" ]] && [[ -d "$repo_root" ]]; then
+            # Run the git helpers against repo_root (Hub case: cwd != repo_root).
+            local __git_prev_pwd="$PWD"
+            cd "$repo_root" 2>/dev/null || true
+
             # Git worktree (dark blue) - symbol: [wt]
             local worktree
             worktree=$(get_git_worktree 2>/dev/null) || true
@@ -1719,10 +1767,21 @@ format_output() {
                 git_line="${git_line}${br_color}⎇ ${branch}${br_color_reset}"
             fi
 
-            # Add git line
-            if [[ -n "$git_line" ]]; then
-                lines+=("$git_line")
+            # Restore the previous cwd before continuing.
+            cd "$__git_prev_pwd" 2>/dev/null || true
+
+            # Prefix: "git: <parent>/<repo> " (last two path segments of repo_root).
+            local repo_label
+            repo_label="$(basename "$(dirname "$repo_root")")/$(basename "$repo_root")"
+            local prefix_color=""
+            local prefix_color_reset=""
+            if [[ "$SHOW_COLORS" == "true" ]]; then
+                prefix_color="$COLOR_GRAY"
+                prefix_color_reset="$COLOR_RESET"
             fi
+            local git_prefix="${prefix_color}git: ${repo_label}${prefix_color_reset} "
+
+            lines+=("${git_prefix}${git_line}")
         fi
     fi
 

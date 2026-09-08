@@ -18,7 +18,7 @@ Live API usage in Claude Code statusline - colored progress bars, Git info, toke
 
 **Extended Features**
 - CWD (Current Working Directory)
-- Git: branch, worktree name, changes (+insertions, -deletions) with colors
+- Git: branch, worktree name, changes (+insertions, -deletions) with colors. The line is prefixed with `git: <parent>/<repo>` showing the resolved target repo. This is normally the repo at the cwd, but when the cwd is a hub (no repo of its own) the target is resolved from the credo session-pin, so the git info follows the pinned project even when you are not standing in its directory (soft dependency on the credo plugin - absent it, only cwd-based discovery is used)
 - Token metrics: Input, Output, Cached, Total
 - Context usage with percentage of max and usable (before auto-compact)
 - Session timing: Total duration, API time
