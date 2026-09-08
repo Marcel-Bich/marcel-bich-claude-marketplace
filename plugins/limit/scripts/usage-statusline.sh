@@ -1677,15 +1677,41 @@ format_output() {
     # Format: git: Marcel-Bich/marcel-bich-claude-marketplace [wt] main (+0,-0)⎇ main
     #
     # The reported repo is the RESOLVED TARGET repo, not necessarily the cwd:
+    #   0. work-repo: the repo the MAIN agent last worked in (per-session state
+    #      file written by the track-work-repo.sh hook) - highest priority so the
+    #      line follows the agent live even from a non-git hub directory
     #   1. git-discovery from cwd (git rev-parse --show-toplevel)
     #   2. hub fallback: credo session-pin (soft dependency on the credo plugin)
-    # When neither resolves a repo, the git line is omitted entirely.
+    # When none resolves a repo, the git line is omitted entirely.
     if [[ "$SHOW_GIT" == "true" ]]; then
         local git_line=""
         local repo_root=""
 
+        # 0. Work-repo state file (highest priority). The heavy derivation happens
+        #    in the hook; here we only read the file and do ONE rev-parse to keep
+        #    the statusline fast. Any failure falls through to the sources below.
+        if [[ -n "$STDIN_DATA" ]]; then
+            local __wr_sid=""
+            __wr_sid=$(echo "$STDIN_DATA" | jq -r '.session_id // empty' 2>/dev/null) || __wr_sid=""
+            [[ "$__wr_sid" == "null" ]] && __wr_sid=""
+            if [[ -n "$__wr_sid" ]]; then
+                local __wr_file="/tmp/claude-mb-workrepo_${__wr_sid}"
+                if [[ -f "$__wr_file" ]]; then
+                    local __wr_val=""
+                    __wr_val=$(cat "$__wr_file" 2>/dev/null) || __wr_val=""
+                    if [[ -n "$__wr_val" ]]; then
+                        local __wr_top=""
+                        __wr_top=$(git -C "$__wr_val" rev-parse --show-toplevel 2>/dev/null) || __wr_top=""
+                        [[ -n "$__wr_top" ]] && repo_root="$__wr_top"
+                    fi
+                fi
+            fi
+        fi
+
         # 1. Git discovery from cwd (we already cd'd into cwd above).
-        repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root=""
+        if [[ -z "$repo_root" ]]; then
+            repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root=""
+        fi
 
         # 2. Hub fallback: resolve the target repo via the credo session-pin.
         #    Soft dependency - locate credo-config.sh relative to THIS script.

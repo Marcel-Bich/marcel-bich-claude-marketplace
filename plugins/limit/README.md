@@ -18,7 +18,7 @@ Live API usage in Claude Code statusline - colored progress bars, Git info, toke
 
 **Extended Features**
 - CWD (Current Working Directory)
-- Git: branch, worktree name, changes (+insertions, -deletions) with colors. The line is prefixed with `git: <parent>/<repo>` showing the resolved target repo. This is normally the repo at the cwd, but when the cwd is a hub (no repo of its own) the target is resolved from the credo session-pin, so the git info follows the pinned project even when you are not standing in its directory (soft dependency on the credo plugin - absent it, only cwd-based discovery is used)
+- Git: branch, worktree name, changes (+insertions, -deletions) with colors. The line is prefixed with `git: <parent>/<repo>` showing the resolved target repo. The target is resolved in this order: (1) the repo the MAIN agent last worked in - captured live from its Edit/Write and Bash `cd` / `git -C` calls via a PostToolUse hook (session-affine, subagents excluded), so the line follows the agent into whatever repo it touches even from a non-git hub directory; (2) the repo at the cwd; (3) the credo session-pin. Sources 1 and 3 are soft dependencies - without them, only cwd-based discovery is used
 - Token metrics: Input, Output, Cached, Total
 - Context usage with percentage of max and usable (before auto-compact)
 - Session timing: Total duration, API time
