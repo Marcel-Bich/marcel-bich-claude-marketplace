@@ -198,6 +198,12 @@ slug or feature name), `<viewport>` is the width in px, and the date is the day 
 verification. The `.credo/` directory is git-excluded by design, so screenshots are
 local evidence, not committed artifacts.
 
+You do not need to resolve the path to `.credo/screenshots/` yourself: save with the bare
+filename above, and a credo PostToolUse hook relocates the screenshot into the pinned
+project's `.credo/screenshots/` automatically (the screenshot tool is sandboxed to its cwd
+and cannot write into the project directly, so the hook moves the file afterwards). Keep
+the naming rule exactly; only the naming is your responsibility.
+
 ## Definition-of-Done gate
 
 A change with a runtime surface is done only when its observable success criteria are

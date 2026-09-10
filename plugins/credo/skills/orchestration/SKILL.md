@@ -144,15 +144,18 @@ the item before and during the work.
 ## Delegating verify / UI subagents
 
 When you delegate any verification or UI-checking subagent - the formal credo `verify`
-skill or an ad-hoc one you brief inline - screenshots are saved to `.credo/screenshots/`
-using the naming rule `<slug>-<viewport>-<YYYY-MM-DD>.png` (for example
-`login-form-320-2026-07-04.png`). This is not optional and not limited to the formal
-verify skill: every verify subagent writes there.
+skill or an ad-hoc one you brief inline - the subagent saves each screenshot under the
+naming rule `<slug>-<viewport>-<YYYY-MM-DD>.png` (for example
+`login-form-320-2026-07-04.png`). A bare filename is enough; the subagent does not resolve
+or pass any directory.
 
-The spawn or briefing preamble you hand such a subagent MUST name that target folder
-explicitly, so the subagent saves evidence to the right place even if it never loads the
-verify skill. Do not leave the location implicit. See the credo `verify` skill for the
-full evidence and naming rules.
+A credo PostToolUse hook then relocates every screenshot into the session-resolved
+`<pinned-project>/.credo/screenshots/` automatically. This works from a launch hub and
+even when a subagent never loads the verify skill. The reason it is hook-based rather than
+a path instruction: the screenshot tool is sandboxed to its cwd and cannot write into the
+pinned project directly, so no preamble can steer it there - the hook moves the file after
+the fact. You therefore do not need to name the target folder in the spawn preamble; just
+require the naming rule. See the credo `verify` skill for the full evidence and naming rules.
 
 ## Model policy (no downgrade, no model-choice logic)
 

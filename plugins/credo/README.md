@@ -67,7 +67,7 @@ Orthogonal to the mode, a session can carry a persistent default role that scope
 ```
 .credo/
   docs/                stable "how we work here" conventions
-  screenshots/         visual-verify evidence: <task>-<viewport>-<YYYY-MM-DD>.png
+  screenshots/         visual-verify evidence: <task>-<viewport>-<YYYY-MM-DD>.png (a PostToolUse hook files screenshots here automatically, even from a hub)
   items/
     1_todo/{1_clarify,2_go,3_blocked}
     2_done/
