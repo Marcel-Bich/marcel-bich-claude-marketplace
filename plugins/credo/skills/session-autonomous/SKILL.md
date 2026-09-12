@@ -621,9 +621,9 @@ cannot be secured - so warn via ntfy and stop; do not keep building unsecured wo
 ### Budget-start read-back (mandatory before any autonomous start)
 
 Before starting an autonomous run - always, not only overnight - the agent MUST give a
-read-back and only then start: the COMPLETE four-part read-back below on the FIRST start, and
+read-back and only then start: the COMPLETE five-part read-back below on the FIRST start, and
 AT LEAST the short form on every start (see "Timing" below - never start without at least the
-short form). The full read-back has four parts (a scattered or late partial read-back is not
+short form). The full read-back has five parts (a scattered or late partial read-back is not
 acceptable):
 
 **(0) Read the real numbers first (mandatory - before naming ANY budget figure).** Before
@@ -712,9 +712,35 @@ of these fresh, in this moment. A number that was not just read is not stated:
    - Directive set OR `sleep.enabled` true, but `sleep.command` EMPTY (misconfig): state it
      will end WITHOUT powering down (per the misconfig guard above) - the directive override
      does not extend to a missing command.
+5. **(e) Declare the ntfy posture - proof-obliged like the budget numbers.** State, in one
+   line, whether ntfy is active for this run. The status comes ONLY from the resolving
+   command, read fresh right now:
+
+   ```
+   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get personal.ntfy_topic
+   ```
+
+   This is the command that resolves the FULL cascade (global < profile < project), including
+   the global -> profile inheritance - a topic set only in the global config still resolves
+   under a non-default profile. NEVER determine the ntfy status by reading a profile config
+   file directly (e.g. `$CLAUDE_CONFIG_DIR/credo/config`) or from memory: an inherited topic
+   has no entry in the profile file itself, so a direct look wrongly reports "not configured"
+   - that is exactly the inheritance trap this element exists to close.
+   - **Show the output (proof obligation, hard MUST)** - same standing as part (0). A prose
+     "ntfy is set" is indistinguishable from a guess; the read-back MUST make the raw
+     `get personal.ntfy_topic` output VISIBLE as the evidence (empty / exit 3 = not
+     configured; non-empty = configured). The proof is present-vs-empty, NOT the plaintext
+     topic: the topic is a push address (mildly sensitive), so the VALUE MAY be masked - show
+     only "set / non-empty", or just its first / last few characters. Masking the value is
+     allowed; skipping the real command output is not - the "configured vs empty" claim MUST
+     rest on output actually shown in THIS turn, never on memory or a profile-file glance.
+   - If it reads as empty / not configured, say so plainly: ntfy is then silently skipped and
+     the run is BLIND on notifications (no digests, no come-to-PC pushes - see the ntfy
+     consequence around "running blind on notifications" above). Do not restate the mechanism,
+     just declare it.
 
 **Timing - full read-back on the first start, AT LEAST the short form EVERY time.** The
-COMPLETE four-part read-back above is mandatory before the FIRST autonomous start (whenever
+COMPLETE five-part read-back above is mandatory before the FIRST autonomous start (whenever
 you have not already given it in this session). On EVERY invocation of
 `/credo:session-autonomous` - including a re-entry, a resume, or a repeat after autonomy was
 turned off - you MUST emit AT LEAST the short form, and NEVER start autonomous work without
@@ -731,9 +757,11 @@ it. The short form is a compact minimum that is ALWAYS present, in every case - 
 - **ntfy:** whether ntfy is active AND what will be reported. Active-or-not is decided ONLY
   by running `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get personal.ntfy_topic` fresh
   at this moment - a non-empty value means active, exit 3 or empty means not configured.
-  NEVER state ntfy's status from memory or assumption; read it. The value cascades
-  (global < profile < project), so a topic set only in the global config still resolves under
-  a non-default profile - do not conclude "not configured" without the read. When active,
+  NEVER state ntfy's status from memory, from a profile-file glance, or by assumption; read
+  it via that command (the value MAY be masked - "set / non-empty" or a few edge characters
+  - the proof is present-vs-empty from the real output, not the plaintext topic). The value
+  cascades (global < profile < project), so a topic set only in the global config still
+  resolves under a non-default profile - do not conclude "not configured" without the read. When active,
   what will be reported: normally a report on every item completion (a go -> done
   transition), bundled per the digest interval, plus immediate come-to-PC pushes for
   questions / blockers. If it reads as not configured, say so plainly (autonomy then runs
@@ -745,7 +773,7 @@ the ntfy line (`get personal.ntfy_topic`) and the suspend-posture reads (`sleep.
 `sleep.mode` / `sleep.command` plus `credo-suspend-directive.sh get`) - state each value only
 from the freshly shown output of that command, never from memory or a default.
 
-So the rule is: first start -> the full four-part read-back (plus the ntfy line); any later
+So the rule is: first start -> the full five-part read-back; any later
 start -> at minimum the three-axis short form above. In ADDITION, give a fresh short
 read-back whenever the binding situation actually changes mid-run - specifically on a
 schedule-row transition (e.g. entering `work_hours`), a user cap-override taking effect or
