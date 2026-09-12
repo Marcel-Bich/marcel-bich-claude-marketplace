@@ -35,7 +35,7 @@ The folder tree (created by `credo-init`) and what each folder means:
   1_todo/
     1_clarify/     open questions - needs the user, NOT buildable yet
     2_go/          clarified and approved - buildable (go-gate: only 2_go is buildable)
-    3_blocked/     GO'd but hard-blocked by another (unbuilt) credo item; auto-returns to 2_go on unblock
+    3_blocked/     GO'd but hard-blocked by another (unbuilt) credo item; auto-returns to its origin (unblock_to: go|clarify) when every blocker is delivered
   2_done/          Definition of Done met (agent and/or user), gate passed
   3_verified/      human-authorized - human-in-the-loop confirmation (main agent moves here only on explicit user instruction)
   4_archived/      abandoned / deprecated / rejected
@@ -497,8 +497,8 @@ done-work rule.
 
 `3_blocked` holds an item that is fully clarified and the user has GO'd, but which is
 hard-blocked by ANOTHER, still-unbuilt credo item. It is NOT a demotion of the GO - the GO
-stands; the block only pauses it. When the blocking item is done, the item auto-returns to
-`2_go`.
+stands; the block only pauses it. When every blocking item is delivered, the item
+auto-returns to its origin folder (its `unblock_to` target, `go` or `clarify`).
 
 Distinct from `parked/hold`, which is for an EXTERNAL dependency (not another credo item) or
 a block on something not yet GO'd. `3_blocked` is specifically an internal-item block on an
@@ -510,6 +510,12 @@ already-GO'd item, and that internal relation is what enables the automatic retu
 - Bidirectional dependency graph, relational only - NOT a second status source. The folder
   still says "blocked"; the relations only say by which item(s). Keep both sides in sync.
 - Required whenever an item sits in `3_blocked`.
+- `unblock_to: go|clarify` records the RETURN target for the auto-unblock sweep - the folder
+  the item came from before it was blocked. `credo-item-move.sh <id> blocked` writes it
+  automatically (source `1_clarify` -> `clarify`, `2_go` -> `go`, anything else -> `go`);
+  override with `--unblock-to clarify|go`. It is set only while the item sits in `3_blocked`
+  and is NOT a status source (the folder still owns status). A legacy blocked item WITHOUT
+  `unblock_to` defaults to `go` on unblock (the old contract).
 
 ### Block-guard (a block needs a concrete blocker)
 
@@ -518,12 +524,56 @@ item. "Too big / too hard / uncertain" is NOT a block: such an item stays in `2_
 built (see "go=go" above). This stops an agent from parking buildable work as "blocked" to
 avoid building it - the exact RETRO regression this guards against.
 
-### Auto-unblock (no new GO needed)
+### Auto-unblock (deterministic, no new GO needed)
 
-When an item B reaches `2_done`, read `B.blocks`. For each referenced item A in `3_blocked`
-whose `blocked_by` set is now fully done, move A `3_blocked -> 2_go` and write the History
-line. This is NOT a new GO - the GO was the user's originally and still stands; the block
-merely paused it, so the automatic return respects "only the user sets GO".
+Auto-unblock is ENFORCED by `credo-unblock-sweep.sh`, not left to an agent to remember. The
+sweep runs at two moments, so a delivered blocker never leaves a dependent stranded:
+
+- **On every successful move into `2_done` or `3_verified`** - `credo-item-move.sh` invokes
+  the sweep (defensively; a sweep error never fails the move), so dependents return the
+  instant their last blocker is delivered.
+- **At every SessionStart** (startup, resume, clear, compact, fork) via a hook, which
+  reconciles any backlog that built up while no move happened.
+
+What the sweep does, for each item in `3_blocked`:
+
+1. It reads the item's OWN `blocked_by` ids - the FORWARD edge - and looks up each blocker's
+   status (the folder it lives in). It deliberately does NOT walk the `blocks:` back-pointers,
+   which drift; the forward `blocked_by` edge is authoritative.
+2. If EVERY blocker is in `2_done` OR `3_verified`, the block is over: it moves the item to
+   its `unblock_to` target (`go` or `clarify`; a legacy item without the field -> `go`) and
+   appends a History line `-> <target> <date> (auto-unblock: #<ids> done)`. **`4_archived`
+   does NOT count as delivered** - an archived blocker means the dependency was abandoned, so
+   the item stays blocked and is surfaced (below).
+
+This is NOT a new GO - the GO was the user's originally and still stands; the block merely
+paused it, so the automatic return respects "only the user sets GO". The sweep is idempotent
+(an unblocked item leaves `3_blocked`, so a re-run does not touch it) and never deletes
+anything (it moves via `credo-item-move.sh`).
+
+### Surfacing stranded blocked items (a nudge, no move)
+
+For items that REMAIN in `3_blocked` after the auto-unblock pass, the sweep emits a short
+nudge (at SessionStart, as `additionalContext`) when a blocker is not heading toward done:
+
+- blocker in `1_clarify` - waiting on an undecided question;
+- blocker in `4_archived` - stranded: the dependency was abandoned;
+- transitive dead-end - the blocker is itself still `3_blocked`.
+
+This is surfacing ONLY - the sweep never moves these; it just makes the dead-end visible so
+the user or agent resolves the blocker (or re-decides). A blocker still in `2_go`/`parked` is
+normal in-progress work and is NOT surfaced.
+
+### Decision-hub items unblock their dependents by reaching done
+
+A decision / clarify-hub item whose deliverable is a DECISION, not code (for example "decide
+A vs B" that several other items are `blocked_by`), is **done once its decisions are captured
+AND propagated into the dependent items** - then it may move to `2_done`, so it stops blocking
+its dependents permanently. This is a convention, not a mechanism: there is no auto-move to
+`2_done` for such an item; a human/agent moves it through the normal DoD gate once the
+decision is recorded and the dependents updated. (Because `4_archived` does not count as
+delivered, closing such a hub by archiving it would leave its dependents stranded - resolve
+it to `2_done` instead.)
 
 ## Moving items (lifecycle)
 
@@ -553,7 +603,10 @@ Valid transitions (folder = status):
 - `2_go -> 1_clarify` when a genuine user-only decision surfaces (the Named-Decision-Test
   passes), typically mid-build. Agent-permitted - the one carve-out from "never self-demote";
   NOT for "too big / too hard". Mark the returned item URGENT (see above) and record why.
-- `3_blocked -> 2_go` on auto-unblock when the blocking item(s) are done (not a new GO).
+- `3_blocked -> <unblock_to>` (`go` or `clarify`; legacy item without the field -> `go`) on
+  auto-unblock when EVERY blocker is in `2_done`/`3_verified` (not a new GO), enforced
+  deterministically by `credo-unblock-sweep.sh` on done/verified moves and at SessionStart.
+  `4_archived` does NOT count as delivered.
 - `2_go -> 2_done` only after the full Definition of Done gate above passes.
 - `2_done -> 1_clarify` when a bug is found (see above).
 - any -> `parked/hold` (external block) or `parked/future` (deferred), or `4_archived`

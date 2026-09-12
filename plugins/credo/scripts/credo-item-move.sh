@@ -12,6 +12,7 @@
 # Usage:
 #   credo-item-move.sh <id> <target>
 #   credo-item-move.sh <id> verified --user-authorized
+#   credo-item-move.sh <id> blocked [--unblock-to clarify|go]
 #   CREDO_DIR=/path credo-item-move.sh <id> <target>
 #   CREDO_VERIFIED_USER_AUTHORIZED=1 credo-item-move.sh <id> verified
 #
@@ -28,7 +29,14 @@
 #
 # Entry-gate helpers (warn / refuse, not a full gate):
 #   target go      -> warns if the item History has no GO-citation line (G1 not provable).
-#   target blocked -> refuses if the item has no blocked_by (a block needs a concrete blocker).
+#   target blocked -> refuses if the item has no blocked_by (a block needs a concrete blocker);
+#                     records unblock_to: in the frontmatter (the return target the auto-unblock
+#                     sweep uses) - derived from the source folder (1_clarify->clarify, 2_go->go,
+#                     anything else->go), overridable with --unblock-to clarify|go.
+#
+# After a successful move to done OR verified, credo-unblock-sweep.sh is invoked
+# (defensively, never failing the move) so items whose blockers are now delivered
+# return to their unblock_to target immediately.
 #
 # 3_verified is human-authorized: an agent NEVER moves an item there on its own
 # initiative. Only the MAIN agent (direct user contact), and only on the user's
@@ -47,14 +55,34 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 die() { echo "credo-item-move: $*" >&2; exit 1; }
 
 # --- args --------------------------------------------------------------------
-{ [ "$#" -ge 2 ] && [ "$#" -le 3 ]; } || die "usage: credo-item-move.sh <id> <target> [--user-authorized]  (target: clarify|go|blocked|done|verified|archived|hold|future; --user-authorized only for verified)"
+[ "$#" -ge 2 ] || die "usage: credo-item-move.sh <id> <target> [--user-authorized] [--unblock-to clarify|go]  (target: clarify|go|blocked|done|verified|archived|hold|future)"
 ID="$1"
 TARGET="$2"
-FLAG="${3:-}"
+shift 2
 
-if [ -n "$FLAG" ] && [ "$FLAG" != "--user-authorized" ]; then
-    die "unknown option '$FLAG' (only --user-authorized is valid as third argument, and only for the verified target)"
-fi
+# Optional flags (order-free): --user-authorized (verified target only) and
+# --unblock-to <clarify|go> (blocked target only, overrides the source-folder default).
+FLAG=""
+UNBLOCK_TO_OVERRIDE=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --user-authorized)
+            FLAG="--user-authorized"
+            ;;
+        --unblock-to)
+            shift
+            UNBLOCK_TO_OVERRIDE="${1:-}"
+            case "$UNBLOCK_TO_OVERRIDE" in
+                clarify|go) : ;;
+                *) die "--unblock-to takes 'clarify' or 'go', got '${UNBLOCK_TO_OVERRIDE:-<empty>}'" ;;
+            esac
+            ;;
+        *)
+            die "unknown option '$1' (valid: --user-authorized, --unblock-to clarify|go)"
+            ;;
+    esac
+    shift
+done
 
 # 3_verified is human-authorized. Only an explicit opt-in unlocks it: the third
 # argument --user-authorized OR the env CREDO_VERIFIED_USER_AUTHORIZED=1.
@@ -161,6 +189,41 @@ case "$TARGET" in
         if ! grep -Eiq -- '^[[:space:]]*blocked_by:.*[0-9]' "$SRC"; then
             die "target 'blocked' requires a blocked_by referencing an unfinished item (e.g. 'blocked_by: [123]'); '$BASENAME' has none. 'Too big/hard/uncertain' is not a block - build it in 2_go."
         fi
+        # Record the return target the auto-unblock sweep uses. Derive it from the
+        # source folder (where the GO'd item came from) unless --unblock-to overrides:
+        #   1_clarify -> clarify, 2_go -> go, anything else -> go (the legacy default).
+        if [ -n "$UNBLOCK_TO_OVERRIDE" ]; then
+            UNBLOCK_TO="$UNBLOCK_TO_OVERRIDE"
+        else
+            case "$SRC_DIR" in
+                */1_todo/1_clarify) UNBLOCK_TO="clarify" ;;
+                */1_todo/2_go)      UNBLOCK_TO="go" ;;
+                *)                  UNBLOCK_TO="go" ;;
+            esac
+        fi
+        # Write unblock_to into the frontmatter (replace an existing line, else insert
+        # before the closing '---'). Atomic via a temp file so a parse hiccup never
+        # corrupts the item; a failure here only warns and does not abort the move.
+        _fm_tmp="$SRC.unblockto.$$"
+        if awk -v val="$UNBLOCK_TO" '
+            BEGIN{infm=0; wrote=0; seen=0}
+            NR==1 && /^---[[:space:]]*$/ {print; infm=1; seen=1; next}
+            infm==1 && /^---[[:space:]]*$/ {
+                if (wrote==0) { print "unblock_to: " val; wrote=1 }
+                print; infm=0; next
+            }
+            infm==1 && /^[[:space:]]*unblock_to:/ {
+                if (wrote==0) { print "unblock_to: " val; wrote=1 }
+                next
+            }
+            {print}
+            END{ if (seen==0) exit 1 }
+        ' "$SRC" > "$_fm_tmp" 2>/dev/null; then
+            mv -f "$_fm_tmp" "$SRC" 2>/dev/null || rm -f "$_fm_tmp" 2>/dev/null
+        else
+            rm -f "$_fm_tmp" 2>/dev/null
+            echo "credo-item-move: WARNING - could not record unblock_to in $BASENAME (frontmatter unchanged)." >&2
+        fi
         ;;
 esac
 
@@ -184,3 +247,17 @@ fi
 
 echo "moved #$ID: ${SRC#"$CREDO_DIR"/} -> ${DEST#"$CREDO_DIR"/}"
 echo "credo-item-move: remember to update the item's History section with this transition."
+
+# --- auto-unblock dependents (done/verified only) ----------------------------
+# A delivery (a move into 2_done or 3_verified) can satisfy the last blocker of
+# some item in 3_blocked. Run the unblock sweep (pass 1) so such dependents return
+# to their unblock_to target immediately, not only at the next SessionStart. The
+# sweep is fully defensive and idempotent; its failure must NEVER fail this move,
+# so it is fire-and-forget with output discarded. It targets THIS tree via CREDO_DIR.
+case "$TARGET" in
+    done|verified|3_verified)
+        if [ -x "$SCRIPT_DIR/credo-unblock-sweep.sh" ]; then
+            CREDO_DIR="$CREDO_DIR" "$SCRIPT_DIR/credo-unblock-sweep.sh" "$CREDO_DIR" >/dev/null 2>&1 || true
+        fi
+        ;;
+esac
