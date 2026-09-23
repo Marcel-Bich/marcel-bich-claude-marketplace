@@ -170,6 +170,7 @@ The `SessionStart` hook injects a small legend so the agent understands the user
 - `cm` - commit, per the repo's commit rules, no push.
 - `ph` - commit and push, per the repo's rules (push only where they allow it).
 - `exclude` / `excluded` - always the local `.git/info/exclude`, never `.gitignore`; only `ignore` / `ignored` / `gitignore` means `.gitignore`.
+- `#N` vs `§cct_N` - `#N` is reserved for real items (credo items, issues, PRs, tickets); harness task entries and any other numbering are `§cct_N` (e.g. `§cct_2`), in both directions (`§cct_2 dd` = harness task 2 done).
 
 ## 6. Capturing recurring workflows into skills
 

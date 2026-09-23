@@ -74,6 +74,7 @@ credo teaches the agent a few short chat shorthands, so you can type them withou
 | `cm` | Commit, following the repo's commit rules. No push. |
 | `ph` | Commit and push, following the repo's rules (push only where they allow it). |
 | `exclude` / `excluded` | Always the local `.git/info/exclude`, never `.gitignore`. Only `ignore` / `ignored` / `gitignore` means `.gitignore`. |
+| `#N` vs `§cct_N` | `#N` only for real items (credo items, issues, PRs, tickets). Claude's harness tasks and any other numbering are `§cct_N` (cct = Claude Code task, e.g. `§cct_2`), so the two never get confused. `§cct_2 dd` = harness task 2 done. |
 
 Turn off only the legend with `CREDO_SESSION_START_SHORTHANDS=false`; `CREDO_SESSION_START_INJECT=false` silences the whole hook, legend included.
 

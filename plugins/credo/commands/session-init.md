@@ -139,7 +139,9 @@ tag convention, and terminology live in the credo `items` skill under "Harness t
 ## Output convention
 
 Item references are always written in inline-code style: `#37`, `#90`, `#91` (backticks) -
-never bold or plain. This improves scannability of item numbers.
+never bold or plain. This improves scannability of item numbers. `#N` is reserved for real
+items (credo items, issues, PRs, tickets); harness task entries and any other numbering are
+written `§cct_N` (e.g. `§cct_2`), never `#2` (see the credo `items` skill).
 
 ## Your Response
 

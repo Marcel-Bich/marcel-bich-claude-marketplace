@@ -81,6 +81,12 @@ inline-code item-reference convention used throughout the credo skills. Example 
 [REMINDER] `#1234` X still needed there, but only later after Y is done
 ```
 
+**Numbering: `#N` only for real items.** `#N` is reserved for real items (credo items, issues,
+PRs, tickets). A harness task entry is never referred to as `#N`, because the harness ids
+overlap with item numbers: in replies and task subjects write it as `§cct_N` (cct = Claude Code task, e.g. "task `§cct_2`
+is still open", never "task #2"). The same goes for any other numbering that is not a real
+item. The user writes it the same way ("§cct_2 dd" = harness task 2 done).
+
 > **Terminology.** "task list" / "task liste" means primarily the harness `TaskCreate` /
 > `TaskList` entries; only if none exist may the agent interpret what was otherwise meant.
 

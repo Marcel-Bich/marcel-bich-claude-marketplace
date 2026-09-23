@@ -150,6 +150,7 @@ read -r -d '' SHORTHANDS <<'SH'
 - "cc-up" = the user fully updated Claude Code (plugins + marketplaces fetched and installed, /reload-plugins, full quit and restart, maybe resumed): the running state is current. Take it at face value - never doubt it, never ask for steps or proof, just continue. Also valid in passing.
 - "cm" = commit (per the repo's commit rules, no push). "ph" = commit + push (same rules; push only where the repo rules allow it).
 - "exclude" / "excluded" = always the local .git/info/exclude, never .gitignore; only "ignore" / "ignored" / "gitignore" means .gitignore.
+- "#N" vs "§cct_N": "#N" is reserved for real items (credo items, issues, PRs, tickets). Harness task-list entries (TaskCreate / TaskList ids) and any other numbering that is not a real item are written "§cct_N" (cct = Claude Code task) in replies and task subjects (e.g. "§cct_2", never "#2"), so the two never get confused. The user uses it the same way: "§cct_2 dd" = harness task 2 done.
 SH
 fi
 

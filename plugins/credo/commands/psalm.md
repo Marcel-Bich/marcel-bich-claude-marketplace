@@ -50,7 +50,7 @@ What would you like to explore?
 - Item Lifecycle: work items with a hard Definition of Done
 - Budget and Autonomy: unattended work within 5h and weekly caps
 - Verify and Safety: visual verify, filesystem protection, subagent priming
-- Chat Shorthands: dd / vf / cf / ??? / cc-up / cm / ph / exclude
+- Chat Shorthands: dd / vf / cf / ??? / cc-up / cm / ph / exclude / #N vs §cct_N
 - The Wider Marketplace: hydra, dogma, import, limit and more (optional)
 - Something else: Ask your own question
 ```
@@ -147,6 +147,7 @@ You can type a few short shorthands in chat; credo's SessionStart hook teaches t
 - `cc-up` - you fully updated Claude Code (plugins, reload, restart); the agent takes it at face value.
 - `cm` - commit (repo rules, no push). `ph` - commit and push.
 - `exclude` / `excluded` - always `.git/info/exclude`, never `.gitignore` (say "ignore" / "gitignore" for that).
+- `#N` vs `§cct_N` - `#N` only for real items (credo items, issues, PRs, tickets); Claude's harness tasks and other numbering are `§cct_N` (`§cct_2 dd` = task 2 done).
 
 ### The Full Commandments (credo)
 
