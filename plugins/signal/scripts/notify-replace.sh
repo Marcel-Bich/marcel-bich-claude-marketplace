@@ -18,6 +18,15 @@ URGENCY="${5:-1}"
 
 # Store notification IDs in temp files for replacement
 ID_FILE="/tmp/claude-mb-notify-id-${SESSION_ID}"
+
+# Serialize read-close-notify-write per key. Without the lock, hooks that fire
+# at the same moment (parallel tool calls) all read the same old ID and each
+# leaves its own notification behind. The lock is released when the script exits.
+if command -v flock &> /dev/null; then
+    exec 9>"${ID_FILE}.lock"
+    flock -w 5 9 || true
+fi
+
 PREV_ID=0
 if [ -f "$ID_FILE" ]; then
     PREV_ID=$(cat "$ID_FILE" 2>/dev/null || echo "0")
@@ -42,8 +51,19 @@ elif command -v gdbus &> /dev/null; then
             -d org.freedesktop.Notifications \
             -o /org/freedesktop/Notifications \
             -m org.freedesktop.Notifications.CloseNotification \
-            "$PREV_ID" 2>/dev/null || true
+            "$PREV_ID" >/dev/null 2>&1 || true
     fi
+
+    # GNOME Shell (46 and older) turns every "\n" in the body into a space, even
+    # when the notification is expanded; a carriage return survives and renders
+    # as a line break. Other servers keep "\n", so convert only for gnome-shell.
+    SERVER_NAME=$(gdbus call --session \
+        -d org.freedesktop.Notifications \
+        -o /org/freedesktop/Notifications \
+        -m org.freedesktop.Notifications.GetServerInformation 2>/dev/null)
+    case "$SERVER_NAME" in
+        *"'gnome-shell'"*) BODY="${BODY//$'\n'/$'\r'}" ;;
+    esac
 
     RESULT=$(gdbus call --session \
         -d org.freedesktop.Notifications \

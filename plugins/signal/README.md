@@ -7,9 +7,11 @@ Desktop notifications showing what Claude Code is working on - stay informed eve
 - Live status updates via desktop notifications
 - Location context in every notification:
   - Title: `<event> | cwd: .../<parent>/<dir>` (short paths like `/tmp` are shown as is), e.g. `Tool waiting | cwd: .../marcel/workstation`
+  - General notifications (permission prompt, waiting for input) use the session caption as `<event>`: the `/rename` title, else the limit statusline caption, else the kitty tab title, else the tmux session, else `Claude Code`
   - Body, first line: `git: <parent>/<repo>` of the repo the session works in - resolved from the limit plugin's per-session work-repo state, then git discovery from the cwd, then the credo session pin (limit and credo are optional); omitted when no repo resolves
   - Body, last line (after an empty line): `tmux: <session> | kitty: <tab>` with only the parts that exist; omitted outside tmux/kitty. tmux is the session of the current pane; kitty is the tab title without `[ai...]`/`[ask]`/`[fin]` prefixes, taken from the tab indicator's saved title or, if the indicator is disabled or has no saved title, read live via `kitty @ ls` (needs the kitty socket)
   - On WSL2 the body lines are joined with ` | ` because the toast shows the body as a single text field
+  - On GNOME Shell the line breaks are sent as carriage returns, because GNOME turns every `\n` in the body into a space (empty lines are kept)
 - Sound alerts with context-aware sounds:
   - "Complete" sound for permission prompts (requires attention)
   - "Message" sound for general notifications
@@ -17,7 +19,7 @@ Desktop notifications showing what Claude Code is working on - stay informed eve
 - Optional AI summaries (using Haiku)
 - Smart filtering to prevent notification spam
 - "Tool waiting" hints are skipped in bypass permissions mode (no tool ever waits there); real permission prompts are still notified
-- Non-stacking notifications: previous notifications are closed before sending new ones to prevent Linux tray stacking
+- Non-stacking notifications: one slot per session and hook type; each new notification replaces the previous one of the same session (previous one is closed first to prevent Linux tray stacking). Hooks firing at the same moment (parallel tool calls) are serialized with `flock`, so they no longer leave several notifications behind
 - Kitty terminal tab indicator for active Claude sessions
 - Cross-platform: Linux and WSL2 (Windows 10/11)
 

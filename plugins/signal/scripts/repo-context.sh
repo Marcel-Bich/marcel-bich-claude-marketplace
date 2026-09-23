@@ -6,6 +6,8 @@
 #   signal_cwd_label <cwd>          -> ".../<parent>/<base>" (or the path as is when short)
 #   signal_git_label <cwd> <sid>    -> "git: <parent>/<repo>" or nothing
 #   signal_title <base> <cwd>       -> "<base> | cwd: <cwd_label>" (or "<base>")
+#   signal_caption <sid> <transcript> [<name>] -> session caption, else kitty tab, else tmux session, else "Claude Code"
+#   signal_notify_key <sid> <project> <type> -> "session-<sid>-<type>" (or "project-<project>-<type>" without a valid sid)
 #   signal_session_label            -> "tmux: <session> | kitty: <tab>" (only parts that exist)
 #   signal_body <git> <msg> [<sess>] -> "<git>\n<msg>\n\n<sess>" (empty parts are omitted)
 #
@@ -108,6 +110,48 @@ signal_title() {
     else
         printf '%s' "$base"
     fi
+}
+
+# Replacement key for notify-replace.sh: one slot per session and hook type.
+signal_notify_key() {
+    local sid="$1" project="$2" type="$3"
+    case "$sid" in
+        ""|*[!A-Za-z0-9._-]*) printf '%s' "project-${project}-${type}" ;;
+        *) printf '%s' "session-${sid}-${type}" ;;
+    esac
+}
+
+# Title base for general notifications (instead of a fixed "Claude Code"), first hit wins:
+#   1. <name> (session_name from the hook input, if Claude Code sends it)
+#   2. the latest /rename title ("custom-title") in the session transcript
+#   3. limit's cached statusline caption /tmp/claude-mb-limit-caption-<sid> (soft dependency)
+#   4. the clean kitty tab title
+#   5. the tmux session name of this pane
+#   6. "Claude Code"
+signal_caption() {
+    local sid="$1" transcript="$2" name="${3:-}" cap=""
+    case "$sid" in
+        *[!A-Za-z0-9._-]*) sid="" ;;
+    esac
+    cap="$name"
+    if [ -z "$cap" ] && [ -n "$transcript" ] && [ -f "$transcript" ]; then
+        cap=$(_signal_timeout grep '"type":"custom-title"' "$transcript" 2>/dev/null | tail -n 1 \
+            | jq -r '.customTitle // empty' 2>/dev/null)
+    fi
+    if [ -z "$cap" ] && [ -n "$sid" ] && [ -f "/tmp/claude-mb-limit-caption-${sid}" ]; then
+        cap=$(head -n 1 "/tmp/claude-mb-limit-caption-${sid}" 2>/dev/null)
+    fi
+    if [ -z "$cap" ] && declare -F kitty_tab_get_clean_title > /dev/null; then
+        cap=$(kitty_tab_get_clean_title 2>/dev/null)
+    fi
+    if [ -z "$cap" ] && [ -n "${TMUX_PANE:-}" ] && command -v tmux &> /dev/null; then
+        cap=$(_signal_timeout tmux display-message -p -t "$TMUX_PANE" '#S' 2>/dev/null | head -n 1)
+    fi
+    cap=$(printf '%s' "$cap" | tr -d '\r\n')
+    [ "$cap" = "null" ] && cap=""
+    [ -n "$cap" ] || cap="Claude Code"
+    [ "${#cap}" -gt 60 ] && cap="${cap:0:60}..."
+    printf '%s' "$cap"
 }
 
 # Session location: "tmux: <session> | kitty: <tab title>", only the parts that exist.

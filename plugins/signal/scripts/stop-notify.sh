@@ -131,7 +131,7 @@ fi
 # Body: "git: <parent>/<repo>" first, then the summary, then "tmux: ... | kitty: ..." (each only if present)
 TITLE=$(signal_title "✨ Done" "$CWD")
 BODY=$(signal_body "$(signal_git_label "$CWD" "$SESSION_ID")" "$SUMMARY" "$(signal_session_label)")
-"$PLUGIN_ROOT/scripts/notify-replace.sh" "project-${PROJECT}-stop" "$TITLE" "$BODY" "dialog-information" 1
+"$PLUGIN_ROOT/scripts/notify-replace.sh" "$(signal_notify_key "$SESSION_ID" "$PROJECT" stop)" "$TITLE" "$BODY" "dialog-information" 1
 
 # Play completion sound
 if is_wsl; then

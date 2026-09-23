@@ -4,12 +4,21 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/wsl-utils.sh"
+source "$SCRIPT_DIR/repo-context.sh"
 
 PROJECT=$(basename "$PWD" 2>/dev/null || echo "claude")
 
+# Session id from the hook input (notification slots are keyed per session)
+INPUT=""
+[ ! -t 0 ] && INPUT=$(cat)
+SID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
+case "$SID" in
+    *[!A-Za-z0-9._-]*) SID="" ;;
+esac
+
 # Mark that first PreToolUse event should be ignored
 # (Either stale from /resume, or user is at terminal anyway for new session)
-touch "/tmp/claude-mb-first-event-pending-${PROJECT}"
+touch "/tmp/claude-mb-first-event-pending-$(signal_notify_key "$SID" "$PROJECT" first)"
 
 if is_wsl; then
     # Windows: Clear only ClaudeCode group notifications from Action Center
@@ -20,7 +29,8 @@ if is_wsl; then
 else
     # Linux: Close all tracked notifications and clean up ID files
     if command -v gdbus &> /dev/null; then
-        for id_file in /tmp/claude-mb-notify-id-project-${PROJECT}-*; do
+        for id_file in /tmp/claude-mb-notify-id-project-${PROJECT}-* ${SID:+/tmp/claude-mb-notify-id-session-${SID}-*}; do
+            case "$id_file" in *.lock) continue ;; esac
             [ -f "$id_file" ] || continue
             NOTIF_ID=$(cat "$id_file" 2>/dev/null)
             if [ -n "$NOTIF_ID" ] && [ "$NOTIF_ID" != "0" ]; then
@@ -28,11 +38,12 @@ else
                     -d org.freedesktop.Notifications \
                     -o /org/freedesktop/Notifications \
                     -m org.freedesktop.Notifications.CloseNotification \
-                    "$NOTIF_ID" 2>/dev/null || true
+                    "$NOTIF_ID" >/dev/null 2>&1 || true
             fi
         done
     fi
     rm -f /tmp/claude-mb-notify-id-project-${PROJECT}-* 2>/dev/null
+    [ -n "$SID" ] && rm -f /tmp/claude-mb-notify-id-session-${SID}-* 2>/dev/null
 fi
 
 # --- Kitty tab: clean up stale prefix and start exit monitor ---

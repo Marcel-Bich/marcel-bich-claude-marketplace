@@ -29,15 +29,18 @@ INPUT=""
 HOOK_CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 [ -z "$HOOK_CWD" ] && HOOK_CWD="$PWD"
 HOOK_SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
+HOOK_TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)
+HOOK_SESSION_NAME=$(echo "$INPUT" | jq -r '.session_name // empty' 2>/dev/null)
 
-# Use PROJECT + HOOK_TYPE as replacement ID
-NOTIFY_ID="project-${PROJECT}-${HOOK_TYPE}"
+# Replacement key: one notification slot per session and hook type
+# (falls back to the directory name when the hook input has no session id)
+NOTIFY_ID=$(signal_notify_key "$HOOK_SESSION_ID" "$PROJECT" "$HOOK_TYPE")
 
 # Ignore first PreToolUse event after session start
 # - New session: User is at terminal anyway, no notification needed
 # - /resume: First event is stale from old session
 if [ "$HOOK_TYPE" = "PreToolUse" ] || [ "$HOOK_TYPE" = "pretooluse" ]; then
-    FIRST_EVENT_MARKER="/tmp/claude-mb-first-event-pending-${PROJECT}"
+    FIRST_EVENT_MARKER="/tmp/claude-mb-first-event-pending-$(signal_notify_key "$HOOK_SESSION_ID" "$PROJECT" first)"
     if [ -f "$FIRST_EVENT_MARKER" ]; then
         rm -f "$FIRST_EVENT_MARKER"
         exit 0
@@ -63,7 +66,7 @@ case "$HOOK_TYPE" in
         exit 0
         ;;
     notification|Notification)
-        TITLE="Claude Code"
+        TITLE=$(signal_caption "$HOOK_SESSION_ID" "$HOOK_TRANSCRIPT" "$HOOK_SESSION_NAME")
         ICON="dialog-information"
         URGENCY=2
         SOUND_TYPE="attention"
@@ -128,7 +131,7 @@ case "$HOOK_TYPE" in
         fi
         ;;
     *)
-        TITLE="Claude Code"
+        TITLE=$(signal_caption "$HOOK_SESSION_ID" "$HOOK_TRANSCRIPT" "$HOOK_SESSION_NAME")
         MESSAGE="Activity: $HOOK_TYPE"
         ICON="dialog-information"
         URGENCY=1
