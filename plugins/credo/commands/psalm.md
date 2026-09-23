@@ -50,6 +50,7 @@ What would you like to explore?
 - Item Lifecycle: work items with a hard Definition of Done
 - Budget and Autonomy: unattended work within 5h and weekly caps
 - Verify and Safety: visual verify, filesystem protection, subagent priming
+- Chat Shorthands: dd / vf / cf / ??? / cc-up / cm / ph / exclude
 - The Wider Marketplace: hydra, dogma, import, limit and more (optional)
 - Something else: Ask your own question
 ```
@@ -134,6 +135,18 @@ Two orchestration skills for maintaining a public repo. They trigger on their ow
 When the same multi-step workflow keeps coming back in a session - about three times - credo can turn it into a reusable Claude Code skill instead of re-deriving it each time. Detection is in-session and heuristic; there is no counter and no backend.
 
 It is mode-aware. In autonomous mode credo never builds a skill on its own - it just notes the pattern in `.credo/skill-candidates.md` and keeps working. In active or passive mode it explains the pattern and proposes capturing it via a question, building only on your GO. A built skill lands on the normal discovery path (`<repo>/.claude/skills/` or `~/.claude/skills/`), is marked as credo-generated (a `credo-` name prefix and an `origin: credo-repetition` marker), and is logged in `.credo/generated-skills.md`. Open candidates are offered again gently at the next session start.
+
+### Topic: Chat Shorthands
+
+You can type a few short shorthands in chat; credo's SessionStart hook teaches them to the agent in every directory (credo active or not), so nothing goes into your own CLAUDE.md and they survive a compact. Each refers to what precedes it:
+
+- `dd` - done: `<thing> dd`, bare `dd` (the last discussed thing), `cc-up dd`. On a single Definition of Done point only that point is ticked. For a credo item (`#123 dd`) the agent runs the normal Definition of Done gate and moves it to `2_done/` only on a pass - otherwise it reports.
+- `vf` - in a manual test round you were asked to run: you checked it, it passes. On a single Definition of Done point only that point is ticked; only the whole item under test (`#123 vf`) moves to `3_verified/`. Otherwise: verify it for real with runtime proof (verify skill). Unclear? The agent asks.
+- `cf` - start or continue a clarify round (the `1_clarify` items one per round, or `#57 cf`).
+- `???` - explain that in depth: What / Why / Example / Consequences (same as `/credo:explain`).
+- `cc-up` - you fully updated Claude Code (plugins, reload, restart); the agent takes it at face value.
+- `cm` - commit (repo rules, no push). `ph` - commit and push.
+- `exclude` / `excluded` - always `.git/info/exclude`, never `.gitignore` (say "ignore" / "gitignore" for that).
 
 ### The Full Commandments (credo)
 

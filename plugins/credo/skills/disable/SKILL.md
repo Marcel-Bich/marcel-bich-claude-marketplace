@@ -17,6 +17,9 @@ makes credo stop advertising itself here (no onboarding ASK, no `[credo]` prompt
 down any active credo state for the current session. It does NOT uninstall the plugin and it is
 fully reversible.
 
+The chat-shorthand legend (`dd` / `vf` / `cf` / `???` / `cc-up` / `exclude`) stays on here: it is
+pure user-intent parsing injected into the model context only, not workflow advertising.
+
 ## When to use
 
 - The user runs `/credo:disable`.

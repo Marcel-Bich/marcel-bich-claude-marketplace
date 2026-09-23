@@ -20,6 +20,17 @@
 #      it may run itself, which need the user, and which it must never trigger
 #      autonomously.
 #
+#   3. SHORTHANDS (always). A compact legend of the user's chat shorthands
+#      (dd / vf / cf / ??? / cc-up / cm / ph / exclude) is appended to EVERY output of
+#      this hook, and emitted on its own where the hook would otherwise stay
+#      silent (declined dir, open decision on compact/resume/fork, gsd backend).
+#      It is pure user-intent parsing, not workflow, so it also applies in hub
+#      dirs, dirs without .credo/, and dirs silenced via /credo:disable - and the
+#      user needs no line in their own CLAUDE.md. Each shorthand has a general
+#      meaning first plus the credo-item mapping. Toggle:
+#      CREDO_SESSION_START_SHORTHANDS (default on); CREDO_SESSION_START_INJECT
+#      =false still silences the whole hook, legend included.
+#
 # State (keyed by session_id, mirrors session-mode-set.sh / credo-decision-set.sh):
 #   mode      : ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-modes/<id>      (active|passive|autonomous)
 #   decision  : ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-decisions/<id>  (accepted|declined)
@@ -28,8 +39,10 @@
 #   dir       : ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/dir-decisions/<hash>    (accepted|declined)
 # Derived session state:
 #   active   = a mode is set, OR decision == accepted, OR dir == accepted -> KNOWLEDGE (any source)
-#   declined = decision == declined, OR dir == declined (and not active)  -> stay silent
+#   declined = decision == declined, OR dir == declined (and not active)  -> no workflow text
 #   open     = none of the above                                          -> ASK on startup/clear only
+# ("silent" / "nothing" below refers to the workflow text; the SHORTHANDS
+# legend is still emitted in every state, see mechanism 3.)
 # The per-dir layer makes a "No" stick: once declined for a directory, that
 # directory never ASKs again, in this or any future session.
 #
@@ -43,7 +56,8 @@
 # Pattern mirrors session-mode-inject.sh: emit hookSpecificOutput.additionalContext
 # with jq, suppressOutput so the user chat is not flooded.
 #
-# Failure-safe: ANY problem -> exit 0 with no output. Never disrupt a session.
+# Failure-safe: ANY problem (no jq, no/invalid stdin, bad session_id) -> exit 0
+# with no output. Never disrupt a session.
 
 # --- toggle (default on) ---
 [[ "${CREDO_SESSION_START_INJECT:-true}" == "true" ]] || exit 0
@@ -119,9 +133,33 @@ fi
 # cascade > default credo); any error falls back to credo. When the backend is
 # gsd, the ENTIRE credo SessionStart hook stands down (no ASK, no KNOWLEDGE):
 # GSD is the task system, so advertising the credo item workflow would mislead.
+emit() {
+    jq -n --arg ctx "$1" \
+        '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}, suppressOutput: true}' 2>/dev/null
+}
+
+# --- SHORTHANDS legend (mechanism 3): emitted in every state, see header ---
+SHORTHANDS=""
+if [[ "${CREDO_SESSION_START_SHORTHANDS:-true}" == "true" ]]; then
+read -r -d '' SHORTHANDS <<'SH'
+[credo] USER SHORTHANDS (valid in any directory, credo workflow active or not; each refers to what precedes it):
+- "dd" = done: the referenced thing (task, step; bare "dd" = the last discussed/requested one) is done; "cc-up dd" = update done. A single DoD point: tick only that point, never the whole item. For a credo item ("#123 dd"): run its normal DoD gate (audit, verify if ui), on pass move it via credo-item-move.sh 123 done; if the gate fails, report instead (a user statement, never a gate bypass).
+- "vf" = verified or verify. In a manual test round where the user was asked to check something: checked and passing - scope is exactly what it refers to: a single DoD point -> tick only that point (user-verified), the item stays where it is; only the whole item under test ("#123 vf") -> credo-item-move.sh 123 verified --user-authorized, main agent only. Otherwise: verify it for real with runtime proof, not code review (in credo: verify skill via subagents). Unclear which? Ask briefly.
+- "cf" = start or continue a clarify round: structured questions until the open points are resolved (in credo: the 1_clarify items one per Ask round, or the named one, "#57 cf").
+- "???" (alone or right after a term/statement) = explain that thing in depth: What / Why / Example / Consequences (explain skill, same as /credo:explain).
+- "cc-up" = the user fully updated Claude Code (plugins + marketplaces fetched and installed, /reload-plugins, full quit and restart, maybe resumed): the running state is current. Take it at face value - never doubt it, never ask for steps or proof, just continue. Also valid in passing.
+- "cm" = commit (per the repo's commit rules, no push). "ph" = commit + push (same rules; push only where the repo rules allow it).
+- "exclude" / "excluded" = always the local .git/info/exclude, never .gitignore; only "ignore" / "ignored" / "gitignore" means .gitignore.
+SH
+fi
+
 backend="$("${HOOK_DIR}/../scripts/credo-config.sh" backend 2>/dev/null || echo credo)"
 [[ -n "$backend" ]] || backend="credo"
-[[ "$backend" == "gsd" ]] && exit 0
+# gsd: no credo workflow text at all, but the shorthand legend still applies.
+if [[ "$backend" == "gsd" ]]; then
+    [[ -n "$SHORTHANDS" ]] && emit "$SHORTHANDS"
+    exit 0
+fi
 
 # CREDO_SESSION_START_ASK (default on) turns ONLY the one-time activation ASK
 # off, independently of the KNOWLEDGE re-feed (CREDO_SESSION_START_INJECT still
@@ -133,11 +171,6 @@ ask_enabled=true
 # to answer AskUserQuestion. This closes the gap where a fresh autonomous
 # session has no mode file yet at its first startup (state would be "open").
 [[ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo-autonomy-active" ]] && ask_enabled=false
-
-emit() {
-    jq -n --arg ctx "$1" \
-        '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}, suppressOutput: true}' 2>/dev/null
-}
 
 # --- KNOWLEDGE block (credo active): full list, tagged by execution class ---
 read -r -d '' KNOWLEDGE <<'K'
@@ -216,6 +249,15 @@ if [[ -n "$REHYDRATE" ]]; then
         OUT="$OUT"$'\n\n'"$REHYDRATE"
     else
         OUT="$REHYDRATE"
+    fi
+fi
+
+# Append the SHORTHANDS legend (mechanism 3) in every state, or emit it alone.
+if [[ -n "$SHORTHANDS" ]]; then
+    if [[ -n "$OUT" ]]; then
+        OUT="$OUT"$'\n\n'"$SHORTHANDS"
+    else
+        OUT="$SHORTHANDS"
     fi
 fi
 
