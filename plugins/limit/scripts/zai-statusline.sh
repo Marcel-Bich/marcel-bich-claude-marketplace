@@ -13,7 +13,8 @@
 #   Tokens  -> Input/Output/Cached/User Tokens        (from stdin)
 #   Context -> UsedT/TkLeft/CtxMax/ContextLeft         (from stdin)
 #   Session -> Sessn/APIuse/SnCost  [bar] %  (try /compact)
-#   <Model> | Style: <s> | Plan: <level> | Device: <host>   (LifetimeTotal dropped)
+#   <Model> | <Effort> | <style> | Plan: <level> | Device: <host>   (LifetimeTotal dropped;
+#                                   <Effort> only when stdin has effort.level)
 #   -
 #   5h / Weekly / MCP   (from z.ai quota; replaces the Anthropic 5h/7d lines)
 #   -
@@ -181,6 +182,17 @@ session_id=$(printf '%s' "$INPUT" | jq -r '.session_id // ""' 2>/dev/null); [[ "
 disp_name=$(printf '%s' "$INPUT" | jq -r '.model.display_name // ""' 2>/dev/null); [[ "$disp_name" == "null" ]] && disp_name=""
 model_name="${disp_name#Claude }"; [[ -n "$model_name" ]] || model_name="GLM"
 style=$(printf '%s' "$INPUT" | jq -r '.output_style.name // "default"' 2>/dev/null); [[ -z "$style" || "$style" == "null" ]] && style="default"
+# Live session effort level; only present when the model supports reasoning effort
+effort=$(printf '%s' "$INPUT" | jq -r '.effort.level // ""' 2>/dev/null); [[ "$effort" == "null" ]] && effort=""
+case "$effort" in
+    "") ;;
+    low) effort="Low" ;;
+    medium) effort="Medium" ;;
+    high) effort="High" ;;
+    xhigh) effort="XHigh" ;;
+    max) effort="Max" ;;
+    *) effort="$(printf '%s' "${effort:0:1}" | tr '[:lower:]' '[:upper:]')${effort:1}" ;;
+esac
 cwd=$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null); [[ "$cwd" == "null" ]] && cwd=""
 [[ -n "$cwd" ]] || cwd=$(pwd 2>/dev/null || echo "")
 
@@ -297,10 +309,12 @@ if [[ "$SHOW_SESSION" == "true" ]]; then
     lines+=("${COLOR_GRAY}${l}${COLOR_RESET}${ucol}    $(progress_bar "$usable_pct") ${pct_fmt}${COLOR_RESET}${warn}")
 fi
 
-# Model line (model | style | plan | device) - LifetimeTotal dropped
+# Model line (model | effort | style | plan | device) - LifetimeTotal dropped
 if [[ "$SHOW_MODEL" == "true" && -n "$model_name" ]]; then
     mcol=$(model_color "$model_name")
-    ml="${mcol}${model_name}${COLOR_RESET}${COLOR_GRAY} | Style: ${style}"
+    ml="${mcol}${model_name}${COLOR_RESET}${COLOR_GRAY}"
+    [[ -n "$effort" ]] && ml="${ml} | ${effort}"
+    ml="${ml} | ${style}"
     [[ -n "$level" ]] && ml="${ml} | Plan: ${level}"
     ml="${ml} | Device: ${DEVICE_LABEL}${COLOR_RESET}"
     lines+=("$ml")

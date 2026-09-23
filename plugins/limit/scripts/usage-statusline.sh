@@ -1391,6 +1391,24 @@ get_thinking_style() {
     echo "default"
 }
 
+# Get live session effort level from stdin data (e.g., "high" -> "High").
+# The field is only present when the current model supports reasoning effort;
+# empty output means the segment is omitted.
+get_effort_level() {
+    [[ -n "$STDIN_DATA" ]] || return 0
+    local effort
+    effort=$(echo "$STDIN_DATA" | jq -r '.effort.level // empty' 2>/dev/null)
+    [[ -z "$effort" || "$effort" == "null" ]] && return 0
+    case "$effort" in
+        low) echo "Low" ;;
+        medium) echo "Medium" ;;
+        high) echo "High" ;;
+        xhigh) echo "XHigh" ;;
+        max) echo "Max" ;;
+        *) echo "${effort^}" ;;
+    esac
+}
+
 # Get total cost from stdin data (USD)
 get_total_cost() {
     if [[ -n "$STDIN_DATA" ]]; then
@@ -1992,6 +2010,8 @@ format_output() {
         current_model_sess=$(get_current_model)
         local style_sess
         style_sess=$(get_thinking_style)
+        local effort_sess
+        effort_sess=$(get_effort_level)
 
         local model_name_color_sess="" model_color_reset_sess=""
         if [[ "$SHOW_COLORS" == "true" ]] && [[ -n "$current_model_sess" ]]; then
@@ -2029,7 +2049,8 @@ format_output() {
         lines+=("${gray_color}${sess_line}${gray_color_reset}${sess_progress_color}${sess_progress_bar}${sess_progress_color_reset}${compact_warning}")
 
         # Model info line with lifetime totals
-        # Format: {Model} | Style: {style} | LifetimeTotal: {tokens} ${cost} | Device: {device}
+        # Format: {Model} | {Effort} | {style} | LifetimeTotal: {tokens} ${cost} | Device: {device}
+        # {Effort} is omitted when stdin has no effort.level (model without reasoning effort)
         if [[ "$SHOW_MODEL" == "true" ]] && [[ -n "$current_model_sess" ]]; then
             # Get lifetime tokens from JSONL files (main + subagent)
             local main_tokens_lifetime subagent_tokens_lifetime total_tokens_lifetime
@@ -2054,7 +2075,11 @@ format_output() {
 
             local model_line=""
             model_line="${model_name_color_sess}${current_model_sess}${model_color_reset_sess}"
-            model_line="${model_line}${gray_color} | Style: ${style_sess}"
+            model_line="${model_line}${gray_color}"
+            if [[ -n "$effort_sess" ]]; then
+                model_line="${model_line} | ${effort_sess}"
+            fi
+            model_line="${model_line} | ${style_sess}"
             if [[ -n "$formatted_tokens_lifetime" ]]; then
                 model_line="${model_line} | LifetimeTotal: ${formatted_tokens_lifetime} \$${total_cost_lifetime}"
             fi

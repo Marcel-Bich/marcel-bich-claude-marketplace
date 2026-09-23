@@ -22,6 +22,7 @@ Live API usage in Claude Code statusline - colored progress bars, Git info, toke
 - Token metrics: Input, Output, Cached, Total
 - Context usage with percentage of max and usable (before auto-compact)
 - Session timing: Total duration, API time
+- Model line: `<Model> | <Effort> | <style> | LifetimeTotal: ... | Device: ...` - the live session effort level (Low/Medium/High/XHigh/Max) is read from the statusline stdin `effort.level` and only shown for models that support reasoning effort
 - Session ID display
 - Session caption (from /rename, summary, or first user prompt)
 
@@ -107,7 +108,7 @@ All features can be toggled via environment variables. Export them in your shell
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLAUDE_MB_LIMIT_MODEL` | true | Show current model with style and cost |
+| `CLAUDE_MB_LIMIT_MODEL` | true | Show current model with effort level, style and cost |
 | `CLAUDE_MB_LIMIT_5H` | true | Show 5-hour limit |
 | `CLAUDE_MB_LIMIT_7D` | true | Show 7-day limit |
 | `CLAUDE_MB_LIMIT_SONNET` | true | Show Sonnet-specific limit |
