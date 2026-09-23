@@ -23,6 +23,19 @@ _signal_debug() {
     fi
 }
 
+# --- Is <pid> a kitty process? ---
+# comm alone is not enough: kitty started via the x-terminal-emulator
+# alternative shows comm "x-terminal-emul", so also check the executable.
+
+_is_kitty_pid() {
+    local pid="$1"
+    local comm exe
+    comm=$(ps -p "$pid" -o comm= 2>/dev/null)
+    [ "$comm" = "kitty" ] && return 0
+    exe=$(readlink "/proc/$pid/exe" 2>/dev/null)
+    [ -n "$exe" ] && [ "$(basename "$exe")" = "kitty" ]
+}
+
 # --- Walk up process tree until parent is kitty, return that PID ---
 
 _walk_up_to_kitty_child() {
@@ -31,9 +44,7 @@ _walk_up_to_kitty_child() {
         local parent
         parent=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')
         if [ -z "$parent" ] || [ "$parent" -le 1 ] 2>/dev/null; then break; fi
-        local parent_comm
-        parent_comm=$(ps -p "$parent" -o comm= 2>/dev/null)
-        if [ "$parent_comm" = "kitty" ]; then
+        if _is_kitty_pid "$parent"; then
             echo "$pid"
             return 0
         fi
@@ -45,10 +56,16 @@ _walk_up_to_kitty_child() {
 # --- Find kitty window PID via process tree ---
 
 _find_kitty_window_pid() {
-    # In tmux: start from tmux client PID (which is in kitty's process tree)
+    # In tmux: start from tmux client PID (which is in kitty's process tree).
+    # Target this pane's client via -t "$TMUX_PANE"; without it tmux picks the
+    # most recent client, which is wrong when several clients are attached.
     if [ -n "${TMUX:-}" ]; then
         local client_pid
-        client_pid=$(timeout 2 tmux display-message -p '#{client_pid}' 2>/dev/null)
+        if [ -n "${TMUX_PANE:-}" ]; then
+            client_pid=$(timeout 2 tmux display-message -p -t "$TMUX_PANE" '#{client_pid}' 2>/dev/null)
+        else
+            client_pid=$(timeout 2 tmux display-message -p '#{client_pid}' 2>/dev/null)
+        fi
         if [ -n "$client_pid" ]; then
             local result
             result=$(_walk_up_to_kitty_child "$client_pid")
@@ -313,6 +330,48 @@ kitty_tab_get_display_name() {
     fi
 
     echo "$fallback"
+}
+
+# --- Strip signal's own tab prefixes from a title ---
+
+_kitty_tab_strip_prefix() {
+    sed 's/^\(\[AI\.\.\.\] \|\[ASK\] \|\[FIN\] \|\[ai\.\.\.\] \|\[ask\] \|\[fin\] \)*//'
+}
+
+# --- Get clean tab title for notification bodies ---
+# 1. Display file /tmp/claude-mb-kitty-display-<window_pid> (already clean),
+#    only when the tab indicator is enabled (it maintains that file).
+# 2. Fallback (indicator disabled or file missing): real title of the tab that
+#    contains this window via "kitty @ ls" (window matched by pid), with signal
+#    prefixes stripped. Needs a kitty socket; 2s timeout.
+# Prints nothing outside kitty or on any failure (no fallback name).
+
+kitty_tab_get_clean_title() {
+    local window_pid
+    window_pid=$(_find_kitty_window_pid 2>/dev/null)
+    if [ -z "$window_pid" ]; then return 0; fi
+
+    local title=""
+    if [ "${CLAUDE_MB_KITTY_TAB:-true}" != "false" ]; then
+        local display_file="/tmp/claude-mb-kitty-display-${window_pid}"
+        if [ -f "$display_file" ]; then
+            title=$(head -n 1 "$display_file" 2>/dev/null | tr -d '\r')
+        fi
+    fi
+
+    if [ -z "$title" ] && command -v kitty &> /dev/null; then
+        local socket
+        socket=$(kitty_tab_find_socket 2>/dev/null)
+        if [ -n "$socket" ]; then
+            title=$(timeout 2 kitty @ --to "unix:${socket}" ls 2>/dev/null | jq -r --argjson pid "$window_pid" '
+                [.[] | .tabs[] | select(.windows[] | .pid == $pid)] | first |
+                .title // empty
+            ' 2>/dev/null | head -n 1 | _kitty_tab_strip_prefix)
+        fi
+    fi
+
+    [ -n "$title" ] && printf '%s' "$title"
+    return 0
 }
 
 # --- Initialize display name file (for notifications before first prompt) ---

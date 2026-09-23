@@ -5,6 +5,11 @@ Desktop notifications showing what Claude Code is working on - stay informed eve
 ## Features
 
 - Live status updates via desktop notifications
+- Location context in every notification:
+  - Title: `<event> | cwd: .../<parent>/<dir>` (short paths like `/tmp` are shown as is), e.g. `Tool waiting | cwd: .../marcel/workstation`
+  - Body, first line: `git: <parent>/<repo>` of the repo the session works in - resolved from the limit plugin's per-session work-repo state, then git discovery from the cwd, then the credo session pin (limit and credo are optional); omitted when no repo resolves
+  - Body, last line (after an empty line): `tmux: <session> | kitty: <tab>` with only the parts that exist; omitted outside tmux/kitty. tmux is the session of the current pane; kitty is the tab title without `[ai...]`/`[ask]`/`[fin]` prefixes, taken from the tab indicator's saved title or, if the indicator is disabled or has no saved title, read live via `kitty @ ls` (needs the kitty socket)
+  - On WSL2 the body lines are joined with ` | ` because the toast shows the body as a single text field
 - Sound alerts with context-aware sounds:
   - "Complete" sound for permission prompts (requires attention)
   - "Message" sound for general notifications
@@ -57,6 +62,8 @@ Marks the kitty terminal tab title with a prefix during active Claude sessions s
 - [kitty](https://sw.kovidgoyal.net/kitty/) terminal
 - `allow_remote_control yes` in `kitty.conf`
 - `listen_on unix:/tmp/mykitty` in `kitty.conf`
+
+Works inside tmux (the client of the current pane is used) and with kitty started via the `x-terminal-emulator` alternative.
 
 ## Installation
 

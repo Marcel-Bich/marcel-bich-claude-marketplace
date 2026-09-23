@@ -14,6 +14,7 @@ PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Load WSL utilities
 source "$PLUGIN_ROOT/scripts/wsl-utils.sh"
+source "$PLUGIN_ROOT/scripts/repo-context.sh"
 
 # Read JSON input
 INPUT=$(cat)
@@ -48,7 +49,6 @@ PROJECT=$(basename "$CWD" 2>/dev/null || echo "claude")
 
 # Kitty tab indicator: restore original title
 source "$PLUGIN_ROOT/scripts/kitty-tab.sh"
-DISPLAY_NAME=$(kitty_tab_get_display_name "$PROJECT")
 kitty_tab_restore "$PROJECT"
 DEBOUNCE_FILE="/tmp/claude-mb-notify-${PROJECT}"
 NOW=$(date +%s)
@@ -127,7 +127,11 @@ if [ -z "$SUMMARY" ] || [ ${#SUMMARY} -lt 10 ]; then
 fi
 
 # Send notification
-"$PLUGIN_ROOT/scripts/notify-replace.sh" "project-${PROJECT}-stop" "✨ Done [$DISPLAY_NAME]" "$SUMMARY" "dialog-information" 1
+# Title: "Done | cwd: .../<parent>/<base>"
+# Body: "git: <parent>/<repo>" first, then the summary, then "tmux: ... | kitty: ..." (each only if present)
+TITLE=$(signal_title "✨ Done" "$CWD")
+BODY=$(signal_body "$(signal_git_label "$CWD" "$SESSION_ID")" "$SUMMARY" "$(signal_session_label)")
+"$PLUGIN_ROOT/scripts/notify-replace.sh" "project-${PROJECT}-stop" "$TITLE" "$BODY" "dialog-information" 1
 
 # Play completion sound
 if is_wsl; then

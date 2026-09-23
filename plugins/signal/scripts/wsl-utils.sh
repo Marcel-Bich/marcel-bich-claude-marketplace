@@ -30,6 +30,15 @@ windows_notify() {
     local tag="${3:-claude-default}"
     local urgency="${4:-1}"
 
+    # Multi-line bodies (git line / message / tmux+kitty line): ToastText02 shows
+    # the body as one wrapping text field, so join non-empty lines with " | "
+    # instead of passing raw newlines (and blank lines) into the toast XML.
+    message=$(printf '%s\n' "$message" | tr -d '\r' | awk 'NF { printf "%s%s", (n++ ? " | " : ""), $0 }')
+
+    # Escape XML special characters (paths/commands may contain & < >)
+    title=$(printf '%s' "$title" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+    message=$(printf '%s' "$message" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+
     # Escape special characters for PowerShell
     title=$(echo "$title" | sed "s/'/\`'/g" | sed 's/"/\\"/g')
     message=$(echo "$message" | sed "s/'/\`'/g" | sed 's/"/\\"/g')

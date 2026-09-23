@@ -17,13 +17,18 @@ PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Load WSL utilities
 source "$PLUGIN_ROOT/scripts/wsl-utils.sh"
 source "$PLUGIN_ROOT/scripts/kitty-tab.sh"
+source "$PLUGIN_ROOT/scripts/repo-context.sh"
 HOOK_TYPE="${1:-notification}"
 PROJECT=$(basename "$PWD" 2>/dev/null || echo "claude")
-DISPLAY_NAME=$(kitty_tab_get_display_name "$PROJECT")
 
 # Read JSON input
 INPUT=""
 [ ! -t 0 ] && INPUT=$(cat)
+
+# Location context for title (cwd) and body (git repo)
+HOOK_CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
+[ -z "$HOOK_CWD" ] && HOOK_CWD="$PWD"
+HOOK_SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
 
 # Use PROJECT + HOOK_TYPE as replacement ID
 NOTIFY_ID="project-${PROJECT}-${HOOK_TYPE}"
@@ -58,7 +63,7 @@ case "$HOOK_TYPE" in
         exit 0
         ;;
     notification|Notification)
-        TITLE="Claude Code [$DISPLAY_NAME]"
+        TITLE="Claude Code"
         ICON="dialog-information"
         URGENCY=2
         SOUND_TYPE="attention"
@@ -88,7 +93,7 @@ case "$HOOK_TYPE" in
         fi
         ;;
     PreToolUse|pretooluse)
-        TITLE="Tool waiting [$DISPLAY_NAME]"
+        TITLE="Tool waiting"
         ICON="dialog-warning"
         URGENCY=2
         if [ -n "$INPUT" ]; then
@@ -123,12 +128,17 @@ case "$HOOK_TYPE" in
         fi
         ;;
     *)
-        TITLE="Claude Code [$PROJECT]"
+        TITLE="Claude Code"
         MESSAGE="Activity: $HOOK_TYPE"
         ICON="dialog-information"
         URGENCY=1
         ;;
 esac
+
+# Title: "<title> | cwd: .../<parent>/<base>"
+# Body: "git: <parent>/<repo>" first, then the message, then "tmux: ... | kitty: ..." (each only if present)
+TITLE=$(signal_title "$TITLE" "$HOOK_CWD")
+MESSAGE=$(signal_body "$(signal_git_label "$HOOK_CWD" "$HOOK_SESSION_ID")" "$MESSAGE" "$(signal_session_label)")
 
 # Set [ask] prefix on kitty tab (all hooks here are user-waiting scenarios)
 kitty_tab_set_ask "$PROJECT"
