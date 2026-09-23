@@ -18,7 +18,7 @@ Desktop notifications showing what Claude Code is working on - stay informed eve
 - Configurable sound volume via environment variables
 - Optional AI summaries (using Haiku)
 - Smart filtering to prevent notification spam
-- "Tool waiting" hints are skipped in bypass permissions mode (no tool ever waits there); real permission prompts are still notified
+- "Tool waiting" hints are skipped in bypass permissions mode (no tool ever waits there, switch: `CLAUDE_MB_NOTIFY_BYPASS_TOOLS`); real permission prompts are still notified
 - Non-stacking notifications: one slot per session and hook type; each new notification replaces the previous one of the same session (previous one is closed first to prevent Linux tray stacking). Hooks firing at the same moment (parallel tool calls) are serialized with `flock`, so they no longer leave several notifications behind
 - Kitty terminal tab indicator for active Claude sessions
 - Cross-platform: Linux and WSL2 (Windows 10/11)
@@ -44,6 +44,7 @@ If none is installed, notifications still work; only the sound is skipped. On WS
 | `CLAUDE_MB_NOTIFY_SOUND_ATTENTION` | volume `0.0`-`1.0`, `0` disables | `0.25` |
 | `CLAUDE_MB_NOTIFY_SOUND_COMPLETE` | volume `0.0`-`1.0`, `0` disables (permission prompts) | `0.4` |
 | `CLAUDE_MB_NOTIFY_SUBAGENT_TOOLS` | `true` / `false` - `false` silences "Tool waiting" hints for subagent tool calls | `true` |
+| `CLAUDE_MB_NOTIFY_BYPASS_TOOLS` | `true` / `false` - `true` shows "Tool waiting" hints in bypass permissions mode too | `false` |
 
 ## Kitty Tab Indicator
 

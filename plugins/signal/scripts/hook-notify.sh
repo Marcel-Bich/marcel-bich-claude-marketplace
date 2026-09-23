@@ -6,10 +6,12 @@
 # CLAUDE_MB_NOTIFY_SOUND_ATTENTION: volume 0.0-1.0 (default: 0.25), 0 to disable
 # CLAUDE_MB_NOTIFY_SOUND_COMPLETE: volume 0.0-1.0 (default: 0.4), 0 to disable (used for permission_prompt)
 # CLAUDE_MB_NOTIFY_SUBAGENT_TOOLS: true/false (default: true), false silences "Tool waiting" for subagent tool calls
+# CLAUDE_MB_NOTIFY_BYPASS_TOOLS: true/false (default: false), true keeps "Tool waiting" in bypass permissions mode
 
 SOUND_VOLUME_ATTENTION="${CLAUDE_MB_NOTIFY_SOUND_ATTENTION:-0.25}"
 SOUND_VOLUME_COMPLETE="${CLAUDE_MB_NOTIFY_SOUND_COMPLETE:-0.4}"
 NOTIFY_SUBAGENT_TOOLS="${CLAUDE_MB_NOTIFY_SUBAGENT_TOOLS:-true}"
+NOTIFY_BYPASS_TOOLS="${CLAUDE_MB_NOTIFY_BYPASS_TOOLS:-false}"
 
 # Get plugin root and hook type
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -47,10 +49,13 @@ if [ "$HOOK_TYPE" = "PreToolUse" ] || [ "$HOOK_TYPE" = "pretooluse" ]; then
     fi
 
     # PreToolUse fires before Claude Code decides whether to ask at all, so it
-    # is only a hint. In bypassPermissions mode no tool ever waits -> skip.
+    # is only a hint. In bypassPermissions mode no tool ever waits -> skip
+    # (unless CLAUDE_MB_NOTIFY_BYPASS_TOOLS=true).
     # Real prompts still arrive via the Notification hook (permission_prompt).
-    PERM_MODE=$(echo "$INPUT" | jq -r '.permission_mode // empty' 2>/dev/null)
-    [ "$PERM_MODE" = "bypassPermissions" ] && exit 0
+    if [ "$NOTIFY_BYPASS_TOOLS" != "true" ]; then
+        PERM_MODE=$(echo "$INPUT" | jq -r '.permission_mode // empty' 2>/dev/null)
+        [ "$PERM_MODE" = "bypassPermissions" ] && exit 0
+    fi
 
     # Subagent tool calls (agent_id is set only for subagents)
     if [ "$NOTIFY_SUBAGENT_TOOLS" != "true" ]; then
