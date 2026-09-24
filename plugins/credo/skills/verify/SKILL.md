@@ -92,10 +92,12 @@ time and answer per step:
   exactly WHAT to observe or report back (a status, a value, yes/no). This lets the user
   test step by step and answer each step individually.
 
+- Keep a test round small: 1-2 items per round, not a long checklist of everything.
+
 Example:
 
 ```
-Test run B - #37 Auto-Grant + Auto-Submit
+### 🧪 B) #37 Auto-Grant + Auto-Submit
 1. Hard-reload localhost:5173 (Ctrl+Shift+R), Network tab, filter api.
 -> Answer: on load, without a click, does a POST /api/games appear? Status? With token+seed?
 2. Win the board (just play).
@@ -103,6 +105,33 @@ Test run B - #37 Auto-Grant + Auto-Submit
 ```
 
 Use plain `-` and `->`, no special arrow or dash characters.
+
+### Test and question letters (visible, continuous)
+
+Every manual test block AND every question to the user gets a letter, so the user can
+answer unambiguously ("B vf", "B2 vf", "Y: option 2"). This applies in every session mode
+and every repo where credo is active:
+
+- **One continuous sequence, shared by tests and questions.** Letters run A, B, C, ... Z
+  across replies and never restart at A per reply; after Z the sequence wraps to A again.
+  If the previous reply ended at D, the next test or question starts at E. Tests and
+  questions draw from the same sequence (a test C and a question C never coexist).
+- **Steps are numbered inside a test** (1. 2. 3.), so a single step is addressable as
+  letter plus number ("B2 vf" = step 2 of test B checked and passing).
+- **Visible heading.** Each test block and each question starts with its own markdown
+  `###` heading carrying a leading symbol, 🧪 for tests and ❓ for questions, then the
+  letter and a short topic: `### 🧪 T) Trainer` / `### ❓ Y) Which rank?`. A question asked
+  through the Ask tool carries the same `❓ Y)` prefix in its question text.
+- **Open-letters footer.** End every reply that has open tests or questions with one line
+  listing the open letters in bold, in the conversation language, e.g.
+  `**Open for testing: C, D** · **Open questions: Y, Z**`. A letter leaves the footer when
+  the user answered it (vf, a decision, "skip"); omit a part that has no open letters, and
+  omit the footer when nothing is open.
+- **Survives a compact.** The next free letter and the open letters are part of the
+  handoff state (the credo `compact-plus` skill records them in HANDOFF.md), so the
+  sequence continues after a `/compact` instead of restarting at A.
+- **Separate from other numbering.** Letters are neither item numbers (`#N`) nor harness
+  task numbers (`§cct_N`); never mix them.
 
 ## Bringing up a down surface (local only, autonomous-capable)
 

@@ -140,6 +140,9 @@ then go straight to the report (step 8) and skip steps 4-7.
    secured by being on disk, not by a commit.
 3. Update the rolling handoff at `.credo/process/handoffs/HANDOFF.md` so the current
    plan and the done/pending state survive: what is done, what is open, what comes next.
+   Include the test/question letter state: the next free letter and the still-open test and
+   question letters (credo `verify` skill, "Test and question letters"), so the sequence
+   continues after the compact instead of restarting at A.
    Move the prior handoff into `.credo/process/handoffs/archive/` before overwriting.
    Note any in-flight subagent work explicitly - either finish and fold it in, or record
    that it is still running and what it will produce. This file is git-excluded too.

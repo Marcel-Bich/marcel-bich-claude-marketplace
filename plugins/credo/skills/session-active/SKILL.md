@@ -124,6 +124,11 @@ Ask round, one round per item id. Never bundle several items into one message or
 flowing-text dump of questions; that floods the user and makes it impossible to respond to
 each point. Prefer many small, focused Ask rounds over one large one.
 
+Every question to the user carries a letter from the one continuous test/question letter
+sequence, with a visible `### ❓ <letter>) <topic>` heading (and the same `❓ <letter>)`
+prefix inside an Ask-tool question), plus the open-letters footer at the end of the reply.
+The full convention lives in the credo `verify` skill ("Test and question letters").
+
 Within a single Ask round, asking several questions at once (the Ask tool's
 multiple-question form) is allowed and encouraged - it lets the user settle several open
 points in one pass. Only batch questions that are independent of each other; never put a
@@ -142,9 +147,11 @@ Whenever a verification can only be run by the user - a human-only criterion, or
 re-test that lets an item move to `3_verified/`, and especially when a task / build agent
 in active or passive mode needs the user to check something - hand it over as a NUMBERED,
 step-by-step list, never a vague "please test this". One concrete action per number, each
-followed by an own `-> Answer:` line saying exactly what to observe or report. The full
-format and an example live in the credo `verify` skill ("Handing a manual test to the
-user").
+followed by an own `-> Answer:` line saying exactly what to observe or report, 1-2 items
+per round, under a visible `### 🧪 <letter>) <topic>` heading with a letter from the one
+continuous test/question sequence. The full format, the letter convention and an example
+live in the credo `verify` skill ("Handing a manual test to the user", "Test and question
+letters").
 
 ## No pause suggestions (attended: active and passive only, NOT autonomous)
 

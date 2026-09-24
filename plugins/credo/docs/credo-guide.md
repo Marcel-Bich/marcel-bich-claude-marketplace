@@ -170,6 +170,7 @@ The `SessionStart` hook injects a small legend so the agent understands the user
 - `cm` - commit, per the repo's commit rules, no push.
 - `ph` - commit and push, per the repo's rules (push only where they allow it).
 - `exclude` / `excluded` - always the local `.git/info/exclude`, never `.gitignore`; only `ignore` / `ignored` / `gitignore` means `.gitignore`.
+- Test/question letters - every manual test and every question gets a letter from one continuous sequence shared by both (A..Z across replies, wrap after Z) under a visible `### 🧪 B) <topic>` / `### ❓ Y) <topic>` heading; answer with `B vf`, `B2 vf`, `Y: ...`; each reply ends with the open letters in bold; the next free letter survives a compact (details: `verify` skill, "Test and question letters").
 - `#N` vs `§cct_N` - `#N` is reserved for real items (credo items, issues, PRs, tickets); harness task entries and any other numbering are `§cct_N` (e.g. `§cct_2`), in both directions (`§cct_2 dd` = harness task 2 done).
 
 ## 6. Capturing recurring workflows into skills
