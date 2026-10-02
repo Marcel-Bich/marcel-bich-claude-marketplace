@@ -78,7 +78,7 @@ Steps (`P="${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py"`):
    allowed for the effective allowlist, `check` prints a `FIREWALL:` block with
    copy-paste-ready commands, one per allowlist entry (ranges are split into CIDRs):
    ```
-   sudo ufw allow from 192.168.1.104 to any port 48610 proto tcp comment 'credo-peer-lan'
+   sudo ufw allow from 192.168.1.42 to any port 48610 proto tcp comment 'credo-peer-lan'
    ```
    plus `sudo ufw delete allow from <old-entry> to any port 48610 proto tcp` for
    credo-peer-lan rules whose allowlist entry was removed (only rules carrying the
@@ -87,7 +87,7 @@ Steps (`P="${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py"`):
    lines and explain why (peers cannot reach this machine otherwise). sudo needs the
    user's password, so the agent never runs them itself and never handles the
    password: tell the user to type each line with the `!` prefix in the prompt, e.g.
-   `! sudo ufw allow from 192.168.1.104 to any port 48610 proto tcp comment 'credo-peer-lan'`.
+   `! sudo ufw allow from 192.168.1.42 to any port 48610 proto tcp comment 'credo-peer-lan'`.
    Afterwards re-run `"$P" check` (it then reports `ufw active, port ... allowed`) and
    ask the user to run `check` on the other machine to confirm this one is reachable.
    If ufw rules are unreadable without root, `check` still prints the commands with a
@@ -224,7 +224,7 @@ commands scoped to the effective allowlist, tagged with the comment `credo-peer-
 (see Setup flow step 5), e.g.:
 
 ```
-sudo ufw allow from 192.168.1.104 to any port 48610 proto tcp comment 'credo-peer-lan'
+sudo ufw allow from 192.168.1.42 to any port 48610 proto tcp comment 'credo-peer-lan'
 ```
 
 ## Security model

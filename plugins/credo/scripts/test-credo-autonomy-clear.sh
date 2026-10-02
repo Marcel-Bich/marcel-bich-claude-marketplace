@@ -57,7 +57,20 @@ expect "task notification keeps autonomy" kept
 out_of() { jq -n --arg p "$1" --arg s "$SID" '{prompt: $p, session_id: $s}' | bash "$HOOK" 2>/dev/null; }
 arm; out="$(out_of "[CREDO-AUTONOMY-WAKE] standby check")"
 if printf '%s' "$out" | grep -q '"block"'; then fail=$((fail + 1)); echo "FAIL: live wake must not be blocked"; else pass=$((pass + 1)); fi
-rm -f "$CREDO_AUTONOMY_DIR/$SID/active"; printf 'active\n' > "$CREDO_SESSION_MODES_DIR/$SID"
+# autonomy PAUSED by a user message (flag gone, mode still autonomous): wake kept
+arm; rm -f "$CREDO_AUTONOMY_DIR/$SID/active"
+out="$(out_of "[CREDO-AUTONOMY-WAKE] standby check")"
+if printf '%s' "$out" | grep -q '"block"'; then fail=$((fail + 1)); echo "FAIL: wake during autonomy pause must be kept"; else pass=$((pass + 1)); fi
+# no mode file at all: not provably switched -> kept
+rm -f "$CREDO_SESSION_MODES_DIR/$SID"
+out="$(out_of "[CREDO-AUTONOMY-WAKE] standby check")"
+if printf '%s' "$out" | grep -q '"block"'; then fail=$((fail + 1)); echo "FAIL: wake without a mode file must be kept"; else pass=$((pass + 1)); fi
+# switched to passive: dropped
+printf 'passive\n' > "$CREDO_SESSION_MODES_DIR/$SID"
+out="$(out_of "[CREDO-AUTONOMY-WAKE] standby check")"
+if printf '%s' "$out" | grep -q '"decision": *"block"'; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: wake after switch to passive must be dropped"; fi
+# switched to active: dropped
+printf 'active\n' > "$CREDO_SESSION_MODES_DIR/$SID"
 out="$(out_of "[CREDO-AUTONOMY-WAKE] standby check")"
 if printf '%s' "$out" | grep -q '"decision": *"block"'; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: stale wake must be blocked (got: $out)"; fi
 out="$(out_of "a normal user message")"

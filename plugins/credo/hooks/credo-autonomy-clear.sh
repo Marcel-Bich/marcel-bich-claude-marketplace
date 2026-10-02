@@ -59,20 +59,29 @@ if command -v jq >/dev/null 2>&1; then
     stdin_session_id="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || true)"
 fi
 
-# A self-scheduled wake that fires after autonomy ended (the user switched to
-# active/passive, or ended the run) is stale: drop it so it never drives work in an
+# A self-scheduled wake that fires after the session was SWITCHED to active or
+# passive (by the user or the agent) is stale: drop it so it never drives work in an
 # attended session. ScheduleWakeup cannot be cancelled from a hook, so this is the
-# backstop. Only a prompt that STARTS with the marker counts, and only when this
-# session's autonomy flag is gone.
+# backstop. Keyed on the session MODE, not the autonomy flag: a user message only
+# pauses autonomy (flag gone, mode still autonomous) and the run's wakes must survive
+# that. No mode file = not provably switched = kept. Only a prompt that STARTS with
+# the marker counts.
 case "$prompt" in
     "[CREDO-AUTONOMY-WAKE]"*)
         if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/credo-autonomy-lib.sh" ]; then
             # shellcheck source=credo-autonomy-lib.sh
             . "$SCRIPT_DIR/credo-autonomy-lib.sh"
-            if wake_sid="$(credo_autonomy_resolve_id "$stdin_session_id")" \
-                && [ ! -f "$(credo_autonomy_dir "$wake_sid")/active" ]; then
-                printf '{"decision": "block", "reason": "credo: stale autonomy wake-up dropped - this session is no longer autonomous"}\n'
-                exit 0
+            if wake_sid="$(credo_autonomy_resolve_id "$stdin_session_id")"; then
+                wake_modes="${CREDO_SESSION_MODES_DIR:-$CONFIG_DIR/credo/session-modes}"
+                wake_mode=""
+                [ -f "$wake_modes/$wake_sid" ] && \
+                    wake_mode=$(tr -d '[:space:]' < "$wake_modes/$wake_sid" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+                case "$wake_mode" in
+                    active | passive)
+                        printf '{"decision": "block", "reason": "credo: stale autonomy wake-up dropped - this session was switched to %s mode"}\n' "$wake_mode"
+                        exit 0
+                        ;;
+                esac
             fi
         fi
         ;;

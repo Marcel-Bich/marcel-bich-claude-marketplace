@@ -6,6 +6,16 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.72
 
+#### v0.72.9
+
+##### Changed
+
+- Docs and tests use invented example addresses instead of real device addresses
+
+##### Fixed
+
+- A self-scheduled autonomy wake-up survives an autonomy pause (a user message in between); it is dropped only once the session mode was switched to active or passive
+
 #### v0.72.8
 
 ##### Fixed

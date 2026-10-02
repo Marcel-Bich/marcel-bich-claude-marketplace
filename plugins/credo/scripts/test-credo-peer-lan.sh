@@ -634,7 +634,7 @@ mkdir -p "$TMP/wh/bin" "$TMP/wh/cfg/credo"
 cat > "$TMP/wh/bin/ip" <<'EOF'
 #!/bin/bash
 # fake `ip`: a canned `ip route get` line with a known src address
-echo "1.1.1.1 via 192.168.178.1 dev eth0 src 192.168.178.39 uid 1000"
+echo "1.1.1.1 via 10.20.30.1 dev eth0 src 10.20.30.40 uid 1000"
 echo "    cache"
 EOF
 chmod +x "$TMP/wh/bin/ip"
@@ -644,7 +644,7 @@ cat > "$TMP/wh/cfg/credo/peer-lan.json" <<EOF
 EOF
 WH_OUT="$(PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
     CREDO_PEER_LAN_CONFIG="$TMP/wh/cfg/credo/peer-lan.json" "$PY" "$DAEMON" whoami 2>/dev/null)"
-case "$WH_OUT" in *"192.168.178.39:48610"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL whoami did not report the mocked src IP\n  %s\n' "$WH_OUT" ;; esac
+case "$WH_OUT" in *"10.20.30.40:48610"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL whoami did not report the mocked src IP\n  %s\n' "$WH_OUT" ;; esac
 case "$WH_OUT" in *127.0.0.1*) FAIL=$((FAIL + 1)); printf 'FAIL whoami leaked 127.0.0.1\n' ;; *) PASS=$((PASS + 1)) ;; esac
 
 # --- PR: reachability probe (reachable live listener vs closed port) ----------
@@ -832,7 +832,7 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
 GW = "172.23.64.1"  # the WSL NAT gateway the receiver wrongly saw as the source
-PEER = "192.168.1.112"
+PEER = "192.168.1.72"
 
 # one configured peer; roster arrives from the NAT gateway but ADVERTISES the peer IP
 d1 = mod.Daemon({"peers": [PEER + ":48610"], "listen_port": 48610})
@@ -1251,7 +1251,7 @@ expect(h["warnings"] and "WARNING" in h["warnings"][0], "home warning")
 
 # --- matching + effective state
 MAC = "aa:bb:cc:dd:ee:01"
-net_home = {"ip": "192.168.1.104", "subnet": "192.168.1.0/24", "gateway_mac": MAC}
+net_home = {"ip": "192.168.1.42", "subnet": "192.168.1.0/24", "gateway_mac": MAC}
 nets = {
     "home-main": {"fingerprint": {"gateway_mac": "AA-BB-CC-DD-EE-01", "subnet": "192.168.1.0/24"},
                   "group": "home", "allow": ["peers"]},
@@ -1316,10 +1316,10 @@ expect(hosts == ["127.0.0.1", "192.168.1.50"], "enabled: only allowlisted peers 
 adv = []
 mod.send_to_peer = lambda h, p, t, payload, timeout=5.0: adv.append(
     (h, payload.get("advertise_host"), payload.get("advertise_port")))
-d.advertise_host, d.advertise_port = "192.168.1.104", 48610
+d.advertise_host, d.advertise_port = "192.168.1.73", 48610
 d.roster_tick()
 adv_map = {h: (ah, ap) for h, ah, ap in adv}
-expect(adv_map.get("192.168.1.50") == ("192.168.1.104", 48610), "LAN peer gets LAN advertise %r" % adv_map)
+expect(adv_map.get("192.168.1.50") == ("192.168.1.73", 48610), "LAN peer gets LAN advertise %r" % adv_map)
 expect(adv_map.get("127.0.0.1") == ("127.0.0.1", 48610), "loopback peer gets loopback advertise %r" % adv_map)
 adv.clear()
 d.advertise_host = None
@@ -1349,7 +1349,7 @@ case "$AL_OUT" in *AL_OK*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf '
 # --- CLI: netinfo / init suggestion / bind / networks / unbind ----------------
 mkdir -p "$TMP/cli/credo"
 CLI_CFG="$TMP/cli/credo/peer-lan.json"
-NET_JSON='{"iface":"wlan0","ip":"192.168.1.104","prefix":24,"gateway_ip":"192.168.1.1","gateway_mac":"AA-BB-CC-DD-EE-01","ssid":"Home WLAN"}'
+NET_JSON='{"iface":"wlan0","ip":"192.168.1.42","prefix":24,"gateway_ip":"192.168.1.1","gateway_mac":"AA-BB-CC-DD-EE-01","ssid":"Home WLAN"}'
 cli() { PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
     CREDO_PEER_LAN_CONFIG="$CLI_CFG" CREDO_PEER_LAN_NETINFO="$NET_JSON" "$PY" "$DAEMON" "$@" 2>&1; }
 NI="$(cli netinfo)"
@@ -1456,30 +1456,30 @@ status = """Status: active
 To                         Action      From
 --                         ------      ----
 22/tcp                     ALLOW       Anywhere
-48610/tcp                  ALLOW       192.168.1.104              # credo-peer-lan
+48610/tcp                  ALLOW       192.168.1.42              # credo-peer-lan
 48610/tcp                  ALLOW       10.0.0.5                   # credo-peer-lan
 48610                      ALLOW       192.168.2.0/24
 48610/tcp (v6)             ALLOW       Anywhere (v6)
 """
 active, rules = mod.parse_ufw_status(status, 48610)
 eq("active", active, True)
-eq("rules", [r["source"] for r in rules], ["192.168.1.104", "10.0.0.5", "192.168.2.0/24"])
+eq("rules", [r["source"] for r in rules], ["192.168.1.42", "10.0.0.5", "192.168.2.0/24"])
 eq("inactive", mod.parse_ufw_status("Status: inactive\n", 48610), (False, []))
 missing, add, dele = mod.ufw_rule_commands(
-    ["192.168.1.104", "192.168.1.112", "192.168.2.7", "192.168.3.4-192.168.3.7"], 48610, rules)
-eq("missing", missing, ["192.168.1.112", "192.168.3.4/30"])
+    ["192.168.1.42", "192.168.1.72", "192.168.2.7", "192.168.3.4-192.168.3.7"], 48610, rules)
+eq("missing", missing, ["192.168.1.72", "192.168.3.4/30"])
 eq("add", add, [
-    "sudo ufw allow from 192.168.1.112 to any port 48610 proto tcp comment 'credo-peer-lan'",
+    "sudo ufw allow from 192.168.1.72 to any port 48610 proto tcp comment 'credo-peer-lan'",
     "sudo ufw allow from 192.168.3.4/30 to any port 48610 proto tcp comment 'credo-peer-lan'"])
 eq("delete only stale credo rules", dele,
    ["sudo ufw delete allow from 10.0.0.5 to any port 48610 proto tcp"])
 eq("range split", mod._ufw_sources("192.168.1.5-192.168.1.9"),
    ["192.168.1.5", "192.168.1.6/31", "192.168.1.8/31"])
-m2, a2, d2 = mod.ufw_rule_commands(["192.168.1.104"], 48610, [])
+m2, a2, d2 = mod.ufw_rule_commands(["192.168.1.42"], 48610, [])
 eq("no rules -> one add, no delete", (len(a2), d2), (1, []))
-fd = mod.firewalld_rule_commands(["192.168.1.104"], 48610)
+fd = mod.firewalld_rule_commands(["192.168.1.42"], 48610)
 eq("firewalld", fd[-1], "sudo firewall-cmd --reload")
-if "source address=\"192.168.1.104\" port port=\"48610\"" not in fd[0]:
+if "source address=\"192.168.1.42\" port port=\"48610\"" not in fd[0]:
     bad.append("firewalld rich rule: %s" % fd[0])
 print("FW_OK" if not bad else "\n".join(bad))
 PYEOF
@@ -1489,22 +1489,22 @@ case "$FW_OUT" in FW_OK) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FA
 mkdir -p "$TMP/fw/credo"
 cat > "$TMP/fw/credo/peer-lan.json" <<EOF
 {"this_machine":"FW","listen_host":"0.0.0.0","listen_port":48610,"peers":["127.0.0.1:1"],
- "networks":{"home-main":{"fingerprint":{"gateway_mac":"aa:bb:cc:dd:ee:01","subnet":"192.168.1.0/24"},"group":"home","allow":["192.168.1.112"]}}}
+ "networks":{"home-main":{"fingerprint":{"gateway_mac":"aa:bb:cc:dd:ee:01","subnet":"192.168.1.0/24"},"group":"home","allow":["192.168.1.72"]}}}
 EOF
 printf 'Status: active\n\n48610/tcp ALLOW 10.0.0.5 # credo-peer-lan\n' > "$TMP/fw/ufw-status"
-FW_NET='{"iface":"wlan0","ip":"192.168.1.104","prefix":24,"gateway_ip":"192.168.1.1","gateway_mac":"AA-BB-CC-DD-EE-01","ssid":"Home WLAN"}'
+FW_NET='{"iface":"wlan0","ip":"192.168.1.42","prefix":24,"gateway_ip":"192.168.1.1","gateway_mac":"AA-BB-CC-DD-EE-01","ssid":"Home WLAN"}'
 fwcheck() { PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
     CREDO_PEER_LAN_CONFIG="$TMP/fw/credo/peer-lan.json" CREDO_PEER_LAN_NETINFO="$FW_NET" \
     "$PY" "$DAEMON" check 2>&1; }
 FC="$(CREDO_PEER_LAN_UFW_STATUS="@$TMP/fw/ufw-status" fwcheck)"
-case "$FC" in *"not allowed for: 192.168.1.112"*"! prefix"*"  sudo ufw allow from 192.168.1.112 to any port 48610 proto tcp comment 'credo-peer-lan'"*"  sudo ufw delete allow from 10.0.0.5 to any port 48610 proto tcp"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL check ufw commands: %s\n' "$FC" ;; esac
+case "$FC" in *"not allowed for: 192.168.1.72"*"! prefix"*"  sudo ufw allow from 192.168.1.72 to any port 48610 proto tcp comment 'credo-peer-lan'"*"  sudo ufw delete allow from 10.0.0.5 to any port 48610 proto tcp"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL check ufw commands: %s\n' "$FC" ;; esac
 printf 'Status: active\n\n48610/tcp ALLOW 192.168.1.0/24\n' > "$TMP/fw/ufw-ok"
 FC="$(CREDO_PEER_LAN_UFW_STATUS="@$TMP/fw/ufw-ok" fwcheck)"
 case "$FC" in *"ufw active, port 48610 allowed for the effective allowlist"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL check ufw covered: %s\n' "$FC" ;; esac
 case "$FC" in *"sudo ufw"*) FAIL=$((FAIL + 1)); printf 'FAIL check printed ufw commands although covered\n' ;; *) PASS=$((PASS + 1)) ;; esac
 FC="$(CREDO_PEER_LAN_UFW_STATUS='Status: inactive' CREDO_PEER_LAN_FIREWALLD_STATE=running fwcheck)"
 case "$FC" in *"sudo ufw"*) FAIL=$((FAIL + 1)); printf 'FAIL inactive ufw printed commands\n' ;; *) PASS=$((PASS + 1)) ;; esac
-case "$FC" in *"firewalld is running"*'source address="192.168.1.112"'*"firewall-cmd --reload"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL firewalld hint: %s\n' "$FC" ;; esac
+case "$FC" in *"firewalld is running"*'source address="192.168.1.72"'*"firewall-cmd --reload"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL firewalld hint: %s\n' "$FC" ;; esac
 FC="$(CREDO_PEER_LAN_UFW_STATUS="@$TMP/fw/ufw-status" CREDO_PEER_LAN_PROCVERSION=/nonexistent WSL_DISTRO_NAME=Ubuntu \
     CREDO_PEER_LAN_CONFIG="$TMP/fw/credo/peer-lan.json" CREDO_PEER_LAN_NETINFO="$FW_NET" "$PY" "$DAEMON" check 2>&1)"
 case "$FC" in *"sudo ufw"*) FAIL=$((FAIL + 1)); printf 'FAIL ufw hint on WSL\n' ;; *) PASS=$((PASS + 1)) ;; esac
