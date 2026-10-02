@@ -16,15 +16,22 @@
 # Rules:
 #   - a path missing in the main checkout is skipped silently
 #   - a versioned file is skipped with a warning (it comes with the checkout)
-#   - a directory without tracked files is linked/copied as a whole; a directory that
-#     contains tracked files is recursed into and each untracked entry is handled
-#     individually (tracked ones come with the checkout)
+#   - only paths that are ignored (in the main checkout or the worktree) are linked or
+#     copied; an untracked path that is NOT ignored (e.g. a new uncommitted item file)
+#     is skipped with a hint - a `git add -A` in the worktree would commit the symlink
+#     or copy, and a merge would put it into the main branch. The builder reads such
+#     paths read-only in the main checkout (main=...). Not-ignored paths are never
+#     added to info/exclude (it is shared with the main checkout and would hide them).
+#   - a directory without tracked files is linked/copied as a whole when it is ignored;
+#     a directory that contains tracked files, or a not-ignored one that holds ignored
+#     entries, is recursed into and each untracked entry is handled individually
+#     (tracked ones come with the checkout); a not-ignored directory without ignored
+#     entries is skipped as a whole
 #   - entries that are a nested repo or worktree (contain .git) are skipped
 #   - an existing path in the worktree (file, dir or symlink) is NEVER overwritten
 #   - a linked directory that is ignored in the main checkout only via a "dir/" pattern
 #     gets an anchored "/dir" line in the shared info/exclude (a "dir/" pattern does
-#     not match a symlink); a linked path that is not ignored in the main checkout at
-#     all gets a warning (it could be committed by accident in the worktree)
+#     not match a symlink)
 #
 # Usage:
 #   credo-worktree-setup.sh <worktree-path> [main-checkout]
@@ -36,7 +43,8 @@
 #   CLAUDE_CONFIG_DIR      Claude config dir (default ~/.claude) for the dogma lookup
 #
 # Output: one line per action ("linked <path>", "copied <path>", "kept <path> (exists)",
-# "skipped <path> (versioned)" for a listed path that is itself versioned), warnings on
+# "skipped <path> (versioned)" for a listed path that is itself versioned,
+# "skipped <path> (untracked, not ignored - read it in the main checkout)"), warnings on
 # stderr, then "source=dogma|default" and "main=<main checkout path>" (the path to put
 # into the builder brief: read-only lookups of anything missing in the worktree).
 # Exit codes: 0 done, 1 bad arguments, 2 not a secondary worktree of a git repo.
@@ -120,6 +128,10 @@ fi
 EXCLUDE_MARK="# worktree setup: symlinked paths in linked worktrees"
 is_tracked_file() { git -C "$MAIN" ls-files --error-unmatch -- "$1" >/dev/null 2>&1; }
 has_tracked_inside() { [ -n "$(git -C "$MAIN" ls-files -- "$1/" 2>/dev/null | head -n1)" ]; }
+has_ignored_inside() { [ -n "$(git -C "$MAIN" ls-files --others --ignored --exclude-standard --directory -- "$1/" 2>/dev/null | head -n1)" ]; }
+is_ignored() { # rel - ignored in the worktree or in the main checkout
+    git -C "$WT" check-ignore -q -- "$1" 2>/dev/null || git -C "$MAIN" check-ignore -q -- "$1" 2>/dev/null
+}
 
 relpath() { # target-abs from-dir-abs
     python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$1" "$2" 2>/dev/null || echo "$1"
@@ -129,7 +141,7 @@ relpath() { # target-abs from-dir-abs
 # would show up as untracked in the worktree (and could be committed by accident).
 # When the path is ignored in the main checkout, add the anchored pattern "/<rel>"
 # (no trailing slash) to the shared info/exclude once - it ignores the same path in
-# the main checkout, so nothing changes there. Otherwise only warn.
+# the main checkout, so nothing changes there. Only called for ignored paths.
 ensure_link_ignored() { # rel
     local rel="$1" exclude
     git -C "$WT" check-ignore -q -- "$rel" 2>/dev/null && return 0
@@ -142,8 +154,6 @@ ensure_link_ignored() { # rel
             printf '/%s\n' "$rel" >> "$exclude"
         fi
         echo "excluded /$rel (symlink in worktrees)"
-    else
-        warn "$rel is untracked but not ignored - do not commit the link in the worktree"
     fi
 }
 
@@ -151,6 +161,12 @@ apply_one() { # kind rel
     local kind="$1" rel="$2" src="$MAIN/$2" dst="$WT/$2"
     if [ -e "$dst" ] || [ -L "$dst" ]; then
         echo "kept $rel (exists)"
+        return 0
+    fi
+    if ! is_ignored "$rel"; then
+        # a link or copy of a not-ignored path would be picked up by `git add -A`
+        echo "skipped $rel (untracked, not ignored - read it in the main checkout)"
+        warn "$rel is untracked but not ignored in the main checkout - not linked or copied into the worktree"
         return 0
     fi
     mkdir -p "$(dirname "$dst")"
@@ -174,7 +190,7 @@ handle() { # kind rel top(1|0)
             warn "skipping $rel (nested repository or worktree)"
             return 0
         fi
-        if ! has_tracked_inside "$rel"; then
+        if ! has_tracked_inside "$rel" && { is_ignored "$rel" || ! has_ignored_inside "$rel"; }; then
             apply_one "$kind" "$rel"
             return 0
         fi

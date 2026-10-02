@@ -108,7 +108,9 @@ Right after EVERY `git worktree add`, run the `setup=` script on the new worktre
 (relative symlinks) or copies the excluded ones - CLAUDE.md, CLAUDE/, GUIDES/,
 DOGMA-PERMISSIONS.md and everything unversioned under .credo/ by default, or the
 "Worktree files" list of DOGMA-PERMISSIONS.md (`link:` / `copy:` entries). It never
-overwrites an existing path, skips versioned paths, and prints `main=<main checkout>`.
+overwrites an existing path, skips versioned paths and untracked paths that are not
+ignored (a `git add -A` in the worktree would commit them; builders read them in the
+main checkout), and prints `main=<main checkout>`.
 When the harness created the worktree itself (Agent tool `isolation: worktree`), the
 builder runs the setup on its own worktree root as its first step.
 
