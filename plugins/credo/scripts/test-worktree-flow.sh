@@ -12,6 +12,10 @@ FLOW_SH="$SCRIPT_DIR/credo-worktree-flow.sh"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/credo-wt-flow-test.XXXXXX")"
 trap 'rm -rf -- "$TMP"' EXIT
 
+# hermetic: no session-folder file to inherit from, no credo pinned project
+mkdir -p "$TMP/session"
+export DOGMA_SESSION_DIR="$TMP/session" DOGMA_CREDO_CONFIG=none
+
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 
@@ -113,6 +117,58 @@ check "id: old file, missing checkbox stays missing" missing "$("$MODE_SH" --id 
 "$MODE_SH" --id XY12 Hydra "$HYD" "$TMP/a" >/dev/null 2>&1; check "id: bad id exit 1" 1 "$?"
 "$MODE_SH" --id >/dev/null 2>&1; check "id: --id without value exit 1" 1 "$?"
 check "flow by id [ ] reworded + hydra" native "$(flow "$FAKE_HYDRA" "$TMP/ids")"
+
+
+# --- which file applies + inheritance from the session folder's file (§r3nx) ---
+WS="$TMP/inh/workspace"
+P="$TMP/inh/projects"
+mkdir -p "$WS" "$P/app" "$P/off" "$P/nobox" "$P/old" "$P/nofile"
+cat > "$WS/DOGMA-PERMISSIONS.md" <<'EOF'
+<permissions>
+## Workflow Permissions
+### Hydra
+- [x] (§xw1i) use Hydra for 2+ independent tasks
+- [?] (§36ch) clean up merged worktrees automatically
+</permissions>
+EOF
+cat > "$P/app/DOGMA-PERMISSIONS.md" <<'EOF'
+<permissions>
+## Inheritance
+- [x] (§r3nx) inherit permissions
+
+## Workflow Permissions
+### Hydra
+- [ ] (§xw1i) use Hydra for 2+ independent tasks
+</permissions>
+EOF
+sed 's/- \[x\] (§r3nx)/- [ ] (§r3nx)/' "$P/app/DOGMA-PERMISSIONS.md" > "$P/off/DOGMA-PERMISSIONS.md"
+grep -v 'r3nx\|## Inheritance' "$P/app/DOGMA-PERMISSIONS.md" > "$P/nobox/DOGMA-PERMISSIONS.md"
+cat > "$P/old/DOGMA-PERMISSIONS.md" <<'EOF'
+<permissions>
+### Hydra
+- [ ] use Hydra for 2+ independent tasks
+</permissions>
+EOF
+in_ws() { (cd "$WS" && DOGMA_SESSION_DIR="$WS" "$MODE_SH" "$@"); }
+check "inherit: own id wins" deny "$(in_ws --id xw1i Hydra "$HYD" "$P/app")"
+check "inherit: missing id from session file" ask "$(in_ws --id 36ch Hydra "$CLEAN" "$P/app")"
+check "inherit [ ]: missing stays missing" missing "$(in_ws --id 36ch Hydra "$CLEAN" "$P/off")"
+check "inherit: missing checkbox = on" ask "$(in_ws --id 36ch Hydra "$CLEAN" "$P/nobox")"
+check "inherit: old file text line wins" deny "$(in_ws --id xw1i Hydra "$HYD" "$P/old")"
+check "inherit: old file missing setting inherited" ask "$(in_ws --id 36ch Hydra "$CLEAN" "$P/old")"
+check "target without own file -> session file" auto "$(in_ws --id xw1i Hydra "$HYD" "$P/nofile")"
+check "no target -> session file" auto "$(in_ws --id xw1i Hydra "$HYD")"
+check "session dir is the target -> no inheritance" missing "$(cd "$P/app" && DOGMA_SESSION_DIR="$P/app" "$MODE_SH" --id 36ch Hydra "$CLEAN" "$P/app")"
+
+# credo pinned project (fake pin in a temp CLAUDE_CONFIG_DIR): no target -> pinned project
+mkdir -p "$TMP/inh/cfg/credo/session-projects"
+printf '%s\n' "$P/app" > "$TMP/inh/cfg/credo/session-projects/test-sid"
+pinned() { (unset CREDO_DIR; cd "$WS" && DOGMA_SESSION_DIR="$WS" DOGMA_CREDO_CONFIG= CLAUDE_CONFIG_DIR="$TMP/inh/cfg" CREDO_SESSION_ID=test-sid "$MODE_SH" "$@"); }
+check "pinned: no target -> pinned project file" deny "$(pinned --id xw1i Hydra "$HYD")"
+check "pinned: inherits from session file" ask "$(pinned --id 36ch Hydra "$CLEAN")"
+check "pinned: explicit target wins" ask "$(pinned --id 36ch Hydra "$CLEAN" "$P/nobox")"
+check "pinned: switched off -> session file" auto "$(cd "$WS" && DOGMA_SESSION_DIR="$WS" DOGMA_CREDO_CONFIG=none CLAUDE_CONFIG_DIR="$TMP/inh/cfg" CREDO_SESSION_ID=test-sid "$MODE_SH" --id xw1i Hydra "$HYD")"
+check "flow: repo inherits [x] Hydra from the session file" hydra "$(cd "$WS" && DOGMA_SESSION_DIR="$WS" CREDO_HYDRA_DIR="$FAKE_HYDRA" "$FLOW_SH" "$P/nofile" | sed -n 's/^flow=//p')"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

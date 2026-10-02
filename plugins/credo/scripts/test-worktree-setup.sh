@@ -21,6 +21,10 @@ fi
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/credo-wt-setup-test.XXXXXX")"
 trap 'rm -rf -- "$TMP"' EXIT
 
+# hermetic: no session-folder file to inherit from, no credo pinned project
+mkdir -p "$TMP/session"
+export DOGMA_SESSION_DIR="$TMP/session" DOGMA_CREDO_CONFIG=none
+
 # isolate git from the user's global/system config (hooks, signing, ...)
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
