@@ -64,8 +64,18 @@ DEFAULT_MACHINE_TIMEOUT = 30.0
 # upper bound on remote sessions materialized per machine, to cap subprocess and
 # disk growth from a large or hostile roster (config key max_remotes_per_machine)
 MAX_REMOTES_PER_MACHINE = 64
+# upper bound on concurrent inbound TCP handler threads. Auth happens only after a
+# full line is read, so without this cap an unauthenticated LAN client could open
+# many connections and exhaust threads/memory (config key max_conn_threads).
+MAX_CONN_THREADS = 64
+# upper bound on concurrent holder proxy-connection worker threads, so one stuck
+# local client cannot block other local writers and the pool cannot grow unbounded.
+MAX_HOLDER_WORKERS = 16
 # how long the holder server socket blocks on accept before re-checking its parent
 HOLDER_ACCEPT_TIMEOUT = 2.0
+# how long an accept loop waits to acquire its concurrency slot before shedding a
+# connection, so the accept loop itself never blocks on a full pool
+ACQUIRE_TIMEOUT = 0.5
 ENVELOPE_RE = re.compile(
     r"<cross-session-message\b[^>]*>(.*)</cross-session-message>", re.S
 )
@@ -336,17 +346,14 @@ def run_holder(args):
         % (proxy, args.peer_name, args.target_session, host, port)
     )
 
-    try:
-        while not stop["v"]:
-            try:
-                conn, _ = srv.accept()
-            except socket.timeout:
-                if os.getppid() != parent:
-                    log("holder: parent gone, exiting")
-                    break
-                continue
-            except OSError:
-                break
+    # Each accepted proxy connection is handled in its own short-lived daemon worker
+    # thread, bounded by this semaphore, so a local client that opens the proxy and
+    # stalls cannot delay other local writers (no head-of-line block). The accept
+    # loop keeps its periodic wakeup so an orphaned holder still self-exits.
+    worker_sem = threading.Semaphore(MAX_HOLDER_WORKERS)
+
+    def _serve(conn):
+        try:
             try:
                 conn.settimeout(5)
                 buf = b""
@@ -365,11 +372,52 @@ def run_holder(args):
                 if not line:
                     continue
                 _forward(line, token, host, port, args, sess_dir)
+        except Exception as exc:
+            log("holder: worker error: %s" % exc)
+        finally:
+            worker_sem.release()
+
+    workers = []
+    try:
+        while not stop["v"]:
+            workers = [w for w in workers if w.is_alive()]
+            try:
+                conn, _ = srv.accept()
+            except socket.timeout:
+                if os.getppid() != parent:
+                    log("holder: parent gone, exiting")
+                    break
+                continue
+            except OSError:
+                break
+            if not worker_sem.acquire(timeout=ACQUIRE_TIMEOUT):
+                log(
+                    "holder: worker cap reached (%d); dropping a proxy connection"
+                    % MAX_HOLDER_WORKERS
+                )
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                continue
+            try:
+                t = threading.Thread(target=_serve, args=(conn,), daemon=True)
+                t.start()
+                workers.append(t)
+            except Exception as exc:
+                worker_sem.release()
+                log("holder: could not start worker: %s" % exc)
+                try:
+                    conn.close()
+                except OSError:
+                    pass
     finally:
         try:
             os.unlink(proxy)
         except OSError:
             pass
+        for w in workers:
+            w.join(timeout=1.0)
     return 0
 
 
@@ -430,6 +478,12 @@ class Daemon(object):
         self.max_remotes = int(
             cfg.get("max_remotes_per_machine", MAX_REMOTES_PER_MACHINE)
         )
+        self.max_conn_threads = int(
+            cfg.get("max_conn_threads", MAX_CONN_THREADS)
+        )
+        # bounds concurrent inbound handler threads; the accept loop sheds load
+        # rather than blocking when the pool is full (pre-auth exhaustion guard)
+        self.conn_sem = threading.Semaphore(self.max_conn_threads)
         self.sess_dir = sessions_dir()
         self.sock_dir = sock_dir()
         self.script = os.path.abspath(__file__)
@@ -487,9 +541,36 @@ class Daemon(object):
                 conn, addr = self.srv.accept()
             except OSError:
                 break
-            threading.Thread(
-                target=self._handle_conn, args=(conn, addr), daemon=True
-            ).start()
+            # bound concurrency: try to grab a slot without blocking the accept loop.
+            # If the pool is full, shed this (still unauthenticated) connection rather
+            # than spawning an unbounded number of handler threads.
+            if not self.conn_sem.acquire(timeout=ACQUIRE_TIMEOUT):
+                log(
+                    "connection cap reached (%d); dropping %s"
+                    % (self.max_conn_threads, addr)
+                )
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                continue
+            try:
+                threading.Thread(
+                    target=self._handle_conn_guarded, args=(conn, addr), daemon=True
+                ).start()
+            except Exception as exc:
+                self.conn_sem.release()
+                log("could not start handler thread for %s: %s" % (addr, exc))
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+
+    def _handle_conn_guarded(self, conn, addr):
+        try:
+            self._handle_conn(conn, addr)
+        finally:
+            self.conn_sem.release()
 
     def _handle_conn(self, conn, addr):
         try:

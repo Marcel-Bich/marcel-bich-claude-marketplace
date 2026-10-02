@@ -50,15 +50,16 @@ PY="$(command -v python3 2>/dev/null || true)"
 [ -n "$PY" ] || exit 0
 
 MARK='credoPeerBridge'
+LAN_MARK='credoPeerLan'
 pid_alive() { kill -0 "$1" 2>/dev/null; }
 
-# Ownership check: the marker must be a real top-level JSON key, not just a byte
+# Marker check: the marker must be a real top-level JSON key, not just a byte
 # sequence somewhere in the file. grep is a cheap pre-filter; the structural python
 # confirm only runs on the rare files that already contain the string, so the common
 # case (no marker) stays fast.
-is_ours() {
-  grep -q "\"$MARK\"" "$1" 2>/dev/null || return 1
-  "$PY" - "$1" "$MARK" >/dev/null 2>&1 <<'PYEOF'
+has_marker() {  # file marker
+  grep -q "\"$2\"" "$1" 2>/dev/null || return 1
+  "$PY" - "$1" "$2" >/dev/null 2>&1 <<'PYEOF'
 import json, sys
 try:
     with open(sys.argv[1]) as fh:
@@ -68,6 +69,10 @@ except Exception:
 sys.exit(0 if isinstance(d, dict) and sys.argv[2] in d else 1)
 PYEOF
 }
+
+# Ownership check: a file that carries OUR own bridge marker. Prune and loop-safety
+# use this - it must match only credoPeerBridge, never the LAN relay's marker.
+is_ours() { has_marker "$1" "$MARK"; }
 
 if command -v shopt >/dev/null 2>&1; then shopt -s nullglob 2>/dev/null; fi
 
@@ -113,6 +118,7 @@ for sib_cfg in "$HOME"/.claude*/; do
     [ -L "$src" ] && continue               # regular files only
     [ -f "$src" ] || continue
     is_ours "$src" && continue              # loop-safety: never bridge a bridged copy
+    has_marker "$src" "$LAN_MARK" && continue  # never bridge a credo-peer-lan descriptor
     pid="$(basename "$src" .json)"
     printf '%s' "$pid" | grep -Eq '^[0-9]+$' || continue
     pid_alive "$pid" || continue

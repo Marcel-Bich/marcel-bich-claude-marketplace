@@ -334,5 +334,123 @@ ok "pre-existing non-marker descriptor at the holder pid path is NOT overwritten
 # a kill -9 against the OS reparent-to-init; it is covered by manual/live testing
 # rather than forcing a flaky assertion here.
 
+# --- N2: concurrent proxy writers, no head-of-line block --------------------
+# Two local clients write into the SAME proxy socket on A at once. One connects
+# first and holds its socket open WITHOUT sending for a while; the other connects
+# right after and sends immediately. With per-connection worker threads in the
+# holder, the fast writer is delivered to B promptly even while the slow connection
+# is still held. (With the old inline accept loop the slow connection would block
+# the accept() so the fast message could not be delivered until the slow handler's
+# socket timeout - this test would then fail, which is the point.) Finally the slow
+# writer sends too, so both frames are delivered.
+cat > "$TMP/slowproxy.py" <<'PYEOF'
+import json, socket, sys, time, uuid
+path, name, body, reply, delay = sys.argv[1:6]
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect(path)
+time.sleep(float(delay))  # hold the connection open before sending anything
+env = '<cross-session-message from="%s" from-name="%s">\n%s\n</cross-session-message>' % (reply, name, body)
+frame = {"type": "user", "message": {"content": env}, "uuid": str(uuid.uuid4()), "priority": "next", "from": reply}
+s.sendall((json.dumps(frame) + "\n").encode())
+s.shutdown(socket.SHUT_WR)
+s.close()
+PYEOF
+
+if [ -n "${PROXY_A:-}" ] && [ -S "$PROXY_A" ]; then
+    # slow writer: connects now, holds 4s, then sends. started first so the holder
+    # accepts it before the fast one.
+    "$PY" "$TMP/slowproxy.py" "$PROXY_A" "slowA" "slow-concurrent-msg" "uds:$SENDER_A" 4 &
+    SLOW_PID=$!; PIDS="$PIDS $SLOW_PID"
+    sleep 0.5   # ensure the slow connection is accepted and held first
+    "$PY" "$TMP/sendproxy.py" "$PROXY_A" "fastA" "fast-concurrent-msg" "uds:$SENDER_A"
+    # the fast frame must arrive well before the slow writer sends (at 4s): a 3s
+    # window is comfortably above normal loopback latency but below the slow send.
+    fast=""
+    for _ in $(seq 1 15); do
+        if grep -q "fast-concurrent-msg" "$TMP/B/inbox.log" 2>/dev/null; then fast=1; break; fi
+        sleep 0.2
+    done
+    ok "fast proxy writer is delivered while a slow connection is held (no head-of-line block)" "$([ -n "$fast" ] && echo 0 || echo 1)"
+    # both frames must ultimately be delivered
+    slow=""
+    for _ in $(seq 1 40); do
+        if grep -q "slow-concurrent-msg" "$TMP/B/inbox.log" 2>/dev/null; then slow=1; break; fi
+        sleep 0.2
+    done
+    ok "both concurrent proxy writers are delivered" "$([ -n "$fast" ] && [ -n "$slow" ] && echo 0 || echo 1)"
+else
+    FAIL=$((FAIL + 1)); printf 'FAIL N2: no proxy socket to test concurrent writers\n'
+fi
+
+# --- N1: bounded inbound handler threads shed load without wedging -----------
+# A dedicated daemon D1 runs with a tiny max_conn_threads so the cap is easy to hit.
+# Several clients connect and stall (send nothing), filling the handler pool; extra
+# connections are sampled by accept() and shed (logged "connection cap reached")
+# instead of spawning unbounded threads. After the stalls are released, a valid,
+# authenticated deliver still succeeds - proving the cap sheds load without wedging.
+read PD < <("$PY" - <<'PYEOF'
+import socket
+s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()
+PYEOF
+)
+mkdir -p "$TMP/D1/cfg/sessions" "$TMP/D1/cfg/credo" "$TMP/D1/sock"
+INBOX_D="$TMP/D1/inbox.sock"
+: > "$TMP/D1/inbox.log"
+cat > "$TMP/D1/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"D1","listen_host":"127.0.0.1","listen_port":$PD,"token":"$TOKEN",
+ "roster_interval":60,"machine_timeout":600,"max_conn_threads":2,"peers":[]}
+EOF
+"$PY" "$TMP/inbox.py" "$INBOX_D" "$TMP/D1/inbox.log" &
+PIDS="$PIDS $!"
+sleep 600 & SLEEP_D=$!; PIDS="$PIDS $SLEEP_D"
+write_descriptor "$TMP/D1/cfg/sessions/$SLEEP_D.json" "$SLEEP_D" "sid-D" "$INBOX_D" "werkbank-d1"
+CLAUDE_CONFIG_DIR="$TMP/D1/cfg" CREDO_PEER_LAN_CONFIG="$TMP/D1/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/D1/sock" "$PY" "$DAEMON" daemon >"$TMP/D1/daemon.log" 2>&1 &
+D1_PID=$!; PIDS="$PIDS $D1_PID"
+
+# stall client: open 6 TCP connections and hold them open, sending nothing.
+cat > "$TMP/stallconns.py" <<'PYEOF'
+import socket, sys, time
+host, port, n = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+socks = []
+for _ in range(n):
+    try:
+        socks.append(socket.create_connection((host, port), timeout=5))
+    except Exception:
+        pass
+while True:
+    time.sleep(1)
+PYEOF
+
+# wait for D1 to be listening
+for _ in $(seq 1 40); do
+    if "$PY" -c 'import socket,sys; socket.create_connection(("127.0.0.1",int(sys.argv[1])),timeout=1).close()' "$PD" 2>/dev/null; then break; fi
+    sleep 0.1
+done
+"$PY" "$TMP/stallconns.py" 127.0.0.1 "$PD" 6 &
+STALL_PID=$!; PIDS="$PIDS $STALL_PID"
+
+# with cap=2 and 6 stalls, the surplus connections must be shed and logged
+shed=""
+for _ in $(seq 1 40); do
+    if grep -q "connection cap reached" "$TMP/D1/daemon.log" 2>/dev/null; then shed=1; break; fi
+    sleep 0.2
+done
+ok "inbound handler pool sheds surplus connections at the cap" "$([ -n "$shed" ] && echo 0 || echo 1)"
+
+# release the stalls (closing the sockets frees the held handler slots)
+kill -KILL "$STALL_PID" 2>/dev/null || true
+
+# the daemon is still responsive: a valid, authenticated deliver lands in the inbox
+before_d="$(wc -c < "$TMP/D1/inbox.log" 2>/dev/null || echo 0)"
+GOOD_BODY='{"body":"responsive-after-flood","from_name":"n1","from_sessionId":"","kind":"deliver","target_sessionId":"sid-D"}'
+delivered=""
+for _ in $(seq 1 25); do
+    "$PY" "$TMP/sendtcp.py" 127.0.0.1 "$PD" "$TOKEN" "$GOOD_BODY" 2>/dev/null || true
+    if grep -q "responsive-after-flood" "$TMP/D1/inbox.log" 2>/dev/null; then delivered=1; break; fi
+    sleep 0.2
+done
+ok "daemon stays responsive after a connection flood (valid deliver still succeeds)" "$([ -n "$delivered" ] && echo 0 || echo 1)"
+
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
