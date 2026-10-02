@@ -803,5 +803,162 @@ else
     PASS=$((PASS + 1))
 fi
 
+# --- B1: forward target = CONFIGURED/ADVERTISED peer, never the raw source IP ------
+# The WSL2-NAT bug: an inbound roster's source IP seen by the receiving daemon is the
+# WSL gateway (e.g. 172.23.64.1), NOT the peer's real LAN IP. Keying the peer by that
+# source IP makes the holder forward to the gateway -> timeout. Driven at the module
+# level (no real sockets) against _resolve_peer_addr: given a source IP that differs
+# from the configured/advertised peer host, the forward target must resolve to the
+# CONFIGURED/advertised peer, and an unconfigured advertised host must never redirect.
+cat > "$TMP/b1test.py" <<'PYEOF'
+import importlib.util, sys
+daemon_path = sys.argv[1]
+spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+GW = "172.23.64.1"  # the WSL NAT gateway the receiver wrongly saw as the source
+PEER = "192.168.1.112"
+
+# one configured peer; roster arrives from the NAT gateway but ADVERTISES the peer IP
+d1 = mod.Daemon({"peers": [PEER + ":48610"], "listen_port": 48610})
+addr, known = d1._resolve_peer_addr(GW, 48610, PEER, 48610)
+assert addr == (PEER, 48610), "advertised host did not resolve to the configured peer: %r" % (addr,)
+assert known is True, "configured/advertised peer must be known"
+assert addr[0] != GW, "forward target must NOT be the raw source IP (gateway)"
+
+# backward-compat: a peer too old to advertise, single configured peer -> still resolves
+# to that peer (not the gateway source IP)
+addr2, known2 = d1._resolve_peer_addr(GW, 48610, None, None)
+assert addr2 == (PEER, 48610), "single-peer fallback did not resolve to the peer: %r" % (addr2,)
+assert known2 is True
+
+# multiple peers: the advertised host selects the matching configured peer
+P2 = "192.168.1.113"
+d2 = mod.Daemon({"peers": [PEER + ":48610", P2 + ":48610"], "listen_port": 48610})
+addr3, known3 = d2._resolve_peer_addr(GW, 48610, P2, 48610)
+assert addr3 == (P2, 48610), "advertised host did not pick the right peer: %r" % (addr3,)
+assert known3 is True
+
+# security: multiple peers, an advertised host that is NOT configured must NEVER be
+# used as the forward target (no rogue redirect). The source IP is also not configured,
+# so it falls back to the raw source, flagged unknown - crucially NOT the bogus adv host.
+addr4, known4 = d2._resolve_peer_addr(GW, 48610, "10.0.0.66", 48610)
+assert addr4 == (GW, 48610), "must fall back to the source, not a bogus advertised host: %r" % (addr4,)
+assert known4 is False, "an unconfigured address must be flagged unexpected"
+assert addr4[0] != "10.0.0.66", "a rogue advertised host must never become the forward target"
+
+# same-host loopback (tests' own shape): advertised port disambiguates two peers that
+# share a host but differ by port
+d3 = mod.Daemon({"peers": ["127.0.0.1:5001", "127.0.0.1:5002"], "listen_port": 48610})
+addr5, known5 = d3._resolve_peer_addr("127.0.0.1", 5002, "127.0.0.1", 5002)
+assert addr5 == ("127.0.0.1", 5002), "advertised port did not disambiguate: %r" % (addr5,)
+assert known5 is True
+print("B1_OK")
+PYEOF
+B1_OUT="$("$PY" "$TMP/b1test.py" "$DAEMON" 2>&1)"
+case "$B1_OUT" in *B1_OK*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL B1 forward-target resolution: %s\n' "$B1_OUT" ;; esac
+
+# --- B1b: a roster advertising the peer address but arriving from a DIFFERENT source
+# IP still mirrors the remote session AND spawns a holder whose forward target is the
+# advertised/configured peer (not the source). End to end over TCP into a daemon.
+read PK < <("$PY" - <<'PYEOF'
+import socket
+s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()
+PYEOF
+)
+mkdir -p "$TMP/K/cfg/sessions" "$TMP/K/cfg/credo" "$TMP/K/sock"
+# K's single configured peer is a DEAD loopback port (stands in for the real peer IP).
+# A roster is injected over TCP (source 127.0.0.1) advertising that same peer address.
+read PKDEAD < <("$PY" - <<'PYEOF'
+import socket
+s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()
+PYEOF
+)
+cat > "$TMP/K/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"nodeK","listen_host":"127.0.0.1","listen_port":$PK,
+ "roster_interval":0.3,"machine_timeout":60,"peers":["127.0.0.1:$PKDEAD"]}
+EOF
+sleep 600 & SLEEP_K=$!; PIDS="$PIDS $SLEEP_K"
+write_descriptor "$TMP/K/cfg/sessions/$SLEEP_K.json" "$SLEEP_K" "sid-K" "$TMP/K/sender.sock" "werkbank-k"
+CLAUDE_CONFIG_DIR="$TMP/K/cfg" CREDO_PEER_LAN_CONFIG="$TMP/K/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/K/sock" "$PY" "$DAEMON" daemon >"$TMP/K/daemon.log" 2>&1 & K_PID=$!; PIDS="$PIDS $K_PID"
+for _ in $(seq 1 40); do
+    if "$PY" -c 'import socket,sys; socket.create_connection(("127.0.0.1",int(sys.argv[1])),timeout=1).close()' "$PK" 2>/dev/null; then break; fi
+    sleep 0.1
+done
+# roster from source 127.0.0.1 advertising the configured peer 127.0.0.1:$PKDEAD
+ROSTER_K='{"kind":"roster","machine":"nodeK-remote","listen_port":'"$PKDEAD"',"advertise_host":"127.0.0.1","advertise_port":'"$PKDEAD"',"sessions":[{"name":"werkbank-remote","sessionId":"sid-KR","status":"idle"}]}'
+"$PY" "$TMP/sendtcp_nosig.py" 127.0.0.1 "$PK" "$ROSTER_K" 2>/dev/null || true
+gotK=""
+for _ in $(seq 1 60); do
+    if grep -rq '"werkbank-remote__nodeK-remote"' "$TMP/K/cfg/sessions" 2>/dev/null; then gotK=1; break; fi
+    sleep 0.2
+done
+ok "B1b: advertised roster from a different source IP still mirrors the remote session" "$([ -n "$gotK" ] && echo 0 || echo 1)"
+# the holder log must name the CONFIGURED peer address as its forward target
+grep -q "via 127.0.0.1:$PKDEAD" "$TMP/K/daemon.log" 2>/dev/null
+ok "B1b: holder forward target is the configured/advertised peer, not the source" "$?"
+
+# --- B3: init --replace sets peers[] to EXACTLY the given set; --remove drops one ----
+mkdir -p "$TMP/b3/credo"
+B3_CFG="$TMP/b3/credo/peer-lan.json"
+PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+    CREDO_PEER_LAN_CONFIG="$B3_CFG" "$PY" "$DAEMON" init 192.168.1.10 192.168.1.11 >/dev/null 2>&1
+# --replace: peers become EXACTLY the given set (the earlier two are dropped)
+PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+    CREDO_PEER_LAN_CONFIG="$B3_CFG" "$PY" "$DAEMON" init --replace 192.168.1.20 192.168.1.21 >/dev/null 2>&1
+B3_REP="$("$PY" - "$B3_CFG" <<'PYEOF'
+import json, sys
+p = json.load(open(sys.argv[1]))["peers"]
+print("OK" if set(p) == {"192.168.1.20", "192.168.1.21"} and len(p) == 2 else "BAD %r" % p)
+PYEOF
+)"
+case "$B3_REP" in OK) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL init --replace did not set peers exactly: %s\n' "$B3_REP" ;; esac
+# --remove: drop one, keep the rest
+PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+    CREDO_PEER_LAN_CONFIG="$B3_CFG" "$PY" "$DAEMON" init --remove 192.168.1.20 >/dev/null 2>&1
+B3_REM="$("$PY" - "$B3_CFG" <<'PYEOF'
+import json, sys
+p = json.load(open(sys.argv[1]))["peers"]
+print("OK" if p == ["192.168.1.21"] else "BAD %r" % p)
+PYEOF
+)"
+case "$B3_REM" in OK) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL init --remove did not drop the address: %s\n' "$B3_REM" ;; esac
+
+# --- B5: native-Linux ufw hint - active + port not allowed prints a clear warning ----
+# A fake `ufw` on PATH reports an active firewall WITHOUT the relay port; a non-WSL
+# /proc/version override forces the native path (this host is WSL2). init must print a
+# clear "ufw is active and port ... may be blocked" warning. Read-only: the fake ufw
+# never changes anything and is never invoked with sudo.
+mkdir -p "$TMP/b5/bin" "$TMP/b5/credo"
+cp "$TMP/wh/bin/ip" "$TMP/b5/bin/ip"
+cat > "$TMP/b5/bin/ufw" <<'EOF'
+#!/bin/bash
+# fake `ufw status`: active, but no rule mentioning the relay port
+echo "Status: active"
+echo ""
+echo "To                         Action      From"
+echo "--                         ------      ----"
+echo "22/tcp                     ALLOW       Anywhere"
+EOF
+chmod +x "$TMP/b5/bin/ufw"
+B5_CFG="$TMP/b5/credo/peer-lan.json"
+B5_OUT="$(PATH="$TMP/b5/bin:$TMP/wh/bin:/usr/bin:/bin" WSL_DISTRO_NAME= \
+    CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+    CREDO_PEER_LAN_CONFIG="$B5_CFG" "$PY" "$DAEMON" init 192.168.1.30 2>&1)"
+case "$B5_OUT" in *"ufw is active"*"48610"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL ufw-active hint not printed: %s\n' "$B5_OUT" ;; esac
+# and when a rule DOES mention the port, no warning
+cat > "$TMP/b5/bin/ufw" <<'EOF'
+#!/bin/bash
+echo "Status: active"
+echo "48610/tcp                  ALLOW       192.168.0.0/16"
+EOF
+chmod +x "$TMP/b5/bin/ufw"
+B5_OUT2="$(PATH="$TMP/b5/bin:$TMP/wh/bin:/usr/bin:/bin" WSL_DISTRO_NAME= \
+    CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+    CREDO_PEER_LAN_CONFIG="$B5_CFG" "$PY" "$DAEMON" init 192.168.1.31 2>&1)"
+case "$B5_OUT2" in *"ufw is active"*) FAIL=$((FAIL + 1)); printf 'FAIL ufw hint wrongly printed when the port is allowed\n' ;; *) PASS=$((PASS + 1)) ;; esac
+
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

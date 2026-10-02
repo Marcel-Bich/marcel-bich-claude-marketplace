@@ -40,11 +40,13 @@ cfgdir="${cfgdir%/}"
 cfg="${CREDO_PEER_LAN_CONFIG:-$cfgdir/credo/peer-lan.json}"
 [ -f "$cfg" ] || exit 0          # no config -> the relay is a no-op, start nothing
 
-# Already running? Do not start a second daemon. The daemon's command line contains
-# "credo-peer-lan.py daemon"; this hook's own command line is the hook script path,
-# which does NOT contain that pattern, so this pgrep never self-matches.
+# Already running? Do not start a second daemon. The `[c]...` bracket makes the pattern
+# self-match-safe (the same form the /credo:peer-lan status/stop commands use): pgrep -f
+# matches full command lines, and the character class matches a literal `c` while the
+# pattern STRING `[c]redo...` never occurs in any shell that merely mentions the daemon
+# name, so it only ever matches the real daemon.
 if command -v pgrep >/dev/null 2>&1; then
-  if pgrep -f "credo-peer-lan.py daemon" >/dev/null 2>&1; then
+  if pgrep -f "[c]redo-peer-lan.py daemon" >/dev/null 2>&1; then
     exit 0
   fi
 fi

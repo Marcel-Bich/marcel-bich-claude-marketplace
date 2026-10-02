@@ -355,6 +355,36 @@ def probe_all_peers(cfg):
             )
 
 
+def check_firewall_hint(cfg):
+    """Native-Linux-only, read-only, best-effort: if ufw is active and the listen
+    port is not already allowed, print a clear hint. It NEVER runs sudo and NEVER
+    changes anything; any error (ufw absent, not root, unreadable) is swallowed so the
+    generic doc hint still applies. On WSL there is no local ufw to consult (the port
+    is a Windows portproxy concern), so this is a no-op there."""
+    if is_wsl():
+        return
+    if not have_cmd("ufw"):
+        return
+    port = int(cfg.get("listen_port", DEFAULT_PORT))
+    try:
+        out = subprocess.run(
+            ["ufw", "status"], capture_output=True, text=True, timeout=5
+        )
+    except Exception:
+        return
+    status = out.stdout or ""
+    if "Status: active" not in status:
+        return  # inactive, needs-root, or unreadable -> nothing to warn about
+    if str(port) in status:
+        return  # a rule already mentions the port
+    print(
+        "WARNING: ufw is active and port %d does not appear in its rules - the relay "
+        "port may be blocked on this machine. Allow it scoped to your LAN, e.g.:\n"
+        "  sudo ufw allow from 192.168.0.0/16 to any port %d proto tcp"
+        % (port, port)
+    )
+
+
 # ---------------------------------------------------------------------------
 # line transport (HMAC-signed when a token is configured, unsigned otherwise)
 # ---------------------------------------------------------------------------
@@ -699,6 +729,18 @@ class Daemon(object):
         # addresses of configured peers; an inbound roster whose source address is
         # NOT in here is "unexpected" inbound (warned once; see _on_roster)
         self.peer_addrs = set((p["host"], p["port"]) for p in self.peers)
+        # Address we ADVERTISE to peers so they forward back to us at our real LAN
+        # address, never at the raw inbound source IP. Under WSL2 NAT the source IP a
+        # peer sees is the WSL gateway (e.g. 172.23.x.1), NOT this machine - so a
+        # receiver keying us by that source IP would forward to its own gateway and
+        # time out. Each daemon therefore announces detect_self_ip() (the Windows host
+        # LAN IP under WSL, the default-route src natively) plus listen_port, and the
+        # receiver pairs that against its configured peers. An explicit config
+        # "advertise_host" (and optional "advertise_port") skips auto-detection; when
+        # neither is set it is detected once in a background thread (see start()) so
+        # the slow powershell probe under WSL never blocks the roster loop.
+        self.advertise_host = cfg.get("advertise_host")
+        self.advertise_port = int(cfg.get("advertise_port", self.listen_port))
         self.roster_interval = float(
             cfg.get("roster_interval", DEFAULT_ROSTER_INTERVAL)
         )
@@ -771,9 +813,28 @@ class Daemon(object):
                 "to restrict to your own devices."
                 % (self.listen_host, self.listen_port)
             )
+        if self.advertise_host:
+            log("advertising self address %s:%d in rosters" % (self.advertise_host, self.advertise_port))
+        else:
+            # detect in the background so a slow powershell probe (WSL) never blocks the
+            # roster loop; until it resolves, rosters simply omit the advertise fields
+            # (receivers then fall back - see _resolve_peer_addr).
+            threading.Thread(target=self._detect_advertise_host, daemon=True).start()
         threading.Thread(target=self._accept_loop, daemon=True).start()
         threading.Thread(target=self._roster_loop, daemon=True).start()
         threading.Thread(target=self._janitor_loop, daemon=True).start()
+
+    def _detect_advertise_host(self):
+        try:
+            ip = detect_self_ip()
+        except Exception as exc:
+            log("self-address detection failed: %s" % exc)
+            return
+        if ip:
+            self.advertise_host = ip
+            log("advertising self address %s:%d in rosters" % (ip, self.advertise_port))
+        else:
+            log("self-address not detected; rosters omit the advertise fields")
 
     def shutdown(self):
         if self.stop.is_set():
@@ -910,6 +971,13 @@ class Daemon(object):
                 "listen_port": self.listen_port,
                 "sessions": sessions,
             }
+            # advertise our own reachable address so the receiver forwards to the
+            # CONFIGURED peer matching it, never to the raw inbound source IP (which
+            # under WSL2 NAT is the gateway, not us). Omitted until detected, so an
+            # old peer that never sends it still works via the receiver's fallback.
+            if self.advertise_host:
+                payload["advertise_host"] = self.advertise_host
+                payload["advertise_port"] = self.advertise_port
             for peer in self.peers:
                 host, port = peer["host"], peer["port"]
                 try:
@@ -917,17 +985,40 @@ class Daemon(object):
                 except Exception as exc:
                     log("roster to %s:%s failed: %s" % (host, port, exc))
 
-    def _resolve_peer_addr(self, src_ip, listen_port):
-        """Map an inbound roster's (source IP, announced listen_port) to the peer
-        address its replies forward to, and whether that address is configured.
-        A real multi-IP LAN uses the SAME port on every machine with DIFFERENT
-        hosts, while the loopback tests use the SAME host with DIFFERENT ports -
-        matching on host AND port handles both. An address not in the config is
-        still served (token-less casual default); it is only flagged unexpected."""
+    def _resolve_peer_addr(self, src_ip, listen_port, adv_host=None, adv_port=None):
+        """Map an inbound roster to the peer ADDRESS its replies/messages forward to,
+        and whether that address is a configured peer. The forward target must be the
+        CONFIGURED peer, never the raw inbound source IP (under WSL2 NAT the source IP
+        is the WSL gateway, not the peer). Resolution order:
+          1. the configured peer matching the roster's ADVERTISED host (the sender's
+             own reachable address). An advertised address is only ever honored when
+             it matches the config, so a rogue cannot redirect traffic elsewhere.
+          2. the configured peer matching the raw source IP + announced port (the
+             no-NAT / loopback case where the source IP really is the peer).
+          3. the single configured peer, if exactly one is configured (unambiguous;
+             also makes the NAT fix work for a peer too old to advertise).
+          4. else the raw (src_ip, port), flagged unexpected. Served token-less (the
+             receiving session's own consent gate is the protection), warned once."""
         port = int(listen_port) if listen_port else DEFAULT_PORT
+        # 1. advertised host matches a configured peer (NAT-safe path)
+        if adv_host:
+            aport = int(adv_port) if adv_port else None
+            if aport is not None:
+                for p in self.peers:
+                    if p["host"] == adv_host and p["port"] == aport:
+                        return (p["host"], p["port"]), True
+            for p in self.peers:
+                if p["host"] == adv_host:
+                    return (p["host"], p["port"]), True
+        # 2. source IP + announced port matches a configured peer
         for p in self.peers:
             if p["host"] == src_ip and p["port"] == port:
                 return (p["host"], p["port"]), True
+        # 3. exactly one configured peer -> unambiguous forward target
+        if len(self.peers) == 1:
+            p = self.peers[0]
+            return (p["host"], p["port"]), True
+        # 4. not resolvable to a configured peer
         return (src_ip, port), False
 
     def _on_roster(self, payload, src_ip=""):
@@ -937,7 +1028,12 @@ class Daemon(object):
         sessions = payload.get("sessions")
         if not isinstance(sessions, list):
             sessions = []
-        peer_addr, known = self._resolve_peer_addr(src_ip, payload.get("listen_port"))
+        peer_addr, known = self._resolve_peer_addr(
+            src_ip,
+            payload.get("listen_port"),
+            payload.get("advertise_host"),
+            payload.get("advertise_port"),
+        )
         addr_key = "%s:%d" % peer_addr
         now = time.monotonic()
         with self.lock:
@@ -976,9 +1072,13 @@ class Daemon(object):
                 s = dict(s)
                 s["machine"] = machine  # announced this_machine, for the display name
                 present[sid] = s
-            # remove sessions that vanished from this peer's roster
-            for (mkey, sid) in list(self.remotes.keys()):
-                if mkey == addr_key and sid not in present:
+            # remove sessions that vanished from THIS sender's roster. The prune is
+            # scoped to the same announced machine as well as the forward address: with
+            # the single-peer fallback (resolution rule 3) two different senders can map
+            # to the same configured peer address, and a roster from one must never prune
+            # the other's sessions.
+            for (mkey, sid), rec in list(self.remotes.items()):
+                if mkey == addr_key and rec.get("machine") == machine and sid not in present:
                     self._remove_remote_locked((mkey, sid))
             # ensure a holder+descriptor for each present session
             template = self._template_descriptor_locked()
@@ -1094,6 +1194,7 @@ class Daemon(object):
             "proxy": proxy,
             "descriptor": desc_path,
             "pid": proc.pid,
+            "machine": machine,
         }
         log("remote up: %s -> holder pid %d, proxy %s" % (name, proc.pid, proxy))
 
@@ -1318,7 +1419,12 @@ def run_daemon(_args):
 def run_init(args):
     """Write/update the config from one or more peer IPs, token-less, then print
     this machine's own address and probe the configured peers. Pure: it never
-    starts the daemon or touches Windows (that is the command doc / autostart)."""
+    starts the daemon or touches Windows (that is the command doc / autostart).
+
+    Modes:
+      init <ips...>            additive + dedup (default)
+      init --replace <ips...>  peers[] becomes EXACTLY the given addresses
+      init --remove <ips...>   remove the given addresses from peers[]"""
     path = config_path()
     cfg = load_config() or {}
     cfg.setdefault("this_machine", socket.gethostname())
@@ -1327,19 +1433,40 @@ def run_init(args):
     # token-less by default: NEVER add a token here (an existing one is kept as-is)
     default_port = int(cfg.get("listen_port", DEFAULT_PORT))
     peers = normalize_peers(cfg.get("peers", []), default_port)
-    seen = set((p["host"], p["port"]) for p in peers)
     added = []
-    for raw in args.ips:
-        p = normalize_peer(raw, default_port)
-        if not p:
-            log("init: ignoring unparseable peer %r" % raw)
-            continue
-        key = (p["host"], p["port"])
-        if key in seen:
-            continue
-        seen.add(key)
-        peers.append(p)
-        added.append(p)
+    removed = []
+    if getattr(args, "replace", False):
+        # peers[] becomes exactly the given addresses (normalized + deduped)
+        peers = normalize_peers(list(args.ips), default_port)
+        added = list(peers)
+    elif getattr(args, "remove", False):
+        drop = set()
+        for raw in args.ips:
+            p = normalize_peer(raw, default_port)
+            if p:
+                drop.add((p["host"], p["port"]))
+            else:
+                log("init: ignoring unparseable peer %r" % raw)
+        kept = []
+        for p in peers:
+            if (p["host"], p["port"]) in drop:
+                removed.append(p)
+            else:
+                kept.append(p)
+        peers = kept
+    else:
+        seen = set((p["host"], p["port"]) for p in peers)
+        for raw in args.ips:
+            p = normalize_peer(raw, default_port)
+            if not p:
+                log("init: ignoring unparseable peer %r" % raw)
+                continue
+            key = (p["host"], p["port"])
+            if key in seen:
+                continue
+            seen.add(key)
+            peers.append(p)
+            added.append(p)
     cfg["peers"] = [peer_to_string(p, default_port) for p in peers]
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1359,10 +1486,13 @@ def run_init(args):
         print("  peers:        (none yet - re-run with one or more peer IPs)")
     if added:
         print("  added:        %s" % ", ".join(peer_to_string(p, default_port) for p in added))
+    if removed:
+        print("  removed:      %s" % ", ".join(peer_to_string(p, default_port) for p in removed))
     print("")
     print_self_address(cfg)
     print("")
     probe_all_peers(cfg)
+    check_firewall_hint(cfg)
     return 0
 
 
@@ -1383,6 +1513,7 @@ def run_check(_args):
     print_self_address(cfg)
     print("")
     probe_all_peers(cfg)
+    check_firewall_hint(cfg)
     return 0
 
 
@@ -1397,6 +1528,17 @@ def main(argv=None):
         "init", help="write/update the config from peer IPs (token-less)"
     )
     p_init.add_argument("ips", nargs="*", help="peer addresses: IP or IP:PORT")
+    g_init = p_init.add_mutually_exclusive_group()
+    g_init.add_argument(
+        "--replace",
+        action="store_true",
+        help="set peers[] to EXACTLY the given addresses (not additive)",
+    )
+    g_init.add_argument(
+        "--remove",
+        action="store_true",
+        help="remove the given addresses from peers[]",
+    )
     p_init.set_defaults(func=run_init)
 
     p_whoami = sub.add_parser(

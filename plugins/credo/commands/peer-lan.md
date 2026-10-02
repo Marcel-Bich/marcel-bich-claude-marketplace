@@ -141,9 +141,22 @@ reachability, not trust.
      "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" init <ips...>
      ```
      (Running `init` with no IPs still writes a valid empty token-less config.)
-  2. Start the daemon:
+
+     Plain `init <ips...>` is ADDITIVE (merges + dedupes into the existing peers). To
+     fix a wrong or dead IP, edit the peer set instead of only adding:
      ```bash
-     nohup "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" daemon >>"$HOME/.claude/credo/peer-lan.log" 2>&1 &
+     # set peers[] to EXACTLY these addresses (drops everything else):
+     "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" init --replace <ips...>
+     # remove one or more addresses, keep the rest:
+     "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" init --remove <ips...>
+     ```
+     (`--replace`/`--remove` are mutually exclusive; both are token-less like plain
+     `init`. On native Linux, `init` also warns if `ufw` is active and the port is not
+     yet allowed.)
+  2. Start the daemon (the log lives under the active config dir, created if needed):
+     ```bash
+     cfgdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; mkdir -p "$cfgdir/credo"
+     nohup "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" daemon >>"$cfgdir/credo/peer-lan.log" 2>&1 &
      ```
   3. Open the LAN port:
      - **Under WSL only** (detect with `grep -qi microsoft /proc/version` or a set
@@ -177,14 +190,20 @@ reachability, not trust.
 
 - **status**
   ```bash
-  pgrep -af "credo-peer-lan.py daemon" || echo "relay not running"
+  pgrep -af "[c]redo-peer-lan.py daemon" || echo "relay not running"
   ```
-  Report whether the daemon runs. If there is no config file, say the relay is a no-op
-  until `~/.claude/credo/peer-lan.json` exists (create it with `init`).
+  The `[c]...` bracket is deliberate: `pgrep -f` matches against full command lines, so a
+  plain `"credo-peer-lan.py daemon"` would also match this very command's own shell
+  wrapper (a false hit). The character class `[c]` matches the literal `c` but the pattern
+  STRING is `[c]redo...`, which does not occur in the wrapper's command line, so it only
+  matches the real daemon. Report whether the daemon runs. If there is no config file, say
+  the relay is a no-op until `${CLAUDE_CONFIG_DIR:-~/.claude}/credo/peer-lan.json` exists
+  (create it with `init`).
 
 - **start**
   ```bash
-  nohup "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" daemon >>"$HOME/.claude/credo/peer-lan.log" 2>&1 &
+  cfgdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; mkdir -p "$cfgdir/credo"
+  nohup "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" daemon >>"$cfgdir/credo/peer-lan.log" 2>&1 &
   ```
   Then confirm it came up with the status command. If it logs "no config" it exits
   immediately - tell the user to run `init` first. Disable globally any time with
@@ -192,10 +211,13 @@ reachability, not trust.
 
 - **stop**
   ```bash
-  pkill -TERM -f "credo-peer-lan.py daemon"
+  pkill -TERM -f "[c]redo-peer-lan.py daemon"
   ```
-  SIGTERM lets the daemon clean up: it kills its holder subprocesses, removes the proxy
-  sockets, and removes every `credoPeerLan` descriptor it created. Confirm with status.
+  The same `[c]...` bracket as in status: without it `pkill -f` would also match (and kill)
+  this command's own shell wrapper before the daemon, so the wrapper dies (exit 144) and
+  any follow-up in the same command never runs. SIGTERM lets the daemon clean up: it kills
+  its holder subprocesses, removes the proxy sockets, and removes every `credoPeerLan`
+  descriptor it created. Confirm with status.
 
 ## Notes
 
