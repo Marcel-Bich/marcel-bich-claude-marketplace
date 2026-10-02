@@ -190,7 +190,7 @@ read -r -d '' KNOWLEDGE <<'K'
 SKILLS (auto-trigger by their description - use them actively whenever they apply): items (the work-item model = the task system), audit (mandatory post-completion review gate), verify (visual Definition of Done for any UI/runtime surface), diag (read-only root-cause diagnosis), safety (before ANY delete or install), rules (per-repo special rules from .credo/RULES.md - load and honor at start), requirements-verbatim (log approved intent word-for-word), sandbox (writing clarify pre-work - measurement/mockup/feasibility - under .credo/sandbox-tmp/, no production code, no commit), optimize (opt-in optimisation audit: read-only scan, findings offered one by one), orchestration (delegation rules), budget (API cap + reset rules), compact-plus (secure approved state before a compact), pr-vetting, issue-triage, skill-capture, cross-cutting-checklist-generator, wsl-env.
 
 COMMANDS by execution class:
-[A] may be run by the agent itself when useful: /credo:session-init, /credo:project (show only, no path argument).
+[A] may be run by the agent itself when useful: /credo:session-init, /credo:project (show only, no path argument), /credo:self-restart (after plugin updates it needs or on user request; never with running background subagents).
 [B] only on explicit user request (interactive or the user's call to make): /credo:session-active, /credo:session-passive, /credo:psalm, /credo:project <path> (pin a target), /credo:optimize (optimisation audit; also right after the user says Yes to a credo-optimize offer).
 [C] NEVER run autonomously - only the user decides these (mode escalation / installs / structural migration): /credo:session-autonomous, /credo:setup, /credo:migrate.
 K

@@ -250,6 +250,19 @@ resources:
 optimize:
   idle_days: 7
 
+# --- self-restart plugin update allowlist (/credo:self-restart run --update) --
+# Which plugins `run --update` may update before the session restarts. A mapping
+# marketplace name -> "*" (all installed plugins of that marketplace) or a list of
+# plugin names. UNSET (the default) -> only the marketplace credo itself was
+# installed from. Plugins of marketplaces not listed are never touched, and the
+# helper never changes autoUpdate settings or known_marketplaces.json.
+# WARNING: widening this to third-party marketplaces is at your own risk - an
+# update pulls whatever that marketplace currently publishes, unreviewed.
+# self_update:
+#   marketplaces:
+#     marcel-bich-claude-marketplace: "*"
+#     some-other-marketplace: [plugin-a, plugin-b]
+
 # --- personal / environment fields (left EMPTY, filled just-in-time) ---------
 # Never committed with real values in the shipped template. The global config
 # holds the user's real values; those live in ~/.claude/credo/config, not here.

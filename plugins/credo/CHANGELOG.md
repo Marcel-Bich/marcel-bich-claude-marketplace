@@ -4,6 +4,25 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ## v0
 
+### v0.71
+
+#### v0.71.0
+
+##### Added
+
+- `/credo:self-restart`: a session can restart itself (e.g. to load plugin updates)
+  and resume the exact same session in the same profile without a human prompt;
+  relaunch via tmux, a new terminal window or a pty fallback, with a peer wake
+  template and ntfy as safety net
+- Optional allowlisted plugin update step (`self_update.marketplaces`, default: only
+  the marketplace credo comes from) that records every version change before -> after
+- Permission-mode recorder hook, so a restarted session gets back exactly the mode it
+  had (never escalated)
+
+##### Changed
+
+- Changelog fragments plus `scripts/changelog/release.py` now drive credo releases
+
 ### v0.70
 
 #### v0.70.0

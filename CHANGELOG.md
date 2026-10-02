@@ -2,75 +2,28 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-10
 
-## dogma
-
-### v1
-
-#### v1.43
-
-##### Added
-
-- DOGMA-PERMISSIONS.md is picked by action target, pinned project, then session folder, with per-id inheritance (default on)
-- Notices also show in non-git folders and for pinned projects that inherit permissions
-
-#### v1.42
-
-##### Added
-
-- Source broadcasts via NOTICES.md
-- `CLAUDE_MB_DOGMA_SOURCE` for sync and recommended setup
-- Per-folder git identity for the source fetch
-
-#### v1.41
-
-##### Added
-
-- Stable setting ids (`§xxxx`) matched first with a text fallback, plus an id registry
-- changelog.d assembly in `/dogma:versioning`
-
-#### v1.40
-
-##### Added
-
-- Worktree files list (link or copy, `.credo/` included by default) and a cleanup-merged-worktrees checkbox
-
-##### Changed
-
-- Subagents may commit in their own worktree, never push or merge
-
-#### v1.39
-
-##### Added
-
-- One-time per-repo update notices for updates that need user action (Run/Later/Never), with an optional band toast
-
-#### v1.38
-
-##### Added
-
-- Final Verification option to run all tests only at release
-
-#### v1.37
-
-##### Added
-
-- Optional per-stage test commands (commit, push, relevant, build, all) with branch filters
-
-#### v1.36
-
-##### Added
-
-- Optional Claude Code band showing restricting permissions with change highlights
-
-#### v1.35
-
-##### Added
-
-- `permissions-summary.sh` listing only the restricting DOGMA-PERMISSIONS entries
-
 ## credo
 
 ### v0
+
+#### v0.71
+
+##### v0.71.0
+
+###### Added
+
+- `/credo:self-restart`: a session can restart itself (e.g. to load plugin updates)
+  and resume the exact same session in the same profile without a human prompt;
+  relaunch via tmux, a new terminal window or a pty fallback, with a peer wake
+  template and ntfy as safety net
+- Optional allowlisted plugin update step (`self_update.marketplaces`, default: only
+  the marketplace credo comes from) that records every version change before -> after
+- Permission-mode recorder hook, so a restarted session gets back exactly the mode it
+  had (never escalated)
+
+###### Changed
+
+- Changelog fragments plus `scripts/changelog/release.py` now drive credo releases
 
 #### v0.70
 
@@ -265,6 +218,72 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 ##### Added
 
 - Budget read-back shows the active profile, config layers and the source of each cap
+
+## dogma
+
+### v1
+
+#### v1.43
+
+##### Added
+
+- DOGMA-PERMISSIONS.md is picked by action target, pinned project, then session folder, with per-id inheritance (default on)
+- Notices also show in non-git folders and for pinned projects that inherit permissions
+
+#### v1.42
+
+##### Added
+
+- Source broadcasts via NOTICES.md
+- `CLAUDE_MB_DOGMA_SOURCE` for sync and recommended setup
+- Per-folder git identity for the source fetch
+
+#### v1.41
+
+##### Added
+
+- Stable setting ids (`§xxxx`) matched first with a text fallback, plus an id registry
+- changelog.d assembly in `/dogma:versioning`
+
+#### v1.40
+
+##### Added
+
+- Worktree files list (link or copy, `.credo/` included by default) and a cleanup-merged-worktrees checkbox
+
+##### Changed
+
+- Subagents may commit in their own worktree, never push or merge
+
+#### v1.39
+
+##### Added
+
+- One-time per-repo update notices for updates that need user action (Run/Later/Never), with an optional band toast
+
+#### v1.38
+
+##### Added
+
+- Final Verification option to run all tests only at release
+
+#### v1.37
+
+##### Added
+
+- Optional per-stage test commands (commit, push, relevant, build, all) with branch filters
+
+#### v1.36
+
+##### Added
+
+- Optional Claude Code band showing restricting permissions with change highlights
+
+#### v1.35
+
+##### Added
+
+- `permissions-summary.sh` listing only the restricting DOGMA-PERMISSIONS entries
 
 ## hydra
 

@@ -36,6 +36,7 @@ credo is built from small, composable pieces:
 | `/credo:optimize` | Run the opt-in optimisation audit for this repo (read-only scan, findings offered one by one) |
 | `/credo:disable` | Disable credo for this directory (silence onboarding and the [credo] line here, reversible) |
 | `/credo:enable` | Enable credo for this directory (opt in; overrides a previous decline) |
+| `/credo:self-restart` | Restart this session and resume exactly the same session in the same profile (e.g. to load plugin updates); `check` (dry run), `run [--update]`, `status` |
 
 Skills and hooks are auto-discovered by Claude Code from the `skills/` and `hooks/` directories, so they are not hand-listed in the manifest.
 
@@ -215,6 +216,16 @@ A remote session has no local process, so its descriptor would be reaped (the di
   - *Native Linux:* no NAT, no portproxy - the daemon already listens on the LAN at `0.0.0.0:listen_port`. If a firewall is active, allow the port once scoped to the LAN (for `ufw`: `sudo ufw allow from <lan-subnet> to any port <listen_port> proto tcp`); otherwise nothing to do.
   - The firewall rule is LAN-scoped (`LocalSubnet` on Windows), never internet-facing, and the relay still never forges a `from-mode` - every receiving session keeps its own consent gate. Start/stop/status via `/credo:peer-lan`.
 - **Caveat:** the descriptor format is internal to Claude Code and undocumented; the relay is fail-safe - if it changes, remote peers simply stop appearing.
+
+## Self-restart (resume the same session)
+
+`/credo:self-restart` (`scripts/credo-self-restart.py`) lets a session restart itself - typically to load plugin updates - and come back as exactly the same session in the same profile, continuing on its own with a wake prompt.
+
+- **Profile-safe.** Session id from `CLAUDE_CODE_SESSION_ID`, target = the Claude ancestor process, config dir = the target's own `CLAUDE_CONFIG_DIR`; the transcript must exist in that profile (exactly one match), never a `--continue` or cross-profile fallback; refuses when another process holds the same session.
+- **Same flags, same mode.** The relaunch reuses the original (alias-expanded) argv from `/proc` with `--resume <id> <wake prompt>`, and the `credo-permission-mode-record.sh` hook lets it restore a permission mode changed during the session (never escalating).
+- **Relaunch methods.** Same tmux pane, else a new Windows Terminal tab (WSL), else a new terminal window (Linux GUI); none -> it refuses. A "Resume from summary" dialog is avoided (the wake prompt is always passed) and answered with Escape as a fallback.
+- **Optional plugin update** (`run --update`): only marketplaces in `self_update.marketplaces` (default: credo's own marketplace), versions before -> after in the log, marker and wake prompt. Never touches `autoUpdate`.
+- **Safety net.** Failures send an ntfy push; before restarting, the agent asks a reachable peer session to send a wake message after ~1 minute. Never while background subagents run. Details: `commands/self-restart.md`.
 
 ## Peer message etiquette
 
