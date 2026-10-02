@@ -8,6 +8,14 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.71
 
+##### v0.71.2
+
+###### Fixed
+
+- Self-restart via tmux: the two Ctrl+C key presses are sent 0.4s apart (was 1.5s),
+  so the Claude TUI actually exits on the double press instead of relying on the
+  SIGINT fallback (found in the first live test)
+
 ##### v0.71.1
 
 ###### Fixed

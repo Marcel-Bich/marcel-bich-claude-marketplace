@@ -48,7 +48,7 @@ environment is never logged or printed.
 
 Env overrides (tests): CREDO_SELF_RESTART_SESSION_ID, CREDO_SELF_RESTART_TARGET_PID,
 CREDO_SELF_RESTART_NTFY_URL ("off" or a full URL), CREDO_SELF_RESTART_OWN_MARKETPLACE,
-CREDO_SELF_RESTART_STOP_TIMEOUT, CREDO_SELF_RESTART_SIGNAL_PAUSE,
+CREDO_SELF_RESTART_STOP_TIMEOUT, CREDO_SELF_RESTART_SIGNAL_PAUSE, CREDO_SELF_RESTART_KEY_PAUSE,
 CREDO_SELF_RESTART_CMD_TIMEOUT, CREDO_SELF_RESTART_CONFIG_SH.
 
 Python 3 stdlib only.
@@ -986,6 +986,9 @@ def stop_target(plan):
     pid, start = plan["target_pid"], plan["target_start"]
     timeout = env_float("CREDO_SELF_RESTART_STOP_TIMEOUT", 30)
     pause = env_float("CREDO_SELF_RESTART_SIGNAL_PAUSE", 1.5)
+    # The TUI only exits on a SECOND Ctrl+C within a short window; a 1.5s gap was
+    # observed to miss it (live test), so the two key presses use their own short gap.
+    key_pause = env_float("CREDO_SELF_RESTART_KEY_PAUSE", 0.4)
     if plan["method"] == "tmux":
         pane = plan["method_details"]["pane"]
         for _ in range(2):
@@ -994,7 +997,7 @@ def stop_target(plan):
             subprocess.run(["tmux", "send-keys", "-t", pane, "C-c"], timeout=10,
                            capture_output=True)
             log("sent C-c to tmux pane %s" % pane)
-            time.sleep(pause)
+            time.sleep(key_pause)
         if wait_gone(pid, start, min(10.0, timeout / 2)):
             return True
         log("still alive after tmux C-c, falling back to signals")
