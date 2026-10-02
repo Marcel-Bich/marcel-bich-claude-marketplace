@@ -149,14 +149,16 @@ INBOX_B="$TMP/B/inbox.sock"
 SENDER_A="$TMP/A/sender.sock"   # path only; no live listener needed on A
 : > "$TMP/B/inbox.log"          # exists up front so the byte-count checks are quiet
 
+# bind_retry_total is kept short so the single-instance (SI) test's losing second daemon
+# gives up its bind-retry window quickly instead of polling the full default ~8s.
 cat > "$TMP/A/cfg/credo/peer-lan.json" <<EOF
 {"this_machine":"A","listen_host":"127.0.0.1","listen_port":$PA,"token":"$TOKEN",
- "roster_interval":0.3,"machine_timeout":60,
+ "roster_interval":0.3,"machine_timeout":60,"bind_retry_total":1.0,
  "peers":[{"name":"B","host":"127.0.0.1","port":$PB}]}
 EOF
 cat > "$TMP/B/cfg/credo/peer-lan.json" <<EOF
 {"this_machine":"B","listen_host":"127.0.0.1","listen_port":$PB,"token":"$TOKEN",
- "roster_interval":0.3,"machine_timeout":60,
+ "roster_interval":0.3,"machine_timeout":60,"bind_retry_total":1.0,
  "peers":[{"name":"A","host":"127.0.0.1","port":$PA}]}
 EOF
 
@@ -469,7 +471,8 @@ ok "daemon stays responsive after a connection flood (valid deliver still succee
 
 # --- SI: single instance - a second daemon on the same port exits 0 cleanly -----
 # Start a second daemon with machine A's EXACT config (same 127.0.0.1:$PA). The bind
-# must fail with EADDRINUSE, so it logs "another daemon already listening" and exits 0
+# keeps failing with EADDRINUSE; after poll-retrying for the short bind_retry_total
+# window (1.0s in A's config) it logs "another daemon already listening" and exits 0
 # without touching any descriptor or socket daemon A owns. Daemon A keeps working.
 before_desc="$(marked_desc "$TMP/A/cfg/sessions" || true)"
 SECOND_LOG="$TMP/A/daemon2.log"
@@ -959,6 +962,231 @@ B5_OUT2="$(PATH="$TMP/b5/bin:$TMP/wh/bin:/usr/bin:/bin" WSL_DISTRO_NAME= \
     CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
     CREDO_PEER_LAN_CONFIG="$B5_CFG" "$PY" "$DAEMON" init 192.168.1.31 2>&1)"
 case "$B5_OUT2" in *"ufw is active"*) FAIL=$((FAIL + 1)); printf 'FAIL ufw hint wrongly printed when the port is allowed\n' ;; *) PASS=$((PASS + 1)) ;; esac
+
+# helpers to read the pidfile fields from bash
+pf_pid() { "$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("pid",""))' "$1" 2>/dev/null; }
+pf_ver() { "$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("version",""))' "$1" 2>/dev/null; }
+free_port() { "$PY" - <<'PYEOF'
+import socket
+s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()
+PYEOF
+}
+
+# --- PF: pidfile written on start, removed on a clean shutdown ----------------
+# Daemon A (already running) must have written a pidfile recording its own pid + the
+# listen port. A dedicated short-lived daemon then proves the pidfile is REMOVED on a
+# clean SIGTERM shutdown (and only by the owner).
+PIDFILE_A="$TMP/A/cfg/credo/peer-lan.pid"
+ok "daemon A wrote its pidfile" "$([ -f "$PIDFILE_A" ] && echo 0 || echo 1)"
+PF_PORT="$("$PY" -c 'import json,sys;print(int(json.load(open(sys.argv[1]))["listen_port"]))' "$PIDFILE_A" 2>/dev/null)"
+check "pidfile records A's listen port" "$PA" "$PF_PORT"
+PF_APID="$(pf_pid "$PIDFILE_A")"
+ok "pidfile pid is a live process" "$([ -n "$PF_APID" ] && kill -0 "$PF_APID" 2>/dev/null && echo 0 || echo 1)"
+
+read PPF < <(free_port)
+mkdir -p "$TMP/PF/cfg/sessions" "$TMP/PF/cfg/credo" "$TMP/PF/sock"
+cat > "$TMP/PF/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"PF","listen_host":"127.0.0.1","listen_port":$PPF,
+ "roster_interval":60,"machine_timeout":600,"bind_retry_total":3,"peers":[]}
+EOF
+CLAUDE_CONFIG_DIR="$TMP/PF/cfg" CREDO_PEER_LAN_CONFIG="$TMP/PF/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/PF/sock" "$PY" "$DAEMON" daemon >"$TMP/PF/daemon.log" 2>&1 &
+PF_PID=$!; PIDS="$PIDS $PF_PID"
+PIDFILE_PF="$TMP/PF/cfg/credo/peer-lan.pid"
+for _ in $(seq 1 40); do [ -f "$PIDFILE_PF" ] && break; sleep 0.1; done
+ok "short-lived daemon wrote its pidfile" "$([ -f "$PIDFILE_PF" ] && echo 0 || echo 1)"
+kill -TERM "$PF_PID" 2>/dev/null || true
+removed=""
+for _ in $(seq 1 40); do [ ! -f "$PIDFILE_PF" ] && { removed=1; break; }; sleep 0.1; done
+ok "pidfile removed on a clean SIGTERM shutdown" "$([ -n "$removed" ] && echo 0 || echo 1)"
+
+# --- UH: read_pidfile / daemon_is_alive / version_tuple / port_is_free behave --
+cat > "$TMP/uhtest.py" <<'PYEOF'
+import importlib.util, json, os, socket, sys, tempfile
+daemon_path, tmp = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+# version_tuple
+assert mod.version_tuple("2.1.293") == (2, 1, 293)
+assert mod.version_tuple("0.69.0") == (0, 69, 0)
+assert mod.version_tuple("unknown") is None
+assert mod.version_tuple("1.2") is None
+assert mod.version_tuple("a.b.c") is None
+assert mod.version_tuple(None) is None
+# port_is_free: a bound+listening port is not free; once closed it is free again
+s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.listen(1)
+assert mod.port_is_free("127.0.0.1", port) is False, "listening port reported free"
+s.close()
+assert mod.port_is_free("127.0.0.1", port) is True, "closed port reported not free"
+# daemon_is_alive: a bogus / non-int pid is never alive
+assert mod.daemon_is_alive(2 ** 30) is False
+assert mod.daemon_is_alive("not-an-int") is False
+assert mod.daemon_is_alive(None) is False
+# read_pidfile: missing -> None, corrupt -> None, valid dict -> dict
+cfg = os.path.join(tmp, "credo", "peer-lan.json")
+os.makedirs(os.path.dirname(cfg), exist_ok=True)
+os.environ["CREDO_PEER_LAN_CONFIG"] = cfg
+pfp = mod.pidfile_path()
+assert mod.read_pidfile() is None, "missing pidfile not None"
+open(pfp, "w").write("{not json")
+assert mod.read_pidfile() is None, "corrupt pidfile not None"
+open(pfp, "w").write(json.dumps({"pid": 123, "version": "1.2.3"}))
+d = mod.read_pidfile()
+assert isinstance(d, dict) and d.get("pid") == 123, "valid pidfile not parsed"
+print("UH_OK")
+PYEOF
+UH_OUT="$("$PY" "$TMP/uhtest.py" "$DAEMON" "$TMP/uh" 2>&1)"
+case "$UH_OUT" in *UH_OK*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL UH helpers misbehave: %s\n' "$UH_OUT" ;; esac
+
+# --- BR: bind-retry binds when the port frees within the window ---------------
+# A listener holds the port; a daemon configured for it must NOT give up at once but
+# poll-retry the bind. When the holder is released mid-window, the daemon binds and
+# writes its pidfile. (With the old immediate-EADDRINUSE behavior it would have exited.)
+read PBR < <(free_port)
+"$PY" "$TMP/tcplisten.py" "$PBR" & BR_HOLD=$!; PIDS="$PIDS $BR_HOLD"
+for _ in $(seq 1 40); do
+    if "$PY" -c 'import socket,sys; socket.create_connection(("127.0.0.1",int(sys.argv[1])),timeout=1).close()' "$PBR" 2>/dev/null; then break; fi
+    sleep 0.1
+done
+mkdir -p "$TMP/BR/cfg/sessions" "$TMP/BR/cfg/credo" "$TMP/BR/sock"
+cat > "$TMP/BR/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"BR","listen_host":"127.0.0.1","listen_port":$PBR,
+ "roster_interval":60,"machine_timeout":600,"bind_retry_total":6,"bind_retry_interval":0.2,"peers":[]}
+EOF
+CLAUDE_CONFIG_DIR="$TMP/BR/cfg" CREDO_PEER_LAN_CONFIG="$TMP/BR/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/BR/sock" "$PY" "$DAEMON" daemon >"$TMP/BR/daemon.log" 2>&1 &
+BR_PID=$!; PIDS="$PIDS $BR_PID"
+sleep 0.8
+PIDFILE_BR="$TMP/BR/cfg/credo/peer-lan.pid"
+ok "bind-retry: daemon has NOT bound while the port is still held" "$([ ! -f "$PIDFILE_BR" ] && echo 0 || echo 1)"
+kill -KILL "$BR_HOLD" 2>/dev/null || true   # free the port mid bind-retry window
+bound=""
+for _ in $(seq 1 40); do [ -f "$PIDFILE_BR" ] && { bound=1; break; }; sleep 0.2; done
+ok "bind-retry: daemon binds once the port frees within the window" "$([ -n "$bound" ] && echo 0 || echo 1)"
+kill -TERM "$BR_PID" 2>/dev/null || true
+
+# --- BR2: bind-retry gives up (AlreadyRunning, exit 0) when the port stays held --
+read PBR2 < <(free_port)
+"$PY" "$TMP/tcplisten.py" "$PBR2" & BR2_HOLD=$!; PIDS="$PIDS $BR2_HOLD"
+for _ in $(seq 1 40); do
+    if "$PY" -c 'import socket,sys; socket.create_connection(("127.0.0.1",int(sys.argv[1])),timeout=1).close()' "$PBR2" 2>/dev/null; then break; fi
+    sleep 0.1
+done
+mkdir -p "$TMP/BR2/cfg/sessions" "$TMP/BR2/cfg/credo" "$TMP/BR2/sock"
+cat > "$TMP/BR2/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"BR2","listen_host":"127.0.0.1","listen_port":$PBR2,
+ "roster_interval":60,"machine_timeout":600,"bind_retry_total":0.8,"bind_retry_interval":0.2,"peers":[]}
+EOF
+CLAUDE_CONFIG_DIR="$TMP/BR2/cfg" CREDO_PEER_LAN_CONFIG="$TMP/BR2/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/BR2/sock" "$PY" "$DAEMON" daemon >"$TMP/BR2/daemon.log" 2>&1
+BR2_RC=$?
+check "bind-retry give-up: daemon exits 0 when the port stays held" "0" "$BR2_RC"
+grep -q "already listening" "$TMP/BR2/daemon.log"; ok "bind-retry give-up logs the single-instance notice" "$?"
+ok "bind-retry give-up wrote NO pidfile (never clobbers the incumbent)" "$([ ! -f "$TMP/BR2/cfg/credo/peer-lan.pid" ] && echo 0 || echo 1)"
+kill -KILL "$BR2_HOLD" 2>/dev/null || true
+
+# --- EN: ensure decisions (no config / same / newer / unknown -> no-op; older -> replace) --
+# One real incumbent daemon drives every decision: its pidfile's version field is rewritten
+# (keeping the real live pid) and `ensure` is run in the foreground with CREDO_PEER_LAN_VERSION
+# standing in for the current plugin version. A no-op `ensure` returns at once (it does not
+# serve), so these run synchronously; only the replace case serves and is run detached.
+EN_NOCFG="$(CREDO_PEER_LAN_CONFIG="$TMP/EN/nope.json" "$PY" "$DAEMON" ensure 2>&1; echo "rc=$?")"
+case "$EN_NOCFG" in *"no config"*"rc=0"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL ensure no-config not a clean no-op: %s\n' "$EN_NOCFG" ;; esac
+
+read PEN < <(free_port)
+mkdir -p "$TMP/EN/cfg/sessions" "$TMP/EN/cfg/credo" "$TMP/EN/sock"
+EN_CFG="$TMP/EN/cfg/credo/peer-lan.json"
+cat > "$EN_CFG" <<EOF
+{"this_machine":"EN","listen_host":"127.0.0.1","listen_port":$PEN,
+ "roster_interval":60,"machine_timeout":600,"bind_retry_total":3,"bind_retry_interval":0.2,"peers":[]}
+EOF
+PIDFILE_EN="$TMP/EN/cfg/credo/peer-lan.pid"
+en_run() { # version -> runs ensure (foreground) with that CREDO_PEER_LAN_VERSION; prints log+rc
+    CLAUDE_CONFIG_DIR="$TMP/EN/cfg" CREDO_PEER_LAN_CONFIG="$EN_CFG" \
+        CREDO_PEER_LAN_SOCKDIR="$TMP/EN/sock" CREDO_PEER_LAN_VERSION="$1" \
+        "$PY" "$DAEMON" ensure 2>&1
+}
+set_pf_version() { # version -> rewrite the pidfile keeping the current pid+port
+    "$PY" - "$PIDFILE_EN" "$1" "$PEN" <<'PYEOF'
+import json, sys
+path, ver, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
+d = json.load(open(path))
+d["version"] = ver
+d["listen_port"] = port
+open(path, "w").write(json.dumps(d))
+PYEOF
+}
+# incumbent at version 2.0.0
+CLAUDE_CONFIG_DIR="$TMP/EN/cfg" CREDO_PEER_LAN_CONFIG="$EN_CFG" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/EN/sock" CREDO_PEER_LAN_VERSION=2.0.0 \
+    "$PY" "$DAEMON" daemon >"$TMP/EN/incumbent.log" 2>&1 &
+EN_INC=$!; PIDS="$PIDS $EN_INC"
+for _ in $(seq 1 40); do [ -f "$PIDFILE_EN" ] && break; sleep 0.1; done
+EN_P0="$(pf_pid "$PIDFILE_EN")"
+ok "ensure: incumbent daemon is up with a pidfile" "$([ -n "$EN_P0" ] && kill -0 "$EN_P0" 2>/dev/null && echo 0 || echo 1)"
+check "ensure: incumbent pidfile records version 2.0.0" "2.0.0" "$(pf_ver "$PIDFILE_EN")"
+
+# newer incumbent (cur 1.0.0 < running 2.0.0) -> no-op
+EN_OUT="$(en_run 1.0.0)"; EN_RC=$?
+ok "ensure (older current vs newer running) exits 0" "$EN_RC"
+case "$EN_OUT" in *"leaving it"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL ensure did not leave the newer daemon: %s\n' "$EN_OUT" ;; esac
+check "ensure (newer running): incumbent pid unchanged" "$EN_P0" "$(pf_pid "$PIDFILE_EN")"
+# equal version -> no-op
+EN_OUT2="$(en_run 2.0.0)"
+case "$EN_OUT2" in *"leaving it"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL ensure did not leave the equal-version daemon: %s\n' "$EN_OUT2" ;; esac
+check "ensure (equal version): incumbent pid unchanged" "$EN_P0" "$(pf_pid "$PIDFILE_EN")"
+# unknown recorded version -> leave (cannot confirm older)
+set_pf_version "unknown"
+EN_OUT3="$(en_run 1.0.0)"
+case "$EN_OUT3" in *"leaving it"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL ensure did not leave the unknown-version daemon: %s\n' "$EN_OUT3" ;; esac
+check "ensure (unknown version): incumbent pid unchanged" "$EN_P0" "$(pf_pid "$PIDFILE_EN")"
+
+# older incumbent (running 1.0.0 < cur 9.9.9) -> REPLACE. Run detached (it serves).
+set_pf_version "1.0.0"
+CLAUDE_CONFIG_DIR="$TMP/EN/cfg" CREDO_PEER_LAN_CONFIG="$EN_CFG" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/EN/sock" CREDO_PEER_LAN_VERSION=9.9.9 \
+    "$PY" "$DAEMON" ensure >"$TMP/EN/replace.log" 2>&1 &
+EN_NEW=$!; PIDS="$PIDS $EN_NEW"
+replaced=""
+for _ in $(seq 1 60); do
+    newpid="$(pf_pid "$PIDFILE_EN")"
+    if [ -n "$newpid" ] && [ "$newpid" != "$EN_P0" ] && kill -0 "$newpid" 2>/dev/null \
+       && ! kill -0 "$EN_P0" 2>/dev/null; then replaced=1; break; fi
+    sleep 0.2
+done
+ok "ensure (older running): the old daemon is replaced by a new one" "$([ -n "$replaced" ] && echo 0 || echo 1)"
+grep -q "replacing older daemon" "$TMP/EN/replace.log"; ok "ensure logs the replace decision" "$?"
+check "ensure (replaced): pidfile now records the new version 9.9.9" "9.9.9" "$(pf_ver "$PIDFILE_EN")"
+kill -TERM "$EN_NEW" 2>/dev/null || true
+
+# --- RS: restart reclaims the port (stop-then-start regardless of version) -----
+read PRS < <(free_port)
+mkdir -p "$TMP/RS/cfg/sessions" "$TMP/RS/cfg/credo" "$TMP/RS/sock"
+RS_CFG="$TMP/RS/cfg/credo/peer-lan.json"
+cat > "$RS_CFG" <<EOF
+{"this_machine":"RS","listen_host":"127.0.0.1","listen_port":$PRS,
+ "roster_interval":60,"machine_timeout":600,"bind_retry_total":3,"bind_retry_interval":0.2,"peers":[]}
+EOF
+PIDFILE_RS="$TMP/RS/cfg/credo/peer-lan.pid"
+CLAUDE_CONFIG_DIR="$TMP/RS/cfg" CREDO_PEER_LAN_CONFIG="$RS_CFG" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/RS/sock" "$PY" "$DAEMON" daemon >"$TMP/RS/incumbent.log" 2>&1 &
+RS_INC=$!; PIDS="$PIDS $RS_INC"
+for _ in $(seq 1 40); do [ -f "$PIDFILE_RS" ] && break; sleep 0.1; done
+RS_P1="$(pf_pid "$PIDFILE_RS")"
+ok "restart: incumbent daemon is up with a pidfile" "$([ -n "$RS_P1" ] && kill -0 "$RS_P1" 2>/dev/null && echo 0 || echo 1)"
+CLAUDE_CONFIG_DIR="$TMP/RS/cfg" CREDO_PEER_LAN_CONFIG="$RS_CFG" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/RS/sock" "$PY" "$DAEMON" restart >"$TMP/RS/restart.log" 2>&1 &
+RS_NEW=$!; PIDS="$PIDS $RS_NEW"
+rs_ok=""
+for _ in $(seq 1 60); do
+    newpid="$(pf_pid "$PIDFILE_RS")"
+    if [ -n "$newpid" ] && [ "$newpid" != "$RS_P1" ] && kill -0 "$newpid" 2>/dev/null \
+       && ! kill -0 "$RS_P1" 2>/dev/null; then rs_ok=1; break; fi
+    sleep 0.2
+done
+ok "restart: old daemon stopped and a fresh one reclaimed the port" "$([ -n "$rs_ok" ] && echo 0 || echo 1)"
+grep -q "restart: stopping running daemon" "$TMP/RS/restart.log"; ok "restart logs that it stopped the running daemon" "$?"
+kill -TERM "$RS_NEW" 2>/dev/null || true
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

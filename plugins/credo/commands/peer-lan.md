@@ -2,7 +2,7 @@
 description: credo - Start, stop, or check the LAN peer relay (cross-machine peer messaging, no cloud)
 arguments:
   - name: action
-    description: init | whoami | check | start | stop | status (default status). init also takes one or more peer IPs.
+    description: init | whoami | check | start | restart | stop | status (default status). init also takes one or more peer IPs.
     required: false
 allowed-tools:
   - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py:*)
@@ -67,11 +67,22 @@ remote's own `this_machine`, purely for the label.)
 ## Auto-start and single instance
 
 Once the config file exists, the `credo-peer-lan-autostart.sh` SessionStart hook brings
-the daemon up automatically, detached so it never blocks session start. Only one daemon
-runs per machine: the listen port is the single-instance lock, so a second daemon on the
-same `listen_host:listen_port` logs that another is already listening and exits 0 without
-disturbing the running one. Disable the auto-start (and the relay) with `CREDO_PEER_LAN`
-set to `0`/`false`/`no`/`off`.
+the daemon up automatically, detached so it never blocks session start. The hook runs the
+`ensure` subcommand, which reads the running daemon's state file (`peer-lan.pid`, next to
+the config, recording pid + version + port) and decides: leave a current/newer daemon
+untouched, replace an OLDER one after a plugin update (`cc-up`), or start fresh. Only one
+daemon runs per machine: the listen port is the single-instance lock, so a second daemon
+on the same `listen_host:listen_port` poll-retries the bind briefly (race-safe) and, if it
+stays held, logs that another is already listening and exits 0 without disturbing the
+running one. Disable the auto-start (and the relay) with `CREDO_PEER_LAN` set to
+`0`/`false`/`no`/`off`.
+
+After `cc-up` the autostart `ensure` auto-replaces an OLDER running daemon with the new
+version (it only ever replaces a daemon it can POSITIVELY confirm is older; on any doubt
+it leaves the running one alone). Parallel sessions on one machine share the single daemon
+and never kill each other. A deliberate `restart` is race-safe now: it waits for the old
+daemon's port to actually free before starting the new one, so a restart never ends with
+no daemon running.
 
 ## Token (optional)
 
@@ -196,18 +207,35 @@ reachability, not trust.
   plain `"credo-peer-lan.py daemon"` would also match this very command's own shell
   wrapper (a false hit). The character class `[c]` matches the literal `c` but the pattern
   STRING is `[c]redo...`, which does not occur in the wrapper's command line, so it only
-  matches the real daemon. Report whether the daemon runs. If there is no config file, say
-  the relay is a no-op until `${CLAUDE_CONFIG_DIR:-~/.claude}/credo/peer-lan.json` exists
-  (create it with `init`).
+  matches the real daemon. Report whether the daemon runs. For the running version, also
+  read the state file (it records the live daemon's pid + version + port):
+  ```bash
+  cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/peer-lan.pid" 2>/dev/null || echo "no pidfile"
+  ```
+  If there is no config file, say the relay is a no-op until
+  `${CLAUDE_CONFIG_DIR:-~/.claude}/credo/peer-lan.json` exists (create it with `init`).
 
-- **start**
+- **start** - prefer `ensure`: it self-heals an OLDER running daemon after `cc-up` and
+  no-ops when a current one already runs (so it is safe to call even if a daemon may be
+  up), whereas a plain `daemon` start relies only on the port lock.
   ```bash
   cfgdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; mkdir -p "$cfgdir/credo"
-  nohup "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" daemon >>"$cfgdir/credo/peer-lan.log" 2>&1 &
+  nohup "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" ensure >>"$cfgdir/credo/peer-lan.log" 2>&1 &
   ```
   Then confirm it came up with the status command. If it logs "no config" it exits
   immediately - tell the user to run `init` first. Disable globally any time with
   `CREDO_PEER_LAN=0` in the environment.
+
+- **restart** - safe stop-then-start regardless of version. It stops the running daemon,
+  waits for the listen port to be really released, then starts a fresh one; if it cannot
+  reclaim the port within its timeout it reports that and exits non-zero rather than
+  leaving nothing running.
+  ```bash
+  cfgdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; mkdir -p "$cfgdir/credo"
+  nohup "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" restart >>"$cfgdir/credo/peer-lan.log" 2>&1 &
+  ```
+  Then confirm with the status command. Use this when you deliberately want the new code
+  running now (the autostart `ensure` already handles the after-`cc-up` case on its own).
 
 - **stop**
   ```bash

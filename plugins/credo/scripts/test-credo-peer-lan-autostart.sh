@@ -1,16 +1,23 @@
 #!/bin/bash
 # Tests for credo-peer-lan-autostart.sh - the SessionStart auto-start hook.
 #
-# Everything runs against throwaway config dirs in a temp tree with a FAKE daemon
-# script (so no real daemon is ever started, no LAN port is opened, nothing lingers).
-# The fake "daemon" just touches a sentinel file and exits, so a successful start is
-# observable without a real process. A fake pgrep on PATH makes the "already running"
-# check deterministic regardless of what runs on the host.
+# The gate + delegation tests run against throwaway config dirs with a FAKE daemon
+# script (so no real daemon is started, no LAN port is opened, nothing lingers). The
+# fake "daemon" records the subcommand it was invoked with into a sentinel and exits,
+# so a successful start - and that it was the `ensure` subcommand - is observable
+# without a real process.
 #
-# It checks the gates:
+# A final ensure-decision section DOES drive the REAL daemon, but only on 127.0.0.1 with
+# an ephemeral port (same loopback-only model as test-credo-peer-lan.sh), to prove the
+# hook -> ensure chain replaces an OLDER running daemon after a plugin update yet leaves a
+# current/newer one untouched. Those daemons are tracked and killed on exit.
+#
+# It checks:
 #   - CREDO_PEER_LAN=0 / false -> no-op (exit 0, starts nothing),
 #   - no config file           -> no-op (exit 0, starts nothing),
-#   - config present + nothing running -> the hook starts the (fake) daemon detached.
+#   - config present + nothing running -> the hook starts the daemon detached via `ensure`,
+#   - WSL portproxy trigger is still gated by WSL detection (and opt-out / missing-ps),
+#   - ensure via the hook: an OLDER running daemon is replaced; a same/newer one is left.
 #
 # Usage: bash test-credo-peer-lan-autostart.sh
 
@@ -21,12 +28,28 @@ HOOK="$SCRIPT_DIR/../hooks/credo-peer-lan-autostart.sh"
 if [ ! -f "$HOOK" ]; then echo "FAIL: $HOOK missing"; exit 1; fi
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/cla.XXXXXX")"
-trap 'rm -rf -- "$TMP"' EXIT
+
+# Real daemons are only started (on loopback) by the ensure-decision section at the end;
+# track their pids plus whatever the RD pidfile records so nothing lingers after the run.
+PIDS=""
+RD_PIDFILE=""
+cleanup() {
+    [ -n "$RD_PIDFILE" ] && [ -f "$RD_PIDFILE" ] && {
+        rp="$(command -v python3 >/dev/null 2>&1 && python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("pid",""))' "$RD_PIDFILE" 2>/dev/null)"
+        [ -n "$rp" ] && kill -KILL "$rp" 2>/dev/null || true
+    }
+    for p in $PIDS; do kill -KILL "$p" 2>/dev/null || true; done
+    rm -rf -- "$TMP"
+}
+trap cleanup EXIT
 
 PASS=0
 FAIL=0
 ok() { # name cond(0=pass)
     if [ "$2" = "0" ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; fi
+}
+check() { # name expected actual
+    if [ "$2" = "$3" ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); printf 'FAIL %s\n  expected: %s\n  actual:   %s\n' "$1" "$2" "$3"; fi
 }
 
 # fake plugin root with a fake daemon script that records it was started, then exits.
@@ -35,7 +58,8 @@ mkdir -p "$FAKE_ROOT/scripts"
 SENTINEL="$TMP/started"
 cat > "$FAKE_ROOT/scripts/credo-peer-lan.py" <<EOF
 #!/usr/bin/env bash
-# fake daemon: record the start and exit at once (never lingers, never binds a port)
+# fake daemon: record the subcommand it was invoked with and exit at once (never
+# lingers, never binds a port). The hook must invoke it as "ensure".
 echo "started \$*" >> "$SENTINEL"
 exit 0
 EOF
@@ -134,6 +158,7 @@ rm -f "$SENTINEL"
 run_hook; rc=$?
 ok "config present exits 0" "$rc"
 ok "config present starts the (fake) daemon detached" "$(wait_sentinel && echo 0 || echo 1)"
+ok "hook invokes the daemon via the ensure subcommand" "$(grep -q 'started ensure' "$SENTINEL" && echo 0 || echo 1)"
 
 # --- proxy trigger, NON-WSL host: no portproxy needed -> no powershell attempt --------
 # Even with a fake powershell.exe ON the PATH, a non-WSL host must never trigger it.
@@ -182,6 +207,81 @@ ok "WSL without powershell.exe exits 0" "$rc"
 ok "WSL without powershell.exe still starts the daemon" "$(wait_sentinel && echo 0 || echo 1)"
 sleep 0.4
 ok "WSL without powershell.exe makes no trigger" "$([ ! -f "$PSLOG" ] && echo 0 || echo 1)"
+
+# --- ensure via the hook: older running daemon replaced, same/newer left untouched ---
+# Drives the REAL daemon through the hook, loopback only, ephemeral port. ensure reads the
+# running daemon's pidfile (pid + version) and either replaces an older one or no-ops.
+REAL_ROOT="$SCRIPT_DIR/.."
+REAL_DAEMON="$SCRIPT_DIR/credo-peer-lan.py"
+PY="$(command -v python3 || true)"
+if [ -z "$PY" ] || [ ! -f "$REAL_DAEMON" ]; then
+    echo "SKIP ensure-decision section: python3 or the real daemon not available"
+else
+    RD_CFGDIR="$TMP/rd"
+    mkdir -p "$RD_CFGDIR/credo" "$RD_CFGDIR/sessions" "$TMP/rdsock" "$TMP/home"
+    RD_CFG="$RD_CFGDIR/credo/peer-lan.json"
+    RD_PIDFILE="$RD_CFGDIR/credo/peer-lan.pid"   # picked up by the cleanup trap
+    RDPORT="$("$PY" -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
+    cat > "$RD_CFG" <<EOF
+{"this_machine":"RD","listen_host":"127.0.0.1","listen_port":$RDPORT,
+ "roster_interval":60,"machine_timeout":600,"bind_retry_total":3,"bind_retry_interval":0.2,"peers":[]}
+EOF
+    rd_pid() { "$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("pid",""))' "$1" 2>/dev/null; }
+    rd_ver() { "$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("version",""))' "$1" 2>/dev/null; }
+
+    # start a real incumbent daemon directly (not via hook) with a chosen version
+    start_incumbent() { # version
+        rm -f "$RD_PIDFILE"
+        env -i PATH="/usr/bin:/bin" HOME="$TMP/home" \
+            CLAUDE_CONFIG_DIR="$RD_CFGDIR" CREDO_PEER_LAN_CONFIG="$RD_CFG" \
+            CREDO_PEER_LAN_SOCKDIR="$TMP/rdsock" CREDO_PEER_LAN_VERSION="$1" \
+            "$PY" "$REAL_DAEMON" daemon >>"$RD_CFGDIR/incumbent.log" 2>&1 &
+        PIDS="$PIDS $!"
+        for _ in $(seq 1 40); do [ -f "$RD_PIDFILE" ] && return 0; sleep 0.1; done
+        return 1
+    }
+    # run the hook against the real daemon with a chosen current plugin version
+    run_hook_real() { # version
+        env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP/home" \
+            CLAUDE_PLUGIN_ROOT="$REAL_ROOT" CLAUDE_CONFIG_DIR="$RD_CFGDIR" \
+            CREDO_PEER_LAN_CONFIG="$RD_CFG" CREDO_PEER_LAN_SOCKDIR="$TMP/rdsock" \
+            CREDO_PEER_LAN_PROCVERSION="$PROCVER_LINUX" CREDO_PEER_LAN_VERSION="$1" \
+            bash "$HOOK" </dev/null
+    }
+
+    # same/newer running -> the hook's ensure leaves it untouched (incumbent v9.9.9, cur v1.0.0)
+    if start_incumbent 9.9.9; then
+        P0="$(rd_pid "$RD_PIDFILE")"
+        run_hook_real 1.0.0; rc=$?
+        ok "hook ensure (newer running) exits 0" "$rc"
+        sleep 1.0
+        check "hook ensure leaves a newer running daemon untouched (pid unchanged)" "$P0" "$(rd_pid "$RD_PIDFILE")"
+        ok "hook ensure (newer running): incumbent still alive" "$([ -n "$P0" ] && kill -0 "$P0" 2>/dev/null && echo 0 || echo 1)"
+        kill -KILL "$P0" 2>/dev/null || true
+        for _ in $(seq 1 20); do kill -0 "$P0" 2>/dev/null || break; sleep 0.1; done
+    else
+        FAIL=$((FAIL + 1)); printf 'FAIL hook ensure no-op: incumbent did not come up\n'
+    fi
+
+    # older running -> the hook's ensure replaces it (incumbent v1.0.0, cur v9.9.9)
+    if start_incumbent 1.0.0; then
+        P0="$(rd_pid "$RD_PIDFILE")"
+        run_hook_real 9.9.9; rc=$?
+        ok "hook ensure (older running) exits 0" "$rc"
+        replaced=""
+        for _ in $(seq 1 60); do
+            np="$(rd_pid "$RD_PIDFILE")"
+            if [ -n "$np" ] && [ "$np" != "$P0" ] && kill -0 "$np" 2>/dev/null \
+               && ! kill -0 "$P0" 2>/dev/null; then replaced=1; break; fi
+            sleep 0.2
+        done
+        ok "hook ensure replaces an OLDER running daemon (cc-up self-heal)" "$([ -n "$replaced" ] && echo 0 || echo 1)"
+        check "hook ensure (replaced): pidfile now records the new version" "9.9.9" "$(rd_ver "$RD_PIDFILE")"
+        np="$(rd_pid "$RD_PIDFILE")"; kill -KILL "$np" 2>/dev/null || true
+    else
+        FAIL=$((FAIL + 1)); printf 'FAIL hook ensure replace: incumbent did not come up\n'
+    fi
+fi
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

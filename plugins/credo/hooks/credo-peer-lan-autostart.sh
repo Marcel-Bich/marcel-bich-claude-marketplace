@@ -7,10 +7,11 @@
 # /credo:peer-lan start. The daemon is started DETACHED, so this hook returns
 # immediately and never blocks session start.
 #
-# No-op unless a config file exists (the relay itself is a no-op without one). The
-# daemon binds a fixed TCP listen port, which is the single-instance lock: a second
-# daemon exits cleanly on EADDRINUSE. This hook additionally checks for an already
-# running daemon up front, so it does not even spawn a doomed second process.
+# No-op unless a config file exists (the relay itself is a no-op without one). This hook
+# delegates all run/replace/start decisions to the daemon's `ensure` subcommand: ensure
+# leaves a current/newer running daemon untouched, self-heals an OLDER one after a plugin
+# update (cc-up), and otherwise starts fresh. The daemon's bind-retry makes a concurrent
+# start race-safe, so this hook no longer needs its own pgrep pre-check.
 #
 # Under WSL (NAT mode) it ALSO best-effort triggers the Windows scheduled task that
 # refreshes the portproxy (Windows-LAN-IP:PORT -> current WSL-IP:PORT), so a LAN peer
@@ -40,26 +41,17 @@ cfgdir="${cfgdir%/}"
 cfg="${CREDO_PEER_LAN_CONFIG:-$cfgdir/credo/peer-lan.json}"
 [ -f "$cfg" ] || exit 0          # no config -> the relay is a no-op, start nothing
 
-# Already running? Do not start a second daemon. The `[c]...` bracket makes the pattern
-# self-match-safe (the same form the /credo:peer-lan status/stop commands use): pgrep -f
-# matches full command lines, and the character class matches a literal `c` while the
-# pattern STRING `[c]redo...` never occurs in any shell that merely mentions the daemon
-# name, so it only ever matches the real daemon.
-if command -v pgrep >/dev/null 2>&1; then
-  if pgrep -f "[c]redo-peer-lan.py daemon" >/dev/null 2>&1; then
-    exit 0
-  fi
-fi
-
 script="${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py"
 [ -f "$script" ] || exit 0
 
 mkdir -p "$cfgdir/credo" 2>/dev/null || true
 
-# Start detached so the hook returns at once and never blocks session start. The
-# daemon self-guards against a second instance via the listen port, so even if the
-# pgrep check above missed a racing start, the loser exits 0 without disturbing it.
-nohup "$script" daemon >>"$cfgdir/credo/peer-lan.log" 2>&1 &
+# Start detached via `ensure` so the hook returns at once and never blocks session
+# start. ensure itself decides running/replace/start (reading the daemon's pidfile) and
+# the daemon's bind-retry guards concurrent starts, so no pgrep pre-check is needed: a
+# current/newer daemon is left alone, an older one (after cc-up) is replaced, and a
+# losing racer exits 0 without disturbing the incumbent.
+nohup "$script" ensure >>"$cfgdir/credo/peer-lan.log" 2>&1 &
 disown 2>/dev/null || true
 
 # WSL only: refresh the Windows portproxy so the just-started daemon is reachable from

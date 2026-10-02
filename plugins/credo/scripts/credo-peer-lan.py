@@ -85,6 +85,44 @@ ENVELOPE_RE = re.compile(
 )
 FROM_NAME_RE = re.compile(r'from-name="([^"]*)"')
 
+# On EADDRINUSE at startup do NOT give up at once: poll-retry the bind for this long
+# (interval between tries) before raising AlreadyRunning. This guards the restart
+# kill/start race where the old daemon still holds the port for a moment while the new
+# one starts, so the new one no longer loses the port and exits leaving nothing running.
+BIND_RETRY_TOTAL = 8.0
+BIND_RETRY_INTERVAL = 0.25
+# how long _terminate_incumbent waits for a SIGTERMed daemon to die and free the port
+TERMINATE_TIMEOUT = 8.0
+
+
+def _read_version():
+    """Best-effort plugin version from the sibling manifest
+    (../.claude-plugin/plugin.json, key "version"). Each daemon is launched from its
+    own versioned plugin dir after cc-up, so this yields that daemon's own version.
+    CREDO_PEER_LAN_VERSION overrides it - TEST-ONLY, same spirit as the existing
+    CREDO_PEER_LAN_PROCVERSION override. Fallback "unknown" when the manifest is
+    missing, unreadable, or has no usable version."""
+    override = os.environ.get("CREDO_PEER_LAN_VERSION")
+    if override:
+        return override
+    manifest = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..", ".claude-plugin", "plugin.json",
+    )
+    try:
+        with open(manifest) as fh:
+            data = json.load(fh)
+        v = data.get("version")
+        if isinstance(v, str) and v:
+            return v
+    except Exception:
+        pass
+    return "unknown"
+
+
+# computed once at import; the running daemon records it in the pidfile (see start())
+VERSION = _read_version()
+
 
 def log(msg):
     sys.stderr.write("[credo-peer-lan %d] %s\n" % (os.getpid(), msg))
@@ -125,6 +163,12 @@ def sock_dir():
         os.path.expanduser("~"), ".claude"
     )
     return os.path.join(cfg, "credo", "peer-lan-sock")
+
+
+def pidfile_path():
+    """State file recording the running daemon's pid+version+port, next to the config.
+    A new session's `ensure` reads it to decide whether to leave, replace, or start."""
+    return os.path.join(os.path.dirname(config_path()), "peer-lan.pid")
 
 
 def load_config():
@@ -450,6 +494,90 @@ def pid_alive(pid):
         return False
 
 
+def read_pidfile():
+    """Parsed pidfile dict, or None when it is missing or corrupt. Never raises, so a
+    garbled file is treated as "no reliable state" (conservative: ensure then leaves a
+    running daemon untouched rather than acting on bad data)."""
+    try:
+        with open(pidfile_path()) as fh:
+            d = json.load(fh)
+    except Exception:
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def daemon_is_alive(pid):
+    """True only when pid is a live credo-peer-lan daemon. Requires os.kill(pid,0) AND,
+    when /proc is available, that /proc/<pid>/cmdline mentions credo-peer-lan.py (so a
+    reused pid belonging to an unrelated process is never mistaken for our daemon). When
+    /proc is absent, falls back to os.kill alone."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    if os.path.isdir("/proc"):
+        try:
+            with open("/proc/%d/cmdline" % pid, "rb") as fh:
+                return b"credo-peer-lan.py" in fh.read()
+        except OSError:
+            # /proc present but this pid's entry vanished -> it is not alive
+            return False
+    return True  # no /proc at all -> trust os.kill
+
+
+def version_tuple(s):
+    """Parse "X.Y.Z" into an int tuple for comparison. None for "unknown" or anything
+    unparseable, so an unknown/garbled version is never compared (conservative: ensure
+    then leaves the incumbent untouched instead of guessing newer/older)."""
+    if not isinstance(s, str):
+        return None
+    parts = s.strip().split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        return tuple(int(p) for p in parts)
+    except ValueError:
+        return None
+
+
+def port_is_free(host, port):
+    """True if a throwaway TCP bind on host:port succeeds (SO_REUSEADDR, closed at
+    once). While a daemon actively listens on the port the bind fails, so this doubles
+    as a liveness probe for the listen port. Never raises."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((host, int(port)))
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            s.close()
+        except OSError:
+            pass
+
+
+def _terminate_incumbent(pid, host, port, timeout=TERMINATE_TIMEOUT):
+    """SIGTERM pid, then poll up to timeout until the pid is gone AND the listen port is
+    free. Returns True iff the port became free (so a replacement can bind), else False.
+    Never raises - it is called where leaving a running daemon alone is the safe default."""
+    try:
+        os.kill(int(pid), signal.SIGTERM)
+    except (OSError, ValueError, TypeError):
+        pass
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not daemon_is_alive(pid) and port_is_free(host, port):
+            return True
+        time.sleep(0.2)
+    return port_is_free(host, port)
+
+
 def proc_start(pid):
     """Field 22 (starttime) of /proc/<pid>/stat as a string, robust to a comm
     containing spaces or parentheses."""
@@ -722,6 +850,12 @@ class Daemon(object):
         self.this_machine = cfg.get("this_machine", socket.gethostname())
         self.listen_host = cfg.get("listen_host", "127.0.0.1")
         self.listen_port = int(cfg.get("listen_port", DEFAULT_PORT))
+        # how long start() poll-retries the bind on EADDRINUSE before giving up cleanly
+        # (config keys bind_retry_total / bind_retry_interval; tests shorten the window)
+        self.bind_retry_total = float(cfg.get("bind_retry_total", BIND_RETRY_TOTAL))
+        self.bind_retry_interval = float(
+            cfg.get("bind_retry_interval", BIND_RETRY_INTERVAL)
+        )
         # Peers are normalized to {host, port, name?} and routing is ADDRESS-based:
         # a peer is identified by its host:port, never by name. A string "IP"/"IP:PORT"
         # and the legacy {name, host, port} object are both accepted.
@@ -773,29 +907,37 @@ class Daemon(object):
             os.makedirs(self.sock_dir, exist_ok=True)
         except OSError as exc:
             log("cannot create sock dir %s: %s" % (self.sock_dir, exc))
-        # Bind the listen port FIRST - it is the single-instance lock. If another
-        # daemon already holds it the bind fails with EADDRINUSE; we exit cleanly (0)
-        # WITHOUT running any descriptor/socket cleanup, so a running daemon is never
-        # disturbed by a second accidental start.
+        # Bind the listen port FIRST - it is the single-instance lock. On EADDRINUSE we
+        # do NOT give up immediately: a restart's old daemon can still hold the port for
+        # a moment while we start, so we poll-retry the bind for a bounded window. Only
+        # when the window expires still EADDRINUSE do we exit cleanly (0) via
+        # AlreadyRunning WITHOUT running any descriptor/socket cleanup, so a genuinely
+        # running daemon is never disturbed by a second accidental start.
         self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            self.srv.bind((self.listen_host, self.listen_port))
-        except OSError as exc:
-            if exc.errno == errno.EADDRINUSE:
-                log(
-                    "another daemon already listening on %s:%d, exiting"
-                    % (self.listen_host, self.listen_port)
-                )
-                try:
-                    self.srv.close()
-                except OSError:
-                    pass
-                raise AlreadyRunning()
-            raise
+        deadline = time.monotonic() + self.bind_retry_total
+        while True:
+            try:
+                self.srv.bind((self.listen_host, self.listen_port))
+                break
+            except OSError as exc:
+                if exc.errno != errno.EADDRINUSE:
+                    raise
+                if time.monotonic() >= deadline:
+                    log(
+                        "another daemon already listening on %s:%d, exiting"
+                        % (self.listen_host, self.listen_port)
+                    )
+                    try:
+                        self.srv.close()
+                    except OSError:
+                        pass
+                    raise AlreadyRunning()
+                time.sleep(self.bind_retry_interval)
         self._cleanup_stale_descriptors()
         self._cleanup_stale_sockets()
         self.srv.listen(32)
+        self._write_pidfile()
         log(
             "listening on %s:%d as %r; peers=%s"
             % (
@@ -836,6 +978,41 @@ class Daemon(object):
         else:
             log("self-address not detected; rosters omit the advertise fields")
 
+    def _write_pidfile(self):
+        """Atomically record our pid, version, listen port and start time after a
+        successful bind+listen, so a later session's `ensure` can read what is running
+        and decide. Best-effort: pidfile I/O must never crash the daemon."""
+        path = pidfile_path()
+        data = {
+            "pid": os.getpid(),
+            "version": VERSION,
+            "listen_port": self.listen_port,
+            "started": time.time(),
+        }
+        tmp = "%s.%d.tmp" % (path, os.getpid())
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(tmp, "w") as fh:
+                fh.write(json.dumps(data))
+            os.replace(tmp, path)
+        except Exception as exc:
+            log("pidfile write %s failed: %s" % (path, exc))
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+    def _remove_pidfile(self):
+        """Remove the pidfile on shutdown, but ONLY if it still records our own pid, so
+        we never delete a successor daemon's file (e.g. after a restart handed the port
+        over). Best-effort - never raises."""
+        try:
+            d = read_pidfile()
+            if isinstance(d, dict) and int(d.get("pid", -1)) == os.getpid():
+                os.unlink(pidfile_path())
+        except Exception:
+            pass
+
     def shutdown(self):
         if self.stop.is_set():
             return
@@ -846,6 +1023,7 @@ class Daemon(object):
                 self.srv.close()
         except OSError:
             pass
+        self._remove_pidfile()
         with self.lock:
             keys = list(self.remotes.keys())
         for key in keys:
@@ -1386,14 +1564,11 @@ class Daemon(object):
                 pass
 
 
-def run_daemon(_args):
-    if disabled():
-        log("disabled via CREDO_PEER_LAN; exiting")
-        return 0
-    cfg = load_config()
-    if cfg is None:
-        log("no config at %s; nothing to do (no-op)" % config_path())
-        return 0
+def _serve(cfg):
+    """Build the Daemon, install SIGTERM/SIGINT handlers, start it (start() now
+    bind-retries on EADDRINUSE), run until stopped, and always shut down in finally.
+    Shared by run_daemon / run_ensure / run_restart. Returns 0 normally, 0 on a clean
+    AlreadyRunning give-up, 1 on an unexpected start failure."""
     daemon = Daemon(cfg)
 
     def _sig(_signo, _frame):
@@ -1414,6 +1589,93 @@ def run_daemon(_args):
     finally:
         daemon.shutdown()
     return 0
+
+
+def run_daemon(_args):
+    if disabled():
+        log("disabled via CREDO_PEER_LAN; exiting")
+        return 0
+    cfg = load_config()
+    if cfg is None:
+        log("no config at %s; nothing to do (no-op)" % config_path())
+        return 0
+    return _serve(cfg)
+
+
+def run_ensure(_args):
+    """Autostart entry (replaces the old pgrep-check + plain `daemon`): start the
+    daemon, OR self-heal an OLDER running one after a plugin update (cc-up), but never
+    disturb a current/newer or uncertain incumbent.
+
+    Decision (CONSERVATIVE INVARIANT - only ever replace a POSITIVELY older daemon):
+      - disabled or no config    -> log + return 0 (no-op).
+      - a live daemon on the pidfile pid:
+          * running or current version unparseable, or running >= current
+                                   -> leave it, return 0 (no-op).
+          * running < current      -> SIGTERM it; if the port frees, serve the new
+                                      version, else leave the old one and return 0.
+      - no live daemon            -> serve (start() bind-retries past any lingering
+                                      hold). AlreadyRunning -> return 0."""
+    if disabled():
+        log("disabled via CREDO_PEER_LAN; exiting")
+        return 0
+    cfg = load_config()
+    if cfg is None:
+        log("no config at %s; nothing to do (no-op)" % config_path())
+        return 0
+    pf = read_pidfile()
+    if pf and daemon_is_alive(pf.get("pid")):
+        old_pid = pf.get("pid")
+        running_v = version_tuple(pf.get("version"))
+        cur_v = version_tuple(VERSION)
+        if running_v is None or cur_v is None or running_v >= cur_v:
+            log(
+                "daemon already running (pid %s, v%s), leaving it"
+                % (old_pid, pf.get("version"))
+            )
+            return 0
+        log(
+            "replacing older daemon pid %s v%s with v%s"
+            % (old_pid, pf.get("version"), VERSION)
+        )
+        host = cfg.get("listen_host", "127.0.0.1")
+        port = int(cfg.get("listen_port", DEFAULT_PORT))
+        if _terminate_incumbent(old_pid, host, port):
+            return _serve(cfg)
+        log(
+            "could not reclaim %s:%d from older daemon pid %s; leaving it running"
+            % (host, port, old_pid)
+        )
+        return 0
+    return _serve(cfg)
+
+
+def run_restart(_args):
+    """Explicit stop-then-start regardless of version. Never ends with no daemon: if a
+    running daemon cannot be stopped and its port reclaimed within the timeout, report a
+    clear error to STDERR and return 1 rather than leaving nothing (and never force-serve
+    into a still-held port)."""
+    if disabled():
+        log("disabled via CREDO_PEER_LAN; exiting")
+        return 0
+    cfg = load_config()
+    if cfg is None:
+        log("no config at %s; nothing to do (no-op)" % config_path())
+        return 0
+    host = cfg.get("listen_host", "127.0.0.1")
+    port = int(cfg.get("listen_port", DEFAULT_PORT))
+    pf = read_pidfile()
+    if pf and daemon_is_alive(pf.get("pid")):
+        old_pid = pf.get("pid")
+        log("restart: stopping running daemon pid %s" % old_pid)
+        if not _terminate_incumbent(old_pid, host, port):
+            sys.stderr.write(
+                "credo-peer-lan restart: could not reclaim %s:%d from the running "
+                "daemon (pid %s) within %.0fs; left it running\n"
+                % (host, port, old_pid, TERMINATE_TIMEOUT)
+            )
+            return 1
+    return _serve(cfg)
 
 
 def run_init(args):
@@ -1523,6 +1785,20 @@ def main(argv=None):
 
     p_daemon = sub.add_parser("daemon", help="run the relay daemon (default)")
     p_daemon.set_defaults(func=run_daemon)
+
+    p_ensure = sub.add_parser(
+        "ensure",
+        help="start the daemon, or replace an OLDER running one after a plugin "
+        "update; no-op when a current/newer daemon already runs (autostart entry)",
+    )
+    p_ensure.set_defaults(func=run_ensure)
+
+    p_restart = sub.add_parser(
+        "restart",
+        help="stop any running daemon and start a fresh one (race-safe; waits for the "
+        "port to actually free, errors out instead of leaving nothing running)",
+    )
+    p_restart.set_defaults(func=run_restart)
 
     p_init = sub.add_parser(
         "init", help="write/update the config from peer IPs (token-less)"
