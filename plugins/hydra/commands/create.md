@@ -68,7 +68,7 @@ git worktree add -b "hydra/$ARGUMENTS" "$WORKTREE_PATH"
 "${CLAUDE_PLUGIN_ROOT}/scripts/worktree-setup.sh" "$WORKTREE_PATH"
 ```
 
-`worktree-setup.sh` links (relative symlinks) or copies the paths of the worktree files list: the "Worktree files" list in the `### Hydra` subsection of DOGMA-PERMISSIONS.md (read via dogma's `worktree-files.sh` when dogma is installed), else the default list (link CLAUDE.md, CLAUDE/, GUIDES/, DOGMA-PERMISSIONS.md and everything unversioned under .credo/, each only if it exists). Versioned paths are skipped, existing paths are never overwritten. Always run it right after `git worktree add`; report its `linked` / `copied` lines in the output.
+`worktree-setup.sh` links (relative symlinks) or copies the paths of the worktree files list: the "Worktree files" list in the `### Hydra` subsection of DOGMA-PERMISSIONS.md (read via dogma's `worktree-files.sh` when dogma is installed), else the default list (link CLAUDE.md, CLAUDE/, GUIDES/, DOGMA-PERMISSIONS.md and everything unversioned under .credo/, each only if it exists). Versioned paths are skipped, existing paths are never overwritten, and untracked paths that are not ignored in the main checkout are skipped (`skipped <path> (untracked, not ignored ...)`; agents read them in the main checkout). Always run it right after `git worktree add`; report its `linked` / `copied` lines in the output.
 
 ### 5. Output
 
