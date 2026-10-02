@@ -4,6 +4,14 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ## v0
 
+### v0.73
+
+#### v0.73.0
+
+##### Changed
+
+- LAN relay mirror names follow one scheme: `harness`--`network`--`device`--`user`--`profile`--`session`+sid-short (case kept, max 150 before "+"); rosters announce harness, network label, user and profile; mirrors follow a rename of the sender
+
 ### v0.72
 
 #### v0.72.9

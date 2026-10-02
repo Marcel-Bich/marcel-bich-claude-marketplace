@@ -22,7 +22,8 @@ holder is a real live local process, so:
 and the mirrored descriptor uses the holder pid as both the <pid> filename and the
 descriptor's pid/procStart fields, copies pidDomain from a real local session (so it
 is treated as local), points messagingSocketPath at the proxy socket, keeps the
-remote name suffixed with the machine ("name__machine"), and carries the marker key
+mirror name from mirror_name() (harness, network, device, user, profile, session
++ sid short form), and carries the marker key
 "credoPeerLan" (NOT "credoPeerBridge", so the existing bridge never touches it).
 
 When a local session writes into a proxy socket, the holder forwards the message as a
@@ -562,6 +563,31 @@ def build_allowlist(entries, peers):
         else:
             _add(parsed)
     return out
+
+
+MIRROR_NAME_MAX = 150
+
+
+def sid_short(sid):
+    """First char of each dash group joined by "-", plus the last char of the id:
+    a1b2c3d4-e5f6-... -> a-e-4-8-d8. Keeps two sessions of the same name apart."""
+    sid = sid or "?"
+    return "-".join(g[:1] for g in sid.split("-") if g) + sid[-1:]
+
+
+def mirror_name(parts, session, sid):
+    """`p1`--`p2`--...--`session`+sid-short; empty parts are dropped, backticks inside
+    a part are removed, and the session part is trimmed so the name before "+" stays
+    within MIRROR_NAME_MAX. Case, spaces and dots are kept (SendMessage accepts them)."""
+    def clean(v):
+        return re.sub(r"[`\x00-\x1f\x7f]", "", str(v or "")).strip()
+
+    head = "--".join("`%s`" % clean(p) for p in parts if clean(p))
+    sess = clean(session) or "?"
+    room = MIRROR_NAME_MAX - len(head) - len("--``")
+    if room < 1:
+        head, room = head[: MIRROR_NAME_MAX - 8], 4
+    return "%s--`%s`+%s" % (head, sess[:room], sid_short(sid))
 
 
 def is_loopback_ip(ip):
@@ -2332,6 +2358,13 @@ class Daemon(object):
         payload = {
             "kind": "roster",
             "machine": self.this_machine,
+            # naming fields for the receiver's mirror names (see mirror_name)
+            "harness": "Claude Code",
+            "network": (state or {}).get("label") or (state or {}).get("network") or "",
+            "user": getpass.getuser(),
+            "profile": os.path.basename(
+                (os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")).rstrip("/")
+            ),
             # announce our listen port so the receiver can pair this roster
             # (by source IP + this port) with the configured peer address to
             # forward replies to - address-based routing, no name contract.
@@ -2475,6 +2508,10 @@ class Daemon(object):
                     break
                 s = dict(s)
                 s["machine"] = machine  # announced this_machine, for the display name
+                # sender-level naming fields (optional; older senders omit them)
+                for fld in ("harness", "network", "user", "profile"):
+                    v = payload.get(fld)
+                    s[fld] = v[:60] if isinstance(v, str) else ""
                 present[sid] = s
             # remove sessions that vanished from THIS sender's roster. The prune is
             # scoped to the same announced machine as well as the forward address: with
@@ -2530,19 +2567,32 @@ class Daemon(object):
             return True
         return not d.get(MARK)
 
+    def _mirror_name(self, sess, sid, host):
+        """`harness`--`network`--`device`--`user`--`profile`--`session`+sid-short.
+        Fields come from the sender's roster; a loopback sender without a network
+        shares this machine's network, so its label is used."""
+        network = sess.get("network") or ""
+        if not network and is_loopback_ip(host):
+            st = self.lan_state or {}
+            network = st.get("label") or st.get("network") or ""
+        return mirror_name(
+            [sess.get("harness") or "Claude Code", network, sess.get("machine") or host,
+             sess.get("user") or "", sess.get("profile") or ""],
+            sess.get("name") or sid,
+            sid,
+        )
+
     def _create_remote_locked(self, key, sess, template):
         addr_key, sid = key
         # last-line duplicate guard: one mirror per sessionId, whoever announced it
         if any(osid == sid for (_m, osid) in self.remotes):
             return
         host, port = split_host_port(addr_key, self.listen_port)
-        # routing is by address; machine is kept to disambiguate the display name. The
-        # mirror name must be SendMessage-addressable: SendMessage rejects a name that
-        # contains "@", so the machine is joined with a double underscore
-        # ("<session>__<machine>") instead - addressable, and still unique per machine.
-        # Fall back to the host when the roster did not annotate a machine.
+        # routing is by address; the display name follows mirror_name() (SendMessage
+        # accepts backticks, spaces and "+" but not "@"). Fall back to the host when the
+        # roster did not annotate a machine.
         machine = sess.get("machine") or host
-        name = (sess.get("name") or sid) + "__" + machine
+        name = self._mirror_name(sess, sid, host)
         proxy = os.path.join(self.sock_dir, "pl-%s.sock" % uuid.uuid4().hex[:12])
         env = dict(os.environ)
         env["CREDO_PEER_LAN_CONFIG"] = config_path()
@@ -2621,6 +2671,8 @@ class Daemon(object):
             return
         now_ms = int(time.time() * 1000)
         d["status"] = sess.get("status", d.get("status", "idle"))
+        # follow a rename or a network change of the sender
+        d["name"] = self._mirror_name(sess, key[1], split_host_port(key[0], self.listen_port)[0])
         d["statusUpdatedAt"] = now_ms
         d["updatedAt"] = now_ms
         self._atomic_write(rec["descriptor"], d)

@@ -193,7 +193,7 @@ CLAUDE_CONFIG_DIR="$TMP/B/cfg" CREDO_PEER_LAN_CONFIG="$TMP/B/cfg/credo/peer-lan.
 PIDS="$PIDS $!"
 
 # --- wait for the mirrored descriptors to appear ----------------------------
-# A should mirror remote session sid-B (named "werkbank-task__B");
+# A should mirror remote session sid-B (named in the mirror naming scheme);
 # B should mirror remote session sid-A (needed so B can set the reply "from").
 marked_desc() { # sessions_dir  -> path of a credoPeerLan descriptor, or empty
     for f in "$1"/*.json; do
@@ -223,7 +223,8 @@ if [ -n "$DESC_A" ]; then
         PASS=$((PASS + 1))
     fi
     name="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["name"])' "$DESC_A" 2>/dev/null)"
-    check "mirrored name uses __ machine separator" "werkbank-task__B" "$name"
+    RUSER="$("$PY" -c 'import getpass;print(getpass.getuser())')"
+    check "mirrored name follows the naming scheme" "\`Claude Code\`--\`B\`--\`$RUSER\`--\`cfg\`--\`werkbank-task\`+s-BB" "$name"
     PROXY_A="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["messagingSocketPath"])' "$DESC_A" 2>/dev/null)"
 else
     PROXY_A=""
@@ -267,7 +268,7 @@ fi
 # --- S3: a non-dict roster entry must not crash the handler; valid ones still ----
 # materialize. Injected as machine "C" so the live A<->B roster loops never touch it.
 # The non-dict entry is first in the list, so a pre-fix handler would raise before
-# reaching the valid entry and no "werkbank-remote__C" descriptor would ever appear.
+# reaching the valid entry and no werkbank-remote mirror descriptor would ever appear.
 # A holder refuses to start for a machine it does not know, so add "C" as a peer in
 # B's config file. The already-running daemon keeps its loaded peer list (no roster
 # traffic to C); only the freshly spawned holder reads this updated file.
@@ -280,7 +281,7 @@ ROSTER_C='{"kind":"roster","machine":"C","sessions":["i-am-not-a-dict",{"name":"
 "$PY" "$TMP/sendtcp.py" 127.0.0.1 "$PB" "$TOKEN" "$ROSTER_C" 2>/dev/null || true
 gotC=""
 for _ in $(seq 1 60); do
-    if grep -rq '"werkbank-remote__C"' "$TMP/B/cfg/sessions" 2>/dev/null; then gotC=1; break; fi
+    if grep -rqF -e '--`werkbank-remote`+' "$TMP/B/cfg/sessions" 2>/dev/null; then gotC=1; break; fi
     sleep 0.2
 done
 ok "roster with a non-dict entry does not crash; the valid entry materializes" "$([ -n "$gotC" ] && echo 0 || echo 1)"
@@ -761,7 +762,8 @@ done
 ok "address-based (string peers): daemon G mirrors the remote session" "$([ -n "$DESC_G" ] && echo 0 || echo 1)"
 if [ -n "$DESC_G" ]; then
     nameG="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["name"])' "$DESC_G" 2>/dev/null)"
-    check "address-based: mirrored name uses __ machine separator" "werkbank-h__nodeH" "$nameG"
+    RUSER="$("$PY" -c 'import getpass;print(getpass.getuser())')"
+    check "address-based: mirrored name follows the naming scheme" "\`Claude Code\`--\`nodeH\`--\`$RUSER\`--\`cfg\`--\`werkbank-h\`+s-HH" "$nameG"
     PROXY_G="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["messagingSocketPath"])' "$DESC_G" 2>/dev/null)"
 else
     PROXY_G=""
@@ -906,7 +908,7 @@ ROSTER_K='{"kind":"roster","machine":"nodeK-remote","listen_port":'"$PKDEAD"',"a
 "$PY" "$TMP/sendtcp_nosig.py" 127.0.0.1 "$PK" "$ROSTER_K" 2>/dev/null || true
 gotK=""
 for _ in $(seq 1 60); do
-    if grep -rq '"werkbank-remote__nodeK-remote"' "$TMP/K/cfg/sessions" 2>/dev/null; then gotK=1; break; fi
+    if grep -rq '`nodeK-remote`--.*`werkbank-remote`+' "$TMP/K/cfg/sessions" 2>/dev/null; then gotK=1; break; fi
     sleep 0.2
 done
 ok "B1b: advertised roster from a different source IP still mirrors the remote session" "$([ -n "$gotK" ] && echo 0 || echo 1)"
@@ -1327,6 +1329,21 @@ d.roster_tick()
 adv_map = {h: (ah, ap) for h, ah, ap in adv}
 expect(adv_map.get("127.0.0.1") == ("127.0.0.1", 48610), "loopback advertise even before LAN detection %r" % adv_map)
 expect(adv_map.get("192.168.1.50") == (None, None), "LAN peer: no advertise before detection %r" % adv_map)
+
+# --- mirror naming scheme: `harness`--`network`--`device`--`user`--`profile`--`session`+sid-short
+expect(mod.sid_short("a1b2c3d4-e5f6-4789-8abc-def012345678") == "a-e-4-8-d8", "sid short %r" % mod.sid_short("a1b2c3d4-e5f6-4789-8abc-def012345678"))
+expect(mod.sid_short("plain") == "pn", "sid short without dashes")
+nm = mod.mirror_name(["Claude Code", "Home Net", "box-1", "alice", ".claude"], "My Session", "a1b2c3d4-e5f6-4789-8abc-def012345678")
+expect(nm == "`Claude Code`--`Home Net`--`box-1`--`alice`--`.claude`--`My Session`+a-e-4-8-d8", "mirror name %r" % nm)
+nm = mod.mirror_name(["Codex", "", "box-1", "a`b", None], "s", "x-y")
+expect(nm == "`Codex`--`box-1`--`ab`--`s`+x-yy", "empty parts dropped, backticks stripped %r" % nm)
+nm = mod.mirror_name(["Claude Code", "N", "D", "U", "P"], "x" * 400, "a1b2c3d4-e5f6-4789-8abc-def012345678")
+expect(len(nm.split("+")[0]) <= 150 and nm.endswith("+a-e-4-8-d8") and nm.startswith("`Claude Code`--`N`"), "long session trimmed to 150 %r" % len(nm))
+# roster carries the naming fields
+got = []
+mod.send_to_peer = lambda h, p, t, payload, timeout=5.0: got.append(payload)
+d.roster_tick()
+expect(got and got[0].get("harness") == "Claude Code" and got[0].get("user") and got[0].get("profile"), "roster naming fields %r" % (got[:1],))
 
 # --- Windows data file writer: only on change
 path = os.path.join(tmp, "win", "credo", "peer-lan-allow.json")
