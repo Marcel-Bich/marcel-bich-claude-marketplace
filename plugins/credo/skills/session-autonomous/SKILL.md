@@ -143,6 +143,16 @@ is genuinely non-buildable, act by the reason:
 Auto-unblock (credo `items`) still applies during the run: when an item reaches `2_done`,
 check its `blocks` and return any now-unblocked `3_blocked` item to `2_go`.
 
+### Audit gate per item (autonomous)
+
+Every finished item still goes through the mandatory dedicated-subagent audit before
+`2_done`. When spawning it, pick the tier per the credo `audit` skill ("Audit depth (risk
+tiers)"): `full` for UI, security, writes outside the repo, migration, large scope, or
+`audit: full`; `lean` otherwise. Lean items finished in the same stretch may be batched into
+one audit subagent (one verdict per item); `full` items are audited singly. Run the dogma
+`relevant` test stage per item where defined; the full suite runs only where dogma places it
+(e.g. once per release bundle), not per item.
+
 ### Bringing up a local surface to verify (autonomous)
 
 A `ui: true` item is not verify-dead in autonomous mode. If its runtime surface is down, and

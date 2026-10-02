@@ -49,6 +49,55 @@ Audit-after-completed is a **mandatory gate before any item moves to `2_done/`**
 Whatever is needed to complete the core of the item is part of that item and is NOT a
 separate side finding. The gate is about the item's own Definition of Done.
 
+## Audit depth (risk tiers)
+
+The gate above is mandatory for every item and is always run by a dedicated subagent that
+is not the builder. The tier only decides HOW DEEP the audit goes, never WHETHER it runs.
+Depth follows risk: there are two tiers, `full` and `lean`.
+
+**full** - every check in this skill, with current verify evidence required. An item is
+`full` when ANY of these holds:
+
+- frontmatter `ui: true` (current browser evidence from the `verify` skill is required; the
+  audit cites it, it does not drive a browser itself);
+- security-relevant: permissions or rights, hooks that allow or block, secrets handling,
+  deletion, installs;
+- writes outside the repo (a foreign project, user files);
+- data migration;
+- large scope (guide value: more than ~10 files touched, or a new component);
+- frontmatter `audit: full` (the only override, see the `items` skill);
+- when in doubt -> `full`.
+
+**lean** - everything else (small non-UI items). Checks:
+
+- the diff against each DoD point (every success criterion met by the change);
+- wiring / reachability of new code (not present-but-unreachable);
+- docs current for the change (README / wiki / `docs/**` the change affects);
+- stale head / body claims, inside the item itself only.
+
+A lean audit still produces severity-ranked findings with evidence, a verdict, and a report.
+
+**Who picks the tier.** The main agent picks the tier when it spawns the audit subagent and
+names it in the brief. The audit report states the tier plus a one-line reason in its
+Summary (e.g. "lean: 3 files, no UI, no security area"). An auditor that finds a `full`
+criterion on a lean-briefed item escalates to `full` and says so in the report. There is NO
+`audit: lean` override - a risky item can never be downgraded.
+
+**Tests.** The builder and the audit run the repo's `relevant` stage command when dogma
+defines one: resolve the newest installed dogma with
+`ls -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/*/dogma/*/ | sort -V | tail -1`
+and run `<that dir>/scripts/test-commands.sh get relevant` (exit 4 / empty output = not
+defined). When dogma is absent or defines no `relevant` command, choose the relevant tests
+as before. The full suite runs where dogma says (stage `all`, Final Verification, or once
+per release bundle when DOGMA-PERMISSIONS sets "run ALL tests only at release") - in that
+case NOT per item, in neither tier. Running tests is a read-only check and does not break
+the audit's hard constraints.
+
+**Batching.** Several finished `lean` items from the same period may go to ONE audit
+subagent. Each item still gets its own verdict and its own report section (one report per
+item, or one report with a clearly separated section and verdict per item; the item move
+follows each item's own verdict). `full` items are always audited singly, never batched.
+
 ## What to audit against
 
 For the item under review, gather the ground truth first (read, do not guess):
@@ -189,12 +238,14 @@ root; the reports directory is created by `credo-init`). Use frontmatter `kind: 
 kind: audit
 item: 124
 date: YYYY-MM-DD
+tier: full
 verdict: fail
 highest_severity: BLOCKER
 auditor: <subagent role, not the builder>
 ---
 
 ## Summary
+<tier + one-line reason, e.g. "lean: 3 files, no UI, no security area">
 <one-line verdict and recommended item move>
 
 ## Findings

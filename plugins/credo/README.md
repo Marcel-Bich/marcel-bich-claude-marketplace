@@ -126,7 +126,7 @@ Item ids come from `scripts/credo-id-next.sh`. The counter file holds the last i
 
 ## The item workflow
 
-A work item is one Markdown file (`templates/item.template.md`). Its frontmatter is lean and mandatory: `id`, `title`, `created`, `type` (bug | optimization | feature | question | chore), and `ui` (true means a visual verify is part of the Definition of Done). There is no status field, because the folder is the status.
+A work item is one Markdown file (`templates/item.template.md`). Its frontmatter is lean and mandatory: `id`, `title`, `created`, `type` (bug | optimization | feature | question | chore), and `ui` (true means a visual verify is part of the Definition of Done). The optional `audit: full` forces the full audit tier (see Audit depth). There is no status field, because the folder is the status.
 
 The lifecycle, moving the file with `scripts/credo-item-move.sh`:
 
@@ -150,6 +150,10 @@ An item may move to `2_done/` only when:
 - a dedicated **audit** subagent (not the builder) has reviewed the work against its stated requirement and Definition of Done and returned a pass,
 - for `ui: true`, a **visual verify** has driven the real surface in a browser across the configured viewports and captured screenshot evidence,
 - docs are updated in the same change.
+
+#### Audit depth
+
+The audit gate always runs, by a dedicated subagent that is not the builder; only its depth follows risk. **full** (every audit check, current verify evidence) applies to `ui: true` items, security-relevant work (permissions, allow/block hooks, secrets, deletion, installs), writes outside the repo, data migration, large scope (guide value: more than ~10 files or a new component), items with the optional frontmatter `audit: full`, and anything in doubt. **lean** applies to everything else: the diff against each DoD point, wiring of new code, docs current for the change, and stale claims inside the item - still with severity-ranked findings and a verdict. The main agent picks the tier and the report states it with a one-line reason. There is no `audit: lean` override, so a risky item is never downgraded. Builder and audit run dogma's `relevant` test stage when the repo defines one; the full suite runs where dogma places it (for example once per release bundle), not per item. Several lean items may share one audit subagent with one verdict each; full items are always audited singly.
 
 ## Building-block skills
 

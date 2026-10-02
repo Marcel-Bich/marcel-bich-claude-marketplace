@@ -195,6 +195,10 @@ ui: false               # bool - true means a visual verify is a DoD requirement
 - `ui`: boolean. When `true`, a passing **visual** verification (the credo `verify` skill,
   measured layout + real interaction at every configured viewport) is a mandatory part of
   this item's Definition of Done.
+- `audit` (optional, normally absent): the single value `audit: full` forces the full audit
+  tier for this item (credo `audit` skill, "Audit depth (risk tiers)"). Absent = the main
+  agent picks the tier by risk. There is no `audit: lean` override - an item can only be
+  pushed up to `full`, never down.
 
 Everything else (`priority`, `source`, `relates_to`, `regression`, ...) is
 **not** a mandatory field. Do not add speculative frontmatter. Write such information only
@@ -417,7 +421,8 @@ An item may move into `2_done/` ONLY when ALL of these hold. This gate is hard.
    MUST be run by a subagent that is NOT the builder of this item. A builder auditing
    their own work does not satisfy the gate. This applies in every session mode (active,
    passive, autonomous), no exceptions. Only a passing audit lets the item enter
-   `2_done/`.
+   `2_done/`. The audit DEPTH follows risk (`full` or `lean` tier, see the `audit` skill,
+   "Audit depth (risk tiers)"); the gate itself is never skipped.
 5. **Docs updated in the same change** - documentation is part of the change, not a
    follow-up. Any change that affects documented behavior MUST update the docs in the same
    change; stale docs = incomplete (C14). Prefer `/dogma:docs-update` when dogma is

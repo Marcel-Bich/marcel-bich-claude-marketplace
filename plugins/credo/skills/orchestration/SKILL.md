@@ -148,6 +148,14 @@ whole item before it asserts a status or moves it (see "Monitoring without conte
 flooding"): that governs the status decision after the fact, this governs building against
 the item before and during the work.
 
+## Delegating audit subagents
+
+When you spawn the mandatory audit subagent (never the builder), pick the audit tier per
+the credo `audit` skill ("Audit depth (risk tiers)": `full` or `lean`) and name tier plus a
+one-line reason in the brief. Several finished `lean` items may be batched into ONE audit
+subagent (one verdict and report section per item); `full` items are always audited
+singly. The tier changes only the depth, never whether the audit runs.
+
 ## Delegating verify / UI subagents
 
 When you delegate any verification or UI-checking subagent - the formal credo `verify`
