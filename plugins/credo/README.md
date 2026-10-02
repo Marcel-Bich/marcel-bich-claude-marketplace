@@ -69,6 +69,7 @@ credo teaches the agent a few short chat shorthands, so you can type them withou
 | `dd` | Done. `<thing> dd` = that thing is done; bare `dd` = the last discussed or requested thing is done; `cc-up dd` = the update is done. On a single Definition of Done point, `dd` ticks only that point, never the whole item. For a credo item (`#123 dd`) the agent runs the normal Definition of Done gate (audit, plus verify for `ui: true`) and on a pass moves it with `credo-item-move.sh 123 done`. The shorthand is your statement, never a gate bypass: if the gate fails, the agent reports instead of moving. |
 | `vf` | Verified or verify, by context. In a manual test round where you were asked to check something, `vf` means you checked it and it passes. The scope is exactly what it refers to: on a single Definition of Done point only that point is ticked as verified and the item stays where it is; only when the whole item was under test (`#123 vf`) does it move to `3_verified/` via `credo-item-move.sh 123 verified --user-authorized` (main agent only). Otherwise it is an instruction to verify for real with runtime proof, not a code review (in credo: the verify skill, via subagents). If it is unclear which is meant, the agent asks briefly. |
 | `cf` | Start or continue a clarify round: structured questions until the open points are resolved. In credo: the `1_clarify` items, one item per Ask round, or the named one (`#57 cf`). |
+| `go` / `bk` / `pk` / `ar` | Item moves, valid only right after an item ref (`#57 go`); bare they are ordinary words. `#N go` = your GO approval: the agent adds a `(GO: <your words>)` line to the item History and moves it to `2_go` if the GO entry gate (G1-G6) passes, otherwise reports why not. `#N bk` = block it: the agent asks for the concrete blocker if you did not name one (`blocked_by` is mandatory) and moves it to `3_blocked`. `#N pk` = park on hold, `#N pk future` = park for later. `#N ar` = archive. All moves go through `credo-item-move.sh`. |
 | `???` | Explain the thing it follows (or the last thing, when alone) in depth: What / Why / Example / Consequences. Same behavior as `/credo:explain`. |
 | `cc-up` | You fully updated Claude Code (plugins and marketplaces fetched and installed, `/reload-plugins`, full quit and restart, possibly resumed). The running state is current; the agent takes this at face value and never asks for update steps or proof. Also valid when mentioned in passing. |
 | `cm` | Commit, following the repo's commit rules. No push. |
@@ -136,6 +137,8 @@ The lifecycle, moving the file with `scripts/credo-item-move.sh`:
 5. **verified** (`items/3_verified/`) - human-authorized. The agent never self-verifies, but may perform the mechanical move on your explicit instruction (`credo-item-move.sh <id> verified --user-authorized`). Raw `mv`/`git mv` of item files is blocked and redirected to the move helper (enforced by `credo-item-move-guard.sh`).
 
 Parked work lives under `items/parked/{hold,future}`; abandoned work under `items/4_archived/`.
+
+`scripts/credo-item-counts.sh [--json]` prints the item count per status folder of the resolved project (read-only, exit 4 when no credo project resolves), so any renderer can show live counts without knowing the folder layout.
 
 ### The Definition of Done gate
 
