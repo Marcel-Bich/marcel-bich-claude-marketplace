@@ -10,10 +10,16 @@
 # Usage:
 #   credo-session-status.sh [--json] [session_id]
 #     (no flag)  key=value lines (session_id=..., mode=..., role=...,
-#                autonomy_running=yes|no, wake_scheduled=<epoch>|)
+#                autonomy_running=yes|no, autonomy_paused=yes|no,
+#                wake_scheduled=<epoch>|)
 #     --json     one JSON object:
 #                {"session_id":"...","mode":"active"|null,"role":"task"|null,
-#                 "autonomy":{"running":true|false,"wake_scheduled":<epoch>|null}}
+#                 "autonomy":{"running":true|false,"paused":true|false,
+#                             "wake_scheduled":<epoch>|null}}
+#
+# paused is the session's hard opt-out flag. credo also sets it for every
+# active/passive session, so it only means something while mode is
+# autonomous (a user message paused the run as a fail-safe).
 #
 # Session id: the argument, else $CREDO_SESSION_ID, else $CLAUDE_CODE_SESSION_ID
 # (same order as hooks/credo-autonomy-lib.sh).
@@ -65,6 +71,9 @@ role="$(first_line "$ROLES_DIR/$SID")"
 running="no"
 credo_autonomy_running "$SID" && running="yes"
 
+paused="no"
+[ -f "$(credo_autonomy_dir "$SID")/paused" ] && paused="yes"
+
 wake=""
 wake_file="$(credo_autonomy_dir "$SID")/wake-scheduled"
 if [ "$running" = "yes" ]; then
@@ -86,10 +95,11 @@ json_str() {
 }
 
 if [ "$MODE" = "json" ]; then
-    printf '{"session_id":%s,"mode":%s,"role":%s,"autonomy":{"running":%s,"wake_scheduled":%s}}\n' \
+    printf '{"session_id":%s,"mode":%s,"role":%s,"autonomy":{"running":%s,"paused":%s,"wake_scheduled":%s}}\n' \
         "$(json_str "$SID")" "$(json_str "$mode")" "$(json_str "$role")" \
-        "$([ "$running" = "yes" ] && echo true || echo false)" "${wake:-null}"
+        "$([ "$running" = "yes" ] && echo true || echo false)" \
+        "$([ "$paused" = "yes" ] && echo true || echo false)" "${wake:-null}"
 else
-    printf 'session_id=%s\nmode=%s\nrole=%s\nautonomy_running=%s\nwake_scheduled=%s\n' \
-        "$SID" "$mode" "$role" "$running" "$wake"
+    printf 'session_id=%s\nmode=%s\nrole=%s\nautonomy_running=%s\nautonomy_paused=%s\nwake_scheduled=%s\n' \
+        "$SID" "$mode" "$role" "$running" "$paused" "$wake"
 fi

@@ -14,8 +14,8 @@ export type CredoCounts = {
   future: number
 }
 
-/** mode and role from scripts/credo-session-status.sh --json */
-export type CredoSession = { mode: string | null; role: string | null }
+/** mode and role from scripts/credo-session-status.sh --json; paused only while mode is autonomous */
+export type CredoSession = { mode: string | null; role: string | null; paused: boolean }
 
 /** open test / question letters parsed from the last main-loop answer */
 export type CredoLetters = { tests: string[]; questions: string[] }
@@ -42,6 +42,7 @@ declare module 'claude-code' {
       blink: boolean
       preset: number
       session: CredoSession
+      sessionBlink: boolean
       letters: CredoLetters
       panelView: string
       auto: CredoAuto

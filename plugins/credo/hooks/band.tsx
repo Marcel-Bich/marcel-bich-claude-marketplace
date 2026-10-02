@@ -24,7 +24,9 @@ const isExpanded = atom({ plugin: 'credo', key: 'isExpanded' } as const, false)
 const changed = atom({ plugin: 'credo', key: 'changed' } as const, [])
 const created = atom({ plugin: 'credo', key: 'created' } as const, [])
 const blink = atom({ plugin: 'credo', key: 'blink' } as const, false)
-const session = atom({ plugin: 'credo', key: 'session' } as const, { mode: null, role: null })
+const session = atom({ plugin: 'credo', key: 'session' } as const, { mode: null, role: null, paused: false })
+// blink phase of the mode/role tag when an autonomous run gets paused or re-armed
+const sessionBlink = atom({ plugin: 'credo', key: 'sessionBlink' } as const, false)
 const letters = atom({ plugin: 'credo', key: 'letters' } as const, { tests: [], questions: [] })
 const auto = atom({ plugin: 'credo', key: 'auto' } as const, { running: false, wake: null, five: null, ladder: [] })
 const itemList = atom({ plugin: 'credo', key: 'itemList' } as const, null)
@@ -159,10 +161,24 @@ async function refresh($: EngineInterface) {
   await update($, created, () => [])
 }
 
+// paused or re-armed: the mode/role tag blinks like an item move, plus a toast
+async function flashSession($: EngineInterface, paused: boolean) {
+  $.ui.toast(paused ? 'credo: autonomous run paused' : 'credo: autonomous run re-armed')
+  for (let t = 0; t < HIGHLIGHT_MS; t += BLINK_MS) {
+    await update($, sessionBlink, v => !v)
+    await $.clock.sleep(BLINK_MS)
+  }
+  await update($, sessionBlink, () => false)
+}
+
 // mode, role and autonomy from credo-session-status.sh; while autonomy runs,
 // also the 5h figure (credo-budget-read.sh) and the ladder rungs (credo-config.sh)
 async function refreshStatus($: EngineInterface) {
-  let status: { mode: string | null; role: string | null; autonomy: { running: boolean; wake_scheduled: number | null } }
+  let status: {
+    mode: string | null
+    role: string | null
+    autonomy: { running: boolean; paused: boolean; wake_scheduled: number | null }
+  }
   try {
     const r = await runScript($, ['credo-session-status.sh', '--json'])
     if (r.exitCode !== 0) throw new Error(`exit ${r.exitCode}: ${r.stderr.trim()}`)
@@ -172,8 +188,13 @@ async function refreshStatus($: EngineInterface) {
     $.ui.log(`credo band: credo-session-status.sh failed: ${String(err)}`, { to: 'debug' })
     return
   }
-  const nextSession: CredoSession = { mode: status.mode, role: status.role }
+  // credo sets the paused flag for every active/passive session too; it only
+  // matters while the mode is autonomous (a user message paused the run)
+  const paused = status.mode === 'autonomous' && status.autonomy.paused === true
+  const prev = await read($, session)
+  const nextSession: CredoSession = { mode: status.mode, role: status.role, paused }
   await update($, session, () => nextSession)
+  if ((prev.paused ?? false) !== paused) void flashSession($, paused)
 
   if (!status.autonomy.running) {
     await update($, auto, () => ({ running: false, wake: null, five: null, ladder: [] }))
@@ -407,8 +428,10 @@ export const register: Register = on => {
       })
     }
     const ses = await read($, session)
-    const tags = [ses.mode, ses.role].filter((x): x is string => x !== null).join('/')
-    if (tags) meta.push({ width: tags.length, node: <Text key="ses" color="cyan">{tags}</Text> })
+    const modeTag = ses.mode && ses.paused ? `${ses.mode} paused` : ses.mode
+    const tags = [modeTag, ses.role].filter((x): x is string => x !== null).join('/')
+    const sesColor = (await read($, sessionBlink)) ? HIGHLIGHT : 'cyan'
+    if (tags) meta.push({ width: tags.length, node: <Text key="ses" color={sesColor}>{tags}</Text> })
 
     // open test and question letters, so nothing waiting on the user gets lost
     const open = await read($, letters)
