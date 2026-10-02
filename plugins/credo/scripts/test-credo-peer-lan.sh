@@ -180,7 +180,7 @@ CLAUDE_CONFIG_DIR="$TMP/B/cfg" CREDO_PEER_LAN_CONFIG="$TMP/B/cfg/credo/peer-lan.
 PIDS="$PIDS $!"
 
 # --- wait for the mirrored descriptors to appear ----------------------------
-# A should mirror remote session sid-B (named "werkbank-task@B");
+# A should mirror remote session sid-B (named "werkbank-task__B");
 # B should mirror remote session sid-A (needed so B can set the reply "from").
 marked_desc() { # sessions_dir  -> path of a credoPeerLan descriptor, or empty
     for f in "$1"/*.json; do
@@ -210,7 +210,7 @@ if [ -n "$DESC_A" ]; then
         PASS=$((PASS + 1))
     fi
     name="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["name"])' "$DESC_A" 2>/dev/null)"
-    check "mirrored name is suffixed with the remote machine" "werkbank-task@B" "$name"
+    check "mirrored name uses __ machine separator" "werkbank-task__B" "$name"
     PROXY_A="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["messagingSocketPath"])' "$DESC_A" 2>/dev/null)"
 else
     PROXY_A=""
@@ -254,7 +254,7 @@ fi
 # --- S3: a non-dict roster entry must not crash the handler; valid ones still ----
 # materialize. Injected as machine "C" so the live A<->B roster loops never touch it.
 # The non-dict entry is first in the list, so a pre-fix handler would raise before
-# reaching the valid entry and no "werkbank-remote@C" descriptor would ever appear.
+# reaching the valid entry and no "werkbank-remote__C" descriptor would ever appear.
 # A holder refuses to start for a machine it does not know, so add "C" as a peer in
 # B's config file. The already-running daemon keeps its loaded peer list (no roster
 # traffic to C); only the freshly spawned holder reads this updated file.
@@ -267,7 +267,7 @@ ROSTER_C='{"kind":"roster","machine":"C","sessions":["i-am-not-a-dict",{"name":"
 "$PY" "$TMP/sendtcp.py" 127.0.0.1 "$PB" "$TOKEN" "$ROSTER_C" 2>/dev/null || true
 gotC=""
 for _ in $(seq 1 60); do
-    if grep -rq '"werkbank-remote@C"' "$TMP/B/cfg/sessions" 2>/dev/null; then gotC=1; break; fi
+    if grep -rq '"werkbank-remote__C"' "$TMP/B/cfg/sessions" 2>/dev/null; then gotC=1; break; fi
     sleep 0.2
 done
 ok "roster with a non-dict entry does not crash; the valid entry materializes" "$([ -n "$gotC" ] && echo 0 || echo 1)"
@@ -628,7 +628,7 @@ printf 'Linux version 6.1.0-generic (gcc) #1 SMP\n' > "$TMP/wh/procversion-linux
 cat > "$TMP/wh/cfg/credo/peer-lan.json" <<EOF
 {"this_machine":"WH","listen_host":"0.0.0.0","listen_port":48610,"peers":[]}
 EOF
-WH_OUT="$(PATH="$TMP/wh/bin:$PATH" CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+WH_OUT="$(PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
     CREDO_PEER_LAN_CONFIG="$TMP/wh/cfg/credo/peer-lan.json" "$PY" "$DAEMON" whoami 2>/dev/null)"
 case "$WH_OUT" in *"192.168.178.39:48610"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL whoami did not report the mocked src IP\n  %s\n' "$WH_OUT" ;; esac
 case "$WH_OUT" in *127.0.0.1*) FAIL=$((FAIL + 1)); printf 'FAIL whoami leaked 127.0.0.1\n' ;; *) PASS=$((PASS + 1)) ;; esac
@@ -658,7 +658,7 @@ mkdir -p "$TMP/pr/credo"
 cat > "$TMP/pr/credo/peer-lan.json" <<EOF
 {"this_machine":"PR","listen_host":"0.0.0.0","listen_port":48610,"peers":["127.0.0.1:$PR_LIVE","127.0.0.1:$PR_DEAD"]}
 EOF
-PR_OUT="$(PATH="$TMP/wh/bin:$PATH" CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+PR_OUT="$(PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
     CREDO_PEER_LAN_CONFIG="$TMP/pr/credo/peer-lan.json" "$PY" "$DAEMON" check 2>/dev/null)"
 case "$PR_OUT" in *"127.0.0.1:$PR_LIVE - reachable"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL probe did not report the live peer reachable\n  %s\n' "$PR_OUT" ;; esac
 case "$PR_OUT" in *"127.0.0.1:$PR_DEAD - not reachable"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL probe did not report the closed port not reachable\n  %s\n' "$PR_OUT" ;; esac
@@ -666,7 +666,7 @@ case "$PR_OUT" in *"127.0.0.1:$PR_DEAD - not reachable"*) PASS=$((PASS + 1)) ;; 
 # --- IN: init writes a valid token-less config; merges + dedupes peers --------
 mkdir -p "$TMP/in/credo"
 IN_CFG="$TMP/in/credo/peer-lan.json"
-PATH="$TMP/wh/bin:$PATH" CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
     CREDO_PEER_LAN_CONFIG="$IN_CFG" "$PY" "$DAEMON" init 192.168.1.10 >/dev/null 2>&1
 ok "init creates the config from one IP" "$([ -f "$IN_CFG" ] && echo 0 || echo 1)"
 IN_DEFAULTS="$("$PY" - "$IN_CFG" <<'PYEOF'
@@ -680,7 +680,7 @@ PYEOF
 )"
 case "$IN_DEFAULTS" in OK) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL init one-IP config wrong: %s\n' "$IN_DEFAULTS" ;; esac
 # re-run with more IPs incl an explicit port and a duplicate -> merge, no dupes
-PATH="$TMP/wh/bin:$PATH" CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
     CREDO_PEER_LAN_CONFIG="$IN_CFG" "$PY" "$DAEMON" init 192.168.1.11 192.168.1.12:50000 192.168.1.10 >/dev/null 2>&1
 IN_MERGE="$("$PY" - "$IN_CFG" <<'PYEOF'
 import json, sys
@@ -695,7 +695,7 @@ PYEOF
 case "$IN_MERGE" in OK) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL init merge/dedupe wrong: %s\n' "$IN_MERGE" ;; esac
 # no IPs and no pre-existing file -> a valid token-less config with empty peers
 IN_EMPTY="$TMP/in/credo/empty.json"
-PATH="$TMP/wh/bin:$PATH" CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
     CREDO_PEER_LAN_CONFIG="$IN_EMPTY" "$PY" "$DAEMON" init >/dev/null 2>&1
 IN_EMPTY_OK="$("$PY" - "$IN_EMPTY" <<'PYEOF'
 import json, sys
@@ -747,7 +747,7 @@ done
 ok "address-based (string peers): daemon G mirrors the remote session" "$([ -n "$DESC_G" ] && echo 0 || echo 1)"
 if [ -n "$DESC_G" ]; then
     nameG="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["name"])' "$DESC_G" 2>/dev/null)"
-    check "address-based: mirrored name still suffixed with remote this_machine" "werkbank-h@nodeH" "$nameG"
+    check "address-based: mirrored name uses __ machine separator" "werkbank-h__nodeH" "$nameG"
     PROXY_G="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["messagingSocketPath"])' "$DESC_G" 2>/dev/null)"
 else
     PROXY_G=""

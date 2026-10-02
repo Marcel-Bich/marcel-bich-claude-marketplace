@@ -22,7 +22,7 @@ holder is a real live local process, so:
 and the mirrored descriptor uses the holder pid as both the <pid> filename and the
 descriptor's pid/procStart fields, copies pidDomain from a real local session (so it
 is treated as local), points messagingSocketPath at the proxy socket, keeps the
-remote name suffixed with the machine ("name@machine"), and carries the marker key
+remote name suffixed with the machine ("name__machine"), and carries the marker key
 "credoPeerLan" (NOT "credoPeerBridge", so the existing bridge never touches it).
 
 When a local session writes into a proxy socket, the holder forwards the message as a
@@ -1029,10 +1029,13 @@ class Daemon(object):
     def _create_remote_locked(self, key, sess, template):
         addr_key, sid = key
         host, port = split_host_port(addr_key, self.listen_port)
-        # the announced machine name is only for the display suffix; routing is by
-        # address. Fall back to the host when the roster did not annotate a machine.
+        # routing is by address; machine is kept to disambiguate the display name. The
+        # mirror name must be SendMessage-addressable: SendMessage rejects a name that
+        # contains "@", so the machine is joined with a double underscore
+        # ("<session>__<machine>") instead - addressable, and still unique per machine.
+        # Fall back to the host when the roster did not annotate a machine.
         machine = sess.get("machine") or host
-        name = (sess.get("name") or sid) + "@" + machine
+        name = (sess.get("name") or sid) + "__" + machine
         proxy = os.path.join(self.sock_dir, "pl-%s.sock" % uuid.uuid4().hex[:12])
         env = dict(os.environ)
         env["CREDO_PEER_LAN_CONFIG"] = config_path()
