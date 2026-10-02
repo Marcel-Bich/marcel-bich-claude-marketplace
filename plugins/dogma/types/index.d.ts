@@ -9,7 +9,7 @@ export type DogmaSummary = { file: string; ask: string[]; deny: string[] }
 export type DogmaGone = { kind: 'deny' | 'ask'; label: string }
 
 /** the last dogma PreToolUse block, shown for a few seconds */
-export type DogmaBlock = { tool: string; reason: string }
+export type DogmaBlock = { tool: string; reason: string; at?: number }
 
 declare module 'claude-code' {
   interface PluginState {

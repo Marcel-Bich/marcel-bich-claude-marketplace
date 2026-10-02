@@ -6,6 +6,12 @@ Changelog of the dogma plugin. Newest first. Months group releases; no day dates
 
 ### v1.44
 
+#### v1.44.3
+
+##### Fixed
+
+- dogma band no longer shows a "blocked" line forever: the notice is time-stamped and hidden after 15 s even when a plugin reload cut its timer short, and a new session starts without it
+
 #### v1.44.2
 
 ##### Fixed

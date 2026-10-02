@@ -133,7 +133,10 @@ async function noticeToast($: EngineInterface) {
 // show the last dogma block for a few seconds, blinking, plus a toast
 async function showBlock($: EngineInterface, b: DogmaBlock) {
   $.ui.toast(`dogma blocked ${b.tool}: ${b.reason}`, { timeoutMs: TOAST_MIN_MS })
-  await update($, block, () => b)
+  // stamped, so the render hides it after BLOCK_MS even if this timer never finishes
+  // (plugin reload mid-sleep) and a stale stored block never sticks
+  const at = await $.clock.now()
+  await update($, block, () => ({ ...b, at }))
   // blink for the first BLOCK_BLINK_MS, then stay steady red until BLOCK_MS
   for (let t = 0; t < BLOCK_BLINK_MS; t += BLINK_MS) {
     await update($, blink, v => !v)
@@ -147,6 +150,7 @@ async function showBlock($: EngineInterface, b: DogmaBlock) {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
+    await update($, block, () => null)
     await refresh($)
     $.clock.every(REFRESH_MS, () => void refresh($))
     void noticeToast($)
@@ -240,7 +244,7 @@ export const register: Register = on => {
       )
     }
     const last = await read($, block)
-    if (last) {
+    if (last && typeof last.at === 'number' && (await $.clock.now()) - last.at < BLOCK_MS) {
       rows.push(
         <Box key="block" columnGap={HEAD_GAP}>
           <Text bold color={isOn ? HIGHLIGHT : 'red'}>⛔ blocked</Text>
