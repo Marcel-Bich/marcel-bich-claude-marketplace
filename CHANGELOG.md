@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v1.44
 
+##### v1.44.2
+
+###### Fixed
+
+- Delete guard only analyzes a segment whose command word can delete, move or link; a verb inside an argument (a file name, a grep pattern with <...>) no longer blocks harmless commands
+
 ##### v1.44.1
 
 ###### Changed

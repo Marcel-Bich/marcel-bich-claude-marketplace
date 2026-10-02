@@ -256,8 +256,21 @@ def check_segment(seg, ctx, nest=0):
         seg = seg[:-1].rstrip("} \t")
     if not seg:
         return
-    raw_tok = tokens(seg) if re.search(r"\b(rm|unlink|shred|rmdir|find|mv|ln|cp|cd|pushd|git|eval|xargs|sh|bash|zsh|dash)\b", seg) else []
     record_assignments(seg, ctx)
+    # only a segment whose COMMAND word is relevant is tokenized; a verb that merely
+    # appears in an argument (a file named CLAUDE.git.md, a grep pattern) is not
+    m = re.match(r"^(?:\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*|sudo|command|nice|nohup|time|env)(?:\s+-\S+)*\s+)*\\?(\S+)", seg)
+    first = os.path.basename(m.group(1)) if m else ""
+    relevant = DELETE_VERBS | {"find", "mv", "ln", "cp", "cd", "pushd", "git", "eval", "xargs"} | SHELLS
+    if first not in relevant:
+        return
+    try:
+        raw_tok = tokens(seg)
+    except Deny:
+        # unparseable quoting only blocks a segment that can itself destroy data
+        if first in DELETE_VERBS | {"find", "mv", "ln", "eval", "xargs"} | SHELLS:
+            raise
+        return
     tok = strip_prefix(raw_tok, ctx)
     if not tok:
         return

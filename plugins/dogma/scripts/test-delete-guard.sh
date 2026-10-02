@@ -98,6 +98,9 @@ expect allow "$T" "git rm --cached file.txt"
 expect allow "$T" "echo done"
 
 # --- everyday commands must not trip it
+expect allow "$T" "grep -n \"^<rules>\" -A9 CLAUDE/CLAUDE.git.md | head -12"
+expect allow "$T" "git log --format='<%h>' -3"
+expect deny  "$T" "rm -rf \"unbalanced ~/x"
 expect allow "$T" "rm -rf $T/plain/dir 2>/dev/null"
 expect allow "$T/plain" "find . -name '*.pyc' -delete"
 expect allow "$T" "ls $T/plain >/dev/null 2>&1"
