@@ -126,9 +126,12 @@ cleanup at item close").
 - Disjoint files: parallel tracks must edit non-overlapping file sets. Assign each
   track its own files up front (from `touches:` where set). If two tracks would touch the
   same file, they are not independent - sequence them instead.
-- Sequential commit: the MAIN agent commits, one track's result at a time. Subagents do
-  not commit in parallel. This keeps history clean and avoids two agents racing on the
-  index or on a shared file. (By the same index-race logic, the default agent roles put
+- Sequential commit: in the MAIN checkout only the MAIN agent commits, one track's result
+  at a time. Subagents do not commit there. This keeps history clean and avoids two agents
+  racing on the index or on a shared file. Exception (owner-approved): a subagent working
+  in its OWN git worktree (hydra or native, see "Worktrees for parallel code tracks") has
+  its own index and MAY commit on its worktree branch - never push, never merge; merge,
+  push and release stay with the main agent. (By the same index-race logic, the default agent roles put
   commits and push with the task / build agent, not the plan / clarify agent - a guiding
   default, not a constraint; see `session-init`.)
 - If a clean disjoint split is not possible, run the tracks sequentially rather than
