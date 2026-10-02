@@ -127,7 +127,20 @@ Options:
 
 Default: `[x] use Hydra for 2+ independent tasks`
 
-Note: If Hydra is not installed, work proceeds sequentially without asking.
+Note: If Hydra is not installed, work proceeds sequentially without asking. With credo installed, `[x]` makes credo use hydra's worktree flow for parallel code tracks automatically, `[?]` asks once per batch, `[ ]` uses plain `git worktree add`.
+
+Ask: "Clean up merged worktrees automatically when an item is closed?" (3 options):
+- auto `[x]` (default, set-and-forget): remove worktrees whose branch is fully merged into the main branch and that have no changes to tracked files, plus their merged branch
+- ask `[?]`: list the candidates and ask each time
+- never `[ ]`: never remove worktrees automatically
+
+Default: `[x] clean up merged worktrees automatically`. A file without this checkbox behaves as `[?]` (older files predate the setting).
+
+Ask: "Which excluded files should a new worktree get?" A fresh worktree only contains versioned files; excluded ones (rules, credo items, local config) are missing there. Offer:
+- default (recommended): leave the list out - links CLAUDE.md, CLAUDE/, GUIDES/, DOGMA-PERMISSIONS.md and everything unversioned under .credo/, each only if it exists
+- custom: free text, one entry per line as `link: <path>` (symlink to the main checkout, the default kind) or `copy: <path>` (separate copy, for files that must differ per worktree such as `.env.local`)
+
+Only list excluded/ignored paths - versioned files come with `git checkout` and are skipped with a warning. Write the "Worktree files" list only when the user chose custom.
 
 ### 3.7 Subagent Delegation
 
@@ -245,6 +258,14 @@ When no tests exist:
 Parallel work (only if Hydra available, otherwise sequential):
 - [x] use Hydra for 2+ independent tasks
 
+Worktree cleanup at item close ([x] = remove without asking, [?] = ask each time, [ ] = never):
+- [x] clean up merged worktrees automatically
+
+Worktree files (excluded files only; versioned files come with git checkout):
+- link: CLAUDE.md
+- link: .credo/
+- copy: .env.local
+
 ### Subagent Delegation
 
 What counts as delegation (prevents subagent-first warning):
@@ -288,7 +309,7 @@ is integrated into - local merge, push, or PR/MR into it). No filter = every bra
 | delete files | Deletes files | Asks first | Logged to TO-DELETE.md |
 ```
 
-Replace markers based on user choices. The `### Test Commands` lines above are examples: write only the stages the user confirmed (with their filters), and omit the whole subsection when every stage was left empty.
+Replace markers based on user choices. The "Worktree files" lines above are examples: write the list only when the user chose a custom list, otherwise leave it out (the default list applies). The `### Test Commands` lines above are examples: write only the stages the user confirmed (with their filters), and omit the whole subsection when every stage was left empty.
 
 ## Step 5: Confirm
 
