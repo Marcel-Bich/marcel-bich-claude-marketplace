@@ -181,8 +181,8 @@ PIDS="$PIDS $!"
 sleep 600 & SLEEP_A=$!; PIDS="$PIDS $SLEEP_A"
 sleep 600 & SLEEP_B=$!; PIDS="$PIDS $SLEEP_B"
 
-write_descriptor "$TMP/A/cfg/sessions/$SLEEP_A.json" "$SLEEP_A" "sid-A" "$SENDER_A" "werkbank-plan"
-write_descriptor "$TMP/B/cfg/sessions/$SLEEP_B.json" "$SLEEP_B" "sid-B" "$INBOX_B" "werkbank-task"
+write_descriptor "$TMP/A/cfg/sessions/$SLEEP_A.json" "$SLEEP_A" "sid-A" "$SENDER_A" "acme-plan"
+write_descriptor "$TMP/B/cfg/sessions/$SLEEP_B.json" "$SLEEP_B" "sid-B" "$INBOX_B" "acme-task"
 
 # --- start the daemons ------------------------------------------------------
 CLAUDE_CONFIG_DIR="$TMP/A/cfg" CREDO_PEER_LAN_CONFIG="$TMP/A/cfg/credo/peer-lan.json" \
@@ -224,7 +224,7 @@ if [ -n "$DESC_A" ]; then
     fi
     name="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["name"])' "$DESC_A" 2>/dev/null)"
     RUSER="$("$PY" -c 'import getpass;print(getpass.getuser())')"
-    check "mirrored name follows the naming scheme" "\`Claude Code\`--\`B\`--\`$RUSER\`--\`cfg\`--\`werkbank-task\`+s-BB" "$name"
+    check "mirrored name follows the naming scheme" "\`Claude Code\`--\`B\`--\`$RUSER\`--\`cfg\`--\`acme-task\`+s-BB" "$name"
     PROXY_A="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["messagingSocketPath"])' "$DESC_A" 2>/dev/null)"
 else
     PROXY_A=""
@@ -268,7 +268,7 @@ fi
 # --- S3: a non-dict roster entry must not crash the handler; valid ones still ----
 # materialize. Injected as machine "C" so the live A<->B roster loops never touch it.
 # The non-dict entry is first in the list, so a pre-fix handler would raise before
-# reaching the valid entry and no werkbank-remote mirror descriptor would ever appear.
+# reaching the valid entry and no acme-remote mirror descriptor would ever appear.
 # A holder refuses to start for a machine it does not know, so add "C" as a peer in
 # B's config file. The already-running daemon keeps its loaded peer list (no roster
 # traffic to C); only the freshly spawned holder reads this updated file.
@@ -277,11 +277,11 @@ cat > "$TMP/B/cfg/credo/peer-lan.json" <<EOF
  "roster_interval":0.3,"machine_timeout":60,
  "peers":[{"name":"A","host":"127.0.0.1","port":$PA},{"name":"C","host":"127.0.0.1","port":$PA}]}
 EOF
-ROSTER_C='{"kind":"roster","machine":"C","sessions":["i-am-not-a-dict",{"name":"werkbank-remote","sessionId":"sid-C","status":"idle"}]}'
+ROSTER_C='{"kind":"roster","machine":"C","sessions":["i-am-not-a-dict",{"name":"acme-remote","sessionId":"sid-C","status":"idle"}]}'
 "$PY" "$TMP/sendtcp.py" 127.0.0.1 "$PB" "$TOKEN" "$ROSTER_C" 2>/dev/null || true
 gotC=""
 for _ in $(seq 1 60); do
-    if grep -rqF -e '--`werkbank-remote`+' "$TMP/B/cfg/sessions" 2>/dev/null; then gotC=1; break; fi
+    if grep -rqF -e '--`acme-remote`+' "$TMP/B/cfg/sessions" 2>/dev/null; then gotC=1; break; fi
     sleep 0.2
 done
 ok "roster with a non-dict entry does not crash; the valid entry materializes" "$([ -n "$gotC" ] && echo 0 || echo 1)"
@@ -432,7 +432,7 @@ EOF
 "$PY" "$TMP/inbox.py" "$INBOX_D" "$TMP/D1/inbox.log" &
 PIDS="$PIDS $!"
 sleep 600 & SLEEP_D=$!; PIDS="$PIDS $SLEEP_D"
-write_descriptor "$TMP/D1/cfg/sessions/$SLEEP_D.json" "$SLEEP_D" "sid-D" "$INBOX_D" "werkbank-d1"
+write_descriptor "$TMP/D1/cfg/sessions/$SLEEP_D.json" "$SLEEP_D" "sid-D" "$INBOX_D" "acme-d1"
 CLAUDE_CONFIG_DIR="$TMP/D1/cfg" CREDO_PEER_LAN_CONFIG="$TMP/D1/cfg/credo/peer-lan.json" \
     CREDO_PEER_LAN_SOCKDIR="$TMP/D1/sock" "$PY" "$DAEMON" daemon >"$TMP/D1/daemon.log" 2>&1 &
 D1_PID=$!; PIDS="$PIDS $D1_PID"
@@ -555,8 +555,8 @@ EOF
 PIDS="$PIDS $!"
 sleep 600 & SLEEP_E=$!; PIDS="$PIDS $SLEEP_E"
 sleep 600 & SLEEP_F=$!; PIDS="$PIDS $SLEEP_F"
-write_descriptor "$TMP/E/cfg/sessions/$SLEEP_E.json" "$SLEEP_E" "sid-E" "$SENDER_E" "werkbank-plan-e"
-write_descriptor "$TMP/F/cfg/sessions/$SLEEP_F.json" "$SLEEP_F" "sid-F" "$INBOX_F" "werkbank-task-f"
+write_descriptor "$TMP/E/cfg/sessions/$SLEEP_E.json" "$SLEEP_E" "sid-E" "$SENDER_E" "acme-plan-e"
+write_descriptor "$TMP/F/cfg/sessions/$SLEEP_F.json" "$SLEEP_F" "sid-F" "$INBOX_F" "acme-task-f"
 CLAUDE_CONFIG_DIR="$TMP/E/cfg" CREDO_PEER_LAN_CONFIG="$TMP/E/cfg/credo/peer-lan.json" \
     CREDO_PEER_LAN_SOCKDIR="$TMP/E/sock" "$PY" "$DAEMON" daemon >"$TMP/E/daemon.log" 2>&1 &
 PIDS="$PIDS $!"
@@ -747,8 +747,8 @@ EOF
 "$PY" "$TMP/inbox.py" "$INBOX_H" "$TMP/H/inbox.log" & PIDS="$PIDS $!"
 sleep 600 & SLEEP_G=$!; PIDS="$PIDS $SLEEP_G"
 sleep 600 & SLEEP_H=$!; PIDS="$PIDS $SLEEP_H"
-write_descriptor "$TMP/G/cfg/sessions/$SLEEP_G.json" "$SLEEP_G" "sid-G" "$SENDER_G" "werkbank-g"
-write_descriptor "$TMP/H/cfg/sessions/$SLEEP_H.json" "$SLEEP_H" "sid-H" "$INBOX_H" "werkbank-h"
+write_descriptor "$TMP/G/cfg/sessions/$SLEEP_G.json" "$SLEEP_G" "sid-G" "$SENDER_G" "acme-g"
+write_descriptor "$TMP/H/cfg/sessions/$SLEEP_H.json" "$SLEEP_H" "sid-H" "$INBOX_H" "acme-h"
 CLAUDE_CONFIG_DIR="$TMP/G/cfg" CREDO_PEER_LAN_CONFIG="$TMP/G/cfg/credo/peer-lan.json" \
     CREDO_PEER_LAN_SOCKDIR="$TMP/G/sock" "$PY" "$DAEMON" daemon >"$TMP/G/daemon.log" 2>&1 & PIDS="$PIDS $!"
 CLAUDE_CONFIG_DIR="$TMP/H/cfg" CREDO_PEER_LAN_CONFIG="$TMP/H/cfg/credo/peer-lan.json" \
@@ -763,7 +763,7 @@ ok "address-based (string peers): daemon G mirrors the remote session" "$([ -n "
 if [ -n "$DESC_G" ]; then
     nameG="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["name"])' "$DESC_G" 2>/dev/null)"
     RUSER="$("$PY" -c 'import getpass;print(getpass.getuser())')"
-    check "address-based: mirrored name follows the naming scheme" "\`Claude Code\`--\`nodeH\`--\`$RUSER\`--\`cfg\`--\`werkbank-h\`+s-HH" "$nameG"
+    check "address-based: mirrored name follows the naming scheme" "\`Claude Code\`--\`nodeH\`--\`$RUSER\`--\`cfg\`--\`acme-h\`+s-HH" "$nameG"
     PROXY_G="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["messagingSocketPath"])' "$DESC_G" 2>/dev/null)"
 else
     PROXY_G=""
@@ -808,7 +808,7 @@ cat > "$TMP/J/cfg/credo/peer-lan.json" <<EOF
  "roster_interval":0.3,"machine_timeout":60,"peers":["127.0.0.1:$PH","127.0.0.1:$PDEAD3"]}
 EOF
 sleep 600 & SLEEP_J=$!; PIDS="$PIDS $SLEEP_J"
-write_descriptor "$TMP/J/cfg/sessions/$SLEEP_J.json" "$SLEEP_J" "sid-J" "$TMP/J/sender.sock" "werkbank-j"
+write_descriptor "$TMP/J/cfg/sessions/$SLEEP_J.json" "$SLEEP_J" "sid-J" "$TMP/J/sender.sock" "acme-j"
 CLAUDE_CONFIG_DIR="$TMP/J/cfg" CREDO_PEER_LAN_CONFIG="$TMP/J/cfg/credo/peer-lan.json" \
     CREDO_PEER_LAN_SOCKDIR="$TMP/J/sock" "$PY" "$DAEMON" daemon >"$TMP/J/daemon.log" 2>&1 & J_PID=$!; PIDS="$PIDS $J_PID"
 sleep 2
@@ -896,7 +896,7 @@ cat > "$TMP/K/cfg/credo/peer-lan.json" <<EOF
  "roster_interval":0.3,"machine_timeout":60,"peers":["127.0.0.1:$PKDEAD"]}
 EOF
 sleep 600 & SLEEP_K=$!; PIDS="$PIDS $SLEEP_K"
-write_descriptor "$TMP/K/cfg/sessions/$SLEEP_K.json" "$SLEEP_K" "sid-K" "$TMP/K/sender.sock" "werkbank-k"
+write_descriptor "$TMP/K/cfg/sessions/$SLEEP_K.json" "$SLEEP_K" "sid-K" "$TMP/K/sender.sock" "acme-k"
 CLAUDE_CONFIG_DIR="$TMP/K/cfg" CREDO_PEER_LAN_CONFIG="$TMP/K/cfg/credo/peer-lan.json" \
     CREDO_PEER_LAN_SOCKDIR="$TMP/K/sock" "$PY" "$DAEMON" daemon >"$TMP/K/daemon.log" 2>&1 & K_PID=$!; PIDS="$PIDS $K_PID"
 for _ in $(seq 1 40); do
@@ -904,11 +904,11 @@ for _ in $(seq 1 40); do
     sleep 0.1
 done
 # roster from source 127.0.0.1 advertising the configured peer 127.0.0.1:$PKDEAD
-ROSTER_K='{"kind":"roster","machine":"nodeK-remote","listen_port":'"$PKDEAD"',"advertise_host":"127.0.0.1","advertise_port":'"$PKDEAD"',"sessions":[{"name":"werkbank-remote","sessionId":"sid-KR","status":"idle"}]}'
+ROSTER_K='{"kind":"roster","machine":"nodeK-remote","listen_port":'"$PKDEAD"',"advertise_host":"127.0.0.1","advertise_port":'"$PKDEAD"',"sessions":[{"name":"acme-remote","sessionId":"sid-KR","status":"idle"}]}'
 "$PY" "$TMP/sendtcp_nosig.py" 127.0.0.1 "$PK" "$ROSTER_K" 2>/dev/null || true
 gotK=""
 for _ in $(seq 1 60); do
-    if grep -rq '`nodeK-remote`--.*`werkbank-remote`+' "$TMP/K/cfg/sessions" 2>/dev/null; then gotK=1; break; fi
+    if grep -rq '`nodeK-remote`--.*`acme-remote`+' "$TMP/K/cfg/sessions" 2>/dev/null; then gotK=1; break; fi
     sleep 0.2
 done
 ok "B1b: advertised roster from a different source IP still mirrors the remote session" "$([ -n "$gotK" ] && echo 0 || echo 1)"

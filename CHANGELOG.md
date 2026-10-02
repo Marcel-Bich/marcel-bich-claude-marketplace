@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.73
 
+##### v0.73.1
+
+###### Changed
+
+- LAN relay tests use invented session names instead of real project names
+
 ##### v0.73.0
 
 ###### Changed
