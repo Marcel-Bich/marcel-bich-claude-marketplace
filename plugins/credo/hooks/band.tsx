@@ -288,7 +288,11 @@ export const register: Register = on => {
   // under the prompt: only the shorthands the band does not already show
   // (statuses hidden by the preset, plus the general ones)
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
-    if ((await read($, counts)) === null) return next(e)
+    if ((await read($, counts)) === null) {
+      // no item system: only the general shorthands, and only while credo runs here
+      if ((await read($, session)).mode === null) return next(e)
+      return next({ ...e, props: { ...e.props, tail: `Shortcuts: ${GENERAL_SHORTHANDS.join(' ')}` } })
+    }
     const current = presetOf(await read($, preset))
     const hidden = GROUPS.filter((_, gi) => !current.groups.includes(gi))
       .flat()
@@ -350,7 +354,11 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const below = await next(e)
     const c = await read($, counts)
-    if (e.props.hasSurvey || c === null) return below
+    if (e.props.hasSurvey) return below
+    // without a credo project (no item system) the counts and the item controls
+    // are left out; mode/role, open letters and autonomy are session state and
+    // still show, as long as there is any
+    const hasItems = c !== null
 
     const long = await read($, isExpanded)
     // highlighted only in the "on" phase of the blink
@@ -370,7 +378,7 @@ export const register: Register = on => {
 
     // one cell per status, statusline style: short "go: 1245", long "Go(go): 1245"
     const chipWidth = (s: Status) => {
-      const n = String(value(c, s.key)).length
+      const n = c === null ? 1 : String(value(c, s.key)).length
       return long ? s.name.length + s.short.length + 4 + n : s.short.length + 2 + n
     }
 
@@ -378,7 +386,7 @@ export const register: Register = on => {
     const shown = GROUPS.filter((_, gi) => current.groups.includes(gi)).flat()
 
     const chip = (s: Status) => {
-      const n = value(c, s.key)
+      const n = c === null ? 0 : value(c, s.key)
       const isZero = n === 0 && !moved.includes(s.key) && !fresh.includes(s.key)
       return (
         <Box key={s.key}>
@@ -396,7 +404,7 @@ export const register: Register = on => {
     }
 
     // 2 spaces within a color group (cf go, dd vf, pk ar), 4 where the color changes
-    const pieces: Piece[] = shown.map((s, i) => ({
+    const pieces: Piece[] = (hasItems ? shown : []).map((s, i) => ({
       width: chipWidth(s),
       node: chip(s),
       gap: i > 0 && shown[i - 1]?.color === s.color ? SAME_COLOR_GAP : GAP,
@@ -444,36 +452,41 @@ export const register: Register = on => {
       meta.push({ width: 3 + text.length, node: <Text key="questions"><Text>❓ </Text><Text bold color="blue">{text}</Text></Text> })
     }
 
-    meta.push({
-      width: 10,
-      node: <Button key="items" hotkey="i" plain dimColor label="☰ items" onPress={() => openPanel($, 'items')} />,
-    })
+    if (!hasItems && meta.length === 0 && autoLine.length === 0) return below
+
+    if (hasItems)
+      meta.push({
+        width: 10,
+        node: <Button key="items" hotkey="i" plain dimColor label="☰ items" onPress={() => openPanel($, 'items')} />,
+      })
     meta.push({
       width: 9,
       node: <Button key="help" hotkey="h" plain dimColor label="? help" onPress={() => openPanel($, 'help')} />,
     })
-    meta.push({
-      width: 4,
-      node: <Button key="form" hotkey="l" plain dimColor label="⇆" onPress={() => update($, isExpanded, v => !v)} />,
-    })
-    meta.push({
-      width: 4 + current.name.length,
-      node: (
-        <Button
-          key="preset"
-          hotkey="e"
-          plain
-          dimColor
-          label={`◐ ${current.name}`}
-          onPress={() => update($, preset, v => (v + 1) % PRESETS.length)}
-        />
-      ),
-    })
+    if (hasItems)
+      meta.push({
+        width: 4,
+        node: <Button key="form" hotkey="l" plain dimColor label="⇆" onPress={() => update($, isExpanded, v => !v)} />,
+      })
+    if (hasItems)
+      meta.push({
+        width: 4 + current.name.length,
+        node: (
+          <Button
+            key="preset"
+            hotkey="e"
+            plain
+            dimColor
+            label={`◐ ${current.name}`}
+            onPress={() => update($, preset, v => (v + 1) % PRESETS.length)}
+          />
+        ),
+      })
 
     // wrap by hand against the band's real width, so the band knows its height;
     // the counts first (head on the first line), then the meta line, both indented alike
     const room = e.props.bodyColumns - HEAD.length - HEAD_GAP - 1
-    const lines = [...pack(pieces, room, GAP), ...pack(meta, room, GAP), ...(autoLine.length ? pack(autoLine, room, GAP) : [])]
+    const lines = [...(pieces.length ? pack(pieces, room, GAP) : []), ...pack(meta, room, GAP), ...(autoLine.length ? pack(autoLine, room, GAP) : [])]
     const mine = (
       <Box flexDirection="column">
         {lines.map((line, li) => (
