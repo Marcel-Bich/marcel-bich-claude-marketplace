@@ -18,8 +18,16 @@
 #      worktree may lack the excluded file)
 #   2. without dir: the credo pinned project (credo-config.sh resolve-project), unless
 #      the session folder lies inside it anyway
-#   3. upward from the session folder ($PWD)
-# A target / pinned project without a file of its own gets the session folder's file.
+#   3. upward from the current dir ($PWD)
+# A target / pinned project / current dir without a file of its own gets the session
+# folder's file.
+#
+# Session folder (the folder the Claude Code session was started in): DOGMA_SESSION_DIR
+# when set, else the dir the SessionStart hook recorded for this session
+# (${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-dirs/<id>, then dogma's
+# .../dogma/session-dirs/<id>; id = CREDO_SESSION_ID, else CLAUDE_CODE_SESSION_ID) when
+# that dir still exists, else $PWD. The record keeps inheritance working when a Bash
+# tool command ran `cd <project> && ...` first; without one everything is as before.
 #
 # Inheritance: when the applied file is not the session folder's file, a setting it
 # does not define (no id line, no matching text line) is read from the session folder's
@@ -34,7 +42,8 @@
 #     dir         the target dir (see above; default: none -> pinned project, then $PWD)
 #
 # Env (shared with dogma, mainly for tests):
-#   DOGMA_SESSION_DIR   session folder (default $PWD)
+#   DOGMA_SESSION_DIR   session folder and current dir (default: recorded session
+#                       folder, else $PWD; current dir $PWD)
 #   DOGMA_CREDO_CONFIG  "none" skips the pinned project lookup
 #
 # Output: auto ([x]), ask ([?]), deny ([ ] or [0]), one ([1]), all ([a]) or missing.
@@ -62,7 +71,34 @@ if [ -n "$TARGET" ]; then
     [ -d "$TARGET" ] || { echo "credo-dogma-mode: no such dir: $TARGET" >&2; exit 1; }
     TARGET="$(cd "$TARGET" && pwd)"
 fi
-SESSION_DIR="${DOGMA_SESSION_DIR:-$PWD}"
+
+# the session folder the SessionStart hook recorded for this session (credo's record,
+# then dogma's); prints it, returns 1 when there is none or the dir is gone
+recorded_session_dir() {
+    local sid="${CREDO_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}" base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" rec d
+    case "$sid" in
+        ""|.|..|*[!A-Za-z0-9._-]*) return 1 ;;
+    esac
+    for rec in "$base/credo/session-dirs/$sid" "$base/dogma/session-dirs/$sid"; do
+        [ -f "$rec" ] || continue
+        d=""
+        IFS= read -r d < "$rec" || true
+        case "$d" in
+            /*) [ -d "$d" ] && { echo "$d"; return 0; } ;;
+        esac
+    done
+    return 1
+}
+
+# CUR_DIR: where the lookup without target / pin starts; SESSION_DIR: whose file is
+# inherited (both the same unless a recorded session folder differs from $PWD)
+if [ -n "${DOGMA_SESSION_DIR:-}" ]; then
+    SESSION_DIR="$DOGMA_SESSION_DIR"
+    CUR_DIR="$SESSION_DIR"
+else
+    CUR_DIR="$PWD"
+    SESSION_DIR="$(recorded_session_dir)" || SESSION_DIR="$PWD"
+fi
 
 find_up() {
     local dir="$1"
@@ -88,7 +124,7 @@ find_from() {
     return 1
 }
 
-# the credo pinned project dir, unless the session folder lies inside it
+# the credo pinned project dir, unless the current dir lies inside it
 pinned_dir() {
     [ "${DOGMA_CREDO_CONFIG:-}" != "none" ] || return 1
     [ -f "$SCRIPT_DIR/credo-config.sh" ] || return 1
@@ -98,7 +134,7 @@ pinned_dir() {
     proj="$(dirname "$credo_dir")"
     [ -d "$proj" ] || return 1
     proj="$(cd "$proj" && pwd -P)"
-    sess="$(cd "$SESSION_DIR" 2>/dev/null && pwd -P)" || sess=""
+    sess="$(cd "$CUR_DIR" 2>/dev/null && pwd -P)" || sess=""
     case "$sess/" in
         "$proj"/*) return 1 ;;
     esac
@@ -111,9 +147,9 @@ if [ -d "$SESSION_DIR" ]; then
 fi
 START="$TARGET"
 [ -n "$START" ] || START="$(pinned_dir)" || START=""
-# no target, no pin: the session folder itself (plus the main-worktree fallback)
-if [ -z "$START" ] && [ -d "$SESSION_DIR" ]; then
-    START="$(cd "$SESSION_DIR" && pwd)"
+# no target, no pin: the current dir (plus the main-worktree fallback)
+if [ -z "$START" ] && [ -d "$CUR_DIR" ]; then
+    START="$(cd "$CUR_DIR" && pwd)"
 fi
 FILE=""
 if [ -n "$START" ]; then

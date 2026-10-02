@@ -170,5 +170,56 @@ check "pinned: explicit target wins" ask "$(pinned --id 36ch Hydra "$CLEAN" "$P/
 check "pinned: switched off -> session file" auto "$(cd "$WS" && DOGMA_SESSION_DIR="$WS" DOGMA_CREDO_CONFIG=none CLAUDE_CONFIG_DIR="$TMP/inh/cfg" CREDO_SESSION_ID=test-sid "$MODE_SH" --id xw1i Hydra "$HYD")"
 check "flow: repo inherits [x] Hydra from the session file" hydra "$(cd "$WS" && DOGMA_SESSION_DIR="$WS" CREDO_HYDRA_DIR="$FAKE_HYDRA" "$FLOW_SH" "$P/nofile" | sed -n 's/^flow=//p')"
 
+
+# --- session folder recorded by the SessionStart hook (cwd drift: cd <project> && ...) ---
+REC="$TMP/inh/rec"
+mkdir -p "$REC/credo/session-dirs" "$REC/dogma/session-dirs"
+printf '%s\n' "$WS" > "$REC/credo/session-dirs/rec-sid"
+printf '%s\n' "$TMP/inh/gone" > "$REC/credo/session-dirs/gone-sid"
+printf '%s\n' "$WS" > "$REC/dogma/session-dirs/dogma-sid"
+drift() { # cwd sid args... (no DOGMA_SESSION_DIR, cwd inside the project)
+    local cwd="$1" sid="$2"
+    shift 2
+    (unset DOGMA_SESSION_DIR CREDO_SESSION_ID; cd "$cwd" && CLAUDE_CONFIG_DIR="$REC" CLAUDE_CODE_SESSION_ID="$sid" "$MODE_SH" "$@")
+}
+check "recorded: cd into target -> inherited from the session file" ask "$(drift "$P/app" rec-sid --id 36ch Hydra "$CLEAN" "$P/app")"
+check "recorded: target without own file -> session file" auto "$(drift "$P/nofile" rec-sid --id xw1i Hydra "$HYD" "$P/nofile")"
+check "recorded: no target -> cwd file still applies" deny "$(drift "$P/app" rec-sid --id xw1i Hydra "$HYD")"
+check "recorded: no target -> cwd file inherits" ask "$(drift "$P/app" rec-sid --id 36ch Hydra "$CLEAN")"
+check "recorded: dogma's record is read too" ask "$(drift "$P/app" dogma-sid --id 36ch Hydra "$CLEAN" "$P/app")"
+check "recorded: no record -> \$PWD (old behaviour)" missing "$(drift "$P/app" other-sid --id 36ch Hydra "$CLEAN" "$P/app")"
+check "recorded: removed dir -> \$PWD" missing "$(drift "$P/app" gone-sid --id 36ch Hydra "$CLEAN" "$P/app")"
+check "recorded: explicit DOGMA_SESSION_DIR wins" missing "$(cd "$P/app" && CLAUDE_CONFIG_DIR="$REC" CLAUDE_CODE_SESSION_ID=rec-sid DOGMA_SESSION_DIR="$P/app" "$MODE_SH" --id 36ch Hydra "$CLEAN" "$P/app")"
+check "recorded: CREDO_SESSION_ID picks the record" ask "$(unset DOGMA_SESSION_DIR; cd "$P/app" && CLAUDE_CONFIG_DIR="$REC" CLAUDE_CODE_SESSION_ID=other-sid CREDO_SESSION_ID=rec-sid "$MODE_SH" --id 36ch Hydra "$CLEAN" "$P/app")"
+
+# --- the SessionStart hook that writes the record ---
+HOOK="$SCRIPT_DIR/../hooks/credo-session-dir-record.sh"
+HK="$TMP/hk"
+rec_hook() { # session_id cwd source [project_dir]
+    jq -cn --arg s "$1" --arg c "$2" --arg o "$3" '{session_id:$s, cwd:$c, source:$o, hook_event_name:"SessionStart"}' \
+        | (unset CLAUDE_PROJECT_DIR; [ -z "${4:-}" ] || export CLAUDE_PROJECT_DIR="$4"; CLAUDE_CONFIG_DIR="$HK" bash "$HOOK")
+}
+rec_of() { cat "$HK/credo/session-dirs/$1" 2>/dev/null || echo none; }
+check "hook: silent" "" "$(rec_hook h1 "$WS" startup)"
+check "hook: startup records cwd" "$WS" "$(rec_of h1)"
+rec_hook h1 "$P/app" compact >/dev/null
+check "hook: compact keeps the recorded dir (cwd may have drifted)" "$WS" "$(rec_of h1)"
+rec_hook h1 "$P/app" resume >/dev/null
+check "hook: resume overwrites" "$P/app" "$(rec_of h1)"
+rec_hook h2 "$P/app" clear >/dev/null
+check "hook: clear writes when absent" "$P/app" "$(rec_of h2)"
+rec_hook h2 "$P/old" compact "$WS" >/dev/null
+check "hook: CLAUDE_PROJECT_DIR wins and always overwrites" "$WS" "$(rec_of h2)"
+rec_hook h3 "$TMP/inh/gone" startup >/dev/null
+check "hook: missing cwd -> no record" none "$(rec_of h3)"
+rec_hook '../evil' "$WS" startup >/dev/null; check "hook: bad session id exit 0" 0 "$?"
+check "hook: bad session id -> no record" none "$(cat "$HK/credo/evil" 2>/dev/null || echo none)"
+mkdir -p "$HK/credo/session-dirs"
+printf '%s\n' "$WS" > "$HK/credo/session-dirs/old-sid"
+touch -d '40 days ago' "$HK/credo/session-dirs/old-sid"
+rec_hook h4 "$WS" startup >/dev/null
+check "hook: prunes records older than 30 days" none "$(rec_of old-sid)"
+check "hook: end to end with credo-dogma-mode" ask "$(unset DOGMA_SESSION_DIR CREDO_SESSION_ID; cd "$P/app" && CLAUDE_CONFIG_DIR="$HK" CLAUDE_CODE_SESSION_ID=h4 "$MODE_SH" --id 36ch Hydra "$CLEAN" "$P/app")"
+
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
