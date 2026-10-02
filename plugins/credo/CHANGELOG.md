@@ -6,6 +6,28 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.72
 
+#### v0.72.1
+
+##### Added
+
+- LAN relay setup flow gets a native-Linux firewall step: `check` prints copy-paste-ready
+  `ufw allow ... comment 'credo-peer-lan'` commands per uncovered allowlist entry (ranges
+  split into CIDRs), `ufw delete` hints for stale credo-peer-lan rules, and firewalld
+  rich-rule equivalents; the user runs them with the `!` prefix, the agent never handles
+  the password
+- Self-restart notice in the Claude Code band: while a self-restart of this session is
+  pending (or stopping), a yellow `⚠` plus blinking fuchsia text with an m:ss countdown,
+  the reason and the cancel command tops the band, and a toast repeats it every second;
+  it disappears within a second of a cancel, relaunch or failure (read from the
+  `self-restart.json` marker, only for the marker's own session)
+
+##### Changed
+
+- LAN relay onboarding lines and the setup flow tell the agent to ask and explain in the
+  user's language, with English as the fallback
+- `check` detects an active ufw without root via `/etc/ufw/ufw.conf` when `ufw status`
+  is not readable
+
 #### v0.72.0
 
 ##### Added

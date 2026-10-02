@@ -45,6 +45,9 @@ export CREDO_PEER_LAN_NETINFO='{"ip":"127.0.0.1"}'
 export CREDO_PEER_LAN_WINALLOW_FILE=/nonexistent-credo-test/peer-lan-allow.json
 export CREDO_PEER_LAN_WINPROGRAMDATA=/nonexistent-credo-test/programdata
 export CREDO_PEER_LAN_WINPROXY=0
+# never consult the real ufw/firewalld of the test host (empty = inactive)
+export CREDO_PEER_LAN_UFW_STATUS=''
+export CREDO_PEER_LAN_FIREWALLD_STATE=none
 
 # short temp root so unix socket paths stay well under the 108-char sun_path limit
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/clt.XXXXXX")"
@@ -955,7 +958,7 @@ echo "22/tcp                     ALLOW       Anywhere"
 EOF
 chmod +x "$TMP/b5/bin/ufw"
 B5_CFG="$TMP/b5/credo/peer-lan.json"
-B5_OUT="$(PATH="$TMP/b5/bin:$TMP/wh/bin:/usr/bin:/bin" WSL_DISTRO_NAME= \
+B5_OUT="$(unset CREDO_PEER_LAN_UFW_STATUS; PATH="$TMP/b5/bin:$TMP/wh/bin:/usr/bin:/bin" WSL_DISTRO_NAME= \
     CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
     CREDO_PEER_LAN_CONFIG="$B5_CFG" "$PY" "$DAEMON" init 192.168.1.30 2>&1)"
 case "$B5_OUT" in *"ufw is active"*"48610"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL ufw-active hint not printed: %s\n' "$B5_OUT" ;; esac
@@ -966,7 +969,7 @@ echo "Status: active"
 echo "48610/tcp                  ALLOW       192.168.0.0/16"
 EOF
 chmod +x "$TMP/b5/bin/ufw"
-B5_OUT2="$(PATH="$TMP/b5/bin:$TMP/wh/bin:/usr/bin:/bin" WSL_DISTRO_NAME= \
+B5_OUT2="$(unset CREDO_PEER_LAN_UFW_STATUS; PATH="$TMP/b5/bin:$TMP/wh/bin:/usr/bin:/bin" WSL_DISTRO_NAME= \
     CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
     CREDO_PEER_LAN_CONFIG="$B5_CFG" "$PY" "$DAEMON" init 192.168.1.31 2>&1)"
 case "$B5_OUT2" in *"ufw is active"*) FAIL=$((FAIL + 1)); printf 'FAIL ufw hint wrongly printed when the port is allowed\n' ;; *) PASS=$((PASS + 1)) ;; esac
@@ -1421,6 +1424,74 @@ re=""
 for _ in $(seq 1 40); do [ "$(grep -c 'LAN enabled' "$TMP/TR/daemon.log")" -ge 2 ] && { re=1; break; }; sleep 0.2; done
 ok "transition: back on the bound network -> re-enabled" "$([ -n "$re" ] && echo 0 || echo 1)"
 kill -TERM "$TR_PID" 2>/dev/null || true
+
+# --- FW: native-Linux ufw/firewalld command generation (stubbed status, read-only) -
+cat > "$TMP/fwtest.py" <<'PYEOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("credo_peer_lan", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+bad = []
+def eq(name, a, b):
+    if a != b:
+        bad.append("%s: %r != %r" % (name, a, b))
+status = """Status: active
+
+To                         Action      From
+--                         ------      ----
+22/tcp                     ALLOW       Anywhere
+48610/tcp                  ALLOW       192.168.1.104              # credo-peer-lan
+48610/tcp                  ALLOW       10.0.0.5                   # credo-peer-lan
+48610                      ALLOW       192.168.2.0/24
+48610/tcp (v6)             ALLOW       Anywhere (v6)
+"""
+active, rules = mod.parse_ufw_status(status, 48610)
+eq("active", active, True)
+eq("rules", [r["source"] for r in rules], ["192.168.1.104", "10.0.0.5", "192.168.2.0/24"])
+eq("inactive", mod.parse_ufw_status("Status: inactive\n", 48610), (False, []))
+missing, add, dele = mod.ufw_rule_commands(
+    ["192.168.1.104", "192.168.1.112", "192.168.2.7", "192.168.3.4-192.168.3.7"], 48610, rules)
+eq("missing", missing, ["192.168.1.112", "192.168.3.4/30"])
+eq("add", add, [
+    "sudo ufw allow from 192.168.1.112 to any port 48610 proto tcp comment 'credo-peer-lan'",
+    "sudo ufw allow from 192.168.3.4/30 to any port 48610 proto tcp comment 'credo-peer-lan'"])
+eq("delete only stale credo rules", dele,
+   ["sudo ufw delete allow from 10.0.0.5 to any port 48610 proto tcp"])
+eq("range split", mod._ufw_sources("192.168.1.5-192.168.1.9"),
+   ["192.168.1.5", "192.168.1.6/31", "192.168.1.8/31"])
+m2, a2, d2 = mod.ufw_rule_commands(["192.168.1.104"], 48610, [])
+eq("no rules -> one add, no delete", (len(a2), d2), (1, []))
+fd = mod.firewalld_rule_commands(["192.168.1.104"], 48610)
+eq("firewalld", fd[-1], "sudo firewall-cmd --reload")
+if "source address=\"192.168.1.104\" port port=\"48610\"" not in fd[0]:
+    bad.append("firewalld rich rule: %s" % fd[0])
+print("FW_OK" if not bad else "\n".join(bad))
+PYEOF
+FW_OUT="$("$PY" "$TMP/fwtest.py" "$DAEMON" 2>&1)"
+case "$FW_OUT" in FW_OK) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL ufw command generation: %s\n' "$FW_OUT" ;; esac
+# end to end: `check` on a bound native-Linux network prints the copy-paste commands
+mkdir -p "$TMP/fw/credo"
+cat > "$TMP/fw/credo/peer-lan.json" <<EOF
+{"this_machine":"FW","listen_host":"0.0.0.0","listen_port":48610,"peers":["127.0.0.1:1"],
+ "networks":{"home-main":{"fingerprint":{"gateway_mac":"aa:bb:cc:dd:ee:01","subnet":"192.168.1.0/24"},"group":"home","allow":["192.168.1.112"]}}}
+EOF
+printf 'Status: active\n\n48610/tcp ALLOW 10.0.0.5 # credo-peer-lan\n' > "$TMP/fw/ufw-status"
+FW_NET='{"iface":"wlan0","ip":"192.168.1.104","prefix":24,"gateway_ip":"192.168.1.1","gateway_mac":"AA-BB-CC-DD-EE-01","ssid":"Home WLAN"}'
+fwcheck() { PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+    CREDO_PEER_LAN_CONFIG="$TMP/fw/credo/peer-lan.json" CREDO_PEER_LAN_NETINFO="$FW_NET" \
+    "$PY" "$DAEMON" check 2>&1; }
+FC="$(CREDO_PEER_LAN_UFW_STATUS="@$TMP/fw/ufw-status" fwcheck)"
+case "$FC" in *"not allowed for: 192.168.1.112"*"! prefix"*"  sudo ufw allow from 192.168.1.112 to any port 48610 proto tcp comment 'credo-peer-lan'"*"  sudo ufw delete allow from 10.0.0.5 to any port 48610 proto tcp"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL check ufw commands: %s\n' "$FC" ;; esac
+printf 'Status: active\n\n48610/tcp ALLOW 192.168.1.0/24\n' > "$TMP/fw/ufw-ok"
+FC="$(CREDO_PEER_LAN_UFW_STATUS="@$TMP/fw/ufw-ok" fwcheck)"
+case "$FC" in *"ufw active, port 48610 allowed for the effective allowlist"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL check ufw covered: %s\n' "$FC" ;; esac
+case "$FC" in *"sudo ufw"*) FAIL=$((FAIL + 1)); printf 'FAIL check printed ufw commands although covered\n' ;; *) PASS=$((PASS + 1)) ;; esac
+FC="$(CREDO_PEER_LAN_UFW_STATUS='Status: inactive' CREDO_PEER_LAN_FIREWALLD_STATE=running fwcheck)"
+case "$FC" in *"sudo ufw"*) FAIL=$((FAIL + 1)); printf 'FAIL inactive ufw printed commands\n' ;; *) PASS=$((PASS + 1)) ;; esac
+case "$FC" in *"firewalld is running"*'source address="192.168.1.112"'*"firewall-cmd --reload"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL firewalld hint: %s\n' "$FC" ;; esac
+FC="$(CREDO_PEER_LAN_UFW_STATUS="@$TMP/fw/ufw-status" CREDO_PEER_LAN_PROCVERSION=/nonexistent WSL_DISTRO_NAME=Ubuntu \
+    CREDO_PEER_LAN_CONFIG="$TMP/fw/credo/peer-lan.json" CREDO_PEER_LAN_NETINFO="$FW_NET" "$PY" "$DAEMON" check 2>&1)"
+case "$FC" in *"sudo ufw"*) FAIL=$((FAIL + 1)); printf 'FAIL ufw hint on WSL\n' ;; *) PASS=$((PASS + 1)) ;; esac
 
 # --- winproxy -DryRun (only if powershell.exe is runnable; never the real task) -
 WP="$SCRIPT_DIR/credo-peer-lan-winproxy.ps1"

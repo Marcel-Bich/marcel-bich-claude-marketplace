@@ -29,6 +29,9 @@ export type CredoItemList = {
   statuses: { key: string; folder: string; total: number; items: { id: string; title: string }[] }[]
 }
 
+/** this session's pending self-restart (scripts/credo-self-restart.py marker), as shown by the band and the toast */
+export type CredoRestart = { text: string }
+
 /** one entry of templates/shorthands.json */
 export type CredoShorthand = { key: string; word: string; meaning: string }
 
@@ -48,6 +51,8 @@ declare module 'claude-code' {
       auto: CredoAuto
       itemList: CredoItemList | null
       shorthands: CredoShorthand[]
+      restart: CredoRestart | null
+      restartBlink: boolean
     }
   }
 }

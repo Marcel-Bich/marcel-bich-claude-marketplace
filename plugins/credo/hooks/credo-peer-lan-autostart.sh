@@ -42,13 +42,14 @@ cfgdir="${cfgdir%/}"
 cfg="${CREDO_PEER_LAN_CONFIG:-$cfgdir/credo/peer-lan.json}"
 
 # Onboarding context for the AGENT (SessionStart stdout = injected context; this hook
-# never prompts). Cheap: reads only files, never runs network detection.
+# never prompts). The lines stay English (agent-facing) but tell the agent to talk to
+# the user in the user's language, English fallback. Cheap: reads only files, never runs network detection.
 #   no config, not declined -> offer the guided setup once (decline writes a marker)
 #   config but no network bound (legacy / after the 0.72 upgrade) -> relay DISABLED note
 #   bound (matching or not) / declined -> say nothing
 if [ ! -f "$cfg" ]; then
   if [ ! -f "$(dirname "$cfg")/peer-lan-onboarding-declined" ]; then
-    echo "[credo-peer-lan] credo can now connect Claude Code sessions across your machines on the home LAN (no cloud). In an interactive session ask the user once (Ask tool) whether to set it up (guided, /credo:peer-lan Setup flow); if they decline, run \`\${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py onboarding --decline\` so this is never offered again. In autonomous mode do not ask."
+    echo "[credo-peer-lan] credo can now connect Claude Code sessions across your machines on the home LAN (no cloud). In an interactive session ask the user once (Ask tool) whether to set it up (guided, /credo:peer-lan Setup flow); if they decline, run \`\${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py onboarding --decline\` so this is never offered again. In autonomous mode do not ask. Ask and explain in the user's language (the language of the conversation); fall back to English if unknown or unsure."
   fi
   exit 0                         # no config -> the relay is a no-op, start nothing
 fi
@@ -61,7 +62,7 @@ command -v timeout >/dev/null 2>&1 && to5="timeout 5"
 # shellcheck disable=SC2086  # $to5 is an intentional optional command prefix
 state="$($to5 "$script" onboarding --state 2>/dev/null | tail -n1)"
 if [ "$state" = "unbound" ]; then
-  echo "[credo-peer-lan] The LAN relay is DISABLED: no network is bound yet (new allowlist + network binding since credo 0.72). In an interactive session offer the user the guided setup from /credo:peer-lan (Setup flow) via the Ask tool; in autonomous mode do not ask, just mention it in the next report."
+  echo "[credo-peer-lan] The LAN relay is DISABLED: no network is bound yet (new allowlist + network binding since credo 0.72). In an interactive session offer the user the guided setup from /credo:peer-lan (Setup flow) via the Ask tool; in autonomous mode do not ask, just mention it in the next report. Ask and explain in the user's language (the language of the conversation); fall back to English if unknown or unsure."
 fi
 
 mkdir -p "$cfgdir/credo" 2>/dev/null || true

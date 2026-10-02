@@ -217,7 +217,7 @@ ok "WSL without powershell.exe makes no trigger" "$([ ! -f "$PSLOG" ] && echo 0 
 # -> nothing at all.
 rm -f "$CFG" "$CFGDIR/credo/peer-lan-onboarding-declined"
 OUT="$(run_hook)"
-case "$OUT" in *"[credo-peer-lan] credo can now connect"*"onboarding --decline"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL onboarding offer missing: %s\n' "$OUT" ;; esac
+case "$OUT" in *"[credo-peer-lan] credo can now connect"*"onboarding --decline"*"in the user's language (the language of the conversation); fall back to English if unknown or unsure.") PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL onboarding offer missing: %s\n' "$OUT" ;; esac
 : > "$CFGDIR/credo/peer-lan-onboarding-declined"
 OUT="$(run_hook)"
 check "onboarding: declined -> no injection" "" "$OUT"
@@ -226,7 +226,7 @@ OUT="$(run_hook CREDO_PEER_LAN=0)"
 check "onboarding: CREDO_PEER_LAN=0 -> no injection" "" "$OUT"
 printf '{"this_machine":"X","peers":[]}\n' > "$CFG"
 OUT="$(run_hook FAKE_ONB_STATE=unbound)"
-case "$OUT" in *"LAN relay is DISABLED: no network is bound yet"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL onboarding unbound note missing: %s\n' "$OUT" ;; esac
+case "$OUT" in *"LAN relay is DISABLED: no network is bound yet"*"in the user's language (the language of the conversation); fall back to English if unknown or unsure.") PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL onboarding unbound note missing: %s\n' "$OUT" ;; esac
 OUT="$(run_hook FAKE_ONB_STATE=bound)"
 check "onboarding: bound -> no injection" "" "$OUT"
 OUT="$(run_hook FAKE_ONB_STATE=unbound CREDO_PEER_LAN=off)"

@@ -6,11 +6,15 @@
 // + controls, and (only while this session runs autonomously) the 5h figure,
 // the next ladder rung and the next wake. One pane shows items or the
 // shorthand cheatsheet; the prompt hint lists the shorthands the band hides.
+// While a self-restart of THIS session is pending (scripts/credo-self-restart.py
+// marker), a blinking notice with a countdown tops the band and a toast repeats it.
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import type { CredoCounts, CredoItemList, CredoLetters, CredoSession, CredoShorthand } from '../types'
+import type { CredoCounts, CredoItemList, CredoLetters, CredoRestart, CredoSession, CredoShorthand } from '../types'
+import { parseMarker, restartNotice } from './self-restart-marker'
+import type { RestartMarker } from './self-restart-marker'
 
 const HIGHLIGHT = '#d946ef'
 const NEW_COLOR = 'whiteBright'
@@ -31,6 +35,17 @@ const letters = atom({ plugin: 'credo', key: 'letters' } as const, { tests: [], 
 const auto = atom({ plugin: 'credo', key: 'auto' } as const, { running: false, wake: null, five: null, ladder: [] })
 const itemList = atom({ plugin: 'credo', key: 'itemList' } as const, null)
 const shorthands = atom({ plugin: 'credo', key: 'shorthands' } as const, [])
+// pending self-restart of this session: the notice text and its blink phase
+const restart = atom({ plugin: 'credo', key: 'restart' } as const, null)
+const restartBlink = atom({ plugin: 'credo', key: 'restartBlink' } as const, false)
+// yellow warning sign before the notice (dogma's block uses the no-entry sign)
+const RESTART_ICON = '⚠'
+// while a restart is pending: tick (blink phase + marker stat) every 500 ms and a
+// fresh toast every second tick, each living one second, so the toast counts down
+// and leaves within a second of a cancel; otherwise only a slow stat of the marker
+const RESTART_TICK_MS = 500
+const RESTART_IDLE_MS = 3000
+const RESTART_TOAST_MS = 1000
 
 // e rotates these presets, each hiding a bit more. The dogma band reads this
 // value ({ plugin: 'credo', key: 'preset' }) and hides itself at 'open only'.
@@ -240,6 +255,57 @@ async function loadShorthands($: EngineInterface) {
   await update($, shorthands, () => next)
 }
 
+// self-restart marker watch: the marker is only read when its mtime changed
+let restartMarker: RestartMarker | null = null
+let restartMtime = -1
+let restartTicks = 0
+let restartTimer: (() => void) | null = null
+let restartFast = false
+
+async function restartMarkerPath($: EngineInterface) {
+  const dir = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${(await $.env.get('HOME')) ?? ''}/.claude`
+  return `${dir}/credo/self-restart.json`
+}
+
+// one tick: stat (and on change read) the marker, publish the notice, blink and toast.
+// Never throws: a missing or unreadable marker simply means no notice.
+async function restartTick($: EngineInterface, path: string, sid: string) {
+  let notice: CredoRestart | null = null
+  try {
+    try {
+      const st = await $.fs.stat(path)
+      if (st.mtimeMs !== restartMtime) {
+        restartMtime = st.mtimeMs
+        restartMarker = parseMarker(await $.fs.read(path))
+      }
+    } catch {
+      restartMarker = null
+      restartMtime = -1
+    }
+    notice = restartNotice(restartMarker, sid, await $.clock.now())
+    const prev = await read($, restart)
+    if ((prev?.text ?? null) !== (notice?.text ?? null)) await update($, restart, () => notice)
+    if (notice) {
+      restartTicks += 1
+      await update($, restartBlink, v => !v)
+      if (restartTicks % 2 === 1) $.ui.toast(`${RESTART_ICON} ${notice.text}`, { timeoutMs: RESTART_TOAST_MS })
+    } else if (restartTicks !== 0) {
+      restartTicks = 0
+      await update($, restartBlink, () => false)
+    }
+  } catch (err) {
+    $.ui.log(`credo band: self-restart notice failed: ${String(err)}`, { to: 'debug' })
+  }
+  // fast while a notice shows, slow otherwise
+  if ((notice !== null) !== restartFast) watchRestart($, path, sid, notice !== null)
+}
+
+function watchRestart($: EngineInterface, path: string, sid: string, fast: boolean) {
+  restartTimer?.()
+  restartFast = fast
+  restartTimer = $.clock.every(fast ? RESTART_TICK_MS : RESTART_IDLE_MS, () => void restartTick($, path, sid)).cancel
+}
+
 async function refreshAll($: EngineInterface) {
   void refresh($)
   void refreshStatus($)
@@ -283,6 +349,14 @@ export const register: Register = on => {
     await refresh($)
     await refreshStatus($)
     $.clock.every(REFRESH_MS, () => void refreshAll($))
+    try {
+      const path = await restartMarkerPath($)
+      const sid = await $.session.id()
+      watchRestart($, path, sid, false)
+      void restartTick($, path, sid)
+    } catch (err) {
+      $.ui.log(`credo band: self-restart watch not started: ${String(err)}`, { to: 'debug' })
+    }
     return started
   })
 
@@ -372,6 +446,17 @@ export const register: Register = on => {
     const below = await next(e)
     const c = await read($, counts)
     if (e.props.hasSurvey) return below
+    const { Box, Button, Text } = $.ui.resolve(e)
+
+    // pending self-restart of this session: yellow sign, blinking fuchsia text
+    const pendingRestart = await read($, restart)
+    const isRestartOn = await read($, restartBlink)
+    const restartRow = pendingRestart ? (
+      <Box key="restart" columnGap={1}>
+        <Text bold color="yellow">{RESTART_ICON}</Text>
+        <Text bold color={HIGHLIGHT} dimColor={!isRestartOn} wrap="truncate-end">{pendingRestart.text}</Text>
+      </Box>
+    ) : null
     // without a credo project (no item system) the counts and the item controls
     // are left out; mode/role, open letters and autonomy are session state and
     // still show, as long as there is any
@@ -382,7 +467,6 @@ export const register: Register = on => {
     const isOn = await read($, blink)
     const moved = isOn ? await read($, changed) : []
     const fresh = isOn ? await read($, created) : []
-    const { Box, Button, Text } = $.ui.resolve(e)
 
     const color = (s: Status, n: number) =>
       moved.includes(s.key)
@@ -469,7 +553,13 @@ export const register: Register = on => {
       meta.push({ width: 3 + text.length, node: <Text key="questions"><Text>❓ </Text><Text bold color="blue">{text}</Text></Text> })
     }
 
-    if (!hasItems && meta.length === 0 && autoLine.length === 0) return below
+    if (!hasItems && meta.length === 0 && autoLine.length === 0)
+      return restartRow ? (
+        <Box flexDirection="column">
+          {restartRow}
+          {below}
+        </Box>
+      ) : below
 
     if (hasItems)
       meta.push({
@@ -518,6 +608,7 @@ export const register: Register = on => {
     // credo on top; another band (dogma) below
     return (
       <Box flexDirection="column">
+        {restartRow}
         {mine}
         {below}
       </Box>

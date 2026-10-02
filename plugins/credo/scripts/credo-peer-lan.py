@@ -1153,56 +1153,203 @@ def print_lan_status(cfg, state):
             print("WSL sync:  %s" % line)
 
 
+UFW_COMMENT = "credo-peer-lan"
+
+
+def _ufw_sources(entry):
+    """ufw source spec(s) for one canonical allowlist entry. ufw has no range syntax,
+    so an a-b range is split into the minimal list of covering CIDRs."""
+    if "-" in entry:
+        lo, hi = entry.split("-", 1)
+        nets = ipaddress.summarize_address_range(
+            ipaddress.IPv4Address(lo.strip()), ipaddress.IPv4Address(hi.strip())
+        )
+        return [n.with_prefixlen if n.prefixlen < 32 else str(n.network_address) for n in nets]
+    return [entry]
+
+
+def parse_ufw_status(text, port):
+    """Parse `ufw status` output. Returns (active, rules) where rules is a list of
+    {"source", "comment"} for IPv4 ALLOW rules whose target is `port` or `port/tcp`.
+    IPv6 rows are ignored (the relay is IPv4)."""
+    active = "Status: active" in (text or "")
+    rules = []
+    rule_re = re.compile(
+        r"^(?P<to>\S+)(?:\s+on\s+\S+)?\s+ALLOW(?:\s+IN)?\s+"
+        r"(?P<src>\S+)(?:\s+on\s+\S+)?\s*(?:#\s*(?P<comment>.*))?$"
+    )
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if "(v6)" in line:
+            continue
+        m = rule_re.match(line)
+        if not m or m.group("to") not in (str(port), "%d/tcp" % port):
+            continue
+        src = m.group("src")
+        if src == "Anywhere":
+            src = "0.0.0.0/0"
+        rules.append({"source": src, "comment": (m.group("comment") or "").strip()})
+    return active, rules
+
+
+def ufw_rule_commands(allow, port, rules):
+    """Pure command generator. Returns (missing_sources, add_cmds, delete_cmds).
+    A needed source counts as covered when an existing ALLOW rule's source network
+    contains it. Delete hints are produced only for rules that carry the
+    credo-peer-lan comment (never for the user's own rules) and are no longer needed."""
+    needed = []
+    for entry in allow or []:
+        for src in _ufw_sources(entry):
+            if src not in needed:
+                needed.append(src)
+    existing = []
+    for r in rules or []:
+        try:
+            existing.append((ipaddress.ip_network(r["source"], strict=False), r))
+        except ValueError:
+            continue
+    missing = []
+    for src in needed:
+        net = ipaddress.ip_network(src, strict=False)
+        if not any(net.version == e.version and net.subnet_of(e) for e, _r in existing):
+            missing.append(src)
+    add_cmds = [
+        "sudo ufw allow from %s to any port %d proto tcp comment '%s'" % (src, port, UFW_COMMENT)
+        for src in missing
+    ]
+    needed_nets = set(str(ipaddress.ip_network(s, strict=False)) for s in needed)
+    delete_cmds = []
+    for e, r in existing:
+        if r["comment"] == UFW_COMMENT and str(e) not in needed_nets:
+            cmd = "sudo ufw delete allow from %s to any port %d proto tcp" % (r["source"], port)
+            if cmd not in delete_cmds:
+                delete_cmds.append(cmd)
+    return missing, add_cmds, delete_cmds
+
+
+def firewalld_rule_commands(allow, port):
+    """firewalld equivalent. Its rules cannot be read without root, so these are
+    printed as "add if not present"; --permanent plus --reload keeps them across boots."""
+    cmds = []
+    for entry in allow or []:
+        for src in _ufw_sources(entry):
+            cmds.append(
+                "sudo firewall-cmd --permanent --add-rich-rule='rule family=\"ipv4\" "
+                "source address=\"%s\" port port=\"%d\" protocol=\"tcp\" accept'" % (src, port)
+            )
+    if cmds:
+        cmds.append("sudo firewall-cmd --reload")
+    return cmds
+
+
+UFW_RULES_UNREADABLE = "#rules-unreadable"
+
+
+def _ufw_status_text():
+    """`ufw status` output, or None when ufw is absent/unknown. CREDO_PEER_LAN_UFW_STATUS
+    (the text itself, or "@/path/file") replaces the call for deterministic tests.
+    Without root `ufw status` refuses; then the world-readable /etc/ufw/ufw.conf
+    (ENABLED=yes) still tells whether ufw is active, with the rules marked unknown."""
+    raw = os.environ.get("CREDO_PEER_LAN_UFW_STATUS")
+    if raw is not None:
+        if raw.startswith("@"):
+            try:
+                with open(raw[1:]) as fh:
+                    return fh.read()
+            except OSError:
+                return None
+        return raw
+    if not have_cmd("ufw"):
+        return None
+    try:
+        out = subprocess.run(["ufw", "status"], capture_output=True, text=True, timeout=5)
+        text = out.stdout or ""
+    except Exception:
+        text = ""
+    if "Status:" in text:
+        return text
+    try:
+        with open("/etc/ufw/ufw.conf") as fh:
+            if re.search(r"^\s*ENABLED\s*=\s*yes\s*$", fh.read(), re.M):
+                return "Status: active\n%s\n" % UFW_RULES_UNREADABLE
+    except OSError:
+        pass
+    return None
+
+
+def _firewalld_running():
+    """Cheap firewalld detection (`firewall-cmd --state`). CREDO_PEER_LAN_FIREWALLD_STATE
+    replaces the call for tests."""
+    raw = os.environ.get("CREDO_PEER_LAN_FIREWALLD_STATE")
+    if raw is not None:
+        return raw.strip() == "running"
+    if not have_cmd("firewall-cmd"):
+        return False
+    try:
+        out = subprocess.run(["firewall-cmd", "--state"], capture_output=True, text=True, timeout=5)
+        return (out.stdout or "").strip() == "running"
+    except Exception:
+        return False
+
+
 def check_firewall_hint(cfg, state=None):
-    """Native-Linux-only, read-only, best-effort ufw hint. It NEVER runs sudo and
-    NEVER changes anything; any error (ufw absent, not root, unreadable) is swallowed.
-    When the LAN side is enabled it prints the exact optional ufw commands for the
-    effective allowlist. On WSL there is no local ufw to consult (the Windows firewall
-    is synced from the allowlist instead), so this is a no-op there."""
+    """Native-Linux-only, read-only, best-effort firewall hint. It NEVER runs sudo and
+    NEVER changes anything; any error (ufw absent, unreadable) is swallowed. When ufw
+    is active and the LAN side is enabled it prints copy-paste-ready commands: one
+    `ufw allow ... comment 'credo-peer-lan'` per allowlist entry not yet covered, plus
+    `ufw delete` hints for credo-peer-lan rules whose entry was removed. The user runs
+    them (sudo needs the user's password; in Claude Code with the `!` prefix). On WSL
+    there is no local firewall to consult (the Windows firewall is synced from the
+    allowlist instead), so this is a no-op there."""
     if is_wsl():
         return
-    if not have_cmd("ufw"):
-        return
     port = int(cfg.get("listen_port", DEFAULT_PORT))
-    try:
-        out = subprocess.run(
-            ["ufw", "status"], capture_output=True, text=True, timeout=5
-        )
-    except Exception:
-        return
-    status = out.stdout or ""
-    if "Status: active" not in status:
-        return  # inactive, needs-root, or unreadable -> nothing to warn about
-    cmds = []
-    if state and state.get("enabled"):
-        for entry in state["allow"]:
-            if "-" in entry:
-                cmds.append(
-                    "  # %s: ufw has no range syntax - cover it with a CIDR or one rule per address" % entry
+    enabled = bool(state and state.get("enabled"))
+    allow = state["allow"] if enabled else []
+    status = _ufw_status_text()
+    if status is not None:
+        active, rules = parse_ufw_status(status, port)
+        unreadable = UFW_RULES_UNREADABLE in status
+        if active and not enabled:
+            if not rules:
+                print(
+                    "WARNING: ufw is active and port %d has no ALLOW rule%s - the relay port "
+                    "may be blocked on this machine. Once a network is bound, allow it "
+                    "scoped to the allowlist, e.g.:\n"
+                    "  sudo ufw allow from <peer-ip-or-subnet> to any port %d proto tcp comment '%s'"
+                    % (port, " (rules unreadable without root)" if unreadable else "", port, UFW_COMMENT)
                 )
+        elif active:
+            missing, add_cmds, del_cmds = ufw_rule_commands(allow, port, rules)
+            if unreadable:
+                print(
+                    "FIREWALL: ufw is active; its rules are not readable without root "
+                    "(verify with: sudo ufw status). If port %d is not allowed yet, run "
+                    "(in Claude Code with the ! prefix):" % port
+                )
+                print("\n".join("  " + c for c in add_cmds))
+            elif add_cmds or del_cmds:
+                if add_cmds:
+                    print(
+                        "FIREWALL: ufw is active and port %d is not allowed for: %s - peers "
+                        "cannot reach this relay. Run (sudo asks for your password; in Claude "
+                        "Code type each line with the ! prefix):" % (port, ", ".join(missing))
+                    )
+                    print("\n".join("  " + c for c in add_cmds))
+                if del_cmds:
+                    print(
+                        "FIREWALL: stale credo-peer-lan ufw rules (allowlist entries removed), "
+                        "clean up with:"
+                    )
+                    print("\n".join("  " + c for c in del_cmds))
             else:
-                cmds.append("  sudo ufw allow from %s to any port %d proto tcp" % (entry, port))
-    if str(port) in status:
-        if cmds:
-            print(
-                "Note: ufw already mentions port %d. To scope it exactly to the "
-                "effective allowlist (optional), the rules are:\n%s" % (port, "\n".join(cmds))
-            )
-        return
-    if cmds:
+                print("Firewall:  ufw active, port %d allowed for the effective allowlist" % port)
+    if enabled and _firewalld_running():
         print(
-            "WARNING: ufw is active and port %d does not appear in its rules - the relay "
-            "port may be blocked on this machine. Optional rules for the effective "
-            "allowlist:\n%s" % (port, "\n".join(cmds))
+            "FIREWALL: firewalld is running (rules not checked). If port %d is not allowed "
+            "yet, run (in Claude Code with the ! prefix):" % port
         )
-    else:
-        print(
-            "WARNING: ufw is active and port %d does not appear in its rules - the relay "
-            "port may be blocked on this machine. Once a network is bound, allow it "
-            "scoped to the allowlist, e.g.:\n"
-            "  sudo ufw allow from <peer-ip-or-subnet> to any port %d proto tcp"
-            % (port, port)
-        )
+        print("\n".join("  " + c for c in firewalld_rule_commands(allow, port)))
 
 
 # ---------------------------------------------------------------------------

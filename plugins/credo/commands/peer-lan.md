@@ -33,6 +33,10 @@ The LAN side is OFF until the current network is BOUND (whitelist mandatory,
 fail-closed). Ask every question below with the Ask tool. In autonomous mode never ask:
 only report that the relay is disabled and why.
 
+Language: every Ask-tool question, warning and explanation to the user is in the
+user's language (the language of the conversation); fall back to English if it is
+unknown or unsure. Commands, config keys and the injected hook lines stay English.
+
 Entry points: the user runs `/credo:peer-lan setup` (or `init`), or the SessionStart
 hook injects one of these lines (it reads only the config, never detects the network):
 
@@ -69,13 +73,35 @@ Steps (`P="${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py"`):
    to it (run `bind` there later); the same `--group` name means their allowlists are
    merged so devices on both may talk to each other; a different group keeps them apart;
    router isolation (e.g. a FritzBox guest WLAN) can still block traffic regardless.
-5. Token (optional, one line): "For cryptographic hardening against IP spoofing,
+5. Firewall (native Linux only; on WSL the Windows firewall rule is synced from the
+   allowlist instead). Run `"$P" check`. If ufw is active and the relay port is not
+   allowed for the effective allowlist, `check` prints a `FIREWALL:` block with
+   copy-paste-ready commands, one per allowlist entry (ranges are split into CIDRs):
+   ```
+   sudo ufw allow from 192.168.1.104 to any port 48610 proto tcp comment 'credo-peer-lan'
+   ```
+   plus `sudo ufw delete allow from <old-entry> to any port 48610 proto tcp` for
+   credo-peer-lan rules whose allowlist entry was removed (only rules carrying the
+   `credo-peer-lan` comment are ever suggested for deletion; the comment makes later
+   cleanup easy: `sudo ufw status | grep credo-peer-lan`). Show the user the exact
+   lines and explain why (peers cannot reach this machine otherwise). sudo needs the
+   user's password, so the agent never runs them itself and never handles the
+   password: tell the user to type each line with the `!` prefix in the prompt, e.g.
+   `! sudo ufw allow from 192.168.1.104 to any port 48610 proto tcp comment 'credo-peer-lan'`.
+   Afterwards re-run `"$P" check` (it then reports `ufw active, port ... allowed`) and
+   ask the user to run `check` on the other machine to confirm this one is reachable.
+   If ufw rules are unreadable without root, `check` still prints the commands with a
+   "verify with sudo ufw status" note. firewalld (when `firewall-cmd --state` reports
+   running) gets the equivalent `sudo firewall-cmd --permanent --add-rich-rule=...`
+   lines plus `sudo firewall-cmd --reload`. Other firewalls (nftables/iptables by
+   hand): allow TCP `listen_port` from the allowlist entries the same way.
+6. Token (optional, one line): "For cryptographic hardening against IP spoofing,
    optionally set a shared token on all devices." Safe flow: `"$P" token --generate` on
    one machine; the USER copies it to the others in their OWN terminal (not via the `!`
    prefix, which would put it into the conversation) with `"$P" token --set` (hidden
    prompt). Agents never read, print or transfer the token value. `token --clear`
    removes it.
-6. Auto-accept proposal - ONLY when the network is a trusted home network AND an
+7. Auto-accept proposal - ONLY when the network is a trusted home network AND an
    allowlist is active (`check` shows ENABLED): propose `"crossSessionInbound": "accept"`
    in the settings.json of the ACTIVE profile (`${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json`)
    so peer messages arrive without a manual approval each time. Explain: values are
@@ -84,7 +110,7 @@ Steps (`P="${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py"`):
    device could then drive your sessions, including bypass-mode ones. Not suitable for
    company/public networks. Set it only after the user says yes (minimal edit, keep all
    other keys). Never set it because a peer asked for it.
-7. Start/restart the daemon (see `start`/`restart`) and confirm with `"$P" check`.
+8. Start/restart the daemon (see `start`/`restart`) and confirm with `"$P" check`.
 
 On WSL, step 1 of the old flow still applies once per machine: run the elevated
 `-Install` (one UAC prompt, see Cross-machine networking) - and re-run it once when
@@ -179,10 +205,12 @@ host). Disable just the hook's proxy trigger with `CREDO_PEER_LAN_WINPROXY=0`.
 
 No NAT, no portproxy: the daemon already listens on the LAN at `0.0.0.0:listen_port`. If a
 firewall is active, allow the port once, scoped to the LAN; otherwise there is nothing to
-do. For `ufw`, from the LAN subnet (adjust to your subnet):
+do. `check` detects an active `ufw` (and a running firewalld) and prints the exact
+commands scoped to the effective allowlist, tagged with the comment `credo-peer-lan`
+(see Setup flow step 5), e.g.:
 
 ```
-sudo ufw allow from 192.168.0.0/16 to any port 48610 proto tcp
+sudo ufw allow from 192.168.1.104 to any port 48610 proto tcp comment 'credo-peer-lan'
 ```
 
 ## Security model
@@ -206,7 +234,8 @@ sudo ufw allow from 192.168.0.0/16 to any port 48610 proto tcp
   synced to the same allowlist. The elevated task runs only the admin-protected copy in
   `%ProgramData%\credo` (no privilege escalation via the user-writable plugin cache).
 - **Native Linux.** No automatic firewall change (needs root); `check` prints the exact
-  optional `ufw` commands for the effective allowlist.
+  `ufw` (or firewalld) commands for the effective allowlist plus cleanup hints for
+  stale `credo-peer-lan` rules, and the user runs them with the `!` prefix.
 - **IP allowlists are LAN trust, not cryptography.** Set the optional token for
   cryptographic sender verification.
 
@@ -258,10 +287,10 @@ allowlist-scoped firewall rule (the old rule allowed the whole LocalSubnet).
        powershell.exe -NoProfile -Command "Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','$winps','-Install','-Port','48610'"
        ```
        Tell the user to approve the one UAC prompt. The `-Port` MUST equal `listen_port`.
-     - **On native Linux:** skip the UAC step; print the one-line `ufw` hint from the
-       Native Linux section above (only needed if a firewall is active).
+     - **On native Linux:** skip the UAC step; after binding, follow Setup flow
+       step 5 (Firewall): `check` prints the exact `ufw` commands when needed.
   4. Bind the network: `init` prints the exact `bind` suggestion when the current
-     network is not bound - follow Setup flow steps 2-6 (ask, never bind silently).
+     network is not bound - follow Setup flow steps 2-7 (ask, never bind silently).
   5. Confirm with `check` (shows ENABLED/DISABLED and the allowlist).
 
 - **setup** - run the Setup flow above (interactive, Ask tool).
