@@ -40,11 +40,22 @@ get_permissions_section "$FILE" | MODE="$MODE" FILE="$FILE" python3 -c '
 import json, os, re, sys
 
 ask, deny = [], []
+# Only permission sections restrict Claude. Under a "## ... Workflow ..." heading
+# the checkboxes are on/off switches ([ ] = off), not deny, so they are skipped.
+in_workflow = False
 for line in sys.stdin:
+    h = re.match(r"^\s*##\s+(.*)$", line)
+    if h and not line.lstrip().startswith("###"):
+        in_workflow = "workflow" in h.group(1).lower()
+        continue
+    if in_workflow:
+        continue
     m = re.match(r"^\s*-\s*\[([ ?0])\]\s*(.*)$", line)
     if not m:
         continue
-    text = re.sub(r"<!--.*?-->", "", m.group(2)).strip()
+    text = re.sub(r"<!--.*?-->", "", m.group(2))
+    # drop an inline explanation after " -- " (e.g. "-- deny = log to TO-DELETE.md")
+    text = re.split(r"\s+--\s", text, maxsplit=1)[0].strip()
     code = re.search(r"`([^`]+)`", text)
     if code:
         label = code.group(1)
