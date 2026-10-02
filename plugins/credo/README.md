@@ -194,6 +194,19 @@ The `credo-peer-bridge.sh` hook (SessionStart, UserPromptSubmit, PostToolUse) au
 - **Disable** with `CREDO_PEER_BRIDGE=0`.
 - **Caveat:** the descriptor format is internal to Claude Code and undocumented, so a future version may change it. The bridge is fail-safe - if that happens, peers simply stop appearing; nothing is corrupted.
 
+## LAN peer relay (cross-machine, no cloud)
+
+The cross-profile bridge above only reaches sessions on the SAME machine. The LAN relay (`scripts/credo-peer-lan.py`) extends the same peer model to sessions on DIFFERENT machines in one trusted network, without the Anthropic cloud (no Remote Control, no API). A daemon runs on each machine, publishes its local sessions to its configured peers over TCP, and mirrors every remote session into the local `sessions/` registry - so a remote peer appears in `ListAgents` and is reachable via `SendMessage`, with replies routing back over the LAN.
+
+A remote session has no local process, so its descriptor would be reaped (the discovery reader validates the pid is a live local process, matching `procStart` = field 22 of `/proc/<pid>/stat` to resist pid reuse). For each remote session the daemon therefore spawns one lightweight local **holder** subprocess that listens on a local **proxy** unix socket and forwards frames over the LAN. The holder is a real live local process, so its pid and `procStart` are real; the mirrored descriptor uses the holder pid as both the `<pid>` filename and the descriptor's `pid`/`procStart`, copies `pidDomain` from a real local session (so it is treated as local), points `messagingSocketPath` at the proxy socket, keeps the remote name suffixed with the machine (`name@machine`), and carries the marker `credoPeerLan` - NOT `credoPeerBridge`, so the cross-profile bridge never touches it.
+
+- **Mode-agnostic by design.** The injected envelope NEVER carries a `from-mode` attribute; the receiving session applies its OWN consent gate. The relay only carries name, body, and reply address.
+- **Authenticated.** Transport is line-based JSON over TCP, authenticated with a shared token via HMAC-SHA256; a message that does not verify is rejected.
+- **Safe lifecycle.** The daemon only ever removes descriptors carrying its own `credoPeerLan` marker, plus the proxy sockets and holders it created; on SIGTERM it removes all of them. A stale descriptor from a dead run (holder pid gone) is pruned on the next start.
+- **Off by default.** It is a no-op until a config exists at `~/.claude/credo/peer-lan.json` (override with `CREDO_PEER_LAN_CONFIG`; see `scripts/peer-lan.example.json`). Disable globally with `CREDO_PEER_LAN=0`.
+- **Manual network step.** Opening the `listen_port` in the firewall for the LAN (and, under WSL, any portproxy) is a manual action the user performs. Start/stop/status via `/credo:peer-lan`.
+- **Caveat:** the descriptor format is internal to Claude Code and undocumented; the relay is fail-safe - if it changes, remote peers simply stop appearing.
+
 ## Peer message etiquette
 
 Peer sessions tend to over-communicate: every ack, status note or handoff lands as a new turn, and the receiver often reacts right away (a reply, an immediate commit and push). `credo-peer-message.sh` only informs, it never blocks:

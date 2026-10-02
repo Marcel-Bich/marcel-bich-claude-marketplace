@@ -1,0 +1,13 @@
+{
+  "_comment": "Example credo LAN peer relay config. Copy to ~/.claude/credo/peer-lan.json (or point CREDO_PEER_LAN_CONFIG at it) and edit. The relay is a no-op until this file exists. Use the SAME token on every machine; a machine with a different token is rejected.",
+  "this_machine": "pc-hub",
+  "listen_host": "0.0.0.0",
+  "listen_port": 48610,
+  "token": "put-a-long-shared-random-secret-here",
+  "roster_interval": 5.0,
+  "machine_timeout": 30.0,
+  "peers": [
+    {"name": "laptop", "host": "192.168.1.50", "port": 48610},
+    {"name": "workbench", "host": "192.168.1.51", "port": 48610}
+  ]
+}
