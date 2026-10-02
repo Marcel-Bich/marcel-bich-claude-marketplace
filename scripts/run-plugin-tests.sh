@@ -21,6 +21,12 @@ case "${1:-}" in
     --validate)
         for p in plugins/*/; do
             claude plugin validate "$p" >/dev/null 2>&1 || { echo "FAIL validate $p"; exit 1; }
+            # every script a hook runs directly must be committed executable
+            [ -f "$p/hooks/hooks.json" ] || continue
+            for s in $(grep -o '"command": *"${CLAUDE_PLUGIN_ROOT}/[^" ]*' "$p/hooks/hooks.json" | sed 's|.*${CLAUDE_PLUGIN_ROOT}/||' | sort -u); do
+                mode="$(git ls-files -s "$p$s" | cut -d' ' -f1)"
+                [ "$mode" = "100755" ] || { echo "FAIL not executable in git: $p$s"; exit 1; }
+            done
         done
         echo "validate: all plugins OK"
         exit 0
