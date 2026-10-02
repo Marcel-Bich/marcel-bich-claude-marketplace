@@ -81,6 +81,8 @@ YAML, merged lowest to highest:
 builtin (templates/config.default.yaml) < global (~/.claude/credo/config) < profile ($CLAUDE_CONFIG_DIR/credo/config) < project (.credo/config)
 ```
 
+`credo-config.sh paths` lists the layers for the active profile, `credo-config.sh source <key>` names the layer and file that supplies a key (e.g. `source budget.schedule` -> `global: ~/.claude/credo/config`). On the default profile (`~/.claude`, `CLAUDE_CONFIG_DIR` unset) the global config is the profile config; there is no separate profile layer.
+
 The builtin template holds universal defaults only:
 
 - `verify.viewports`: 320, 768, 1440

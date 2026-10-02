@@ -22,6 +22,8 @@
 #   credo-config.sh backend            print resolved task backend (fail-safe)
 #   credo-config.sh ensure-global      create global config if missing
 #   credo-config.sh paths              print the three layer paths + existence
+#   credo-config.sh source <dotted.key> print the layer (builtin/global/profile/project)
+#                                       and file that supplies the merged value
 #   credo-config.sh resolve-project    print the target .credo dir (exit 4 if a
 #                                       hub or ambiguous cwd needs an explicit target)
 #   credo-config.sh rules              print the target .credo/RULES.md path plus
@@ -171,10 +173,10 @@ case "$CMD" in
         fi
         printf 'project: %s (%s)\n' "$PROJECT" "$([ -f "$PROJECT" ] && echo present || echo missing)"
         ;;
-    get)
+    get|source)
         KEY="${2:-}"
         if [ -z "$KEY" ]; then
-            echo "credo-config: get requires a key" >&2
+            echo "credo-config: $CMD requires a key" >&2
             exit 1
         fi
         if [ "${CREDO_SKIP_ENSURE:-}" != "1" ]; then
@@ -183,10 +185,11 @@ case "$CMD" in
         PROFILE_F="$PROFILE"
         [ "$PROFILE_F" = "$GLOBAL" ] && PROFILE_F=""
         CREDO_BUILTIN="$BUILTIN" CREDO_GLOBAL_F="$GLOBAL" CREDO_PROFILE_F="$PROFILE_F" CREDO_PROJECT_F="$PROJECT" \
-            python3 - "$KEY" <<'PY'
+            python3 - "$KEY" "$CMD" <<'PY'
 import os, sys, json
 
 key = sys.argv[1]
+cmd = sys.argv[2]
 
 def load_yaml(path):
     if not path or not os.path.isfile(path):
@@ -331,21 +334,36 @@ def deep_merge(base, over):
             out[k] = v
     return out
 
+def lookup(tree):
+    node = tree
+    for part in key.split("."):
+        if isinstance(node, dict) and part in node:
+            node = node[part]
+        else:
+            return False, None
+    return True, node
+
 merged = {}
-for p in (os.environ.get("CREDO_BUILTIN"),
-          os.environ.get("CREDO_GLOBAL_F"),
-          os.environ.get("CREDO_PROFILE_F"),
-          os.environ.get("CREDO_PROJECT_F")):
+source = None
+for name, p in (("builtin", os.environ.get("CREDO_BUILTIN")),
+                ("global", os.environ.get("CREDO_GLOBAL_F")),
+                ("profile", os.environ.get("CREDO_PROFILE_F")),
+                ("project", os.environ.get("CREDO_PROJECT_F"))):
     layer = load_yaml(p)
     if layer:
         merged = deep_merge(merged, layer)
+        if lookup(layer)[0]:
+            source = (name, p)
 
-node = merged
-for part in key.split("."):
-    if isinstance(node, dict) and part in node:
-        node = node[part]
-    else:
-        sys.exit(3)
+found, node = lookup(merged)
+if not found:
+    sys.exit(3)
+
+if cmd == "source":
+    # Highest layer that sets the key. For a map value, lower layers may still
+    # contribute sub-keys the winning layer leaves out (deep merge).
+    print("%s: %s" % source)
+    sys.exit(0)
 
 def _emit(x):
     if x is None:

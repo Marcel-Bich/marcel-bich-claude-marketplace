@@ -61,10 +61,12 @@ Two ways to read the current numbers:
   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-budget-read.sh" --json   # trimmed JSON
   ```
 
-  It finds the newest `/tmp/claude-mb-limit-cache_*.json` (one per profile), checks the
-  file is fresh, and prints `five_hour_utilization`, `five_hour_resets_at`,
-  `seven_day_utilization`, `seven_day_resets_at`, `seven_day_sonnet_utilization`, plus the
-  cache age. Exit codes: `0` fresh data printed, `3` no cache (limit plugin absent), `4`
+  It reads the active profile's cache `/tmp/claude-mb-limit-cache_<basename of
+  ${CLAUDE_CONFIG_DIR:-$HOME/.claude}>.json` (one per profile, the same fallback chain the
+  limit plugin uses), checks the file is fresh, and prints `cache_file`,
+  `five_hour_utilization`, `five_hour_resets_at`, `seven_day_utilization`,
+  `seven_day_resets_at`, `seven_day_sonnet_utilization`, plus the cache age. To see which
+  config layer supplies the caps, run `credo-config.sh source budget.schedule`. Exit codes: `0` fresh data printed, `3` no cache (limit plugin absent), `4`
   cache stale (do not use). Only use the cache when it is present AND fresh; a stale cache
   (old mtime, limit plugin dormant) must NOT be trusted - treat it like absent.
 

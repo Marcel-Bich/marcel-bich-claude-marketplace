@@ -633,7 +633,18 @@ of these fresh, in this moment. A number that was not just read is not stated:
 ```
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get budget.schedule   # the active profile's real caps, overrides included
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-budget-read.sh"                    # live 5h% / weekly% + resets
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" paths                  # which config layers exist for this profile
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" source budget.schedule # which layer supplies the caps
+echo "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"                             # the active profile
 ```
+
+- **Show the provenance (hard MUST).** The read-back MUST also show, verbatim, the active
+  profile line, the `paths` output, the `source budget.schedule` line and the `cache_file=`
+  line of `credo-budget-read.sh`. This makes a wrong profile, a missing profile override or
+  a cap inherited from the shipped default visible at a glance, before any cap is applied.
+  `CLAUDE_PLUGIN_ROOT` may point into another profile's directory when profiles share a
+  symlinked `plugins/` dir; that is harmless (same files). State and caps always follow the
+  active profile above, never the plugin path.
 
 - The binding cap axis and every cap value named in the read-back come ONLY from
   `budget.schedule` (via `credo-config.sh`) - the active profile's own rows, overrides
