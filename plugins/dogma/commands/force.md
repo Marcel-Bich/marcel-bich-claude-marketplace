@@ -48,7 +48,7 @@ Use AskUserQuestion with multiSelect: true to let user choose which rule categor
 Which rules do you want to apply to the project?
 
 [ ] Language Rules
-    German/English, umlaut correction (ae->a, oe->o, ue->u)
+    German/English, umlaut correction in German text (ae->ä, oe->ö, ue->ü)
     Enforceable: Finds and fixes ASCII umlauts
 
 [ ] Git & AI-Traces
@@ -179,20 +179,21 @@ Enforceable: No
 ```
 
 ```
-Rule 3/4: "German umlauts - use a, o, u, ss. Never ae, oe, ue"
+Rule 3/4: "German umlauts - use ä, ö, ü, ß. Never ae, oe, ue"
 
 What it means:
-  In German text, always use proper umlauts (a, o, u, ss).
+  In German text, always use proper umlauts (ä, ö, ü, ß).
   Never use ASCII replacements like "fuer" or "koennen".
+  Applies to German text only - files in any other language are not touched.
 
 Enforceable: YES
-  I can scan all text files for ASCII umlaut patterns and fix them.
+  I can scan German text files for ASCII umlaut patterns and fix them.
 
   Examples of what will be fixed:
-  - "fuer" -> "fur"
-  - "koennen" -> "konnen"
-  - "Groesse" -> "Grosse"
-  - "aehnlich" -> "ahnlich"
+  - "fuer" -> "für"
+  - "koennen" -> "können"
+  - "Groesse" -> "Größe"
+  - "aehnlich" -> "ähnlich"
 
 Include in execution plan?
 1. Yes, scan and collect fixes
@@ -209,15 +210,15 @@ Found 5 violations:
 
 1. docs/guide.md:23
    Line: "Dies ist fuer den Benutzer"
-   Fix:  "Dies ist fur den Benutzer"
+   Fix:  "Dies ist für den Benutzer"
 
 2. README.md:45
    Line: "Sie koennen auch folgendes tun"
-   Fix:  "Sie konnen auch folgendes tun"
+   Fix:  "Sie können auch folgendes tun"
 
 3. src/messages.ts:12
    Line: const msg = "Dateigroesse"
-   Fix:  const msg = "Dateigrosse"
+   Fix:  const msg = "Dateigröße"
 
 ...
 
@@ -363,11 +364,11 @@ RULES TO APPLY:
 1. Language Rules - German Umlauts
    What: Replace ASCII umlauts with real umlauts
    5 fixes planned:
-   - docs/guide.md:23 - "fuer" -> "fur"
-   - README.md:45 - "koennen" -> "konnen"
-   - src/messages.ts:12 - "Groesse" -> "Grosse"
-   - src/ui.ts:34 - "aehnlich" -> "ahnlich"
-   - docs/api.md:78 - "ueberpruefung" -> "Uberprufung"
+   - docs/guide.md:23 - "fuer" -> "für"
+   - README.md:45 - "koennen" -> "können"
+   - src/messages.ts:12 - "Groesse" -> "Größe"
+   - src/ui.ts:34 - "aehnlich" -> "ähnlich"
+   - docs/api.md:78 - "ueberpruefung" -> "Überprüfung"
 
 2. Git & AI-Traces - Typography
    What: Replace smart typography with normal ASCII
@@ -421,7 +422,7 @@ Fix 1/13:
   File: docs/guide.md:23
   Rule: German umlauts
   Current: "Dies ist fuer den Benutzer"
-  After:   "Dies ist fur den Benutzer"
+  After:   "Dies ist für den Benutzer"
 
   Keep in plan?
   1. Yes
@@ -435,8 +436,8 @@ Fix 1/13:
 ```
 Executing plan...
 
-[1/13] docs/guide.md:23 - Fixed "fuer" -> "fur"
-[2/13] README.md:45 - Fixed "koennen" -> "konnen"
+[1/13] docs/guide.md:23 - Fixed "fuer" -> "für"
+[2/13] README.md:45 - Fixed "koennen" -> "können"
 ...
 [10/13] Running Prettier on src/index.ts... Done
 ...

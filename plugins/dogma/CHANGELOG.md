@@ -6,6 +6,24 @@ Changelog of the dogma plugin. Newest first. Months group releases; no day dates
 
 ### v1.44
 
+#### v1.44.4
+
+##### Fixed
+
+- German-only language rules now fire on German text only: the write reminder's "Keep it in
+  German" note and the post-write ASCII umlaut check (fuer -> für) use a stricter shared
+  detection (`lib-german.sh`) instead of substring matches that also hit English or other
+  languages. Quoted text and code are ignored, and German function words must be a
+  meaningful share of all words and clearly outweigh English ones
+- An English file that quotes German examples is no longer reported as German, and a
+  bilingual file gets no language note instead of a wrong one
+- A German file is no longer reported as English because German prose contains "in" / "is"
+- `/dogma:force` examples show the real umlauts again (they had been stripped to "fur",
+  "konnen"); `/dogma:cleanup` and the prompt reminder state the umlaut rule is German text only
+- New `scripts/test-german-detection.sh` checks German, English, French, Spanish, Dutch and
+  Portuguese samples, English text with German quotes and code, and a bilingual document
+  against the detection and both hooks
+
 #### v1.44.3
 
 ##### Fixed

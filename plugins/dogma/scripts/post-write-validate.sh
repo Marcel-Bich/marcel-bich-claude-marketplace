@@ -114,12 +114,24 @@ if echo "$CONTENT" | grep -qiE '(//|#|/\*|\*)\s*(Let me|I'"'"'ll|Sure!|Certainly
 fi
 
 # ============================================
-# 4. German Umlauts (for German text files)
+# 4. German Umlauts (German text only)
 # ============================================
+# Fires only when the written content is German text, see lib-german.sh - any other
+# language (and bilingual text) is left alone. Only when the content is too short to
+# tell (a small Edit snippet) does the file on disk decide.
+# shellcheck source=lib-german.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib-german.sh"
+IS_GERMAN=false
+CONTENT_LANG=$(detect_text_language "$CONTENT")
+if [ "$CONTENT_LANG" = "de" ]; then
+    IS_GERMAN=true
+elif [ "$CONTENT_LANG" = "none" ] && [ -f "$FILE_PATH" ] && is_german_text "$(head -200 "$FILE_PATH" 2>/dev/null)"; then
+    IS_GERMAN=true
+fi
 case "$EXT" in
     md|txt|rst)
         # Check for ASCII replacements that should be umlauts
-        if echo "$CONTENT" | grep -qE '\b(fuer|koennen|groesse|aehnlich|ueberpruefung|moeglich|wuerde|muessen)\b'; then
+        if [ "$IS_GERMAN" = "true" ] && echo "$CONTENT" | grep -qE '\b(fuer|koennen|groesse|aehnlich|ueberpruefung|moeglich|wuerde|muessen)\b'; then
             VIOLATIONS="${VIOLATIONS}\n- ASCII instead of umlauts found (fuer->für, oe->ö) - use proper German umlauts"
         fi
         ;;

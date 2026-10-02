@@ -96,15 +96,21 @@ fi
 # ============================================
 LANG_NOTE=""
 if [ -f "$FILE_PATH" ]; then
-    FIRST_CONTENT=$(head -50 "$FILE_PATH" 2>/dev/null | tr -d '\n')
+    FIRST_CONTENT=$(head -200 "$FILE_PATH" 2>/dev/null)
 
-    # Simple German detection (ASCII and proper umlauts)
-    if echo "$FIRST_CONTENT" | grep -qiE 'der|die|das|und|ist|nicht|eine|wird|kann|haben|werden|auch|bei|aus|nach|wie|nur|oder|durch|noch|als|bis|dieser|keine|muss|sind|aber|wenn|denn|fuer|für|ueber|über|koennen|können|muessen|müssen|groesse|Größe|aehnlich|ähnlich|hier|heute|jetzt|schon|immer|viel'; then
+    # Language detection (see lib-german.sh). Quotes and code are ignored, function-word
+    # shares decide. German is checked first, because German prose also contains short
+    # tokens the English check below matches ("in", "is", "as"). A bilingual file
+    # ("mixed") gets no note rather than a wrong one.
+    # shellcheck source=lib-german.sh
+    . "$(dirname "${BASH_SOURCE[0]}")/lib-german.sh"
+    FILE_LANG=$(detect_text_language "$FIRST_CONTENT")
+    if [ "$FILE_LANG" = "de" ]; then
         LANG_NOTE="NOTE: File is in German. Keep it in German!"
-    fi
-
+    elif [ "$FILE_LANG" = "mixed" ]; then
+        LANG_NOTE=""
     # Simple English detection
-    if echo "$FIRST_CONTENT" | grep -qiE '\bthe\b|\band\b|\bis\b|\bto\b|\bof\b|\bthat\b|\bin\b|\bfor\b|\bit\b|\bwith\b|\bas\b|\bon\b|\bthis\b|\bwill\b|\byou\b|\bhave\b|\bare\b|\bbe\b|\bbut\b|\bfrom\b|\bcan\b|\bwas\b'; then
+    elif echo "$FIRST_CONTENT" | grep -qiE '\bthe\b|\band\b|\bis\b|\bto\b|\bof\b|\bthat\b|\bin\b|\bfor\b|\bit\b|\bwith\b|\bas\b|\bon\b|\bthis\b|\bwill\b|\byou\b|\bhave\b|\bare\b|\bbe\b|\bbut\b|\bfrom\b|\bcan\b|\bwas\b'; then
         LANG_NOTE="NOTE: File is in English. Keep it in English!"
     fi
 fi

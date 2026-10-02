@@ -60,8 +60,10 @@ Phrases (in comments/docs):
 - "Certainly!" -> remove
 - "Great question!" -> remove
 
-German Umlauts (optional, ask user):
-- In strings: ae->ä, oe->ö, ue->ü, ss->ß (where appropriate)
+German Umlauts (optional, ask user; German text only):
+- Only in files or strings that are German text - never apply to any other language
+  (English, French, Dutch etc. legitimately contain "ae", "oe", "ue", "ss")
+- In German strings: ae->ä, oe->ö, ue->ü, ss->ß (where appropriate)
 - In code identifiers: keep ASCII (ae, oe, ue, ss)
 ```
 

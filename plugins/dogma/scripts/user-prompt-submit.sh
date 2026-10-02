@@ -98,7 +98,7 @@ elif [ -f "CLAUDE.language.md" ]; then
 fi
 
 if [ -n "$LANG_FILE" ]; then
-    REMINDER="${REMINDER}Language: Maintain existing language, use German umlauts (see @${LANG_FILE})\n\n"
+    REMINDER="${REMINDER}Language: Maintain existing language; in German text use proper umlauts (see @${LANG_FILE})\n\n"
 fi
 
 # ============================================
