@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.72
 
+##### v0.72.4
+
+###### Fixed
+
+- Cross-session idle and delivery notices no longer pause autonomous mode as if the user had typed
+
 ##### v0.72.3
 
 ###### Security

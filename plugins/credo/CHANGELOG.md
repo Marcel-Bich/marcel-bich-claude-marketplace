@@ -6,6 +6,12 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.72
 
+#### v0.72.4
+
+##### Fixed
+
+- Cross-session idle and delivery notices no longer pause autonomous mode as if the user had typed
+
 #### v0.72.3
 
 ##### Security

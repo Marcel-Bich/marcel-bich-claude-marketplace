@@ -22,6 +22,8 @@
 # subagent finish would end autonomy. Peer messages from other Claude sessions
 # (<cross-session-message>) are exempt too: a peer is not the user, and
 # credo-peer-message.sh tells the receiver how to handle them inside the run.
+# Harness notices about other sessions ([Cross-session idle notice] /
+# [Cross-session delivery notice], prompt prefix only) are exempt as well.
 #
 # PER SESSION: the autonomy state lives under
 #   ${CREDO_AUTONOMY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/autonomy}/<session_id>/
@@ -59,6 +61,14 @@ fi
 
 case "$prompt$input" in
     *"[CREDO-AUTONOMY-WAKE]"* | *"<task-notification>"* | *"[SYSTEM NOTIFICATION - NOT USER INPUT]"* | *"<cross-session-message"*)
+        exit 0
+        ;;
+esac
+
+# Harness notices about other sessions (idle / delivery) are automated, not the
+# user; match them only as a prompt prefix so a user quoting one still pauses.
+case "$prompt" in
+    "[Cross-session idle notice]"* | "[Cross-session delivery notice]"*)
         exit 0
         ;;
 esac
