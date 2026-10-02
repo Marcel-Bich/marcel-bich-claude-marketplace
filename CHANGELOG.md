@@ -6,6 +6,39 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 ### v0
 
+#### v0.72
+
+##### v0.72.0
+
+###### Added
+
+- LAN relay allowlist with network binding: `bind`, `unbind`, `networks` and `netinfo` subcommands; a network profile is bound to the router MAC plus subnet, and profiles in the same group share their allowlists (peers, IPs, CIDRs, ranges or `home`)
+- `token --generate | --set | --clear` (value never printed, config written 0600) and `onboarding --state | --decline | --reset`
+- Session-start onboarding hint for the agent: one-time setup offer when no config exists, and a note when no network is bound yet
+- Guided, Ask-based setup flow and a security model section in `/credo:peer-lan`; optional auto-accept (`crossSessionInbound`) proposal for trusted home networks only
+- `check` shows the detected network, matched profile, enabled/disabled reason, effective allowlist, WSL firewall sync state and exact optional `ufw` commands
+- `-DryRun` for the Windows winproxy script
+- `--announce SECONDS` for `/credo:self-restart run`: ntfy push plus a transcript line with
+  the reason and the cancel command at the start of the announce period.
+- `/credo:self-restart cancel`: aborts a pending restart (marker `cancelled`, waiting worker
+  terminated, worker re-checks the marker right before stopping); `status` shows
+  pending/cancelled/relaunched with the scheduled time.
+
+###### Changed
+
+- BREAKING: existing configs are LAN-disabled until the current network is bound with `bind` (`init` prints the exact suggestion); without a matching bound network the relay accepts no LAN connections, sends no rosters and forwards nothing (loopback still works). On WSL re-run the elevated `-Install` once
+- The WSL Windows firewall rule is scoped to exactly the effective allowlist (previously LocalSubnet) and disabled while the relay is disabled; the daemon re-detects the network every 30 seconds
+- `/credo:self-restart` follows the owner rule: `run` refuses (exit 3, nothing started)
+  unless the user said yes via the Ask tool (`--user-confirmed`) or the session is in credo
+  autonomous mode and the restart is announced at least 5 minutes ahead (`--announce`,
+  default and minimum 300 s). An unannounced restart outside autonomous mode could discard
+  a prompt the user is typing. The command class lists mark it as autonomous-only.
+
+###### Security
+
+- Whitelist is mandatory and fail-closed; wildcards, CIDRs broader than /8 and public ranges are rejected
+- The elevated scheduled task no longer runs the script from the user-writable plugin cache: `-Install` copies it to an admin-only `%ProgramData%\credo` folder (local privilege escalation fix); the task re-validates the allowlist data file itself
+
 #### v0.71
 
 ##### v0.71.2

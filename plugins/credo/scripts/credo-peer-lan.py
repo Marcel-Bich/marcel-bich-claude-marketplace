@@ -36,6 +36,16 @@ SAFETY
   - This daemon only ever removes session descriptors that carry its own
     "credoPeerLan" marker, and only proxy sockets / holders it created.
   - No-op when no config file exists, or when CREDO_PEER_LAN is set to off.
+  - WHITELIST MANDATORY, FAIL-CLOSED: the LAN side is only enabled while the current
+    network matches a bound network profile (router MAC + subnet, see `bind`). Then
+    only sources/targets inside the effective allowlist (peer IPs, CIDRs, ranges or
+    "home" = RFC1918; never a wildcard, never public ranges) are served. Unknown
+    network, no match, legacy config without "networks" or an empty allowlist ->
+    LAN disabled: no inbound from the LAN, no rosters, no forwards. Loopback
+    (same-machine) use always works. All entries go through parse_allow_entry.
+  - Under WSL2 NAT the daemon only sees the WSL gateway as the source address, so the
+    real per-source filter there is the Windows firewall rule, which the elevated
+    task (credo-peer-lan-winproxy.ps1) sets to exactly the same allowlist.
 
 Transport: line-based JSON over TCP. A shared token is OPTIONAL. With a token, frames
 are signed and verified with HMAC-SHA256 (reject on mismatch). Without one (the casual
@@ -47,11 +57,14 @@ only.
 
 import argparse
 import errno
+import getpass
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
+import secrets
 import signal
 import socket
 import subprocess
@@ -399,12 +412,753 @@ def probe_all_peers(cfg):
             )
 
 
-def check_firewall_hint(cfg):
-    """Native-Linux-only, read-only, best-effort: if ufw is active and the listen
-    port is not already allowed, print a clear hint. It NEVER runs sudo and NEVER
-    changes anything; any error (ufw absent, not root, unreadable) is swallowed so the
-    generic doc hint still applies. On WSL there is no local ufw to consult (the port
-    is a Windows portproxy concern), so this is a no-op there."""
+# ---------------------------------------------------------------------------
+# allowlist (whitelist) - the ONE place every allow entry is parsed and validated.
+# The daemon, `bind`, `check` and the Windows data file all go through
+# parse_allow_entry/build_allowlist, so a future mode (e.g. remote A2A with public
+# ranges) only has to extend this one function instead of several call sites.
+# ---------------------------------------------------------------------------
+PRIVATE_BLOCKS = tuple(
+    ipaddress.IPv4Network(n)
+    for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8")
+)
+HOME_CIDRS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+WILDCARD_WORDS = ("*", "any", "all", "everything", "0.0.0.0", "0.0.0.0/0", "::/0")
+MIN_PREFIX = 8
+HOME_WARNING = (
+    'WARNING: allow entry "home" admits EVERY private (RFC1918) address '
+    "(10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) while this network is active - "
+    "the broadest scope allowed. Prefer the peer IPs or your subnet."
+)
+WIN_PROFILES_ALLOWED = ("Private", "Domain", "Public")
+WIN_CATEGORY_TO_PROFILE = {
+    "Private": "Private",
+    "Public": "Public",
+    "DomainAuthenticated": "Domain",
+    "Domain": "Domain",
+}
+DEFAULT_NETWORK_RECHECK = 30.0
+DEFAULT_WIN_TASK = "credo-peer-lan-proxy"
+NETWORK_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+MAC_RE = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
+
+
+class AllowEntryError(ValueError):
+    """An allow entry that is malformed or not permitted (wildcard, too broad,
+    public). The message is user-facing."""
+
+
+def _parse_ipv4(text, raw):
+    text = text.strip()
+    if not IPV4_RE.match(text):
+        raise AllowEntryError("%r is not a valid IPv4 address, CIDR or range" % raw)
+    try:
+        return ipaddress.IPv4Address(text)
+    except ValueError:
+        raise AllowEntryError("%r is not a valid IPv4 address, CIDR or range" % raw)
+
+
+def _private_block(lo, hi):
+    for block in PRIVATE_BLOCKS:
+        if lo in block and hi in block:
+            return block
+    return None
+
+
+def parse_allow_entry(raw):
+    """Parse + validate ONE allow entry. Returns a dict:
+      {"kind": "peers"}  - keyword: all configured peer IPs
+      {"kind": "home"}   - keyword: all RFC1918 ranges (caller prints HOME_WARNING)
+      {"kind": "addr", "text": canonical, "lo": int, "hi": int}
+    Accepted address forms: single IPv4, CIDR (prefix /8../32), range "a-b".
+    Raises AllowEntryError for wildcards, CIDRs broader than /8, anything that is not
+    entirely inside one private (RFC1918) or loopback block, and malformed input.
+    Public ranges are rejected on purpose for now: they are reserved for a future
+    remote mode, which would extend THIS function."""
+    if not isinstance(raw, str):
+        raise AllowEntryError("allow entry %r must be a string" % (raw,))
+    text = raw.strip()
+    low = text.lower()
+    if not text:
+        raise AllowEntryError("empty allow entry")
+    if low in WILDCARD_WORDS or "*" in text:
+        raise AllowEntryError(
+            "%r: wildcards are never allowed - list the peer IPs, a subnet, a range "
+            "or 'home'" % raw
+        )
+    if low == "peers":
+        return {"kind": "peers", "text": "peers"}
+    if low == "home":
+        return {"kind": "home", "text": "home"}
+    if "/" in text:
+        addr, _, pfx = text.partition("/")
+        _parse_ipv4(addr, raw)
+        if not pfx.strip().isdigit() or int(pfx) > 32:
+            raise AllowEntryError("%r has an invalid prefix length" % raw)
+        prefix = int(pfx)
+        if prefix < MIN_PREFIX:
+            raise AllowEntryError(
+                "%r is broader than /%d - not allowed (use a smaller subnet, a range "
+                "or 'home')" % (raw, MIN_PREFIX)
+            )
+        net = ipaddress.IPv4Network("%s/%d" % (addr.strip(), prefix), strict=False)
+        lo, hi = net.network_address, net.broadcast_address
+        canon = str(lo) if prefix == 32 else str(net)
+    elif "-" in text:
+        a, _, b = text.partition("-")
+        lo, hi = _parse_ipv4(a, raw), _parse_ipv4(b, raw)
+        if lo > hi:
+            raise AllowEntryError("%r: range start is after its end" % raw)
+        canon = str(lo) if lo == hi else "%s-%s" % (lo, hi)
+    else:
+        lo = hi = _parse_ipv4(text, raw)
+        canon = str(lo)
+    if _private_block(lo, hi) is None:
+        raise AllowEntryError(
+            "%r is not inside one private (RFC1918) or loopback range - public "
+            "addresses/ranges are not supported yet (reserved for a future remote "
+            "mode)" % raw
+        )
+    return {"kind": "addr", "text": canon, "lo": int(lo), "hi": int(hi)}
+
+
+def build_allowlist(entries, peers):
+    """Expand + validate + dedup a list of allow entries. "peers" expands to every
+    configured peer host, "home" to the RFC1918 blocks (adds HOME_WARNING). Invalid
+    entries are dropped and reported in errors (never silently widened).
+    Returns {"allow": [canonical text], "ranges": [(lo, hi)], "warnings": [...],
+    "errors": [...]}."""
+    out = {"allow": [], "ranges": [], "warnings": [], "errors": []}
+    seen = set()
+
+    def _add(parsed):
+        if parsed["text"] in seen:
+            return
+        seen.add(parsed["text"])
+        out["allow"].append(parsed["text"])
+        out["ranges"].append((parsed["lo"], parsed["hi"]))
+
+    if not isinstance(entries, list):
+        out["errors"].append("allow must be a list of entries")
+        return out
+    for raw in entries:
+        try:
+            parsed = parse_allow_entry(raw)
+        except AllowEntryError as exc:
+            out["errors"].append(str(exc))
+            continue
+        if parsed["kind"] == "peers":
+            for p in peers or []:
+                try:
+                    _add(parse_allow_entry(p["host"]))
+                except AllowEntryError as exc:
+                    out["errors"].append("peer %s not allowlisted: %s" % (p["host"], exc))
+        elif parsed["kind"] == "home":
+            if HOME_WARNING not in out["warnings"]:
+                out["warnings"].append(HOME_WARNING)
+            for cidr in HOME_CIDRS:
+                _add(parse_allow_entry(cidr))
+        else:
+            _add(parsed)
+    return out
+
+
+def is_loopback_ip(ip):
+    ip = ip or ""
+    if ip.startswith("::ffff:"):
+        ip = ip[7:]
+    return ip.startswith("127.") or ip == "::1"
+
+
+def ip_in_ranges(ip, ranges):
+    try:
+        v = int(ipaddress.IPv4Address((ip or "").replace("::ffff:", "")))
+    except ValueError:
+        return False
+    return any(lo <= v <= hi for lo, hi in ranges)
+
+
+def windows_profiles(cfg):
+    """Validated windows_profiles (WSL only): default ["Private"]; "Domain"/"Public"
+    are explicit, not-recommended opt-ins for company/public networks."""
+    raw = cfg.get("windows_profiles")
+    if raw is None:
+        return ["Private"]
+    out = []
+    if isinstance(raw, list):
+        for v in raw:
+            for allowed in WIN_PROFILES_ALLOWED:
+                if isinstance(v, str) and v.strip().lower() == allowed.lower():
+                    if allowed not in out:
+                        out.append(allowed)
+    return out or ["Private"]
+
+
+# ---------------------------------------------------------------------------
+# network detection + binding. A network profile is bound to the router's MAC
+# address plus the subnet; only on a matching network is the LAN side enabled.
+# ---------------------------------------------------------------------------
+def normalize_mac(mac):
+    m = (mac or "").strip().lower().replace("-", ":")
+    if MAC_RE.match(m) and m not in ("00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff"):
+        return m
+    return None
+
+
+def _win_cwd():
+    # run Windows tools from a Windows directory so cmd.exe does not warn about a
+    # UNC working directory
+    return "/mnt/c" if os.path.isdir("/mnt/c") else None
+
+
+def _run_out(argv, timeout=5, cwd=None):
+    try:
+        res = subprocess.run(
+            argv, capture_output=True, text=True, timeout=timeout, cwd=cwd
+        )
+    except Exception:
+        return ""
+    return res.stdout or ""
+
+
+def linux_default_route():
+    """(gateway_ip, device) of the lowest-metric IPv4 default route, or (None, None)."""
+    best = None
+    for line in _run_out(["ip", "-o", "-4", "route", "show", "default"]).splitlines():
+        m = re.search(r"\bvia\s+(\d{1,3}(?:\.\d{1,3}){3})\s+dev\s+(\S+)", line)
+        if not m:
+            continue
+        mm = re.search(r"\bmetric\s+(\d+)", line)
+        metric = int(mm.group(1)) if mm else 0
+        if best is None or metric < best[0]:
+            best = (metric, m.group(1), m.group(2))
+    if best is None:
+        return None, None
+    return best[1], best[2]
+
+
+def _neigh_mac(gw, dev):
+    out = _run_out(["ip", "neigh", "show", gw, "dev", dev])
+    m = re.search(r"\blladdr\s+([0-9a-fA-F:]{17})", out)
+    if m:
+        return normalize_mac(m.group(1))
+    try:
+        with open("/proc/net/arp") as fh:
+            for line in fh.read().splitlines()[1:]:
+                cols = line.split()
+                if len(cols) >= 4 and cols[0] == gw:
+                    return normalize_mac(cols[3])
+    except OSError:
+        pass
+    return None
+
+
+def _ssid_linux():
+    if have_cmd("iwgetid"):
+        s = _run_out(["iwgetid", "-r"], timeout=3).strip()
+        if s:
+            return s
+    if have_cmd("nmcli"):
+        for line in _run_out(
+            ["nmcli", "-t", "-f", "active,ssid", "dev", "wifi"], timeout=5
+        ).splitlines():
+            if line.startswith("yes:"):
+                return line[4:].strip() or None
+    return None
+
+
+def detect_network_linux():
+    gw, dev = linux_default_route()
+    if not gw:
+        return None
+    mac = _neigh_mac(gw, dev)
+    if mac is None:
+        # the router is not in the neighbor table yet: one empty UDP datagram to it
+        # makes the kernel resolve its MAC (ARP); then read the table again
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.sendto(b"", (gw, 9))
+            s.close()
+            time.sleep(0.3)
+        except OSError:
+            pass
+        mac = _neigh_mac(gw, dev)
+    out = _run_out(["ip", "-o", "-4", "addr", "show", "dev", dev])
+    m = re.search(r"\binet\s+(\d{1,3}(?:\.\d{1,3}){3}/\d{1,2})", out)
+    ip = subnet = None
+    if m:
+        iface = ipaddress.IPv4Interface(m.group(1))
+        ip, subnet = str(iface.ip), str(iface.network)
+    return {
+        "iface": dev,
+        "ip": ip,
+        "subnet": subnet,
+        "gateway_ip": gw,
+        "gateway_mac": mac,
+        "ssid": _ssid_linux(),
+    }
+
+
+# ONE read-only powershell call: the Windows default route with the lowest metric,
+# the router MAC from the neighbor table, the adapter IPv4 + prefix, and the network
+# profile (name = label, NetworkCategory = Private/Public/DomainAuthenticated).
+WSL_NETINFO_PS = (
+    '$ErrorActionPreference="Stop"; '
+    '$r = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -AddressFamily IPv4 | '
+    "Sort-Object { [int]$_.RouteMetric + [int]$_.InterfaceMetric } | "
+    "Select-Object -First 1; "
+    "$n = Get-NetNeighbor -IPAddress $r.NextHop -InterfaceIndex $r.ifIndex "
+    "-ErrorAction SilentlyContinue | Select-Object -First 1; "
+    "$a = Get-NetIPAddress -InterfaceIndex $r.ifIndex -AddressFamily IPv4 | "
+    "Select-Object -First 1; "
+    "$p = Get-NetConnectionProfile -InterfaceIndex $r.ifIndex "
+    "-ErrorAction SilentlyContinue | Select-Object -First 1; "
+    "[pscustomobject]@{iface=[string]$r.InterfaceAlias; gateway_ip=[string]$r.NextHop; "
+    "gateway_mac=[string]$n.LinkLayerAddress; ip=[string]$a.IPAddress; "
+    "prefix=[int]$a.PrefixLength; ssid=[string]$p.Name; "
+    "windows_category=[string]$p.NetworkCategory} | ConvertTo-Json -Compress"
+)
+
+
+def detect_network_wsl():
+    """Under WSL the WSL NAT gateway is not the real router, so ask Windows. Also
+    records the WSL-internal NAT gateway (the source IP the daemon sees for every LAN
+    connection under NAT) as wsl_nat_gateway."""
+    if not have_cmd("powershell.exe"):
+        return None
+    out = _run_out(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", WSL_NETINFO_PS],
+        timeout=25,
+        cwd=_win_cwd(),
+    )
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip().startswith("{")]
+    if not lines:
+        return None
+    try:
+        d = json.loads(lines[-1])
+    except Exception:
+        return None
+    if not isinstance(d, dict):
+        return None
+    d["wsl_nat_gateway"] = linux_default_route()[0]
+    return d
+
+
+def normalize_netinfo(d):
+    """Canonical netinfo dict or None. Fills subnet from ip+prefix, lowercases the MAC
+    to colon form, drops anything unparseable (a field that cannot be trusted is
+    None, so matching then fails closed)."""
+    if not isinstance(d, dict):
+        return None
+    ip = d.get("ip") if isinstance(d.get("ip"), str) and IPV4_RE.match(d.get("ip")) else None
+    subnet = None
+    try:
+        if d.get("subnet"):
+            subnet = str(ipaddress.IPv4Network(str(d["subnet"]), strict=False))
+        elif ip and d.get("prefix") not in (None, ""):
+            subnet = str(ipaddress.IPv4Interface("%s/%d" % (ip, int(d["prefix"]))).network)
+    except (ValueError, TypeError):
+        subnet = None
+    out = {
+        "iface": d.get("iface") or None,
+        "ip": ip,
+        "subnet": subnet,
+        "gateway_ip": d.get("gateway_ip") or None,
+        "gateway_mac": normalize_mac(d.get("gateway_mac")),
+        "ssid": d.get("ssid") or None,
+    }
+    if d.get("windows_category"):
+        out["windows_category"] = str(d["windows_category"])
+    if d.get("wsl_nat_gateway"):
+        out["wsl_nat_gateway"] = str(d["wsl_nat_gateway"])
+    return out
+
+
+def detect_network():
+    """The current network as a normalized dict, or None when unknown. TEST-ONLY
+    override: CREDO_PEER_LAN_NETINFO holds a JSON object (or "@/path/file.json")
+    that replaces detection entirely; "null", unreadable or invalid -> unknown."""
+    raw = os.environ.get("CREDO_PEER_LAN_NETINFO")
+    if raw is not None:
+        try:
+            if raw.startswith("@"):
+                with open(raw[1:]) as fh:
+                    raw = fh.read()
+            return normalize_netinfo(json.loads(raw))
+        except Exception:
+            return None
+    try:
+        d = detect_network_wsl() if is_wsl() else detect_network_linux()
+    except Exception as exc:
+        log("network detection failed: %s" % exc)
+        return None
+    return normalize_netinfo(d)
+
+
+def match_network(networks, net):
+    """Name of the bound network the detected one matches, else None. A match needs
+    BOTH the router MAC to be equal AND the detected IP to lie inside the bound
+    subnet. Unknown detection or missing fields never match (fail-closed)."""
+    if not net or not isinstance(networks, dict):
+        return None
+    mac, ip = net.get("gateway_mac"), net.get("ip")
+    if not mac or not ip:
+        return None
+    for name in sorted(networks):
+        prof = networks[name]
+        if not isinstance(prof, dict):
+            continue
+        fp = prof.get("fingerprint") or {}
+        if not isinstance(fp, dict) or normalize_mac(fp.get("gateway_mac")) != mac:
+            continue
+        try:
+            if ipaddress.IPv4Address(ip) in ipaddress.IPv4Network(
+                str(fp.get("subnet")), strict=False
+            ):
+                return name
+        except ValueError:
+            continue
+    return None
+
+
+def network_group(prof):
+    g = prof.get("group") if isinstance(prof, dict) else None
+    return g if isinstance(g, str) and g.strip() else "home"
+
+
+def compute_lan_state(cfg, net, peers, wsl=False):
+    """Effective LAN state for the detected network. FAIL-CLOSED: no networks
+    (legacy config), unknown detection, no match, a Windows network category outside
+    windows_profiles (WSL), or an empty effective allowlist -> enabled False.
+    When the current network matches profile P, the allowlist is the union of the
+    allow entries of ALL networks in P's group (so two home WLANs in one group may
+    talk to each other)."""
+    st = {
+        "enabled": False,
+        "reason": "",
+        "network": None,
+        "group": None,
+        "label": None,
+        "allow": [],
+        "ranges": [],
+        "warnings": [],
+        "errors": [],
+        "netinfo": net,
+        "windows_profiles": windows_profiles(cfg),
+    }
+    networks = cfg.get("networks")
+    if not isinstance(networks, dict) or not networks:
+        st["reason"] = (
+            "no network is bound (legacy or new config) - run 'credo-peer-lan.py bind' "
+            "while connected to a trusted network"
+        )
+        return st
+    if net is None:
+        st["reason"] = "network detection failed (unknown network)"
+        return st
+    name = match_network(networks, net)
+    if name is None:
+        st["reason"] = "current network (router %s, subnet %s) is not bound" % (
+            net.get("gateway_mac") or "?",
+            net.get("subnet") or "?",
+        )
+        return st
+    group = network_group(networks[name])
+    st["network"], st["group"] = name, group
+    st["label"] = networks[name].get("label")
+    entries = []
+    for other in sorted(networks):
+        prof = networks[other]
+        if not isinstance(prof, dict) or network_group(prof) != group:
+            continue
+        allow = prof.get("allow", ["peers"])
+        if isinstance(allow, list):
+            entries.extend(allow)
+        else:
+            st["errors"].append("network %s: allow must be a list" % other)
+    built = build_allowlist(entries, peers)
+    st["allow"], st["ranges"] = built["allow"], built["ranges"]
+    st["warnings"].extend(built["warnings"])
+    st["errors"].extend(built["errors"])
+    if wsl and net.get("windows_category"):
+        prof = WIN_CATEGORY_TO_PROFILE.get(net["windows_category"])
+        if prof not in st["windows_profiles"]:
+            st["reason"] = (
+                "Windows classifies this network as %s, which is not in "
+                "windows_profiles %s" % (net["windows_category"], st["windows_profiles"])
+            )
+            return st
+    if not st["allow"]:
+        st["reason"] = "the effective allowlist is empty"
+        return st
+    st["enabled"] = True
+    st["reason"] = "network %s (group %s) is bound" % (name, group)
+    return st
+
+
+def source_allowed(src_ip, state, wsl=False):
+    """Inbound gate, evaluated BEFORE any byte is read. Loopback is always allowed
+    (same-machine use). Otherwise the LAN side must be enabled and the source inside
+    the effective allowlist. Under WSL2 NAT every LAN connection arrives from the
+    WSL NAT gateway (the Windows host), so the daemon cannot see the real peer IP;
+    there the gateway is accepted while LAN is enabled and the REAL per-source filter
+    is the Windows firewall rule (RemoteAddress = the same allowlist, see
+    credo-peer-lan-winproxy.ps1). In WSL mirrored mode real IPs arrive and the
+    allowlist applies directly."""
+    if is_loopback_ip(src_ip):
+        return True
+    if not state or not state.get("enabled"):
+        return False
+    if wsl:
+        gw = (state.get("netinfo") or {}).get("wsl_nat_gateway")
+        if gw and src_ip == gw:
+            return True
+    return ip_in_ranges(src_ip, state.get("ranges", []))
+
+
+def peer_allowed_outbound(host, state):
+    """Outbound gate for rosters/forwards: loopback always; LAN peers only while the
+    LAN side is enabled AND the peer IP is inside the effective allowlist (so no
+    session names leak on a foreign network)."""
+    if is_loopback_ip(host):
+        return True
+    if not state or not state.get("enabled"):
+        return False
+    return ip_in_ranges(host, state.get("ranges", []))
+
+
+# ---------------------------------------------------------------------------
+# config writing (0600: the file may hold the token)
+# ---------------------------------------------------------------------------
+def write_config(cfg, path=None):
+    path = path or config_path()
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(json.dumps(cfg, indent=2) + "\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+# ---------------------------------------------------------------------------
+# WSL2: Windows firewall allowlist sync. The daemon writes the effective allowlist
+# as a DATA file into the user's %LOCALAPPDATA%\credo; the elevated scheduled task
+# (installed copy in %ProgramData%\credo) re-validates every entry itself and applies
+# it to the firewall rule. The data file is never trusted blindly.
+# ---------------------------------------------------------------------------
+PS_VERSION_RE = re.compile(r'^\$ScriptVersion\s*=\s*"?(\d+)"?', re.M)
+
+
+def win_env_dir(var):
+    """WSL path of a Windows environment directory (LOCALAPPDATA, ProgramData), or
+    None. Read-only: cmd.exe echo + wslpath."""
+    if not (have_cmd("cmd.exe") and have_cmd("wslpath")):
+        return None
+    out = _run_out(["cmd.exe", "/c", "echo %" + var + "%"], timeout=10, cwd=_win_cwd())
+    val = out.strip().splitlines()[-1].strip() if out.strip() else ""
+    if not val or "%" in val:
+        return None
+    p = _run_out(["wslpath", "-u", val], timeout=5).strip()
+    return p or None
+
+
+def win_allow_file():
+    ov = os.environ.get("CREDO_PEER_LAN_WINALLOW_FILE")
+    if ov:
+        return ov
+    base = win_env_dir("LOCALAPPDATA")
+    return os.path.join(base, "credo", "peer-lan-allow.json") if base else None
+
+
+def win_programdata_dir():
+    ov = os.environ.get("CREDO_PEER_LAN_WINPROGRAMDATA")
+    if ov:
+        return ov
+    base = win_env_dir("ProgramData")
+    return os.path.join(base, "credo") if base else None
+
+
+def win_allow_payload(state, port):
+    enabled = bool(state.get("enabled"))
+    return {
+        "version": 1,
+        "enabled": enabled,
+        "allow": list(state.get("allow", [])) if enabled else [],
+        "windows_profiles": list(state.get("windows_profiles") or ["Private"]),
+        "port": int(port),
+        "network": state.get("network"),
+        "group": state.get("group"),
+    }
+
+
+def write_win_allow_file(path, payload):
+    """Atomically write the data file, ONLY when its content changes. Returns True
+    when it was (re)written, False when it already had this content."""
+    text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    try:
+        with open(path) as fh:
+            if fh.read() == text:
+                return False
+    except OSError:
+        pass
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    with open(tmp, "w") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
+    return True
+
+
+def trigger_win_task():
+    """Best-effort, non-blocking: ask the Task Scheduler to run the elevated refresh
+    task (same pattern as the autostart hook). Honors CREDO_PEER_LAN_WINPROXY=off."""
+    if str(os.environ.get("CREDO_PEER_LAN_WINPROXY", "1")).lower() in ("0", "false", "no", "off"):
+        return False
+    if not have_cmd("powershell.exe"):
+        return False
+    task = os.environ.get("CREDO_PEER_LAN_WINPROXY_TASK") or DEFAULT_WIN_TASK
+    if not re.match(r"^[A-Za-z0-9._ -]+$", task):
+        return False
+    try:
+        subprocess.Popen(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+             "schtasks /Run /TN '%s'" % task],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=_win_cwd(),
+            start_new_session=True,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def ps_script_version(path):
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            m = PS_VERSION_RE.search(fh.read())
+    except OSError:
+        return None
+    return int(m.group(1)) if m else None
+
+
+def win_firewall_status(state, port):
+    """Human-readable lines about the WSL Windows firewall sync (read-only)."""
+    lines = []
+    plugin_ps = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "credo-peer-lan-winproxy.ps1"
+    )
+    want = ps_script_version(plugin_ps)
+    pd = win_programdata_dir()
+    if pd is None:
+        lines.append("installed task script: unknown (cannot resolve %ProgramData%)")
+    else:
+        have = ps_script_version(os.path.join(pd, "credo-peer-lan-winproxy.ps1"))
+        if have is None:
+            lines.append(
+                "installed task script: NOT installed in %ProgramData%\\credo - run "
+                "the elevated -Install once (see /credo:peer-lan)"
+            )
+        elif want is not None and have < want:
+            lines.append(
+                "installed task script: OUTDATED (installed v%d, plugin v%d) - re-run "
+                "the elevated -Install once (one UAC prompt)" % (have, want)
+            )
+        else:
+            lines.append("installed task script: v%d (current)" % have)
+    path = win_allow_file()
+    want_payload = win_allow_payload(state, port)
+    if path is None:
+        lines.append("allowlist data file: unknown (cannot resolve %LOCALAPPDATA%)")
+    else:
+        try:
+            with open(path) as fh:
+                cur = json.load(fh)
+        except Exception:
+            cur = None
+        if cur is None:
+            lines.append("allowlist data file: missing (%s) - the daemon writes it" % path)
+        elif cur == want_payload:
+            lines.append("allowlist data file: up to date (%s)" % path)
+        else:
+            lines.append("allowlist data file: STALE (%s) - the running daemon rewrites it on its next network check" % path)
+    if pd is not None:
+        try:
+            with open(os.path.join(pd, "peer-lan-applied.json"), encoding="utf-8-sig") as fh:
+                applied = json.load(fh)
+        except Exception:
+            applied = None
+        if not isinstance(applied, dict):
+            lines.append("firewall rule: no applied state recorded yet")
+        else:
+            on = bool(applied.get("enabled"))
+            lines.append(
+                "firewall rule: %s, RemoteAddress=%s, Profile=%s (applied %s)"
+                % (
+                    "ENABLED" if on else "DISABLED",
+                    ",".join(applied.get("remote_address") or []) or "-",
+                    ",".join(applied.get("profiles") or []) or "-",
+                    applied.get("applied_at", "?"),
+                )
+            )
+            in_sync = on == want_payload["enabled"] and (
+                not on or sorted(applied.get("remote_address") or []) == sorted(want_payload["allow"])
+            )
+            lines.append("firewall sync: %s" % ("in sync" if in_sync else "PENDING (task not run yet or failed)"))
+    return lines
+
+
+def print_lan_status(cfg, state):
+    net = state.get("netinfo")
+    if net:
+        print(
+            "Network:   %s, subnet %s, router %s (%s, this IP %s)"
+            % (
+                net.get("ssid") or "(no label)",
+                net.get("subnet") or "?",
+                net.get("gateway_mac") or "?",
+                net.get("iface") or "?",
+                net.get("ip") or "?",
+            )
+        )
+    else:
+        print("Network:   unknown (detection failed)")
+    if state.get("network"):
+        print("Profile:   %s (group %s)" % (state["network"], state["group"]))
+    else:
+        print("Profile:   none matched")
+    if state.get("enabled"):
+        print("LAN relay: ENABLED - %s" % state["reason"])
+    else:
+        print("LAN relay: DISABLED - %s (loopback/same-machine use still works)" % state["reason"])
+    print("Allowlist: %s" % (", ".join(state["allow"]) if state["allow"] else "(empty)"))
+    for w in state.get("warnings", []):
+        print(w)
+    for e in state.get("errors", []):
+        print("ERROR: invalid entry dropped: %s" % e)
+    print("Token:     %s" % ("set" if cfg.get("token") else "none (optional)"))
+    if is_wsl():
+        if net and net.get("windows_category"):
+            print("Windows:   network category %s, windows_profiles %s" % (net["windows_category"], state["windows_profiles"]))
+        for line in win_firewall_status(state, int(cfg.get("listen_port", DEFAULT_PORT))):
+            print("WSL sync:  %s" % line)
+
+
+def check_firewall_hint(cfg, state=None):
+    """Native-Linux-only, read-only, best-effort ufw hint. It NEVER runs sudo and
+    NEVER changes anything; any error (ufw absent, not root, unreadable) is swallowed.
+    When the LAN side is enabled it prints the exact optional ufw commands for the
+    effective allowlist. On WSL there is no local ufw to consult (the Windows firewall
+    is synced from the allowlist instead), so this is a no-op there."""
     if is_wsl():
         return
     if not have_cmd("ufw"):
@@ -419,14 +1173,36 @@ def check_firewall_hint(cfg):
     status = out.stdout or ""
     if "Status: active" not in status:
         return  # inactive, needs-root, or unreadable -> nothing to warn about
+    cmds = []
+    if state and state.get("enabled"):
+        for entry in state["allow"]:
+            if "-" in entry:
+                cmds.append(
+                    "  # %s: ufw has no range syntax - cover it with a CIDR or one rule per address" % entry
+                )
+            else:
+                cmds.append("  sudo ufw allow from %s to any port %d proto tcp" % (entry, port))
     if str(port) in status:
-        return  # a rule already mentions the port
-    print(
-        "WARNING: ufw is active and port %d does not appear in its rules - the relay "
-        "port may be blocked on this machine. Allow it scoped to your LAN, e.g.:\n"
-        "  sudo ufw allow from 192.168.0.0/16 to any port %d proto tcp"
-        % (port, port)
-    )
+        if cmds:
+            print(
+                "Note: ufw already mentions port %d. To scope it exactly to the "
+                "effective allowlist (optional), the rules are:\n%s" % (port, "\n".join(cmds))
+            )
+        return
+    if cmds:
+        print(
+            "WARNING: ufw is active and port %d does not appear in its rules - the relay "
+            "port may be blocked on this machine. Optional rules for the effective "
+            "allowlist:\n%s" % (port, "\n".join(cmds))
+        )
+    else:
+        print(
+            "WARNING: ufw is active and port %d does not appear in its rules - the relay "
+            "port may be blocked on this machine. Once a network is bound, allow it "
+            "scoped to the allowlist, e.g.:\n"
+            "  sudo ufw allow from <peer-ip-or-subnet> to any port %d proto tcp"
+            % (port, port)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -474,6 +1250,14 @@ def verify_line(token, line):
 
 
 def send_to_peer(host, port, token, payload, timeout=5.0):
+    # TEST-ONLY: CREDO_PEER_LAN_TEST_SENDLOG records "<kind> <host>:<port>" lines
+    # instead of connecting, so the test suite can assert outbound enforcement for
+    # LAN-shaped peer addresses without ever touching a real LAN.
+    testlog = os.environ.get("CREDO_PEER_LAN_TEST_SENDLOG")
+    if testlog:
+        with open(testlog, "a") as fh:
+            fh.write("%s %s:%s\n" % (payload.get("kind"), host, port))
+        return
     line = frame_for(token, payload).encode("utf-8")
     s = socket.create_connection((host, port), timeout=timeout)
     try:
@@ -900,6 +1684,19 @@ class Daemon(object):
         self.unknown_warned = set()  # peer addrs warned once (not a configured peer)
         self.stop = threading.Event()
         self.srv = None
+        # LAN allowlist state. FAIL-CLOSED: disabled until the network watcher has
+        # detected and matched a bound network (loopback keeps working meanwhile).
+        self.wsl = is_wsl()
+        self.network_recheck = float(
+            cfg.get("network_recheck_interval", DEFAULT_NETWORK_RECHECK)
+        )
+        self.lan_state = compute_lan_state({}, None, self.peers, self.wsl)
+        self.lan_state["reason"] = "network not detected yet"
+        self._lan_key = None
+        self.rejected_warned = set()  # inbound source IPs rejected (logged once each)
+        self.outbound_skip_warned = set()  # peers skipped by the outbound gate
+        self._win_allow_path = None
+        self._win_allow_resolved = False
 
     # -- lifecycle ----------------------------------------------------------
     def start(self):
@@ -962,6 +1759,7 @@ class Daemon(object):
             # roster loop; until it resolves, rosters simply omit the advertise fields
             # (receivers then fall back - see _resolve_peer_addr).
             threading.Thread(target=self._detect_advertise_host, daemon=True).start()
+        threading.Thread(target=self._netwatch_loop, daemon=True).start()
         threading.Thread(target=self._accept_loop, daemon=True).start()
         threading.Thread(target=self._roster_loop, daemon=True).start()
         threading.Thread(target=self._janitor_loop, daemon=True).start()
@@ -977,6 +1775,91 @@ class Daemon(object):
             log("advertising self address %s:%d in rosters" % (ip, self.advertise_port))
         else:
             log("self-address not detected; rosters omit the advertise fields")
+
+    # -- network watcher (allowlist state) ------------------------------------
+    def _netwatch_loop(self):
+        """Detect the network at start and then every network_recheck_interval
+        seconds, in its own thread so a slow detection (powershell under WSL) never
+        blocks the accept or roster loops."""
+        while not self.stop.is_set():
+            try:
+                self.recheck_network()
+            except Exception as exc:
+                log("network check failed: %s" % exc)
+            if self.stop.wait(self.network_recheck):
+                break
+
+    def recheck_network(self):
+        """Re-detect the network, recompute the effective allowlist (re-reading the
+        config's networks/windows_profiles so `bind` applies without a restart), log
+        every transition, prune remotes that are no longer allowed, and (WSL) sync
+        the Windows firewall data file. Returns the new state."""
+        fresh = load_config()
+        merged = dict(self.cfg)
+        for key in ("networks", "windows_profiles"):
+            merged.pop(key, None)
+            if isinstance(fresh, dict) and key in fresh:
+                merged[key] = fresh[key]
+        state = compute_lan_state(merged, detect_network(), self.peers, self.wsl)
+        key = (
+            state["enabled"],
+            state["network"],
+            state["group"],
+            tuple(state["allow"]),
+            state["reason"],
+        )
+        changed = key != self._lan_key
+        with self.lock:
+            self.lan_state = state
+            if changed:
+                self._lan_key = key
+                self.outbound_skip_warned.clear()
+                self.rejected_warned.clear()
+                for rkey in list(self.remotes.keys()):
+                    host = split_host_port(rkey[0], self.listen_port)[0]
+                    if not peer_allowed_outbound(host, state):
+                        self._remove_remote_locked(rkey)
+        if changed:
+            if state["enabled"]:
+                log(
+                    "network: %s (group %s) -> LAN enabled, allow: %s"
+                    % (state["network"], state["group"], ", ".join(state["allow"]))
+                )
+            elif state["netinfo"] is None:
+                log("network unknown -> LAN disabled (%s)" % state["reason"])
+            else:
+                log("network not allowed -> LAN disabled (%s)" % state["reason"])
+            for w in state["warnings"]:
+                log(w)
+            for e in state["errors"]:
+                log("invalid allow entry dropped: %s" % e)
+        self._win_sync(state)
+        return state
+
+    def _win_sync(self, state):
+        """WSL only: write the effective allowlist to the Windows data file (only on
+        change) and trigger the elevated refresh task. Skipped for a loopback-only
+        listener (nothing is reachable from the LAN, so there is nothing to open)."""
+        if not self.wsl or is_loopback_ip(self.listen_host):
+            return
+        if not self._win_allow_resolved:
+            self._win_allow_resolved = True
+            self._win_allow_path = win_allow_file()
+            if not self._win_allow_path:
+                log("cannot resolve %LOCALAPPDATA% - Windows firewall allowlist not synced")
+        if not self._win_allow_path:
+            return
+        try:
+            written = write_win_allow_file(
+                self._win_allow_path, win_allow_payload(state, self.listen_port)
+            )
+        except Exception as exc:
+            log("windows allowlist write %s failed: %s" % (self._win_allow_path, exc))
+            return
+        if written:
+            log("windows firewall allowlist data updated (%s)" % self._win_allow_path)
+            if not os.environ.get("CREDO_PEER_LAN_WINALLOW_FILE"):
+                trigger_win_task()
 
     def _write_pidfile(self):
         """Atomically record our pid, version, listen port and start time after a
@@ -1036,6 +1919,27 @@ class Daemon(object):
                 conn, addr = self.srv.accept()
             except OSError:
                 break
+            # allowlist gate BEFORE reading any byte: loopback always, otherwise only
+            # while LAN is enabled and the source is allowed (see source_allowed)
+            src = addr[0] if isinstance(addr, tuple) and addr else ""
+            with self.lock:
+                state = self.lan_state
+            if not source_allowed(src, state, self.wsl):
+                if src not in self.rejected_warned:
+                    self.rejected_warned.add(src)
+                    log(
+                        "rejected inbound connection from %s (%s)"
+                        % (
+                            src,
+                            "not in the allowlist" if state.get("enabled")
+                            else "LAN disabled: " + state.get("reason", ""),
+                        )
+                    )
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                continue
             # bound concurrency: try to grab a slot without blocking the accept loop.
             # If the pool is full, shed this (still unauthenticated) connection rather
             # than spawning an unbounded number of handler threads.
@@ -1132,36 +2036,63 @@ class Daemon(object):
     # -- roster -------------------------------------------------------------
     def _roster_loop(self):
         while not self.stop.wait(self.roster_interval):
-            sessions = [
-                {
-                    "sessionId": d.get("sessionId"),
-                    "name": d.get("name") or d.get("sessionId"),
-                    "status": d.get("status", "idle"),
-                }
-                for d in read_local_sessions(self.sess_dir)
-            ]
-            payload = {
-                "kind": "roster",
-                "machine": self.this_machine,
-                # announce our listen port so the receiver can pair this roster
-                # (by source IP + this port) with the configured peer address to
-                # forward replies to - address-based routing, no name contract.
-                "listen_port": self.listen_port,
-                "sessions": sessions,
+            self.roster_tick()
+
+    def roster_tick(self):
+        """Send one roster to every peer the outbound gate allows. While LAN is
+        disabled no LAN peer gets anything (no session names leak on a foreign
+        network); loopback peers are unaffected."""
+        with self.lock:
+            state = self.lan_state
+        targets = []
+        for peer in self.peers:
+            if peer_allowed_outbound(peer["host"], state):
+                targets.append(peer)
+                continue
+            addr = "%s:%d" % (peer["host"], peer["port"])
+            if addr not in self.outbound_skip_warned:
+                self.outbound_skip_warned.add(addr)
+                log(
+                    "not sending rosters to %s (%s)"
+                    % (
+                        addr,
+                        "outside the allowlist" if state.get("enabled")
+                        else "LAN disabled: " + state.get("reason", ""),
+                    )
+                )
+        if not targets:
+            return 0
+        sessions = [
+            {
+                "sessionId": d.get("sessionId"),
+                "name": d.get("name") or d.get("sessionId"),
+                "status": d.get("status", "idle"),
             }
-            # advertise our own reachable address so the receiver forwards to the
-            # CONFIGURED peer matching it, never to the raw inbound source IP (which
-            # under WSL2 NAT is the gateway, not us). Omitted until detected, so an
-            # old peer that never sends it still works via the receiver's fallback.
-            if self.advertise_host:
-                payload["advertise_host"] = self.advertise_host
-                payload["advertise_port"] = self.advertise_port
-            for peer in self.peers:
-                host, port = peer["host"], peer["port"]
-                try:
-                    send_to_peer(host, port, self.token, payload)
-                except Exception as exc:
-                    log("roster to %s:%s failed: %s" % (host, port, exc))
+            for d in read_local_sessions(self.sess_dir)
+        ]
+        payload = {
+            "kind": "roster",
+            "machine": self.this_machine,
+            # announce our listen port so the receiver can pair this roster
+            # (by source IP + this port) with the configured peer address to
+            # forward replies to - address-based routing, no name contract.
+            "listen_port": self.listen_port,
+            "sessions": sessions,
+        }
+        # advertise our own reachable address so the receiver forwards to the
+        # CONFIGURED peer matching it, never to the raw inbound source IP (which
+        # under WSL2 NAT is the gateway, not us). Omitted until detected, so an
+        # old peer that never sends it still works via the receiver's fallback.
+        if self.advertise_host:
+            payload["advertise_host"] = self.advertise_host
+            payload["advertise_port"] = self.advertise_port
+        for peer in targets:
+            host, port = peer["host"], peer["port"]
+            try:
+                send_to_peer(host, port, self.token, payload)
+            except Exception as exc:
+                log("roster to %s:%s failed: %s" % (host, port, exc))
+        return len(targets)
 
     def _resolve_peer_addr(self, src_ip, listen_port, adv_host=None, adv_port=None):
         """Map an inbound roster to the peer ADDRESS its replies/messages forward to,
@@ -1215,6 +2146,13 @@ class Daemon(object):
         addr_key = "%s:%d" % peer_addr
         now = time.monotonic()
         with self.lock:
+            # outbound gate: never materialize a holder whose forward target is a LAN
+            # address the current allowlist does not permit (forwards would leak)
+            if not peer_allowed_outbound(peer_addr[0], self.lan_state):
+                if addr_key not in self.outbound_skip_warned:
+                    self.outbound_skip_warned.add(addr_key)
+                    log("roster from %s ignored: forward target not allowed" % addr_key)
+                return
             self.machine_seen[addr_key] = now
             # Unexpected-inbound signal: a roster whose source address is NOT among
             # the configured peer addresses. Token-less this is still served (the
@@ -1682,6 +2620,8 @@ def run_init(args):
     """Write/update the config from one or more peer IPs, token-less, then print
     this machine's own address and probe the configured peers. Pure: it never
     starts the daemon or touches Windows (that is the command doc / autostart).
+    It never binds a network silently: when the current network is not bound yet it
+    prints the exact `bind` suggestion for the agent/user to confirm.
 
     Modes:
       init <ips...>            additive + dedup (default)
@@ -1731,9 +2671,7 @@ def run_init(args):
             added.append(p)
     cfg["peers"] = [peer_to_string(p, default_port) for p in peers]
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as fh:
-            fh.write(json.dumps(cfg, indent=2) + "\n")
+        write_config(cfg, path)
     except Exception as exc:
         log("init: could not write %s: %s" % (path, exc))
         return 1
@@ -1754,14 +2692,72 @@ def run_init(args):
     print_self_address(cfg)
     print("")
     probe_all_peers(cfg)
-    check_firewall_hint(cfg)
+    net = detect_network()
+    state = compute_lan_state(cfg, net, normalize_peers(cfg["peers"], default_port), is_wsl())
+    print("")
+    print_bind_suggestion(cfg, net, state)
+    check_firewall_hint(cfg, state)
     return 0
+
+
+def _shell_quote(text):
+    if re.match(r"^[A-Za-z0-9._/:@-]+$", text or ""):
+        return text
+    return "'" + (text or "").replace("'", "'\\''") + "'"
+
+
+def default_network_name(net, label=None):
+    base = label or (net or {}).get("ssid") or ""
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", base).strip("-._").lower()[:40]
+    if not name:
+        name = "net-" + ((net or {}).get("subnet") or "unknown").replace(".", "-").replace("/", "-")
+    return name
+
+
+def print_bind_suggestion(cfg, net, state):
+    if state.get("enabled"):
+        print(
+            "LAN relay ENABLED on this network: %s (group %s), allow: %s"
+            % (state["network"], state["group"], ", ".join(state["allow"]))
+        )
+        return
+    if net is None or not net.get("gateway_mac") or not net.get("subnet"):
+        print(
+            "LAN relay DISABLED: the current network could not be detected, so it cannot "
+            "be bound. Run 'credo-peer-lan.py netinfo' to inspect detection."
+        )
+        return
+    if state.get("network"):
+        print("LAN relay DISABLED on bound network %s: %s" % (state["network"], state["reason"]))
+        return
+    label = net.get("ssid") or ""
+    cmd = "credo-peer-lan.py bind"
+    if label:
+        cmd += " --label %s" % _shell_quote(label)
+    cmd += " --group home --allow peers"
+    print(
+        "This network (%s, subnet %s, router %s) is NOT bound yet - the relay stays "
+        "DISABLED on it (fail-closed). If it is a trusted home network, bind it with:"
+        % (label or "no label", net["subnet"], net["gateway_mac"])
+    )
+    print("  %s" % cmd)
+    print(
+        "(--allow alternatives: the subnet %s, a range a-b, or 'home' = all private "
+        "ranges, broadest; wildcards are never accepted.)" % net["subnet"]
+    )
 
 
 def run_whoami(_args):
     cfg = load_config() or {}
     print_self_address(cfg)
     return 0
+
+
+def current_state(cfg):
+    default_port = int(cfg.get("listen_port", DEFAULT_PORT))
+    return compute_lan_state(
+        cfg, detect_network(), normalize_peers(cfg.get("peers", []), default_port), is_wsl()
+    )
 
 
 def run_check(_args):
@@ -1774,8 +2770,206 @@ def run_check(_args):
         return 0
     print_self_address(cfg)
     print("")
+    state = current_state(cfg)
+    print_lan_status(cfg, state)
+    print("")
     probe_all_peers(cfg)
-    check_firewall_hint(cfg)
+    check_firewall_hint(cfg, state)
+    return 0
+
+
+def run_netinfo(_args):
+    net = detect_network()
+    if net is None:
+        print(json.dumps({"detected": False}, indent=2))
+        return 0
+    out = {"detected": True}
+    out.update(net)
+    print(json.dumps(out, indent=2))
+    return 0
+
+
+def _flatten(values):
+    out = []
+    for v in values or []:
+        out.extend(v if isinstance(v, list) else [v])
+    return out
+
+
+def run_bind(args):
+    cfg = load_config()
+    if cfg is None:
+        sys.stderr.write("No config at %s - run 'credo-peer-lan.py init <peer-ip>' first.\n" % config_path())
+        return 1
+    net = detect_network()
+    if net is None or not net.get("gateway_mac") or not net.get("subnet") or not net.get("ip"):
+        sys.stderr.write(
+            "Cannot bind: the current network could not be detected (need router MAC + "
+            "subnet). Run 'credo-peer-lan.py netinfo' to inspect.\n"
+        )
+        return 1
+    allow = _flatten(args.allow) or ["peers"]
+    parsed_ok = []
+    for raw in allow:
+        try:
+            parse_allow_entry(raw)
+        except AllowEntryError as exc:
+            sys.stderr.write("Rejected allow entry: %s\n" % exc)
+            return 2
+        if raw.strip().lower() not in [p.strip().lower() for p in parsed_ok]:
+            parsed_ok.append(raw.strip())
+    group = (args.group or "home").strip()
+    if not NETWORK_NAME_RE.match(group):
+        sys.stderr.write("Invalid group name %r (letters, digits, . _ -)\n" % group)
+        return 2
+    networks = cfg.get("networks") if isinstance(cfg.get("networks"), dict) else {}
+    # a network already bound to this exact fingerprint is updated, never duplicated
+    same = [
+        n for n, p in networks.items()
+        if isinstance(p, dict)
+        and normalize_mac((p.get("fingerprint") or {}).get("gateway_mac")) == net["gateway_mac"]
+        and (p.get("fingerprint") or {}).get("subnet") == net["subnet"]
+    ]
+    name = args.name or (same[0] if same else default_network_name(net, args.label))
+    if not NETWORK_NAME_RE.match(name):
+        sys.stderr.write("Invalid network name %r (letters, digits, . _ -)\n" % name)
+        return 2
+    for n in same:
+        if n != name:
+            networks.pop(n, None)
+            print("Replaced the previous binding %s (same router + subnet)." % n)
+    networks[name] = {
+        "fingerprint": {"gateway_mac": net["gateway_mac"], "subnet": net["subnet"]},
+        "label": args.label or net.get("ssid") or "",
+        "group": group,
+        "allow": parsed_ok,
+    }
+    cfg["networks"] = networks
+    try:
+        write_config(cfg)
+    except Exception as exc:
+        sys.stderr.write("Could not write %s: %s\n" % (config_path(), exc))
+        return 1
+    print(
+        "Bound network %s: router %s, subnet %s, label %r, group %s, allow %s"
+        % (name, net["gateway_mac"], net["subnet"], networks[name]["label"], group, parsed_ok)
+    )
+    state = current_state(cfg)
+    for w in state["warnings"]:
+        print(w)
+    for e in state["errors"]:
+        print("ERROR: invalid entry dropped: %s" % e)
+    if state["enabled"]:
+        print("Effective allowlist (group %s): %s" % (state["group"], ", ".join(state["allow"])))
+    else:
+        print("LAN relay still DISABLED: %s" % state["reason"])
+    print("A running daemon picks this up on its next network check (or restart it).")
+    return 0
+
+
+def run_unbind(args):
+    cfg = load_config()
+    networks = (cfg or {}).get("networks")
+    if not isinstance(networks, dict) or args.name not in networks:
+        sys.stderr.write("No bound network named %r.\n" % args.name)
+        return 1
+    networks.pop(args.name)
+    cfg["networks"] = networks
+    write_config(cfg)
+    print("Unbound network %s." % args.name)
+    if not networks:
+        print("No network is bound any more - the LAN relay is DISABLED everywhere (loopback still works).")
+    return 0
+
+
+def run_networks(_args):
+    cfg = load_config() or {}
+    networks = cfg.get("networks")
+    if not isinstance(networks, dict) or not networks:
+        print("No networks bound - the LAN relay is DISABLED (fail-closed). Bind one with 'credo-peer-lan.py bind'.")
+        return 0
+    current = match_network(networks, detect_network())
+    for name in sorted(networks):
+        p = networks[name] if isinstance(networks[name], dict) else {}
+        fp = p.get("fingerprint") or {}
+        print(
+            "%s%s: label %r, group %s, router %s, subnet %s, allow %s"
+            % (
+                name,
+                " (current)" if name == current else "",
+                p.get("label", ""),
+                network_group(p),
+                fp.get("gateway_mac"),
+                fp.get("subnet"),
+                p.get("allow", ["peers"]),
+            )
+        )
+    print("windows_profiles: %s" % windows_profiles(cfg))
+    return 0
+
+
+def run_token(args):
+    """Manage the optional shared token. The value is NEVER printed or logged."""
+    cfg = load_config()
+    if cfg is None:
+        sys.stderr.write("No config at %s - run 'credo-peer-lan.py init <peer-ip>' first.\n" % config_path())
+        return 1
+    if args.clear:
+        cfg.pop("token", None)
+        write_config(cfg)
+        print("token cleared (token-less). Clear it on every machine and restart the daemons.")
+        return 0
+    if args.generate:
+        cfg["token"] = secrets.token_hex(32)
+        write_config(cfg)
+        print("token set (not shown). Transfer it to your other machines in YOUR OWN terminal with 'credo-peer-lan.py token --set', then restart the daemons.")
+        return 0
+    if sys.stdin.isatty():
+        value = getpass.getpass("Shared token (input hidden): ")
+    else:
+        value = sys.stdin.readline()
+    value = (value or "").strip()
+    if len(value) < 16 or any(c.isspace() for c in value):
+        sys.stderr.write("Refused: the token must be at least 16 characters without whitespace.\n")
+        return 2
+    cfg["token"] = value
+    write_config(cfg)
+    print("token set (not shown). Restart the daemon to apply it.")
+    return 0
+
+
+def onboarding_marker():
+    return os.path.join(os.path.dirname(config_path()), "peer-lan-onboarding-declined")
+
+
+def onboarding_state():
+    """Cheap, config-only (NO network detection): not-configured | declined |
+    unbound | bound. Used by the SessionStart hook."""
+    cfg = load_config()
+    if cfg is None:
+        if os.path.exists(config_path()):
+            return "unbound"  # present but unreadable: treat like unbound, never offer setup
+        return "declined" if os.path.exists(onboarding_marker()) else "not-configured"
+    nets = cfg.get("networks")
+    return "bound" if isinstance(nets, dict) and nets else "unbound"
+
+
+def run_onboarding(args):
+    marker = onboarding_marker()
+    if args.decline:
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        with open(marker, "w") as fh:
+            fh.write("declined %s\n" % time.strftime("%Y-%m-%d"))
+        print("LAN relay onboarding declined - it will not be offered again (undo: onboarding --reset).")
+        return 0
+    if args.reset:
+        try:
+            os.unlink(marker)
+        except OSError:
+            pass
+        print("LAN relay onboarding reset - it will be offered again on the next session start.")
+        return 0
+    print(onboarding_state())
     return 0
 
 
@@ -1823,9 +3017,58 @@ def main(argv=None):
     p_whoami.set_defaults(func=run_whoami)
 
     p_check = sub.add_parser(
-        "check", help="print this machine's address and probe configured peers"
+        "check",
+        help="print this machine's address, the network/allowlist status and probe "
+        "configured peers",
     )
     p_check.set_defaults(func=run_check)
+
+    p_netinfo = sub.add_parser("netinfo", help="print the detected network as JSON")
+    p_netinfo.set_defaults(func=run_netinfo)
+
+    p_bind = sub.add_parser(
+        "bind", help="bind the CURRENT network as trusted (enables the LAN side on it)"
+    )
+    p_bind.add_argument("--name", help="profile name (default: from label/subnet)")
+    p_bind.add_argument("--group", default="home", help="group name (default home)")
+    p_bind.add_argument("--label", help="display label (default: SSID / profile name)")
+    p_bind.add_argument(
+        "--allow",
+        action="append",
+        nargs="+",
+        help="allow entries: peers | IP | CIDR | a-b range | home (default peers)",
+    )
+    p_bind.set_defaults(func=run_bind)
+
+    p_unbind = sub.add_parser("unbind", help="remove a bound network")
+    p_unbind.add_argument("name")
+    p_unbind.set_defaults(func=run_unbind)
+
+    p_networks = sub.add_parser("networks", help="list bound networks")
+    p_networks.set_defaults(func=run_networks)
+
+    p_token = sub.add_parser(
+        "token", help="manage the optional shared token (never printed)"
+    )
+    g_token = p_token.add_mutually_exclusive_group(required=True)
+    g_token.add_argument("--generate", action="store_true", help="generate a random token")
+    g_token.add_argument(
+        "--set",
+        action="store_true",
+        help="read a token from a hidden prompt (or stdin when not a TTY)",
+    )
+    g_token.add_argument("--clear", action="store_true", help="remove the token")
+    p_token.set_defaults(func=run_token)
+
+    p_onb = sub.add_parser(
+        "onboarding",
+        help="session-start onboarding state (config only, no network detection)",
+    )
+    g_onb = p_onb.add_mutually_exclusive_group(required=True)
+    g_onb.add_argument("--state", action="store_true", help="print not-configured|declined|unbound|bound")
+    g_onb.add_argument("--decline", action="store_true", help="never offer the setup again")
+    g_onb.add_argument("--reset", action="store_true", help="offer the setup again")
+    p_onb.set_defaults(func=run_onboarding)
 
     p_holder = sub.add_parser("holder", help="internal: per-remote-session holder")
     p_holder.add_argument("--proxy", required=True)

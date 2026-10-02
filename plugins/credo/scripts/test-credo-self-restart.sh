@@ -26,6 +26,13 @@
 #     the parent chain to a fake claude, prints the peer template with the 1-minute wait
 #   - end-to-end run against a fake target: stop via fake tmux C-c, fake updates,
 #     relaunch via fake tmux, dialog answered with Escape, marker written
+#   - owner-rule guard: run refuses (exit 3, target untouched) in interactive mode
+#     without --user-confirmed, with a missing/unreadable mode, and in autonomous mode
+#     with --announce below the minimum; allowed with --user-confirmed or autonomous +
+#     announce; the announcement line and ntfy push (local stub server) carry the
+#     reason and the cancel command; cancel (kill path and marker-only path) keeps the
+#     fake target alive; status shows pending/cancelled with the scheduled time.
+#     The 300 s minimum is scaled down via the TEST-ONLY CREDO_SELF_RESTART_MIN_ANNOUNCE.
 #
 # Usage: bash test-credo-self-restart.sh
 
@@ -108,6 +115,7 @@ EOF
 chmod +x "$FT/tmux" "$FW/wt.exe" "$FX/x-terminal-emulator" "$FC/claude"
 export FAKE_TMUX_LOG="$TMP/tmux.log" FAKE_WT_LOG="$TMP/wt.log" FAKE_X_LOG="$TMP/x.log" FAKE_CLAUDE_LOG="$TMP/claude.log"
 export CREDO_SELF_RESTART_NTFY_URL=off CREDO_SKIP_ENSURE=1
+unset CREDO_SESSION_MODES_DIR CREDO_SELF_RESTART_MIN_ANNOUNCE
 export CREDO_GLOBAL="$TMP/global.yaml" CREDO_PROFILE="$TMP/none-profile" CREDO_PROJECT="$TMP/none-project"
 : > "$CREDO_GLOBAL"
 
@@ -237,6 +245,28 @@ t("launcher exports config dir", "export CLAUDE_CONFIG_DIR='/c fg'" in lt)
 t("launcher sets no resume thresholds", "RESUME_THRESHOLD" not in lt and "TOKEN_THRESHOLD" not in lt)
 t("launcher default profile unsets", "unset CLAUDE_CONFIG_DIR" in m.launcher_text("/w", "/h/.claude", False, ["claude"]))
 t("launcher pty wrap", "relaunch-pty -- claude" in m.launcher_text("/w", "/c", True, ["claude"], pty_wrap=True))
+# owner-rule guard (real 300 s minimum)
+os.environ.pop("CREDO_SELF_RESTART_MIN_ANNOUNCE", None)
+t("min announce is 300", m.min_announce() == 300)
+A = {"session_id": SID, "credo_mode": "autonomous"}
+t("guard autonomous default announce 300", m.owner_guard(A, False, None) == (300, None))
+t("guard autonomous 300 ok", m.owner_guard(A, False, 300)[1] is None)
+a, e = m.owner_guard(A, False, 299)
+t("guard autonomous 299 refused", a is None and "at least 5 minutes" in e)
+for mode in ("active", "passive", None):
+    a, e = m.owner_guard({"session_id": SID, "credo_mode": mode}, False, 600)
+    t("guard %s refused" % mode, a is None and "Ask tool" in e and "--user-confirmed" in e)
+t("guard user-confirmed default announce 0", m.owner_guard({"credo_mode": None}, True, None) == (0, None))
+t("guard user-confirmed keeps announce", m.owner_guard({"credo_mode": "active"}, True, 30) == (30, None))
+t("guard negative announce refused", m.owner_guard(A, True, -1)[1] is not None)
+d2 = tempfile.mkdtemp()
+os.makedirs(os.path.join(d2, "credo", "session-modes"))
+open(os.path.join(d2, "credo", "session-modes", SID), "w").write("autonomous\n")
+t("read credo mode", m.read_credo_mode(d2, SID) == "autonomous")
+t("read credo mode missing", m.read_credo_mode(d2, "other") is None)
+t("read credo mode bad sid", m.read_credo_mode(d2, "../x") is None)
+t("duration format", m.fmt_duration(300) == "5 minutes" and m.fmt_duration(60) == "1 minute"
+  and m.fmt_duration(2) == "2 seconds" and m.fmt_duration(1) == "1 second")
 print("\n".join(res))
 PYEOF
 while IFS= read -r line; do
@@ -361,7 +391,7 @@ out="$(env -u WSL_DISTRO_NAME CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_REST
 check "check no relaunch method -> rc 1" "1" "$rc"
 case "$out" in *"FAIL: no way to bring the session back; not restarting"*) ok "check no method message" 0 ;; *) ok "check no method message" 1 ;; esac
 # run refuses too, and the fake target is untouched
-out="$(env -u WSL_DISTRO_NAME CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T2 PATH="$FC:$BASE" "$PY" "$HELPER" run 2>&1)"; rc=$?
+out="$(env -u WSL_DISTRO_NAME CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T2 PATH="$FC:$BASE" "$PY" "$HELPER" run --user-confirmed 2>&1)"; rc=$?
 check "run refuses on failed validation" "1" "$rc"
 sleep 0.5
 ok "refused run leaves target alive" "$(kill -0 "$T2" 2>/dev/null && echo 0 || echo 1)"
@@ -420,7 +450,7 @@ T5="$(cat "$TMP/t5.pid")"
 out="$(CLAUDECODE=1 CLAUDE_CODE_FOO=bar CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T5 \
     FAKE_TARGET_PIDFILE="$TMP/t5.pid" FAKE_PANE_FILE="$TMP/pane.txt" CREDO_SELF_RESTART_SIGNAL_PAUSE=0.3 \
     CREDO_SELF_RESTART_STOP_TIMEOUT=10 CREDO_SELF_RESTART_DIALOG_WATCH=3 PATH="$FT:$FC:$BASE" \
-    "$PY" "$HELPER" run --update --reason "test run" --delay 0.2 2>&1)"; rc=$?
+    "$PY" "$HELPER" run --user-confirmed --update --reason "test run" --delay 0.2 2>&1)"; rc=$?
 check "run returns 0 immediately" "0" "$rc"
 MARK="$CFGA/credo/self-restart.json"
 for _ in $(seq 1 100); do grep -q '"dialog_guard"' "$MARK" 2>/dev/null && break; sleep 0.2; done
@@ -479,12 +509,143 @@ T6="$(cat "$TMP/t6.pid")"
 rm -f "$MARK"
 CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T6 FAKE_TARGET_PIDFILE="$TMP/t6.pid" \
     CREDO_SELF_RESTART_SIGNAL_PAUSE=0.3 CREDO_SELF_RESTART_STOP_TIMEOUT=10 CREDO_SELF_RESTART_DIALOG_WATCH=1 \
-    PATH="$FT:$FC:$BASE" "$PY" "$HELPER" run --update --delay 0.2 >/dev/null 2>&1
+    PATH="$FT:$FC:$BASE" "$PY" "$HELPER" run --user-confirmed --update --delay 0.2 >/dev/null 2>&1
 for _ in $(seq 1 100); do grep -q '"dialog_guard"' "$MARK" 2>/dev/null && break; sleep 0.2; done
 grep -q '"update": "no plugin updates"' "$MARK"; ok "no changes -> 'no plugin updates'" "$?"
 grep -q "plugin update: no plugin updates" "$LAUNCHER"; ok "wake prompt says no plugin updates" "$?"
 out="$(CREDO_SELF_RESTART_TARGET_PID=$$ CLAUDE_CONFIG_DIR="$CFGA" PATH="$FT:$BASE" "$PY" "$HELPER" status 2>&1)"
 case "$out" in *'"status": "relaunched"'*"--- log tail ---"*) ok "status prints marker and log tail" 0 ;; *) ok "status prints marker and log tail" 1 ;; esac
+
+# --- owner-rule guard, announce, cancel ----------------------------------------------
+# local ntfy stub: records every POST (Title header + body) as one JSON line
+cat > "$TMP/ntfy_stub.py" <<'PYEOF'
+import http.server, json, sys
+out, portfile = sys.argv[1], sys.argv[2]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
+        with open(out, "a") as fh:
+            fh.write(json.dumps({"title": self.headers.get("Title"), "body": body}) + "\n")
+        self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+    def log_message(self, *a):
+        pass
+srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(portfile, "w").write(str(srv.server_address[1]))
+srv.serve_forever()
+PYEOF
+NTFY_OUT="$TMP/ntfy.jsonl"; : > "$NTFY_OUT"
+"$PY" "$TMP/ntfy_stub.py" "$NTFY_OUT" "$TMP/ntfy.port" & NTFY_PID=$!; PIDS="$PIDS $NTFY_PID"
+for _ in $(seq 1 50); do [ -s "$TMP/ntfy.port" ] && break; sleep 0.1; done
+NTFY_URL="http://127.0.0.1:$(cat "$TMP/ntfy.port")/topic"
+MODES="$CFGA/credo/session-modes"; mkdir -p "$MODES"
+LOGF="$CFGA/credo/self-restart.log"
+: > "$FAKE_TMUX_LOG"
+start_target "$TMP/t7.pid" "$CFGA" TMUX=/tmp/t,1,2 TMUX_PANE=%21 -- --model opus
+T7="$(cat "$TMP/t7.pid")"
+G=(env CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T7 FAKE_TARGET_PIDFILE="$TMP/t7.pid"
+   CREDO_SELF_RESTART_NTFY_URL="$NTFY_URL" CREDO_SELF_RESTART_SIGNAL_PAUSE=0.3 CREDO_SELF_RESTART_STOP_TIMEOUT=10
+   CREDO_SELF_RESTART_DIALOG_WATCH=1 PATH="$FT:$FC:$BASE")
+rm -f "$MARK" "$MODES/$SID"
+# missing mode -> refused
+out="$("${G[@]}" "$PY" "$HELPER" run --delay 0.2 2>&1)"; rc=$?
+check "guard: missing mode -> rc 3" "3" "$rc"
+case "$out" in *"REFUSED: refused by the owner rule"*"is not set, not autonomous"*"Ask tool"*"Nothing was started."*) ok "guard: missing mode message" 0 ;; *) ok "guard: missing mode message ($out)" 1 ;; esac
+# interactive (active) mode without --user-confirmed -> refused, even with a long announce
+echo active > "$MODES/$SID"
+out="$("${G[@]}" "$PY" "$HELPER" run --announce 600 --delay 0.2 2>&1)"; rc=$?
+check "guard: active mode without --user-confirmed -> rc 3" "3" "$rc"
+case "$out" in *"is 'active', not autonomous"*"--user-confirmed"*) ok "guard: active mode message" 0 ;; *) ok "guard: active mode message ($out)" 1 ;; esac
+# unreadable mode (a directory instead of a file) -> not autonomous
+rm -f "$MODES/$SID"; mkdir -p "$MODES/$SID"
+out="$("${G[@]}" "$PY" "$HELPER" run --delay 0.2 2>&1)"; rc=$?
+check "guard: unreadable mode -> rc 3" "3" "$rc"
+rmdir "$MODES/$SID"
+# autonomous with announce below the (scaled) minimum -> refused
+echo autonomous > "$MODES/$SID"
+out="$("${G[@]}" CREDO_SELF_RESTART_MIN_ANNOUNCE=5 "$PY" "$HELPER" run --announce 2 --delay 0.2 2>&1)"; rc=$?
+check "guard: autonomous announce < minimum -> rc 3" "3" "$rc"
+case "$out" in *"announced at least 5 seconds ahead (--announce 5 or more, got 2)"*) ok "guard: short announce message" 0 ;; *) ok "guard: short announce message ($out)" 1 ;; esac
+# CREDO_SESSION_MODES_DIR override is honored (same as the mode hooks)
+mkdir -p "$TMP/modes-alt"; echo autonomous > "$TMP/modes-alt/$SID"; rm -f "$MODES/$SID"
+out="$("${G[@]}" CREDO_SESSION_MODES_DIR="$TMP/modes-alt" "$PY" "$HELPER" check 2>&1)"
+case "$out" in *"owner rule:   credo mode autonomous"*) ok "check shows owner rule (modes dir override)" 0 ;; *) ok "check shows owner rule ($out)" 1 ;; esac
+sleep 0.5
+ok "guard refusals leave the target alive" "$(kill -0 "$T7" 2>/dev/null && echo 0 || echo 1)"
+ok "guard refusals start no worker / write no marker" "$([ ! -e "$MARK" ] && echo 0 || echo 1)"
+check "guard refusals send no C-c" "0" "$(grep -c 'C-c' "$FAKE_TMUX_LOG")"
+check "guard refusals send no ntfy" "0" "$(wc -l < "$NTFY_OUT" | tr -d ' ')"
+
+# cancel during the announce period (kill path): target is NOT stopped
+echo autonomous > "$MODES/$SID"
+out="$("${G[@]}" CREDO_SELF_RESTART_MIN_ANNOUNCE=3 "$PY" "$HELPER" run --reason "cc-up test" --delay 0.2 2>&1)"; rc=$?
+check "autonomous run with default (scaled) announce -> rc 0" "0" "$rc"
+case "$out" in *"Self-restart scheduled in 3 seconds (reason: cc-up test). Cancel: python3 "*"credo-self-restart.py cancel"*) ok "announce message in transcript" 0 ;; *) ok "announce message in transcript ($out)" 1 ;; esac
+"$PY" - "$NTFY_OUT" "$SID" <<'PYEOF'
+import json, sys
+r = [json.loads(l) for l in open(sys.argv[1])]
+assert len(r) == 1, r
+assert r[0]["title"] == "credo self-restart in 3 seconds", r
+assert "reason: cc-up test" in r[0]["body"] and "credo-self-restart.py cancel" in r[0]["body"] and sys.argv[2] in r[0]["body"], r
+PYEOF
+ok "announce ntfy: title, reason, cancel command" "$?"
+out="$(CREDO_SELF_RESTART_TARGET_PID=$$ CLAUDE_CONFIG_DIR="$CFGA" PATH="$FT:$BASE" "$PY" "$HELPER" status 2>&1)"
+case "$out" in "state: pending; scheduled: 20"*"reason: cc-up test"*) ok "status shows pending with scheduled time" 0 ;; *) ok "status shows pending ($out)" 1 ;; esac
+WPID="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["worker_pid"])' "$MARK")"
+out="$("${G[@]}" CREDO_SELF_RESTART_MIN_ANNOUNCE=3 "$PY" "$HELPER" run --delay 0.2 2>&1)"; rc=$?
+check "second run while pending -> rc 1" "1" "$rc"
+case "$out" in *"already pending (worker $WPID)"*) ok "second run names the pending worker" 0 ;; *) ok "second run names the pending worker ($out)" 1 ;; esac
+out="$(CREDO_SELF_RESTART_TARGET_PID=$$ CLAUDE_CONFIG_DIR="$CFGA" CREDO_SELF_RESTART_NTFY_URL="$NTFY_URL" PATH="$FT:$BASE" "$PY" "$HELPER" cancel 2>&1)"; rc=$?
+check "cancel -> rc 0" "0" "$rc"
+case "$out" in *"cancelled (session $SID, was scheduled for 20"*"worker $WPID terminated"*) ok "cancel message" 0 ;; *) ok "cancel message ($out)" 1 ;; esac
+sleep 4.5
+ok "cancelled: worker gone" "$(gone "$WPID" && echo 0 || echo 1)"
+ok "cancelled: fake target NOT stopped" "$(kill -0 "$T7" 2>/dev/null && ! gone "$T7" && echo 0 || echo 1)"
+check "cancelled: no C-c sent" "0" "$(grep -c 'C-c' "$FAKE_TMUX_LOG")"
+grep -q '"status": "cancelled"' "$MARK"; ok "cancelled: marker status" "$?"
+grep -q "self-restart cancelled before stopping the target" "$LOGF"; ok "cancelled: worker logged it" "$?"
+grep -q '"title": "credo self-restart cancelled"' "$NTFY_OUT"; ok "cancelled: ntfy sent" "$?"
+out="$(CREDO_SELF_RESTART_TARGET_PID=$$ CLAUDE_CONFIG_DIR="$CFGA" PATH="$FT:$BASE" "$PY" "$HELPER" status 2>&1)"
+case "$out" in "state: cancelled; scheduled: 20"*) ok "status shows cancelled" 0 ;; *) ok "status shows cancelled ($out)" 1 ;; esac
+out="$(CREDO_SELF_RESTART_TARGET_PID=$$ CLAUDE_CONFIG_DIR="$CFGA" PATH="$FT:$BASE" "$PY" "$HELPER" cancel 2>&1)"; rc=$?
+check "cancel with nothing pending -> rc 1" "1" "$rc"
+case "$out" in *"nothing to cancel (self-restart status: cancelled)"*) ok "cancel nothing-pending message" 0 ;; *) ok "cancel nothing-pending message ($out)" 1 ;; esac
+
+# marker-only cancel (worker not signalled): the final re-check before stopping aborts
+out="$("${G[@]}" CREDO_SELF_RESTART_MIN_ANNOUNCE=2 "$PY" "$HELPER" run --delay 0.2 2>&1)"; rc=$?
+check "autonomous run (marker-cancel case) -> rc 0" "0" "$rc"
+"$PY" - "$MARK" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1])); d["status"] = "cancelled"
+json.dump(d, open(sys.argv[1], "w"))
+PYEOF
+sleep 3.5
+ok "marker-cancel: fake target NOT stopped" "$(kill -0 "$T7" 2>/dev/null && ! gone "$T7" && echo 0 || echo 1)"
+check "marker-cancel: no C-c sent" "0" "$(grep -c 'C-c' "$FAKE_TMUX_LOG")"
+check "marker-cancel: worker logged the abort" "2" "$(grep -c 'self-restart cancelled before stopping the target' "$LOGF")"
+
+# autonomous + announce >= minimum: the restart goes through after the announcement
+: > "$NTFY_OUT"
+out="$("${G[@]}" CREDO_SELF_RESTART_MIN_ANNOUNCE=1 "$PY" "$HELPER" run --announce 1 --reason "auto" --delay 0.2 2>&1)"; rc=$?
+check "autonomous + announce >= minimum -> rc 0" "0" "$rc"
+for _ in $(seq 1 100); do grep -q '"dialog_guard"' "$MARK" 2>/dev/null && break; sleep 0.2; done
+gone "$T7"; ok "autonomous: fake target stopped after the announcement" "$?"
+grep -q '"status": "relaunched"' "$MARK"; ok "autonomous: marker relaunched" "$?"
+grep -q '"title": "credo self-restart in 1 second"' "$NTFY_OUT"; ok "autonomous: announce ntfy sent" "$?"
+grep -qxF "send-keys -t %21 clear; bash '$LAUNCHER' Enter" "$FAKE_TMUX_LOG"; ok "autonomous: relaunched into the same pane" "$?"
+
+# --user-confirmed without autonomous mode: no announce, existing short delay
+rm -f "$MODES/$SID"; : > "$NTFY_OUT"
+start_target "$TMP/t8.pid" "$CFGA" TMUX=/tmp/t,1,2 TMUX_PANE=%22 -- --model opus
+T8="$(cat "$TMP/t8.pid")"
+out="$(CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T8 FAKE_TARGET_PIDFILE="$TMP/t8.pid" \
+    CREDO_SELF_RESTART_NTFY_URL="$NTFY_URL" CREDO_SELF_RESTART_SIGNAL_PAUSE=0.3 CREDO_SELF_RESTART_STOP_TIMEOUT=10 \
+    CREDO_SELF_RESTART_DIALOG_WATCH=1 PATH="$FT:$FC:$BASE" "$PY" "$HELPER" run --user-confirmed --delay 0.2 2>&1)"; rc=$?
+check "user-confirmed (no mode) -> rc 0" "0" "$rc"
+case "$out" in *"Self-restart scheduled"*) ok "user-confirmed: no announcement" 1 ;; *"End your turn now."*) ok "user-confirmed: no announcement" 0 ;; *) ok "user-confirmed: no announcement ($out)" 1 ;; esac
+for _ in $(seq 1 100); do grep -q '"dialog_guard"' "$MARK" 2>/dev/null && break; sleep 0.2; done
+gone "$T8"; ok "user-confirmed: fake target stopped" "$?"
+grep -q '"user_confirmed": true' "$MARK"; ok "user-confirmed: recorded in marker" "$?"
+check "user-confirmed: no announce ntfy" "0" "$(wc -l < "$NTFY_OUT" | tr -d ' ')"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

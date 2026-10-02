@@ -7,7 +7,8 @@
 # /credo:peer-lan start. The daemon is started DETACHED, so this hook returns
 # immediately and never blocks session start.
 #
-# No-op unless a config file exists (the relay itself is a no-op without one). This hook
+# It also prints one onboarding line for the agent (no config yet / no network bound;
+# see the onboarding block below). No-op unless a config file exists (the relay itself is a no-op without one). This hook
 # delegates all run/replace/start decisions to the daemon's `ensure` subcommand: ensure
 # leaves a current/newer running daemon untouched, self-heals an OLDER one after a plugin
 # update (cc-up), and otherwise starts fresh. The daemon's bind-retry makes a concurrent
@@ -39,10 +40,29 @@ cfgdir="${cfgdir%/}"
 
 # config path: CREDO_PEER_LAN_CONFIG wins, else <configdir>/credo/peer-lan.json
 cfg="${CREDO_PEER_LAN_CONFIG:-$cfgdir/credo/peer-lan.json}"
-[ -f "$cfg" ] || exit 0          # no config -> the relay is a no-op, start nothing
+
+# Onboarding context for the AGENT (SessionStart stdout = injected context; this hook
+# never prompts). Cheap: reads only files, never runs network detection.
+#   no config, not declined -> offer the guided setup once (decline writes a marker)
+#   config but no network bound (legacy / after the 0.72 upgrade) -> relay DISABLED note
+#   bound (matching or not) / declined -> say nothing
+if [ ! -f "$cfg" ]; then
+  if [ ! -f "$(dirname "$cfg")/peer-lan-onboarding-declined" ]; then
+    echo "[credo-peer-lan] credo can now connect Claude Code sessions across your machines on the home LAN (no cloud). In an interactive session ask the user once (Ask tool) whether to set it up (guided, /credo:peer-lan Setup flow); if they decline, run \`\${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py onboarding --decline\` so this is never offered again. In autonomous mode do not ask."
+  fi
+  exit 0                         # no config -> the relay is a no-op, start nothing
+fi
 
 script="${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py"
 [ -f "$script" ] || exit 0
+
+to5=""
+command -v timeout >/dev/null 2>&1 && to5="timeout 5"
+# shellcheck disable=SC2086  # $to5 is an intentional optional command prefix
+state="$($to5 "$script" onboarding --state 2>/dev/null | tail -n1)"
+if [ "$state" = "unbound" ]; then
+  echo "[credo-peer-lan] The LAN relay is DISABLED: no network is bound yet (new allowlist + network binding since credo 0.72). In an interactive session offer the user the guided setup from /credo:peer-lan (Setup flow) via the Ask tool; in autonomous mode do not ask, just mention it in the next report."
+fi
 
 mkdir -p "$cfgdir/credo" 2>/dev/null || true
 

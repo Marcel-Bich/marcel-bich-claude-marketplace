@@ -7,15 +7,28 @@ Subcommands
 -----------
   check  (default) dry run: gather and validate everything, print the plan, change
          nothing. Exit 1 with a clear reason when a precondition fails.
-  run [--update] [--reason TEXT] [--delay SECONDS] [--method M]
-         validate exactly like check. On failure: nothing is stopped, an ntfy push is
-         sent (when configured) and the exit code is 1. On success: a fully detached
-         worker (own session, stdio to the log file) is spawned and this call returns
-         at once so the agent's turn can end. The worker sleeps --delay, stops the
-         target Claude (tmux C-c twice, else SIGINT twice then SIGTERM, NEVER SIGKILL),
-         waits until it is gone, optionally runs the plugin update step, relaunches
-         the same session with a wake prompt and writes a marker file.
-  status print the last marker and the tail of the log.
+  run [--user-confirmed] [--announce SECONDS] [--update] [--reason TEXT]
+      [--delay SECONDS] [--method M]
+         OWNER RULE GUARD first: run refuses (exit 3, nothing started) unless
+           a) --user-confirmed: the user said yes via the Ask tool in this
+              interactive session (never pass it without that answer), or
+           b) the credo session mode of THIS session is "autonomous" and
+              --announce is >= 300 seconds (default 300 when not user-confirmed).
+         An unannounced restart outside autonomous mode could discard a prompt the
+         user is typing. Then it validates exactly like check. On failure: nothing
+         is stopped, an ntfy push is sent (when configured) and the exit code is 1.
+         On success: a fully detached worker (own session, stdio to the log file) is
+         spawned and this call returns at once. With an announce period it first
+         prints the announcement and sends an ntfy push (reason + cancel command).
+         The worker waits --announce + --delay (re-checking the marker for a
+         cancel), stops the target Claude (tmux C-c twice, else SIGINT twice then
+         SIGTERM, NEVER SIGKILL), waits until it is gone, optionally runs the plugin
+         update step, relaunches the same session with a wake prompt and writes a
+         marker file.
+  cancel mark a pending restart as cancelled and terminate its waiting worker. Too
+         late once the worker started stopping the target (exit 1 then).
+  status print the state (pending/cancelled/stopping/relaunched/failed) with the
+         scheduled time, the last marker and the tail of the log.
   relaunch-pty -- ARGV...
          internal: run ARGV in a pty passthrough that answers the "Resume from
          summary" dialog once with Escape (used by the launcher when no tmux exists).
@@ -49,13 +62,18 @@ environment is never logged or printed.
 Env overrides (tests): CREDO_SELF_RESTART_SESSION_ID, CREDO_SELF_RESTART_TARGET_PID,
 CREDO_SELF_RESTART_NTFY_URL ("off" or a full URL), CREDO_SELF_RESTART_OWN_MARKETPLACE,
 CREDO_SELF_RESTART_STOP_TIMEOUT, CREDO_SELF_RESTART_SIGNAL_PAUSE, CREDO_SELF_RESTART_KEY_PAUSE,
-CREDO_SELF_RESTART_CMD_TIMEOUT, CREDO_SELF_RESTART_CONFIG_SH.
+CREDO_SELF_RESTART_CMD_TIMEOUT, CREDO_SELF_RESTART_CONFIG_SH,
+CREDO_SELF_RESTART_MIN_ANNOUNCE (TEST-ONLY: scales the 300 s autonomous minimum down;
+never set it in a real session). The credo session mode is read from
+${CREDO_SESSION_MODES_DIR:-<configdir>/credo/session-modes}/<session id>, the same file
+hooks/session-mode-set.sh writes; missing/unreadable = not autonomous.
 
 Python 3 stdlib only.
 """
 
 import argparse
 import datetime
+import fcntl
 import glob
 import json
 import os
@@ -72,6 +90,9 @@ SCRIPT_PATH = os.path.abspath(__file__)
 SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
 DEFAULT_MARKETPLACE = "marcel-bich-claude-marketplace"
 PROMPT_TAG = "[credo-self-restart]"
+# Owner rule: an autonomous self-restart is announced at least this long ahead.
+MIN_ANNOUNCE = 300.0
+EXIT_GUARD = 3
 ENV_KEYS = ("CLAUDE_CONFIG_DIR", "TMUX", "TMUX_PANE", "WSL_DISTRO_NAME",
             "DISPLAY", "WAYLAND_DISPLAY")
 INTERPRETERS = ("node", "nodejs", "bun", "deno")
@@ -256,6 +277,64 @@ def read_recorded_mode(config_dir, sid):
     except OSError:
         return None
     return mode if re.fullmatch(r"[A-Za-z]+", mode or "") else None
+
+
+def read_credo_mode(config_dir, sid):
+    """credo session mode (active/passive/autonomous) of THIS session as written by
+    hooks/session-mode-set.sh, or None when missing/unreadable/invalid."""
+    if not sid or not re.fullmatch(r"[A-Za-z0-9._-]+", sid) or sid in (".", ".."):
+        return None
+    modes = os.environ.get("CREDO_SESSION_MODES_DIR") or \
+        os.path.join(config_dir, "credo", "session-modes")
+    try:
+        with open(os.path.join(modes, sid)) as fh:
+            mode = fh.readline().strip()
+    except OSError:
+        return None
+    return mode if re.fullmatch(r"[a-z]+", mode or "") else None
+
+
+def min_announce():
+    """300 s; CREDO_SELF_RESTART_MIN_ANNOUNCE is a TEST-ONLY override."""
+    return max(0.0, env_float("CREDO_SELF_RESTART_MIN_ANNOUNCE", MIN_ANNOUNCE))
+
+
+def fmt_num(x):
+    return ("%d" % x) if float(x) == int(x) else ("%g" % x)
+
+
+def fmt_duration(seconds):
+    s = float(seconds)
+    if s >= 60 and s % 60 == 0:
+        n = int(s // 60)
+        return "%d minute%s" % (n, "" if n == 1 else "s")
+    return "%s second%s" % (fmt_num(s), "" if s == 1 else "s")
+
+
+def owner_guard(plan, user_confirmed, announce):
+    """(announce_seconds, error). Owner rule: without the user's explicit Ask-tool yes
+    (--user-confirmed) a self-restart is only allowed in credo autonomous mode and
+    only with an announcement of at least min_announce() seconds."""
+    if announce is not None and announce < 0:
+        return None, "--announce must not be negative"
+    if user_confirmed:
+        return (announce if announce is not None else 0.0), None
+    minimum = min_announce()
+    announce = minimum if announce is None else announce
+    mode = plan.get("credo_mode")
+    if mode != "autonomous":
+        return None, (
+            "refused by the owner rule: the credo session mode of session %s is %s, not "
+            "autonomous. Outside autonomous mode a self-restart needs the user's explicit "
+            "yes via the Ask tool first (an unannounced restart could discard a prompt "
+            "the user is typing); only after that yes run again with --user-confirmed."
+            % (plan.get("session_id") or "?", "'%s'" % mode if mode else "not set"))
+    if announce < minimum:
+        return None, (
+            "refused by the owner rule: an autonomous self-restart must be announced at "
+            "least %s ahead (--announce %d or more, got %s)"
+            % (fmt_duration(minimum), int(minimum), fmt_num(announce)))
+    return announce, None
 
 
 def apply_mode(flags, recorded):
@@ -854,6 +933,7 @@ def gather(args):
         plan["config_dir"] = os.environ.get("CLAUDE_CONFIG_DIR") or \
             os.path.join(os.path.expanduser("~"), ".claude")
         plan["config_explicit"] = bool(os.environ.get("CLAUDE_CONFIG_DIR"))
+        plan["credo_mode"] = read_credo_mode(plan["config_dir"], sid)
         return plan, errors
     plan["target_pid"] = pid
     plan["target_start"] = proc_start(pid)
@@ -872,6 +952,7 @@ def gather(args):
     config_dir = os.path.abspath(cfg) if cfg else \
         os.path.join(os.path.expanduser("~"), ".claude")
     plan["config_dir"] = config_dir
+    plan["credo_mode"] = read_credo_mode(config_dir, sid)
     try:
         cwd = os.readlink("/proc/%d/cwd" % pid)
     except OSError:
@@ -935,6 +1016,12 @@ def print_plan(plan, errors):
                                  json.dumps(plan.get("method_details") or {})))
     p("  dialog guard: %s" % guard_kind(plan.get("method_details")))
     p("  permission:   %s" % plan.get("permission_note", "-"))
+    if plan.get("credo_mode") == "autonomous":
+        p("  owner rule:   credo mode autonomous -> run allowed with --announce >= %d "
+          "(ntfy + message, cancellable)" % int(min_announce()))
+    else:
+        p("  owner rule:   credo mode %s -> run only after the user's explicit yes via "
+          "the Ask tool, with --user-confirmed" % (plan.get("credo_mode") or "not set"))
     if plan.get("relaunch_argv_template"):
         p("  relaunch:     %s" % " ".join(shlex.quote(a)
                                           for a in plan["relaunch_argv_template"]))
@@ -958,19 +1045,72 @@ def print_plan(plan, errors):
 
 # --- worker --------------------------------------------------------------------
 
-def write_marker(plan, status, extra=None):
-    data = {"session_id": plan.get("session_id"), "started": plan.get("started"),
-            "reason": plan.get("reason"), "status": status, "updated": now_iso()}
-    if extra:
-        data.update(extra)
+class Cancelled(Exception):
+    pass
+
+
+class MarkerLock(object):
+    """Exclusive flock serializing the pending -> cancelled / pending -> stopping
+    transitions between `cancel` and the worker."""
+
+    def __init__(self, marker):
+        self.path = marker + ".lock"
+        self.fh = None
+
+    def __enter__(self):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        self.fh = open(self.path, "a")
+        fcntl.flock(self.fh, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *_):
+        try:
+            fcntl.flock(self.fh, fcntl.LOCK_UN)
+        finally:
+            self.fh.close()
+        return False
+
+
+def read_marker(path):
     try:
-        os.makedirs(os.path.dirname(plan["marker"]), exist_ok=True)
-        tmp = plan["marker"] + ".tmp"
+        with open(path) as fh:
+            d = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def write_json(path, data):
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
         with open(tmp, "w") as fh:
             json.dump(data, fh, indent=2)
-        os.replace(tmp, plan["marker"])
+        os.replace(tmp, path)
     except OSError as exc:
         log("marker write failed: %s" % exc)
+
+
+def write_marker(plan, status, extra=None):
+    data = {"session_id": plan.get("session_id"), "started": plan.get("started"),
+            "reason": plan.get("reason"), "status": status, "updated": now_iso(),
+            "scheduled": plan.get("scheduled"), "announce": plan.get("announce"),
+            "user_confirmed": plan.get("user_confirmed"),
+            "worker_pid": plan.get("worker_pid")}
+    if extra:
+        data.update(extra)
+    write_json(plan["marker"], data)
+
+
+def marker_cancelled(plan):
+    m = read_marker(plan["marker"])
+    return bool(m and m.get("status") == "cancelled"
+                and m.get("started") == plan.get("started"))
+
+
+def is_worker(pid):
+    argv = read_cmdline(pid)
+    return "_worker" in argv and any(a.endswith("credo-self-restart.py") for a in argv)
 
 
 def wait_gone(pid, start, timeout):
@@ -1048,10 +1188,40 @@ def worker(plan_file):
     with open(plan_file) as fh:
         plan = json.load(fh)
     cfg, explicit = plan["config_dir"], plan["config_explicit"]
-    log("worker started for session %s (target pid %d)" % (
-        plan["session_id"], plan["target_pid"]))
-    write_marker(plan, "stopping")
-    time.sleep(max(0.0, float(plan.get("delay") or 0)))
+    plan["worker_pid"] = os.getpid()
+    log("worker started for session %s (target pid %d); announce %ss, delay %ss, "
+        "stop scheduled at %s" % (plan["session_id"], plan["target_pid"],
+                                  fmt_num(plan.get("announce") or 0),
+                                  fmt_num(plan.get("delay") or 0), plan.get("scheduled")))
+
+    def on_term(*_):
+        raise Cancelled()
+
+    signal.signal(signal.SIGTERM, on_term)
+    try:
+        end = time.time() + max(0.0, float(plan.get("announce") or 0)) \
+            + max(0.0, float(plan.get("delay") or 0))
+        while True:
+            if marker_cancelled(plan):
+                raise Cancelled()
+            left = end - time.time()
+            if left <= 0:
+                break
+            time.sleep(min(1.0, left))
+        # past this point a cancel is too late: SIGTERM is ignored and the marker
+        # leaves "pending" under the lock, so `cancel` refuses from now on
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        with MarkerLock(plan["marker"]):
+            if marker_cancelled(plan):
+                raise Cancelled()
+            write_marker(plan, "stopping")
+    except Cancelled:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        log("self-restart cancelled before stopping the target; nothing stopped")
+        ntfy("credo self-restart cancelled",
+             "Self-restart of session %s was cancelled; the session keeps running."
+             % plan["session_id"], cfg, explicit)
+        return 0
     if not stop_target(plan):
         log("target did not exit; aborting (no update, no relaunch)")
         write_marker(plan, "failed: target did not exit")
@@ -1111,8 +1281,27 @@ def cmd_check(args):
     return 1 if errors else 0
 
 
+def cancel_hint():
+    return "python3 %s cancel" % shlex.quote(SCRIPT_PATH)
+
+
+def pending_worker(marker):
+    m = read_marker(marker)
+    if not m or m.get("status") != "pending":
+        return None
+    pid = m.get("worker_pid")
+    if isinstance(pid, int) and alive(pid) and is_worker(pid):
+        return pid
+    return None
+
+
 def cmd_run(args):
     plan, errors = gather(args)
+    announce, gerr = owner_guard(plan, args.user_confirmed, args.announce)
+    if gerr:
+        print("REFUSED: %s" % gerr)
+        print("Nothing was started.")
+        return EXIT_GUARD
     if errors:
         print_plan(plan, errors)
         try:
@@ -1124,16 +1313,47 @@ def cmd_run(args):
                                                "; ".join(errors)),
              plan["config_dir"], plan["config_explicit"])
         return 1
+    other = pending_worker(plan["marker"])
+    if other:
+        print("REFUSED: a self-restart is already pending (worker %d); cancel it first: %s"
+              % (other, cancel_hint()))
+        return 1
+    t0 = time.time()
     plan["started"] = now_iso()
+    plan["announce"] = announce
+    plan["user_confirmed"] = bool(args.user_confirmed)
+    plan["scheduled"] = datetime.datetime.fromtimestamp(
+        t0 + announce + max(0.0, plan["delay"] or 0)).astimezone().isoformat(
+            timespec="seconds")
+    with MarkerLock(plan["marker"]):
+        write_marker(plan, "pending")
     wpid = spawn_worker(plan)
-    print("credo self-restart: worker %d detached; session %s will stop in ~%ss, then "
-          "relaunch via %s. Log: %s" % (wpid, plan["session_id"], plan["delay"],
-                                         plan["method"], plan["log"]))
-    print("End your turn now.")
+    plan["worker_pid"] = wpid
+    with MarkerLock(plan["marker"]):
+        m = read_marker(plan["marker"])
+        if m and m.get("status") == "pending" and m.get("started") == plan["started"]:
+            write_marker(plan, "pending")
+    if announce > 0:
+        when = fmt_duration(announce)
+        print("Self-restart scheduled in %s (reason: %s). Cancel: %s"
+              % (when, plan["reason"], cancel_hint()))
+        ntfy("credo self-restart in %s" % when,
+             "Session %s restarts at %s (reason: %s). Cancel: %s"
+             % (plan["session_id"], plan["scheduled"], plan["reason"], cancel_hint()),
+             plan["config_dir"], plan["config_explicit"])
+    print("credo self-restart: worker %d detached; session %s will stop at %s (in ~%ss), "
+          "then relaunch via %s. Log: %s" % (
+              wpid, plan["session_id"], plan["scheduled"],
+              fmt_num(announce + (plan["delay"] or 0)), plan["method"], plan["log"]))
+    if announce > 0:
+        print("Wrap up and end your turn before %s; the session stops then." %
+              plan["scheduled"])
+    else:
+        print("End your turn now.")
     return 0
 
 
-def cmd_status(args):
+def state_dir():
     cfg = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(
         os.path.expanduser("~"), ".claude")
     pid, _, _, err = find_target()
@@ -1141,7 +1361,42 @@ def cmd_status(args):
         tenv = read_environ_keys(pid, ("CLAUDE_CONFIG_DIR",)) or {}
         if tenv.get("CLAUDE_CONFIG_DIR"):
             cfg = tenv["CLAUDE_CONFIG_DIR"]
-    state = os.path.join(cfg, "credo")
+    return os.path.join(cfg, "credo")
+
+
+def cmd_cancel(args):
+    state = state_dir()
+    marker = os.path.join(state, "self-restart.json")
+    with MarkerLock(marker):
+        m = read_marker(marker)
+        status = (m or {}).get("status") or "none"
+        if status != "pending":
+            print("nothing to cancel (self-restart status: %s)" % status)
+            return 1
+        m["status"] = "cancelled"
+        m["cancelled"] = now_iso()
+        m["updated"] = m["cancelled"]
+        write_json(marker, m)
+    pid = m.get("worker_pid")
+    killed = False
+    if isinstance(pid, int) and alive(pid) and is_worker(pid):
+        try:
+            os.kill(pid, signal.SIGTERM)
+            killed = True
+        except OSError:
+            pass
+    print("credo self-restart cancelled (session %s, was scheduled for %s)%s" % (
+        m.get("session_id") or "?", m.get("scheduled") or "?",
+        "; worker %d terminated" % pid if killed else "; no waiting worker found"))
+    return 0
+
+
+def cmd_status(args):
+    state = state_dir()
+    m = read_marker(os.path.join(state, "self-restart.json"))
+    if m:
+        print("state: %s; scheduled: %s; reason: %s" % (
+            m.get("status") or "?", m.get("scheduled") or "-", m.get("reason") or "-"))
     try:
         with open(os.path.join(state, "self-restart.json")) as fh:
             print(fh.read().rstrip())
@@ -1168,13 +1423,20 @@ def main(argv=None):
         return relaunch_pty(rest)
     ap = argparse.ArgumentParser(prog="credo-self-restart.py")
     ap.add_argument("action", nargs="?", default="check",
-                    choices=("check", "run", "status"))
+                    choices=("check", "run", "cancel", "status"))
+    ap.add_argument("--user-confirmed", action="store_true",
+                    help="the user said yes via the Ask tool in this interactive "
+                         "session; never pass it without that answer")
+    ap.add_argument("--announce", type=float, default=None,
+                    help="seconds to announce before stopping (autonomous: >= 300, "
+                         "default 300; with --user-confirmed default 0)")
     ap.add_argument("--update", action="store_true")
     ap.add_argument("--reason", default="cc-up")
     ap.add_argument("--delay", type=float, default=5.0)
     ap.add_argument("--method", choices=("tmux", "wt", "x11"))
     args = ap.parse_args(argv)
-    return {"check": cmd_check, "run": cmd_run, "status": cmd_status}[args.action](args)
+    return {"check": cmd_check, "run": cmd_run, "cancel": cmd_cancel,
+            "status": cmd_status}[args.action](args)
 
 
 if __name__ == "__main__":

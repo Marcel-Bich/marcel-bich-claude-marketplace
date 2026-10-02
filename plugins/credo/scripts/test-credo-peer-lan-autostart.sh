@@ -59,7 +59,10 @@ SENTINEL="$TMP/started"
 cat > "$FAKE_ROOT/scripts/credo-peer-lan.py" <<EOF
 #!/usr/bin/env bash
 # fake daemon: record the subcommand it was invoked with and exit at once (never
-# lingers, never binds a port). The hook must invoke it as "ensure".
+# lingers, never binds a port). The hook must invoke it as "ensure". The cheap
+# "onboarding --state" query answers with FAKE_ONB_STATE (default bound) and is not
+# recorded as a start.
+if [ "\$1" = onboarding ]; then echo "\${FAKE_ONB_STATE:-bound}"; exit 0; fi
 echo "started \$*" >> "$SENTINEL"
 exit 0
 EOF
@@ -207,6 +210,27 @@ ok "WSL without powershell.exe exits 0" "$rc"
 ok "WSL without powershell.exe still starts the daemon" "$(wait_sentinel && echo 0 || echo 1)"
 sleep 0.4
 ok "WSL without powershell.exe makes no trigger" "$([ ! -f "$PSLOG" ] && echo 0 || echo 1)"
+
+# --- onboarding context (SessionStart stdout = injected agent context) -----------
+# no config, not declined -> one-time setup offer; declined -> silent; config with no
+# bound network -> DISABLED note; bound (matching or not) -> silent. CREDO_PEER_LAN=0
+# -> nothing at all.
+rm -f "$CFG" "$CFGDIR/credo/peer-lan-onboarding-declined"
+OUT="$(run_hook)"
+case "$OUT" in *"[credo-peer-lan] credo can now connect"*"onboarding --decline"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL onboarding offer missing: %s\n' "$OUT" ;; esac
+: > "$CFGDIR/credo/peer-lan-onboarding-declined"
+OUT="$(run_hook)"
+check "onboarding: declined -> no injection" "" "$OUT"
+rm -f "$CFGDIR/credo/peer-lan-onboarding-declined"
+OUT="$(run_hook CREDO_PEER_LAN=0)"
+check "onboarding: CREDO_PEER_LAN=0 -> no injection" "" "$OUT"
+printf '{"this_machine":"X","peers":[]}\n' > "$CFG"
+OUT="$(run_hook FAKE_ONB_STATE=unbound)"
+case "$OUT" in *"LAN relay is DISABLED: no network is bound yet"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL onboarding unbound note missing: %s\n' "$OUT" ;; esac
+OUT="$(run_hook FAKE_ONB_STATE=bound)"
+check "onboarding: bound -> no injection" "" "$OUT"
+OUT="$(run_hook FAKE_ONB_STATE=unbound CREDO_PEER_LAN=off)"
+check "onboarding: off toggle silences the unbound note" "" "$OUT"
 
 # --- ensure via the hook: older running daemon replaced, same/newer left untouched ---
 # Drives the REAL daemon through the hook, loopback only, ephemeral port. ensure reads the

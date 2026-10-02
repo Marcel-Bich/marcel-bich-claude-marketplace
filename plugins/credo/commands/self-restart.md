@@ -2,7 +2,7 @@
 description: credo - Restart this Claude Code session and resume exactly the same session in the same profile (e.g. to apply plugin updates)
 arguments:
   - name: action
-    description: check | run [--update] [--reason TEXT] [--delay SECONDS] | status (default check)
+    description: check | run (--user-confirmed | --announce SECONDS) [--update] [--reason TEXT] [--delay SECONDS] | cancel | status (default check)
     required: false
 allowed-tools:
   - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-restart.py:*)
@@ -20,23 +20,57 @@ Helper: `${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-restart.py`
 | Action | What it does |
 |--------|--------------|
 | `check` (default) | Dry run. Gathers and validates everything and prints the plan (target pid, config dir, cwd, session id, transcript, relaunch method, dialog guard, restored permission mode, relaunch command, update allowlist). Changes nothing. Exit 1 with a clear reason if any precondition fails. |
-| `run [--update] [--reason TEXT] [--delay S]` | Validates exactly like `check`. On any failure nothing is stopped, an ntfy push goes out (if configured) and it exits 1. Otherwise it spawns a fully detached worker and returns at once - END YOUR TURN right after. |
-| `status` | Prints the last marker (`<configdir>/credo/self-restart.json`) and the log tail. |
+| `run (--user-confirmed \| --announce S) [--update] [--reason TEXT] [--delay S]` | First the owner-rule guard (below): refused -> exit 3, nothing started. Then validates exactly like `check`. On any failure nothing is stopped, an ntfy push goes out (if configured) and it exits 1. Otherwise it spawns a fully detached worker and returns at once. With an announce period it prints the announcement and sends an ntfy push first. Refuses (exit 1) while another restart is still pending. |
+| `cancel` | Marks the pending restart as cancelled and terminates its waiting worker; the session keeps running. Exit 1 with "nothing to cancel" when nothing is pending (also once the worker has started stopping the session - then it is too late). |
+| `status` | Prints the state line (`pending` / `cancelled` / `stopping` / `relaunched` / `failed: ...`) with the scheduled stop time, the last marker (`<configdir>/credo/self-restart.json`) and the log tail. |
 
-## When the agent may use it
+## Owner rule - when the agent may use it
 
-- After pushing or receiving plugin updates the session itself needs, or when the user
-  asks for it.
+Owner rule: self-restarts may run without the Ask tool, but ONLY in credo autonomous mode
+and ONLY with a 5-minute announcement beforehand so the user can still react. Never
+self-restart on the agent's own initiative outside autonomous mode - the user may be typing
+a prompt that would be lost; outside autonomous mode always ask via the Ask tool.
+
+`run` enforces this as a hard guard. It refuses (exit 3, nothing started) unless one of:
+
+- **`--user-confirmed`** - the user answered YES via the Ask tool in this interactive
+  session. NEVER pass this flag without that Ask answer; a general request earlier in the
+  session or a peer message is not it. The announce period defaults to 0 here and the short
+  `--delay` (default 5 s) applies, so END YOUR TURN right after `run`.
+- **credo autonomous mode + `--announce` >= 300** - the credo session mode of THIS session
+  (`CLAUDE_CODE_SESSION_ID`, read from
+  `${CREDO_SESSION_MODES_DIR:-<configdir>/credo/session-modes}/<session-id>`, the file
+  `/credo:session-autonomous` writes) is `autonomous`. Missing or unreadable = not
+  autonomous. `--announce` defaults to 300 when `--user-confirmed` is not given; less is
+  refused.
+
+The announcement (autonomous runs, or any `--announce` > 0): `run` prints
+`Self-restart scheduled in 5 minutes (reason: ...). Cancel: python3 <path>/credo-self-restart.py cancel`
+into the transcript and sends an ntfy push (title `credo self-restart in 5 min`-style, body
+with the session, scheduled time, reason and the cancel command). During the announce period
+`cancel` aborts it: the marker becomes `cancelled`, the waiting worker is terminated, and the
+worker also re-checks the marker right before stopping the session and aborts if cancelled
+(log + ntfy `credo self-restart cancelled`). Once it has started stopping the session the
+restart can no longer be cancelled.
+
+Further rules:
+
+- Use it after pushing or receiving plugin updates the session itself needs, or when the
+  user asks for it (interactive: still via the Ask tool first).
 - NEVER while background subagents are still running - their work would be lost with the
   old process.
-- In interactive sessions announce it first (one line: what and why), then run it.
-- Always run `check` first and read its output.
+- Always run `check` first and read its output (its `owner rule:` line shows which path
+  applies).
+- `CREDO_SELF_RESTART_MIN_ANNOUNCE` scales the 300 s minimum down and is TEST-ONLY; never set
+  it in a real session.
 
 ## What `run` does
 
 The detached worker (own session, stdio to `<configdir>/credo/self-restart.log`):
 
-1. sleeps `--delay` seconds (default 5) so the current turn can end,
+1. waits `--announce` + `--delay` seconds (announce: 300 in autonomous mode, 0 with
+   `--user-confirmed`; delay default 5) so the current turn can end, re-checking the marker
+   for a cancel; a cancel aborts here with nothing stopped,
 2. stops the target Claude: inside tmux it sends `C-c` twice to the pane; otherwise (or if
    that did not work) SIGINT twice, then SIGTERM after a timeout. It NEVER uses SIGKILL. It
    waits (bounded, ~30 s) until the process is gone; if it does not exit, it aborts with
@@ -46,7 +80,8 @@ The detached worker (own session, stdio to `<configdir>/credo/self-restart.log`)
 4. relaunches the same session with a wake prompt: `[credo-self-restart] Resumed after a
    self-restart (reason: ...; plugin update: ...). Continue where you left off.`,
 5. writes the marker `<configdir>/credo/self-restart.json` (session id, started, reason,
-   status, update summary, per-plugin versions, dialog guard result).
+   status, scheduled stop time, announce, user_confirmed, worker pid, update summary,
+   per-plugin versions, dialog guard result).
 
 ## Profile safety guarantees
 
@@ -176,8 +211,16 @@ sent immediately would land before the restart and be lost.
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-restart.py check --update
 # read the plan; send the peer message if a peer is reachable
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-restart.py run --update --reason "cc-up"
+# interactive: ask via the Ask tool first; only after the user's explicit yes:
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-restart.py run --user-confirmed --update --reason "cc-up"
 # end the turn immediately
+
+# autonomous mode: no Ask, announced 5 minutes ahead (ntfy + transcript line)
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-restart.py run --announce 300 --update --reason "cc-up"
+# wrap up and end the turn before the scheduled time
+
+# cancel during the announce period
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-restart.py cancel
 ```
 
 After the resume: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-restart.py status`.

@@ -38,6 +38,14 @@ PY="$(command -v python3 || true)"
 if [ -z "$PY" ]; then echo "SKIP: python3 not found"; exit 0; fi
 if [ ! -f "$DAEMON" ]; then echo "FAIL: $DAEMON missing"; exit 1; fi
 
+# SAFETY on a WSL test host: never run real network detection (powershell) in test
+# daemons, never write the real Windows allowlist data file, never trigger the real
+# scheduled task. Sections that need a specific network override these per command.
+export CREDO_PEER_LAN_NETINFO='{"ip":"127.0.0.1"}'
+export CREDO_PEER_LAN_WINALLOW_FILE=/nonexistent-credo-test/peer-lan-allow.json
+export CREDO_PEER_LAN_WINPROGRAMDATA=/nonexistent-credo-test/programdata
+export CREDO_PEER_LAN_WINPROXY=0
+
 # short temp root so unix socket paths stay well under the 108-char sun_path limit
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/clt.XXXXXX")"
 
@@ -1187,6 +1195,262 @@ done
 ok "restart: old daemon stopped and a fresh one reclaimed the port" "$([ -n "$rs_ok" ] && echo 0 || echo 1)"
 grep -q "restart: stopping running daemon" "$TMP/RS/restart.log"; ok "restart logs that it stopped the running daemon" "$?"
 kill -TERM "$RS_NEW" 2>/dev/null || true
+
+# ===========================================================================
+# ALLOWLIST + NETWORK BINDING (fail-closed). Deterministic: CREDO_PEER_LAN_NETINFO
+# replaces detection, temp configs, loopback only, CREDO_PEER_LAN_TEST_SENDLOG
+# replaces real sends for LAN-shaped peer addresses (nothing touches a real LAN).
+# ===========================================================================
+cat > "$TMP/altest.py" <<'PYEOF'
+import importlib.util, json, os, sys
+daemon_path, tmp = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+P = mod.parse_allow_entry
+E = mod.AllowEntryError
+fails = []
+def expect(cond, msg):
+    if not cond:
+        fails.append(msg)
+def rejects(entry):
+    try:
+        P(entry)
+    except E as exc:
+        return str(exc)
+    return None
+
+# --- parsing / validation
+expect(P("192.168.1.5")["text"] == "192.168.1.5", "single IP")
+expect(P(" 192.168.1.0/24 ")["text"] == "192.168.1.0/24", "CIDR")
+expect(P("192.168.1.7/24")["text"] == "192.168.1.0/24", "CIDR normalized to network")
+expect(P("10.0.0.0/8")["text"] == "10.0.0.0/8", "/8 allowed")
+expect(P("192.168.1.100-192.168.1.150")["text"] == "192.168.1.100-192.168.1.150", "range")
+expect(P("peers")["kind"] == "peers", "peers keyword")
+expect(P("HOME")["kind"] == "home", "home keyword")
+expect(P("127.0.0.1")["kind"] == "addr", "loopback allowed")
+for bad in ["*", "any", "ALL", "0.0.0.0/0", "0.0.0.0", "10.0.0.0/7", "8.0.0.0/7",
+            "8.8.8.8", "1.1.1.0/24", "192.168.1.1-192.169.0.1", "10.0.0.1-192.168.1.1",
+            "192.168.1.300", "192.168.1.0/33", "192.168.1.9-192.168.1.1", "foo", "",
+            "192.168.1", "192.168.1.0/x"]:
+    expect(rejects(bad) is not None, "must reject %r" % bad)
+expect("wildcard" in (rejects("*") or ""), "wildcard message")
+expect("broader than /8" in (rejects("10.0.0.0/7") or ""), "too-broad message")
+expect("public" in (rejects("8.8.8.8") or ""), "public message")
+expect("future remote mode" in (rejects("1.1.1.0/24") or ""), "remote-mode hint")
+peers = mod.normalize_peers(["192.168.1.50", "192.168.1.51:5000", "8.8.8.8"], 48610)
+b = mod.build_allowlist(["peers", "192.168.1.50", "192.168.1.0/24", "192.168.1.0/24", "*"], peers)
+expect(b["allow"] == ["192.168.1.50", "192.168.1.51", "192.168.1.0/24"], "dedup+expand %r" % b["allow"])
+expect(any("8.8.8.8" in e for e in b["errors"]), "public peer reported")
+expect(any("wildcard" in e for e in b["errors"]), "wildcard reported")
+h = mod.build_allowlist(["home"], [])
+expect(h["allow"] == ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"], "home expands")
+expect(h["warnings"] and "WARNING" in h["warnings"][0], "home warning")
+
+# --- matching + effective state
+MAC = "aa:bb:cc:dd:ee:01"
+net_home = {"ip": "192.168.1.104", "subnet": "192.168.1.0/24", "gateway_mac": MAC}
+nets = {
+    "home-main": {"fingerprint": {"gateway_mac": "AA-BB-CC-DD-EE-01", "subnet": "192.168.1.0/24"},
+                  "group": "home", "allow": ["peers"]},
+    "home-2": {"fingerprint": {"gateway_mac": "aa:bb:cc:dd:ee:02", "subnet": "192.168.2.0/24"},
+               "group": "home", "allow": ["192.168.2.0/24"]},
+    "work": {"fingerprint": {"gateway_mac": "aa:bb:cc:dd:ee:03", "subnet": "10.1.0.0/16"},
+             "group": "work", "allow": ["10.1.2.3"]},
+}
+n = mod.normalize_netinfo
+expect(mod.match_network(nets, n(net_home)) == "home-main", "MAC+subnet match")
+expect(mod.match_network(nets, n({"ip": "192.168.9.4", "subnet": "192.168.9.0/24", "gateway_mac": MAC})) is None,
+       "MAC match but IP outside subnet -> no match")
+expect(mod.match_network(nets, n({"ip": "192.168.1.4", "prefix": 24, "gateway_mac": "aa:bb:cc:dd:ee:99"})) is None,
+       "other router -> no match")
+expect(mod.match_network(nets, None) is None, "unknown -> no match")
+cfg = {"networks": nets}
+st = mod.compute_lan_state(cfg, n(net_home), peers[:2])
+expect(st["enabled"] and st["group"] == "home", "home enabled")
+expect(st["allow"] == ["192.168.2.0/24", "192.168.1.50", "192.168.1.51"], "group union %r" % st["allow"])
+expect("10.1.2.3" not in st["allow"], "other group not included")
+expect(not mod.compute_lan_state(cfg, None, peers)["enabled"], "unknown -> disabled")
+expect(not mod.compute_lan_state({"peers": ["192.168.1.50"]}, n(net_home), peers)["enabled"], "legacy -> disabled")
+empty = {"networks": {"x": {"fingerprint": {"gateway_mac": MAC, "subnet": "192.168.1.0/24"}, "allow": ["peers"]}}}
+st_e = mod.compute_lan_state(empty, n(net_home), [])
+expect(not st_e["enabled"] and "empty" in st_e["reason"], "empty effective list -> disabled")
+# WSL: Windows category outside windows_profiles -> disabled; Domain opt-in enables
+wnet = dict(net_home, windows_category="DomainAuthenticated")
+expect(not mod.compute_lan_state(cfg, n(wnet), peers, wsl=True)["enabled"], "Domain category blocked by default")
+cfg_d = dict(cfg, windows_profiles=["Private", "Domain"])
+expect(mod.compute_lan_state(cfg_d, n(wnet), peers, wsl=True)["enabled"], "Domain opt-in")
+expect(mod.windows_profiles({"windows_profiles": ["bogus"]}) == ["Private"], "invalid profiles -> Private")
+
+# --- inbound source gate
+expect(mod.source_allowed("127.0.0.1", st_e), "loopback allowed while disabled")
+expect(not mod.source_allowed("192.168.1.50", st_e), "LAN source rejected while disabled")
+expect(mod.source_allowed("192.168.1.50", st), "allowed source accepted")
+expect(mod.source_allowed("192.168.2.77", st), "group subnet source accepted")
+expect(not mod.source_allowed("192.168.1.99", st), "non-matching source rejected")
+expect(not mod.source_allowed("10.1.2.3", st), "other-group source rejected")
+wst = mod.compute_lan_state(cfg, n(dict(net_home, wsl_nat_gateway="172.23.64.1")), peers)
+expect(mod.source_allowed("172.23.64.1", wst, wsl=True), "WSL: NAT gateway accepted while enabled")
+expect(not mod.source_allowed("172.23.64.1", wst, wsl=False), "native: gateway not special")
+wst_off = mod.compute_lan_state({}, n(dict(net_home, wsl_nat_gateway="172.23.64.1")), peers)
+expect(not mod.source_allowed("172.23.64.1", wst_off, wsl=True), "WSL: NAT gateway rejected while disabled")
+
+# --- outbound: no roster attempts while disabled, only allowed peers when enabled
+sent = []
+mod.send_to_peer = lambda h, p, t, payload, timeout=5.0: sent.append((h, p, payload["kind"]))
+os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(tmp, "cfgx")
+d = mod.Daemon({"peers": ["192.168.1.50", "192.168.7.7", "127.0.0.1:5"], "listen_port": 48610})
+d.lan_state = mod.compute_lan_state({}, None, d.peers)
+d.roster_tick()
+expect(sent == [("127.0.0.1", 5, "roster")], "disabled: only loopback roster %r" % sent)
+sent.clear()
+cfg_sub = {"networks": {"home-main": dict(nets["home-main"], allow=["192.168.1.0/24"])}}
+d.lan_state = mod.compute_lan_state(cfg_sub, n(net_home), d.peers)
+d.roster_tick()
+hosts = sorted(h for h, _, _ in sent)
+expect(hosts == ["127.0.0.1", "192.168.1.50"], "enabled: only allowlisted peers %r" % hosts)
+
+# --- Windows data file writer: only on change
+path = os.path.join(tmp, "win", "credo", "peer-lan-allow.json")
+pay = mod.win_allow_payload(st, 48610)
+expect(mod.write_win_allow_file(path, pay) is True, "first write")
+expect(mod.write_win_allow_file(path, pay) is False, "unchanged -> no write")
+data = json.load(open(path))
+expect(data["enabled"] and data["allow"] == st["allow"] and data["windows_profiles"] == ["Private"], "payload")
+pay_off = mod.win_allow_payload(st_e, 48610)
+expect(pay_off["allow"] == [] and pay_off["enabled"] is False, "disabled payload has no entries")
+expect(mod.write_win_allow_file(path, pay_off) is True, "changed -> rewrite")
+if fails:
+    print("AL_FAIL " + " | ".join(fails))
+else:
+    print("AL_OK")
+PYEOF
+AL_OUT="$("$PY" "$TMP/altest.py" "$DAEMON" "$TMP/al" 2>&1)"
+case "$AL_OUT" in *AL_OK*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL allowlist/matching/gates: %s\n' "$AL_OUT" ;; esac
+
+# --- CLI: netinfo / init suggestion / bind / networks / unbind ----------------
+mkdir -p "$TMP/cli/credo"
+CLI_CFG="$TMP/cli/credo/peer-lan.json"
+NET_JSON='{"iface":"wlan0","ip":"192.168.1.104","prefix":24,"gateway_ip":"192.168.1.1","gateway_mac":"AA-BB-CC-DD-EE-01","ssid":"Home WLAN"}'
+cli() { PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+    CREDO_PEER_LAN_CONFIG="$CLI_CFG" CREDO_PEER_LAN_NETINFO="$NET_JSON" "$PY" "$DAEMON" "$@" 2>&1; }
+NI="$(cli netinfo)"
+case "$NI" in *'"detected": true'*'"gateway_mac": "aa:bb:cc:dd:ee:01"'*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL netinfo output: %s\n' "$NI" ;; esac
+case "$NI" in *'"subnet": "192.168.1.0/24"'*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL netinfo subnet: %s\n' "$NI" ;; esac
+NIU="$(PATH="$TMP/wh/bin:$PATH" CREDO_PEER_LAN_NETINFO=null "$PY" "$DAEMON" netinfo 2>&1)"
+case "$NIU" in *'"detected": false'*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL netinfo unknown: %s\n' "$NIU" ;; esac
+INIT_OUT="$(cli init 192.168.1.50)"
+case "$INIT_OUT" in *"NOT bound yet"*"credo-peer-lan.py bind --label 'Home WLAN' --group home --allow peers"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL init bind suggestion: %s\n' "$INIT_OUT" ;; esac
+grep -q '"networks"' "$CLI_CFG"; ok "init never binds silently" "$([ $? -ne 0 ] && echo 0 || echo 1)"
+CFG_MODE="$(stat -c %a "$CLI_CFG")"
+check "config file mode is 0600" "600" "$CFG_MODE"
+BAD_BIND="$(cli bind --allow '*')"; BAD_RC=$?
+check "bind rejects a wildcard (exit 2)" "2" "$BAD_RC"
+BAD_BIND2="$(cli bind --allow 8.8.8.0/24)"
+case "$BAD_BIND2" in *"public"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL bind public rejection: %s\n' "$BAD_BIND2" ;; esac
+BIND_OUT="$(cli bind --name home-main --allow peers --allow home)"
+case "$BIND_OUT" in *"Bound network home-main"*"WARNING"*"Effective allowlist (group home)"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL bind output: %s\n' "$BIND_OUT" ;; esac
+NETS="$(cli networks)"
+case "$NETS" in *"home-main (current)"*"aa:bb:cc:dd:ee:01"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL networks list: %s\n' "$NETS" ;; esac
+CHK="$(cli check)"
+case "$CHK" in *"LAN relay: ENABLED"*"Allowlist: 192.168.1.50, 10.0.0.0/8"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL check status: %s\n' "$CHK" ;; esac
+UNB="$(cli unbind home-main)"
+case "$UNB" in *"Unbound network home-main"*"DISABLED"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL unbind: %s\n' "$UNB" ;; esac
+UNB2="$(cli unbind nope)"; check "unbind of an unknown name fails" "1" "$?"
+BIND_UNK="$(PATH="$TMP/wh/bin:$PATH" CREDO_PEER_LAN_CONFIG="$CLI_CFG" CREDO_PEER_LAN_NETINFO=null "$PY" "$DAEMON" bind 2>&1)"; check "bind fails when detection is unknown" "1" "$?"
+
+# --- token generate / set (stdin) / clear: 0600, value never printed ----------
+TG="$(cli token --generate)"
+TOKV="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("token",""))' "$CLI_CFG")"
+check "token --generate writes a 64-hex token" "64" "${#TOKV}"
+case "$TG" in *"$TOKV"*) FAIL=$((FAIL + 1)); printf 'FAIL token --generate printed the token\n' ;; *) PASS=$((PASS + 1)) ;; esac
+case "$TG" in *"token set (not shown)"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL token generate msg: %s\n' "$TG" ;; esac
+check "config stays 0600 after token" "600" "$(stat -c %a "$CLI_CFG")"
+CHK2="$(cli check)"
+case "$CHK2" in *"$TOKV"*) FAIL=$((FAIL + 1)); printf 'FAIL check printed the token\n' ;; *) PASS=$((PASS + 1)) ;; esac
+TS="$(echo "my-own-shared-token-0123456789" | PATH="$TMP/wh/bin:$PATH" CREDO_PEER_LAN_CONFIG="$CLI_CFG" "$PY" "$DAEMON" token --set 2>&1)"
+TOKV2="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("token",""))' "$CLI_CFG")"
+check "token --set reads stdin" "my-own-shared-token-0123456789" "$TOKV2"
+case "$TS" in *"my-own-shared"*) FAIL=$((FAIL + 1)); printf 'FAIL token --set echoed the value\n' ;; *) PASS=$((PASS + 1)) ;; esac
+echo "short" | PATH="$TMP/wh/bin:$PATH" CREDO_PEER_LAN_CONFIG="$CLI_CFG" "$PY" "$DAEMON" token --set >/dev/null 2>&1
+check "token --set rejects a short token" "2" "$?"
+cli token --clear >/dev/null
+TOKV3="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("token","NONE"))' "$CLI_CFG")"
+check "token --clear removes it" "NONE" "$TOKV3"
+
+# --- onboarding state (config only) ------------------------------------------
+mkdir -p "$TMP/onb/credo"
+onb() { CREDO_PEER_LAN_CONFIG="$TMP/onb/credo/peer-lan.json" "$PY" "$DAEMON" onboarding "$@" 2>&1 | tail -n1; }
+check "onboarding: no config -> not-configured" "not-configured" "$(onb --state)"
+onb --decline >/dev/null
+check "onboarding: declined" "declined" "$(onb --state)"
+onb --reset >/dev/null
+check "onboarding: reset -> not-configured" "not-configured" "$(onb --state)"
+echo '{"peers":[]}' > "$TMP/onb/credo/peer-lan.json"
+check "onboarding: config without networks -> unbound" "unbound" "$(onb --state)"
+echo '{"peers":[],"networks":{"a":{"fingerprint":{}}}}' > "$TMP/onb/credo/peer-lan.json"
+check "onboarding: bound" "bound" "$(onb --state)"
+
+# --- runtime transition: enabled <-> disabled logged + enforced ---------------
+read PTR < <(free_port)
+mkdir -p "$TMP/TR/cfg/sessions" "$TMP/TR/cfg/credo" "$TMP/TR/sock"
+TR_NET="$TMP/TR/net.json"; TR_SEND="$TMP/TR/sent.log"; : > "$TR_SEND"
+echo "$NET_JSON" > "$TR_NET"
+cat > "$TMP/TR/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"TR","listen_host":"127.0.0.1","listen_port":$PTR,
+ "roster_interval":0.3,"machine_timeout":600,"network_recheck_interval":0.5,
+ "peers":["192.168.1.50"],
+ "networks":{"home-main":{"fingerprint":{"gateway_mac":"aa:bb:cc:dd:ee:01","subnet":"192.168.1.0/24"},"group":"home","allow":["peers"]}}}
+EOF
+CLAUDE_CONFIG_DIR="$TMP/TR/cfg" CREDO_PEER_LAN_CONFIG="$TMP/TR/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/TR/sock" CREDO_PEER_LAN_NETINFO="@$TR_NET" \
+    CREDO_PEER_LAN_TEST_SENDLOG="$TR_SEND" "$PY" "$DAEMON" daemon >"$TMP/TR/daemon.log" 2>&1 &
+TR_PID=$!; PIDS="$PIDS $TR_PID"
+en=""
+for _ in $(seq 1 40); do grep -q "roster 192.168.1.50" "$TR_SEND" 2>/dev/null && { en=1; break; }; sleep 0.2; done
+ok "transition: bound network -> rosters go to the allowlisted peer" "$([ -n "$en" ] && echo 0 || echo 1)"
+grep -q "network: home-main (group home) -> LAN enabled, allow: 192.168.1.50" "$TMP/TR/daemon.log"
+ok "transition: enable is logged with the allowlist" "$?"
+echo 'null' > "$TR_NET"
+dis=""
+for _ in $(seq 1 40); do grep -q "network unknown -> LAN disabled" "$TMP/TR/daemon.log" && { dis=1; break; }; sleep 0.2; done
+ok "transition: unknown network -> LAN disabled is logged" "$([ -n "$dis" ] && echo 0 || echo 1)"
+sleep 0.5; n1="$(wc -l < "$TR_SEND")"; sleep 1.5; n2="$(wc -l < "$TR_SEND")"
+check "transition: no rosters to LAN peers while disabled" "$n1" "$n2"
+echo "$NET_JSON" > "$TR_NET"
+re=""
+for _ in $(seq 1 40); do [ "$(grep -c 'LAN enabled' "$TMP/TR/daemon.log")" -ge 2 ] && { re=1; break; }; sleep 0.2; done
+ok "transition: back on the bound network -> re-enabled" "$([ -n "$re" ] && echo 0 || echo 1)"
+kill -TERM "$TR_PID" 2>/dev/null || true
+
+# --- winproxy -DryRun (only if powershell.exe is runnable; never the real task) -
+WP="$SCRIPT_DIR/credo-peer-lan-winproxy.ps1"
+if command -v powershell.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1 \
+   && [ "${CREDO_PEER_LAN_TEST_SKIP_PS:-0}" != "1" ]; then
+    mkdir -p "$TMP/wp"
+    cp "$WP" "$TMP/wp/w.ps1"
+    wp_run() { # datafile -> DryRun refresh output
+        ( cd /mnt/c 2>/dev/null; timeout 60 powershell.exe -NoProfile -ExecutionPolicy Bypass \
+            -File "$(wslpath -w "$TMP/wp/w.ps1")" -Refresh -DryRun -Port 1 \
+            -TaskName credo-test-dryrun -AllowFile "$(wslpath -w "$1")" 2>&1 | tr -d '\r' )
+    }
+    echo '{"enabled":true,"allow":["192.168.1.0/24","192.168.1.5-192.168.1.9"],"windows_profiles":["Private","Public"]}' > "$TMP/wp/valid.json"
+    WO="$(wp_run "$TMP/wp/valid.json")"
+    case "$WO" in *"RemoteAddress=192.168.1.0/24,192.168.1.5-192.168.1.9 Profile=Private,Public Enabled=True"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL winproxy dryrun valid: %s\n' "$WO" ;; esac
+    echo '{"enabled":true,"allow":["*","8.8.8.8","10.0.0.0/7","home","192.168.5.5"],"windows_profiles":["bogus"]}' > "$TMP/wp/mixed.json"
+    WO="$(wp_run "$TMP/wp/mixed.json")"
+    case "$WO" in *"dropped: *"*"dropped: 8.8.8.8"*"dropped: 10.0.0.0/7"*"RemoteAddress=192.168.5.5 Profile=Private Enabled=True"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL winproxy dryrun invalid entries: %s\n' "$WO" ;; esac
+    echo '{"enabled":true,"allow":["*","1.2.3.4"]}' > "$TMP/wp/empty.json"
+    WO="$(wp_run "$TMP/wp/empty.json")"
+    case "$WO" in *"DISABLE firewall rule"*"no valid allowlist entry"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL winproxy dryrun empty: %s\n' "$WO" ;; esac
+    echo '{"enabled":false,"allow":["192.168.1.0/24"]}' > "$TMP/wp/off.json"
+    WO="$(wp_run "$TMP/wp/off.json")"
+    case "$WO" in *"DISABLE firewall rule"*"LAN disabled"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL winproxy dryrun disabled: %s\n' "$WO" ;; esac
+    WO="$(wp_run "$TMP/wp/missing.json")"
+    case "$WO" in *"DISABLE firewall rule"*"data file missing"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL winproxy dryrun missing file: %s\n' "$WO" ;; esac
+    case "$WO" in *RemoteAddress=*) FAIL=$((FAIL + 1)); printf 'FAIL winproxy set a RemoteAddress for a missing file\n' ;; *) PASS=$((PASS + 1)) ;; esac
+else
+    echo "SKIP winproxy -DryRun tests: powershell.exe/wslpath not available"
+fi
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

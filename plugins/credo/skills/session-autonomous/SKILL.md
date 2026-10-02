@@ -180,6 +180,15 @@ the process runs, NOT by the git branch: a checkout named `main` / `develop` / `
 make it remote. If locality cannot be positively established, do NOT restart - defer the
 visual verify as human-only. See the credo `verify` skill for the full rule and the config key.
 
+### Self-restart: announced, never asked (owner rule)
+
+In autonomous mode `/credo:self-restart` runs WITHOUT the Ask tool, but always announced at
+least 5 minutes ahead: `run --announce 300` (the default; less is refused) sends an ntfy push
+and prints the reason plus the cancel command, so the user can still react. Outside
+autonomous mode it is never run on the agent's own initiative - only after the user's
+explicit yes via the Ask tool (`run --user-confirmed`), because an unannounced restart could
+discard a prompt the user is typing. Never with running background subagents.
+
 ### Never interrupt an autonomous run for a mode change (hard rule)
 
 In autonomous mode the agent NEVER asks via the Ask tool about switching mode - not even

@@ -1,7 +1,7 @@
 {
   "_comment": "Example credo LAN peer relay config. The easy way to create this is NOT to copy this file but to run '/credo:peer-lan init <peer-ip> ...' (or 'credo-peer-lan.py init <peer-ip> ...'), which writes ~/.claude/credo/peer-lan.json for you, token-less, and prints this machine's own address. The relay is a no-op until the config exists; once it does, it starts automatically on session start (one daemon per machine) and can be disabled with CREDO_PEER_LAN set to 0/false/no/off.",
   "_peers_comment": "Routing is ADDRESS-based: a peer is identified by its host:port, NOT by a name. List each OTHER machine's LAN address. A plain \"IP\" uses listen_port; \"IP:PORT\" overrides the port. Multiple entries = multiple machines. You always enter the TARGET machine's LAN IP: for a WSL2 machine that is its WINDOWS HOST IP (not the 172.x WSL IP); for native Linux its own LAN IP. Run 'credo-peer-lan.py whoami' on each machine to print its own address so you never have to guess which IP to enter.",
-  "_token_comment": "The shared token is OPTIONAL and omitted here, so the relay runs TOKEN-LESS - the casual default for a trusted home LAN. WITHOUT a token, any device that can reach listen_host:listen_port can send messages to your sessions (gated only by the receiving session's own consent prompt; the relay never forges a trusted sender). To restrict messaging to your own devices, add the SAME non-empty \"token\" on every machine - recommended on untrusted or company networks. A machine whose token differs from a token-requiring peer is rejected by that peer.",
+  "_token_comment": "The shared token is OPTIONAL. Without it frames are unsigned and the IP allowlist of the bound network is the boundary. Manage it only with 'credo-peer-lan.py token --generate | --set | --clear' (never printed); the same token must be set on every machine.",
   "this_machine": "pc-hub",
   "listen_host": "0.0.0.0",
   "listen_port": 48610,
@@ -10,5 +10,34 @@
   "peers": [
     "192.168.1.50",
     "192.168.1.51:48610"
+  ],
+  "_networks_comment": "WHITELIST MANDATORY, FAIL-CLOSED: the LAN side is only enabled while the current network matches a bound profile (router MAC + subnet). Create profiles with 'credo-peer-lan.py bind' while connected to the network. allow entries: \"peers\" (all peer IPs), an IPv4, a CIDR (/8 or narrower), a range a-b, or \"home\" (all RFC1918 ranges, broadest, prints a warning). Wildcards and public ranges are rejected. Networks with the same group share their allowlists (they may talk to each other).",
+  "_windows_profiles_comment": "WSL only: Windows network categories the firewall rule applies to. Default [\"Private\"]; \"Domain\"/\"Public\" are explicit opt-ins for company/public networks and not recommended.",
+  "networks": {
+    "home-main": {
+      "fingerprint": {
+        "gateway_mac": "aa:bb:cc:dd:ee:01",
+        "subnet": "192.168.1.0/24"
+      },
+      "label": "WLAN",
+      "group": "home",
+      "allow": [
+        "peers"
+      ]
+    },
+    "home-second": {
+      "fingerprint": {
+        "gateway_mac": "aa:bb:cc:dd:ee:02",
+        "subnet": "192.168.2.0/24"
+      },
+      "label": "WLAN-2",
+      "group": "home",
+      "allow": [
+        "192.168.2.0/24"
+      ]
+    }
+  },
+  "windows_profiles": [
+    "Private"
   ]
 }
