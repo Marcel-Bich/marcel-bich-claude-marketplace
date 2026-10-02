@@ -124,6 +124,16 @@ sequentially) and, before each spawn, the resource gate (`credo-resource-check.s
 re-check on the next completion notification. Full procedure: credo `orchestration` skill,
 "Parallel code tracks: touches and resource gate".
 
+Each parallel code track gets its own worktree, chosen by `credo-worktree-flow.sh` (hydra's
+flow on `[x] use Hydra for 2+ independent tasks` with hydra installed, else native
+`git worktree add`); a `flow=ask` result is treated as native here - never ask in
+autonomous mode. Run the printed `setup=` script right after every `git worktree add`, and
+put the absolute main-checkout path (its `main=` line) plus the read-only lookup rule into
+every builder brief (credo `orchestration`, "Worktrees for parallel code tracks"). Closing
+an item cleans up merged+clean worktrees per the DOGMA-PERMISSIONS checkbox; with `[?]` or
+no checkbox the removal waits for the user (credo `items`, "Worktree cleanup at item
+close").
+
 Autonomous / AFK runs are read-heavy, so isolated writing pre-work has room here: for a clarify
 item blocked by a missing measurement, mockup, or feasibility proof, use the `sandbox` skill
 (`.credo/sandbox-tmp/`, no production code, no commit) rather than making a product decision.

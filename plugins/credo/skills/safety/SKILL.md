@@ -49,6 +49,16 @@ Additional standing rules:
 - Prefer moving to a holding location over hard deletion when the intent is cleanup and
   the user has not confirmed a delete.
 
+Carve-out - merged+clean worktrees: removing linked git worktrees whose branch is fully
+merged into the main branch AND that have no changes to tracked files (plus deleting that
+merged branch with `git branch -d`), done ONLY by `credo-worktree-cleanup.sh` at item close
+(credo `items`, "Worktree cleanup at item close"), is user-authorized by the setting
+`[x] clean up merged worktrees automatically` in DOGMA-PERMISSIONS.md. With `[?]` or no
+checkbox, ask the user first; with `[ ]`, never. This covers nothing else: not the main
+worktree, not unmerged, dirty, locked or other worktrees, no other path, and no other
+command - git unlinks symlinks there and never follows them, so link targets in the main
+checkout survive.
+
 Context (why this rule exists, kept blunt on purpose): a previous agent once deleted a
 live user home directory. This rule exists so that never happens again.
 

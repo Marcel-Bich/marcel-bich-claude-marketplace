@@ -1,6 +1,6 @@
 ---
 name: orchestration
-description: Delegate work to subagents safely and efficiently - decide how many subagents to run, keep parallel tracks on disjoint files (item `touches:` overlap check) and within machine resources (resource gate, `heavy:` items), monitor them without flooding your context, inherit security to every subagent, and use return-and-resume so a subagent can ask a question and continue with full context. Use whenever you are about to spawn one or more subagents, run work in parallel, or coordinate delegated tasks. Applies to any agent that delegates, including subagents that spawn their own helpers.
+description: Delegate work to subagents safely and efficiently - decide how many subagents to run, keep parallel tracks on disjoint files (item `touches:` overlap check) and within machine resources (resource gate, `heavy:` items), give each code track a set-up git worktree (hydra or native, automatic), monitor them without flooding your context, inherit security to every subagent, and use return-and-resume so a subagent can ask a question and continue with full context. Use whenever you are about to spawn one or more subagents, run work in parallel, or coordinate delegated tasks. Applies to any agent that delegates, including subagents that spawn their own helpers.
 ---
 
 # orchestration
@@ -80,6 +80,45 @@ downloads):
 - never runs in parallel to another heavy item, and
 - starts only when `credo-resource-check.sh --running <N> --heavy` says `ok` - the check
   always runs for heavy items, even below the agent gate.
+
+### Worktrees for parallel code tracks (hydra or native, automatic)
+
+Parallel code tracks work in git worktrees. Decide the flow once per batch, without any
+user command:
+
+```
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-worktree-flow.sh"   # flow=hydra|ask|native, setup=<script>
+```
+
+It reads the DOGMA-PERMISSIONS checkbox `use Hydra for 2+ independent tasks` (`### Hydra`
+subsection; read via `credo-dogma-mode.sh`, works without dogma) and whether hydra is
+installed:
+
+- `flow=hydra` (`[x]` + hydra installed): use hydra's create flow automatically
+  (`git worktree add -b hydra/<name> ../<repo>-worktrees/<name>`, then hydra's
+  `worktree-setup.sh`), as `/hydra:create` describes - no user command needed.
+- `flow=ask` (`[?]` + hydra installed): ask the user ONCE per batch whether to use hydra.
+  In autonomous mode never ask - treat it as `native`.
+- `flow=native` (`[ ]`, no checkbox, no DOGMA-PERMISSIONS.md, or hydra not installed):
+  plain `git worktree add -b <branch> <path>`, then `credo-worktree-setup.sh`.
+
+Right after EVERY `git worktree add`, run the `setup=` script on the new worktree
+(`<setup> <worktree-path>`). A fresh worktree only has versioned files; the setup links
+(relative symlinks) or copies the excluded ones - CLAUDE.md, CLAUDE/, GUIDES/,
+DOGMA-PERMISSIONS.md and everything unversioned under .credo/ by default, or the
+"Worktree files" list of DOGMA-PERMISSIONS.md (`link:` / `copy:` entries). It never
+overwrites an existing path, skips versioned paths, and prints `main=<main checkout>`.
+When the harness created the worktree itself (Agent tool `isolation: worktree`), the
+builder runs the setup on its own worktree root as its first step.
+
+Every worktree builder brief names the ABSOLUTE main-checkout path (the `main=` line) with
+this rule: when something important is missing in the worktree (neither checked out,
+linked nor copied), look it up READ-ONLY in the main checkout - never write, commit or run
+state-changing git commands there - and mention in the report anything that should be
+added to the worktree files list.
+
+Merged and clean worktrees are removed at item close (credo `items` skill, "Worktree
+cleanup at item close").
 
 ## Parallel safety
 
@@ -170,6 +209,8 @@ pointer, and pointers are lossy.
 
 - Every such brief MUST name the item path. Where the work touches domain rules or logic,
   it MUST also name the relevant source of truth as `file:symbol`, not just describe it.
+  When the builder works in a worktree, the brief also names the absolute main-checkout
+  path plus the read-only lookup rule ("Worktrees for parallel code tracks" above).
 - The subagent MUST read the WHOLE item itself and treat it as the single source of truth:
   the complete body, the Success Criteria / DoD, the Historie, AND the requirements log
   under `.credo/process/requirements/` - not just the head, and never the brief alone. It

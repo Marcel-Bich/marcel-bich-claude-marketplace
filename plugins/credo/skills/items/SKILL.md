@@ -616,6 +616,35 @@ Prefer the move helper - it is atomic, never deletes, and gates the human-author
 A raw `mv` / `git mv` of an item file inside the status tree is blocked by the
 `credo-item-move-guard.sh` PreToolUse hook - always use the helper.
 
+### Worktree cleanup at item close
+
+Every item close - a move to `done`, `verified` or `archived` via `credo-item-move.sh` -
+also cleans up finished parallel-track worktrees, automatically, without any prior command.
+The helper reads the DOGMA-PERMISSIONS checkbox in the `### Hydra` subsection (via
+`credo-dogma-mode.sh`, works without dogma):
+
+```
+- [x] clean up merged worktrees automatically
+```
+
+- `[x]` - remove now, without asking (the user authorized it with the setting). The move
+  output lists `worktree cleanup: removed ...` and every kept worktree with its reason.
+- `[?]` or no checkbox (older files predate the setting) - the move output lists the
+  `candidate` worktrees and says to ask the user; on a yes run
+  `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-worktree-cleanup.sh"` (in autonomous mode leave
+  them for the user and mention them in the run report).
+- `[ ]` - never.
+
+`credo-worktree-cleanup.sh [--dry-run] [--json]` removes ONLY worktrees whose branch is
+fully merged into the main branch (the branch checked out in the main worktree) AND that have
+no changes to tracked files; untracked scratch (cache/, the setup symlinks) goes with them.
+It never touches the main worktree, the worktree it runs in, locked ones, unmerged or dirty
+ones (those are reported as `kept` with the reason), and keeps a never-committed worktree
+while it is younger than 24h or has untracked files (an agent may be starting in it). It
+removes via `git worktree remove --force` (git unlinks symlinks and never follows them) and
+deletes the merged branch with `git branch -d`. Every run covers all worktrees of the
+repository, so the first run also sweeps the backlog. A cleanup error never fails the move.
+
 Valid transitions (folder = status):
 
 - `1_clarify -> 2_go` once the user gives an explicit GO (go-gate: only `2_go` is

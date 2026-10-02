@@ -38,6 +38,11 @@
 # (defensively, never failing the move) so items whose blockers are now delivered
 # return to their unblock_to target immediately.
 #
+# After a successful move to done, verified or archived, merged+clean worktrees are
+# cleaned up per the DOGMA-PERMISSIONS checkbox "clean up merged worktrees
+# automatically" ([x] remove, [?] or missing: list candidates and ask, [ ] nothing) via
+# credo-worktree-cleanup.sh - also defensive, never failing the move.
+#
 # 3_verified is human-authorized: an agent NEVER moves an item there on its own
 # initiative. Only the MAIN agent (direct user contact), and only on the user's
 # explicit instruction, may run this with the opt-in - either the third argument
@@ -258,6 +263,39 @@ case "$TARGET" in
     done|verified|3_verified)
         if [ -x "$SCRIPT_DIR/credo-unblock-sweep.sh" ]; then
             CREDO_DIR="$CREDO_DIR" "$SCRIPT_DIR/credo-unblock-sweep.sh" "$CREDO_DIR" >/dev/null 2>&1 || true
+        fi
+        ;;
+esac
+
+# --- worktree cleanup at item close (done/verified/archived) -------------------
+# Closing an item is the moment its parallel-track worktree is finished. The dogma
+# checkbox "clean up merged worktrees automatically" (### Hydra in DOGMA-PERMISSIONS.md,
+# read without dogma via credo-dogma-mode.sh) decides:
+#   [x]          -> remove merged+clean worktrees now (credo-worktree-cleanup.sh)
+#   [?]/missing  -> list the candidates and tell the agent to ask the user first
+#   [ ]          -> nothing
+# Every run covers all worktrees of the repository (the first one sweeps the backlog).
+# Like the unblock sweep, this never fails the move.
+case "$TARGET" in
+    done|verified|3_verified|archived)
+        WT_REPO="$(git -C "$(dirname "$CREDO_DIR")" rev-parse --show-toplevel 2>/dev/null || true)"
+        if [ -n "$WT_REPO" ] && [ -x "$SCRIPT_DIR/credo-worktree-cleanup.sh" ] \
+            && [ "$(git -C "$WT_REPO" worktree list 2>/dev/null | wc -l)" -gt 1 ]; then
+            WT_MODE="$("$SCRIPT_DIR/credo-dogma-mode.sh" Hydra 'clean up merged worktrees automatically' "$WT_REPO" 2>/dev/null || echo missing)"
+            case "$WT_MODE" in
+                auto)
+                    "$SCRIPT_DIR/credo-worktree-cleanup.sh" "$WT_REPO" 2>&1 \
+                        | grep -v '^base=' | sed 's/^/credo-item-move: worktree cleanup: /' || true
+                    ;;
+                deny) : ;;
+                *)
+                    WT_CANDIDATES="$("$SCRIPT_DIR/credo-worktree-cleanup.sh" --dry-run "$WT_REPO" 2>/dev/null | grep '^candidate ' || true)"
+                    if [ -n "$WT_CANDIDATES" ]; then
+                        printf '%s\n' "$WT_CANDIDATES" | sed 's/^/credo-item-move: worktree cleanup: /'
+                        echo "credo-item-move: worktree cleanup is set to ask (DOGMA-PERMISSIONS [?] or no checkbox): ask the user, then run: \"$SCRIPT_DIR/credo-worktree-cleanup.sh\" \"$WT_REPO\""
+                    fi
+                    ;;
+            esac
         fi
         ;;
 esac
