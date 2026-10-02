@@ -34,7 +34,7 @@ The [default source repository](https://github.com/Marcel-Bich/marcel-bich-claud
 - `/dogma:cleanup` - Find and fix AI-typical patterns in code
 - `/dogma:lint` - Project-agnostic linting and formatting on staged files (non-interactive)
 - `/dogma:lint:setup` - Interactive setup for linting/formatting tools
-- `/dogma:versioning` - Check and sync version numbers across all config files
+- `/dogma:versioning` - Check and sync version numbers across all config files; at a release it assembles a versioned `changelog.d/` into the CHANGELOG (no tag)
 - `/dogma:permissions` - Create or update DOGMA-PERMISSIONS.md interactively
 - `/dogma:force` - Interactively collect and apply CLAUDE rules to the project
 - `/dogma:sanitize-git` - Sanitize git history from Claude/AI traces and fix tracking issues
@@ -50,10 +50,10 @@ Control Claude's autonomy with `DOGMA-PERMISSIONS.md` in your project root:
 
 ```markdown
 <permissions>
-- [x] May run `git add` autonomously      # auto
-- [x] May run `git commit` autonomously   # auto
-- [?] May run `git push` autonomously     # ask first
-- [?] May delete files autonomously       # ask first
+- [x] (§6gpt) May run `git add` autonomously      # auto
+- [x] (§2w1t) May run `git commit` autonomously   # auto
+- [?] (§bww9) May run `git push` autonomously     # ask first
+- [?] (§0lgy) May delete files autonomously       # ask first
 </permissions>
 ```
 
@@ -65,11 +65,15 @@ Control Claude's autonomy with `DOGMA-PERMISSIONS.md` in your project root:
 
 Run `/dogma:permissions` to configure interactively.
 
-`scripts/permissions-summary.sh [--json] [dir]` lists only the restricting entries (`[?]` ask, `[ ]`/`[0]` deny) of the permission sections of the nearest `DOGMA-PERMISSIONS.md` (read-only, exit 4 when none is found), so any renderer can show them without parsing the file. Checkboxes under a `## Workflow ...` heading are on/off switches (`[ ]` means off, not deny) and are skipped.
+**Stable setting ids:** every setting carries a fixed id `(§xxxx)` (4 lowercase base36 chars) right after its checkbox, the same in every repo; parsed headings carry it too (`### Test Commands (§ly5v)`, `Worktree files (§47p9) ...`). dogma and credo find a setting by its id first, anywhere in the `<permissions>` block, so the text may be reworded, translated or merged by `/dogma:sync` without silently losing the setting. Only when no line carries the id they fall back to the old heading + text match, so files without ids keep working. Keep the id when editing a line. The full list is in [`docs/permission-ids.md`](docs/permission-ids.md); scripts pass a spec `"§xxxx|text pattern"` to `get_permission_mode` / `check_permission` in `scripts/lib-permissions.sh`.
+
+`scripts/permissions-summary.sh [--json] [dir]` lists only the restricting entries (`[?]` ask, `[ ]`/`[0]` deny) of the permission sections of the nearest `DOGMA-PERMISSIONS.md` (read-only, exit 4 when none is found), so any renderer can show them without parsing the file. Checkboxes under a `## Workflow ...` heading are on/off switches (`[ ]` means off, not deny) and are skipped. Ids `(§xxxx)` never show up in its labels.
 
 **Worktrees (Hydra subsection):** a fresh git worktree only has versioned files, so excluded ones (rules, credo items, local config) are missing there. The `### Hydra` subsection can carry a "Worktree files" list - `- link: CLAUDE.md` (symlink to the main checkout, the default kind; a line without a kind is a link) or `- copy: .env.local` (separate copy per worktree). `scripts/worktree-files.sh [--json] [dir]` prints the effective list as `<kind> <path>` lines (exit 0, 1 bad args); when the list is missing or empty it prints the default: link CLAUDE.md, CLAUDE/, GUIDES/, DOGMA-PERMISSIONS.md and .credo/. hydra's `worktree-setup.sh` and credo's `credo-worktree-setup.sh` apply it right after `git worktree add` (skipping missing and versioned paths, never overwriting). The checkbox `[x] clean up merged worktrees automatically` (default `[x]`; `[?]` asks each time, `[ ]` never, a file without it behaves as `[?]`) lets credo remove merged and clean worktrees at item close; with credo, `[x] use Hydra for 2+ independent tasks` makes credo use hydra's flow automatically for parallel code tracks. These Workflow lines do not change the `permissions-summary.sh` output.
 
 **Test commands (optional):** a `### Test Commands` subsection under `## Workflow Permissions` says WHICH command runs at which stage (the Testing / Final Verification checkboxes say WHEN), language-agnostic, one line per stage: `` - commit: `npm run lint` ``, `` - all [main, stage]: `npm test` ``. Stages: `commit` (fast static checks before every commit), `push` (before `git push`), `relevant` (tests for the changed code when an item is reported done; takes no branch filter), `build` (build check), `all` (full suite at integration into a filtered branch and in Final Verification). The optional `[branch, ...]` filter limits a stage to those branches. Every line is optional - a missing line or section means Claude decides as before. dogma never runs them itself: `scripts/test-commands.sh [--json] [dir]` lists them and `scripts/test-commands.sh get <stage> [branch] [--dir dir]` prints the command that applies (exit 4 when none does), so Claude or other tools run it at the stage. The Final Verification checkbox `run ALL tests only at release` (default off) skips `all` on each merge and runs it once in the release commit, the normal commit that bundles several items with the version bump (never a tag or hosted release; those stay with the user).
+
+**Changelog fragments (`changelog.d/`):** when the repo has a versioned `changelog.d/` at its root, `/dogma:versioning` assembles the fragments at release - the bundling commit with the version bump, never a tag. It prepends a `## [X.Y.Z] - YYYY-MM-DD` section built from the fragments to the existing CHANGELOG, keeping the repo's existing heading and subsection format (it asks when the format is unclear), and removes the consumed fragments in the same commit. Language-agnostic; without a versioned `changelog.d/` nothing changes.
 
 ### Update notices
 

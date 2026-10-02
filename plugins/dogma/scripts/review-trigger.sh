@@ -67,7 +67,11 @@ fi
 REVIEW_CONFIGURED=false
 REVIEW_TRIGGER=""
 
-if grep -qiE '\[x\]\s*(nach Umsetzung|after implementation)' "$PERMISSIONS_FILE"; then
+# Id first (§d33m = review after implementation), text as fallback
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib-permissions.sh
+source "$SCRIPT_DIR/lib-permissions.sh"
+if perm_is_checked "$(cat "$PERMISSIONS_FILE" 2>/dev/null)" d33m '(nach Umsetzung|after implementation)'; then
     REVIEW_CONFIGURED=true
     REVIEW_TRIGGER="nach Umsetzung"
 fi

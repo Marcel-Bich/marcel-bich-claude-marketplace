@@ -8,12 +8,15 @@
 # and runs them at the stage.
 #
 # Section format (one line per stage, command = first `code` span on the line):
-#   ### Test Commands
+#   ### Test Commands (§ly5v)
 #   - commit: `npm run lint`
 #   - push [main, develop]: `npx vitest related --run`
 #   - relevant: `npx vitest related --run`
 #   - build: `npm run build`
 #   - all [main, stage]: `npm test`
+#
+# The heading is found by its stable id (§ly5v) first (any heading level, any
+# wording); only when no heading carries the id, by the text "### Test Commands".
 #
 # Stages: commit, push, relevant, build, all. The optional [branch, ...] filter limits
 # a stage to the listed branches. `relevant` is item-scoped and takes no filter (a
@@ -104,9 +107,15 @@ STAGES = ["commit", "push", "relevant", "build", "all"]
 stages = {}
 found = False
 in_section = False
-for line in sys.stdin:
+lines = sys.stdin.read().splitlines()
+# Id first: a heading carrying the stable id (any level, any wording); only when no
+# heading carries it, the old "### Test Commands" text match (optional trailing id).
+ID_HEAD = re.compile(r"^#{2,}\s+.*\(\u00a7ly5v\)")
+TEXT_HEAD = re.compile(r"^###\s+test\s+commands\s*(?:\(\u00a7[0-9a-z]{4}\)\s*)?$", re.I)
+head = ID_HEAD if any(ID_HEAD.match(l.strip()) for l in lines) else TEXT_HEAD
+for line in lines:
     s = line.strip()
-    if re.match(r"^###\s+test\s+commands\s*$", s, re.I):
+    if head.match(s):
         in_section = found = True
         continue
     if not in_section:

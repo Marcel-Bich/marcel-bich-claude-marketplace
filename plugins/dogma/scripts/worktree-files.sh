@@ -8,7 +8,7 @@
 #
 #   ### Hydra
 #   ...
-#   Worktree files (excluded files only; versioned files come with git checkout):
+#   Worktree files (§47p9) (excluded files only; versioned files come with git checkout):
 #   - link: CLAUDE.md
 #   - link: .credo/
 #   - copy: .env.local
@@ -17,6 +17,8 @@
 # a link) and `copy` (only where explicitly given, for files that must differ per
 # worktree). Paths are relative to the repo root; backticks around a path are allowed.
 # The list ends at the next heading, checkbox line or other non-list text.
+# The list label is found by its stable id (§47p9) first (anywhere in the block, any
+# wording); only when no line carries the id, by the text "Worktree files" in ### Hydra.
 #
 # When the file, the section or the list is missing or empty, the default list is
 # printed: link CLAUDE.md, CLAUDE/, GUIDES/, DOGMA-PERMISSIONS.md and .credo/.
@@ -74,17 +76,26 @@ def warn(msg):
 entries = []
 in_hydra = False
 in_list = False
-for line in sys.stdin:
-    s = re.sub(r"<!--.*?-->", "", line).strip()
+lines = [re.sub(r"<!--.*?-->", "", l).strip() for l in sys.stdin.read().splitlines()]
+# Id first: the list label carrying the stable id (anywhere in the block, any wording);
+# only when no line carries it, the old "Worktree files" label inside "### Hydra".
+ID_LABEL = re.compile(r"^[^-#].*\(\u00a747p9\)")
+by_id = any(ID_LABEL.match(l) for l in lines)
+for s in lines:
     if s.startswith("#") or s.startswith("</permissions>"):
-        in_hydra = bool(re.match(r"^###\s+hydra\s*$", s, re.I))
+        in_hydra = bool(re.match(r"^###\s+hydra\s*(?:\(\u00a7[0-9a-z]{4}\)\s*)?$", s, re.I))
         in_list = False
         continue
-    if not in_hydra:
-        continue
-    if re.match(r"^worktree\s+files\b", s, re.I):
-        in_list = True
-        continue
+    if by_id:
+        if ID_LABEL.match(s):
+            in_list = True
+            continue
+    else:
+        if not in_hydra:
+            continue
+        if re.match(r"^worktree\s+files\b", s, re.I):
+            in_list = True
+            continue
     if not in_list:
         continue
     if not s:

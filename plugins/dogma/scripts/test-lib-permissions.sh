@@ -315,6 +315,86 @@ run_test "Non-existent subsection returns 'auto' (default)" "auto" "$result"
 echo ""
 
 # ============================================================================
+# Test 7: Stable setting ids "(§xxxx)" - id first, text as fallback
+# ============================================================================
+echo "--- Stable setting ids ---"
+
+PERMS_FILE_IDS="$TEST_TMP_DIR/ids.md"
+cat > "$PERMS_FILE_IDS" <<'EOF'
+<permissions>
+## Git Permissions
+- [x] (§6gpt) Darf Dateien stagen
+- [ ] (§bww9) Darf zum Remote pushen
+- [x] May run `git push` autonomously (stale duplicate text, the id line wins)
+
+## File Operations
+- [?] (§0lgy) Löschen erlaubt
+
+## Workflow Permissions
+
+### Review
+- [a] (§3dy3) alles laufen lassen
+
+### Final Verification
+- [x] run relevant tests
+</permissions>
+EOF
+PERMS_IDS_SECTION=$(get_permissions_section "$PERMS_FILE_IDS")
+
+# 7.1 id match with reworded text (legacy content mode)
+result=$(get_permission_mode "$PERMS_IDS_SECTION" "§6gpt|git add")
+run_test "id: reworded 'git add' line found by §6gpt -> auto" "auto" "$result"
+result=$(get_permission_mode "$PERMS_IDS_SECTION" "§bww9|git push")
+run_test "id: id line wins over a text match elsewhere -> deny" "deny" "$result"
+result=$(get_permission_mode "$PERMS_IDS_SECTION" "§0lgy|delete files")
+run_test "id: reworded delete line -> ask" "ask" "$result"
+
+# 7.2 id in a different subsection (file mode with section filter)
+result=$(get_permission_mode "§3dy3|run ALL tests" "$PERMS_FILE_IDS" "Final Verification")
+run_test "id: found in another subsection although section is given -> all" "all" "$result"
+
+# 7.3 id missing in file -> text fallback / default
+result=$(get_permission_mode "§0c7y|run relevant tests" "$PERMS_FILE_IDS" "Final Verification")
+run_test "id: no line with §0c7y -> text fallback 'run relevant tests' -> auto" "auto" "$result"
+result=$(get_permission_mode "$PERMS_IDS_SECTION" "§zzzz")
+run_test "id only, not found -> auto (default)" "auto" "$result"
+
+# 7.4 check_permission with ids
+run_exit_test "check_permission: §bww9 [ ] -> exit 1" "1" "$PERMS_IDS_SECTION" "§bww9|git push"
+run_exit_test "check_permission: §0lgy [?] -> exit 0" "0" "$PERMS_IDS_SECTION" "§0lgy|delete files"
+
+# 7.5 old file without ids: spec falls back to the old text match
+PERMS_OLD="- [ ] May run \`git push\` autonomously
+- [?] May delete files autonomously (rm, unlink, git clean)"
+result=$(get_permission_mode "$PERMS_OLD" "§bww9|git push")
+run_test "old file without ids: §bww9|git push -> deny via text" "deny" "$result"
+result=$(get_permission_mode "$PERMS_OLD" "§0lgy|delete files")
+run_test "old file without ids: §0lgy|delete files -> ask via text" "ask" "$result"
+run_exit_test "old file without ids: check_permission §bww9|git push -> exit 1" "1" "$PERMS_OLD" "§bww9|git push"
+
+# 7.6 helpers for [x]-only switches and parsed headings
+PERMS_SWITCH="### Delegation
+- [ ] (§o85w) Aufgaben-Tool zählt
+- [x] Skill tool usage counts as delegation
+#### Befehle je Stufe (§ly5v)"
+perm_is_checked "$PERMS_SWITCH" o85w 'Task tool.*counts as delegation' && r=on || r=off
+run_test "perm_is_checked: id line [ ] -> off" "off" "$r"
+perm_is_checked "$PERMS_SWITCH" i397 'Skill tool.*counts as delegation' && r=on || r=off
+run_test "perm_is_checked: no id line -> text fallback [x] -> on" "on" "$r"
+perm_has_heading "$PERMS_SWITCH" ly5v 'Test Commands' && r=yes || r=no
+run_test "perm_has_heading: reworded heading found by id" "yes" "$r"
+perm_has_heading "### Test Commands" ly5v 'Test Commands' && r=yes || r=no
+run_test "perm_has_heading: old heading without id -> text fallback" "yes" "$r"
+perm_has_heading "### Something" ly5v 'Test Commands' && r=yes || r=no
+run_test "perm_has_heading: neither id nor text -> no" "no" "$r"
+
+# 7.7 locale independence (C locale, "§" is two bytes there)
+result=$(LC_ALL=C get_permission_mode "$PERMS_IDS_SECTION" "§bww9|git push")
+run_test "id match works under LC_ALL=C" "deny" "$result"
+
+echo ""
+
+# ============================================================================
 # Results
 # ============================================================================
 echo "============================================"

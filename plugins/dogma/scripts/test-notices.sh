@@ -105,6 +105,19 @@ capture "$NP" "$REPO_SEC"
 run_test "with Test Commands section: exit 4" "4" "$RC"
 run_test "with Test Commands section: no output" "" "$OUT"
 
+# Stable id (§ly5v): a reworded heading in another subsection still counts as present
+REPO_ID="$TEST_TMP_DIR/repo-id"
+make_repo "$REPO_ID"
+printf '<permissions>\n## Workflow Permissions\n\n### Final Verification\n- [x] (§3dy3) run ALL tests\n\n#### Befehle je Stufe (§ly5v)\n- commit: `make lint`\n</permissions>\n' > "$REPO_ID/DOGMA-PERMISSIONS.md"
+capture "$NP" "$REPO_ID"
+run_test "reworded Test Commands heading with id: exit 4" "4" "$RC"
+
+REPO_TPL="$TEST_TMP_DIR/repo-template-heading"
+make_repo "$REPO_TPL"
+printf '<permissions>\n### Test Commands (§ly5v)\n- commit: `make lint`\n</permissions>\n' > "$REPO_TPL/DOGMA-PERMISSIONS.md"
+capture "$NP" "$REPO_TPL"
+run_test "template heading '### Test Commands (§ly5v)': exit 4" "4" "$RC"
+
 REPO_NOFILE="$TEST_TMP_DIR/repo-nofile"
 make_repo "$REPO_NOFILE"
 capture "$NP" "$REPO_NOFILE"

@@ -47,6 +47,11 @@ if [ -z "$SUBAGENTS_FILE" ]; then
     exit 0
 fi
 
+# Id-first checkbox helpers (perm_is_checked, perm_has_heading)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib-permissions.sh
+source "$SCRIPT_DIR/lib-permissions.sh"
+
 # Check for DOGMA-PERMISSIONS.md (workflow permissions)
 PERMISSIONS_FILE=""
 if [ -f "DOGMA-PERMISSIONS.md" ]; then
@@ -61,13 +66,13 @@ TASK_DELEGATION="false"
 TEST_COMMANDS="false"
 if [ -n "$PERMISSIONS_FILE" ]; then
     PERMS_CONTENT=$(cat "$PERMISSIONS_FILE" 2>/dev/null || true)
-    if echo "$PERMS_CONTENT" | grep -qiE '^\s*-\s*\[x\].*Skill tool.*counts as delegation'; then
+    if perm_is_checked "$PERMS_CONTENT" i397 'Skill tool.*counts as delegation'; then
         SKILL_DELEGATION="true"
     fi
-    if echo "$PERMS_CONTENT" | grep -qiE '^\s*-\s*\[x\].*Task tool.*counts as delegation'; then
+    if perm_is_checked "$PERMS_CONTENT" o85w 'Task tool.*counts as delegation'; then
         TASK_DELEGATION="true"
     fi
-    if echo "$PERMS_CONTENT" | grep -qiE '^\s*###\s+Test Commands\s*$'; then
+    if perm_has_heading "$PERMS_CONTENT" ly5v 'Test Commands'; then
         TEST_COMMANDS="true"
     fi
 fi

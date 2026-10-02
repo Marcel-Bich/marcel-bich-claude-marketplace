@@ -96,7 +96,7 @@ fi
 
 # Check git add (also catches: && git add, ; git add, || git add)
 if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\||\||\$\(|\(|`)\s*git\s+add(\s|$)'; then
-    MODE=$(get_permission_mode "$PERMS_SECTION" "git add")
+    MODE=$(get_permission_mode "$PERMS_SECTION" "§6gpt|git add")
     case "$MODE" in
         deny)
             output_deny "BLOCKED by dogma: git add not permitted. Change [ ] to [x] or [?] for git add in $PERMS_FILE or run manually."
@@ -109,7 +109,7 @@ fi
 
 # Check git commit (also catches chained commands)
 if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\||\||\$\(|\(|`)\s*git\s+commit(\s|$)'; then
-    MODE=$(get_permission_mode "$PERMS_SECTION" "git commit")
+    MODE=$(get_permission_mode "$PERMS_SECTION" "§2w1t|git commit")
     case "$MODE" in
         deny)
             output_deny "BLOCKED by dogma: git commit not permitted. Change [ ] to [x] or [?] for git commit in $PERMS_FILE or run manually."
@@ -122,7 +122,7 @@ fi
 
 # Check git push (also catches chained commands)
 if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\||\||\$\(|\(|`)\s*git\s+push(\s|$)'; then
-    MODE=$(get_permission_mode "$PERMS_SECTION" "git push")
+    MODE=$(get_permission_mode "$PERMS_SECTION" "§bww9|git push")
     case "$MODE" in
         deny)
             output_deny "BLOCKED by dogma: git push not permitted. Change [ ] to [x] or [?] for git push in $PERMS_FILE or push manually."
@@ -141,7 +141,13 @@ fi
 check_evasion() {
     local keyword="$1"
     local perm_name="git $keyword"
-    local MODE=$(get_permission_mode "$PERMS_SECTION" "$perm_name")
+    local perm_id=""
+    case "$keyword" in
+        add) perm_id="6gpt" ;;
+        commit) perm_id="2w1t" ;;
+        push) perm_id="bww9" ;;
+    esac
+    local MODE=$(get_permission_mode "$PERMS_SECTION" "§${perm_id}|$perm_name")
     case "$MODE" in
         deny)
             output_deny "BLOCKED by dogma: Potential $perm_name evasion detected. Run manually if legitimate."

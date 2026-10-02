@@ -73,9 +73,89 @@ get_permissions_section() {
     fi
 }
 
+# --- Stable setting ids -------------------------------------------------------
+# Every setting in the DOGMA-PERMISSIONS.md template carries a fixed id "(§xxxx)"
+# (4 lowercase base36 chars) right after its checkbox, e.g.
+#   - [ ] (§8eyz) run ALL tests only at release
+# Ids are the same in every repo (see docs/permission-ids.md). Readers match the id
+# first, anywhere in the given block; only when no line carries the id they fall back
+# to the old text pattern, so files without ids keep working and the wording is free.
+#
+# A spec may be passed wherever a pattern is accepted:
+#   "§xxxx|pattern"   id first, pattern as fallback
+#   "§xxxx"           id only (no fallback)
+#   "pattern"         text only (old behaviour)
+
+# Split a spec into PERM_SPEC_ID and PERM_SPEC_PATTERN (globals, no subshell)
+perm_split_spec() {
+    local spec="$1"
+    PERM_SPEC_ID=""
+    PERM_SPEC_PATTERN="$spec"
+    local re_full='^§([0-9a-z]{4})[|](.*)$'
+    local re_id='^§([0-9a-z]{4})$'
+    if [[ "$spec" =~ $re_full ]]; then
+        PERM_SPEC_ID="${BASH_REMATCH[1]}"
+        PERM_SPEC_PATTERN="${BASH_REMATCH[2]}"
+    elif [[ "$spec" =~ $re_id ]]; then
+        PERM_SPEC_ID="${BASH_REMATCH[1]}"
+        PERM_SPEC_PATTERN=""
+    fi
+}
+
+# Print the checkbox character of the first checkbox line carrying "(§id)" in the
+# given content. Returns 1 (prints nothing) when no line carries the id.
+perm_state_by_id() {
+    local content="$1"
+    local id="$2"
+    [ -n "$id" ] && [ -n "$content" ] || return 1
+    local line
+    line=$(printf '%s\n' "$content" | grep -m1 -E "^[[:space:]]*-[[:space:]]*\[.\].*\(§${id}\)") || return 1
+    [ -n "$line" ] || return 1
+    printf '%s\n' "$line" | sed -E 's/^[[:space:]]*-[[:space:]]*\[(.)\].*/\1/'
+}
+
+# Map a checkbox character to a mode (auto/ask/deny/one/all). Unknown -> auto.
+perm_state_to_mode() {
+    case "$1" in
+        x) echo "auto" ;;
+        "?") echo "ask" ;;
+        " "|0) echo "deny" ;;
+        1) echo "one" ;;
+        a) echo "all" ;;
+        *) echo "auto" ;;
+    esac
+}
+
+# Is a workflow checkbox switched on ([x])?
+# Usage: perm_is_checked <content> <id> <fallback_regex>
+# Id first; without an id line, case-insensitive "- [x] ...<fallback_regex>".
+perm_is_checked() {
+    local content="$1" id="$2" regex="$3"
+    local state
+    if state=$(perm_state_by_id "$content" "$id"); then
+        [ "$state" = "x" ]
+        return
+    fi
+    [ -n "$regex" ] || return 1
+    printf '%s\n' "$content" | grep -qiE "^[[:space:]]*-[[:space:]]*\[x\].*$regex"
+}
+
+# Does the content have the heading of a parsed section?
+# Usage: perm_has_heading <content> <id> <heading_text>
+# Id first (any heading level ## or deeper carrying "(§id)"), else "### <heading_text>"
+# matched case-insensitively (an optional trailing id is allowed).
+perm_has_heading() {
+    local content="$1" id="$2" text="$3"
+    if [ -n "$id" ] && printf '%s\n' "$content" | grep -qE "^[[:space:]]*##+[[:space:]].*\(§${id}\)"; then
+        return 0
+    fi
+    printf '%s\n' "$content" | grep -qiE "^[[:space:]]*###[[:space:]]+${text}[[:space:]]*(\(§[0-9a-z]{4}\))?[[:space:]]*$"
+}
+
 # Check if permission is granted (legacy - use get_permission_mode for 3-state)
 # Returns 0 (true) if allowed, 1 (false) if blocked
 # If pattern not found, returns 0 (allow by default)
+# pattern may be a spec "§xxxx|pattern" (id first, see above)
 check_permission() {
     local perms_section="$1"
     local pattern="$2"
@@ -83,6 +163,22 @@ check_permission() {
     if [ -z "$perms_section" ]; then
         dogma_debug_log "No permissions section - allowing by default"
         return 0  # Allow by default if no permissions section
+    fi
+
+    # Id first, then the text pattern
+    perm_split_spec "$pattern"
+    pattern="$PERM_SPEC_PATTERN"
+    local id_state
+    if id_state=$(perm_state_by_id "$perms_section" "$PERM_SPEC_ID"); then
+        dogma_debug_log "Permission by id $PERM_SPEC_ID: [$id_state]"
+        case "$id_state" in
+            " "|0) return 1 ;;
+            *) return 0 ;;
+        esac
+    fi
+    if [ -z "$pattern" ]; then
+        dogma_debug_log "Id $PERM_SPEC_ID not found, no fallback pattern - allowing by default"
+        return 0
     fi
 
     # Check for [x] (allowed)
@@ -122,6 +218,8 @@ check_permission() {
 #
 # Usage:
 #   get_permission_mode "pattern" [permissions_file] [section]
+#   - pattern may be a spec "§xxxx|pattern" (or "§xxxx"): the id is matched first in
+#     the whole <permissions> block (section ignored), the pattern only as fallback
 #   - If permissions_file is empty/missing: uses first arg as perms_section (legacy)
 #   - If section is empty: searches entire <permissions> block
 #   - If section is set: searches only within that section
@@ -133,6 +231,7 @@ get_permission_mode() {
     local section="${3:-}"
     local perms_section=""
     local pattern=""
+    local id_scope=""
 
     # Detect usage mode: new (pattern, file, section) vs legacy (perms_section, pattern)
     # If arg2 is a file path, use new mode
@@ -140,6 +239,7 @@ get_permission_mode() {
         # New mode: get_permission_mode(pattern, file, section)
         pattern="$arg1"
         local permissions_file="$arg2"
+        id_scope=$(sed -n '/<permissions>/,/<\/permissions>/p' "$permissions_file" 2>/dev/null)
 
         if [ -n "$section" ]; then
             # Get the entire permissions block first
@@ -179,10 +279,27 @@ get_permission_mode() {
         # Legacy mode: get_permission_mode(perms_section, pattern)
         perms_section="$arg1"
         pattern="$arg2"
+        id_scope="$perms_section"
+    fi
+
+    # Id first ("§xxxx|pattern"): anywhere in the block, regardless of section
+    perm_split_spec "$pattern"
+    pattern="$PERM_SPEC_PATTERN"
+    local id_state
+    if id_state=$(perm_state_by_id "$id_scope" "$PERM_SPEC_ID"); then
+        dogma_debug_log "Permission by id $PERM_SPEC_ID: [$id_state]"
+        perm_state_to_mode "$id_state"
+        return
     fi
 
     if [ -z "$perms_section" ]; then
         dogma_debug_log "No permissions section - auto by default"
+        echo "auto"
+        return
+    fi
+
+    if [ -z "$pattern" ]; then
+        dogma_debug_log "Id $PERM_SPEC_ID not found, no fallback pattern - auto by default"
         echo "auto"
         return
     fi
@@ -245,13 +362,14 @@ Use /dogma:permissions to interactively create it, or create manually:
 ```markdown
 # Dogma Permissions
 <permissions>
-- [x] May run `git add` autonomously
-- [x] May run `git commit` autonomously
-- [?] May run `git push` autonomously
-- [ ] May delete files autonomously (rm, unlink, git clean)
+- [x] (§6gpt) May run `git add` autonomously
+- [x] (§2w1t) May run `git commit` autonomously
+- [?] (§bww9) May run `git push` autonomously
+- [ ] (§0lgy) May delete files autonomously (rm, unlink, git clean)
 </permissions>
 ```
 
 Checkbox states: [x]=auto, [?]=ask, [ ]=deny, [1]=one, [a]=all, [0]=deny
+The (§xxxx) ids are stable; the text after them may be reworded freely.
 EOF
 }

@@ -28,6 +28,7 @@ Create or update DOGMA-PERMISSIONS.md to configure what Claude can do autonomous
 
 1. Check if `DOGMA-PERMISSIONS.md` exists in project root
 2. If exists, show current permissions and ask if user wants to update
+   - When updating, keep every existing `(§xxxx)` id and add the template id (Step 4) to each recognized setting line or parsed heading that has none yet. Ids come only from the template / `docs/permission-ids.md` - never invent a new one.
 3. If not exists, will create new file
 
 ## Step 2: Git & File Permissions
@@ -210,15 +211,16 @@ Create the file with the user's choices:
 
 Configure what Claude is allowed to do autonomously.
 Mark with `[x]` for auto, `[?]` for ask, `[ ]` for deny.
+The `(§xxxx)` after a checkbox is the setting's stable id: keep it, reword the text freely.
 
 <permissions>
 ## Git Permissions
-- [x] May run `git add` autonomously
-- [x] May run `git commit` autonomously
-- [?] May run `git push` autonomously
+- [x] (§6gpt) May run `git add` autonomously
+- [x] (§2w1t) May run `git commit` autonomously
+- [?] (§bww9) May run `git push` autonomously
 
 ## File Operations
-- [?] May delete files autonomously (rm, unlink, git clean)
+- [?] (§0lgy) May delete files autonomously (rm, unlink, git clean)
 
 ## Workflow Permissions
 
@@ -227,41 +229,41 @@ Checkbox legend: `[ ]` = disabled, `[x]` = auto, `[?]` = on request
 ### Testing
 
 When to run tests?
-- [x] before commit
-- [x] before push
-- [x] on tasklist completion
+- [x] (§pq4z) before commit
+- [x] (§zn2t) before push
+- [x] (§r308) on tasklist completion
 
 What to test?
-- [x] relevant tests
-- [x] silent-failure check
+- [x] (§em4i) relevant tests
+- [x] (§2t40) silent-failure check
 
 ### Review
 
 When to review?
-- [x] after implementation
-- [x] before commit
-- [x] before push
+- [x] (§d33m) after implementation
+- [x] (§38bw) before commit
+- [x] (§hms3) before push
 
 What to review?
-- [x] changed code
-- [ ] architecture
-- [ ] types
+- [x] (§z66u) changed code
+- [ ] (§6h8w) architecture
+- [ ] (§n0wg) types
 
 ### Fallback
 
 When no tests exist:
-- [x] spawn subagent for verification
-- [ ] skip
+- [x] (§33tc) spawn subagent for verification
+- [ ] (§ab7k) skip
 
 ### Hydra
 
 Parallel work (only if Hydra available, otherwise sequential):
-- [x] use Hydra for 2+ independent tasks
+- [x] (§xw1i) use Hydra for 2+ independent tasks
 
 Worktree cleanup at item close ([x] = remove without asking, [?] = ask each time, [ ] = never):
-- [x] clean up merged worktrees automatically
+- [x] (§36ch) clean up merged worktrees automatically
 
-Worktree files (excluded files only; versioned files come with git checkout):
+Worktree files (§47p9) (excluded files only; versioned files come with git checkout):
 - link: CLAUDE.md
 - link: .credo/
 - copy: .env.local
@@ -269,24 +271,24 @@ Worktree files (excluded files only; versioned files come with git checkout):
 ### Subagent Delegation
 
 What counts as delegation (prevents subagent-first warning):
-- [x] Task tool usage counts as delegation
-- [x] Skill tool usage counts as delegation
+- [x] (§o85w) Task tool usage counts as delegation
+- [x] (§i397) Skill tool usage counts as delegation
 
 ### TDD
 
 Test-Driven Development:
-- [x] TDD when tests exist
-- [ ] enforce TDD even without existing tests
+- [x] (§on8g) TDD when tests exist
+- [ ] (§7i3k) enforce TDD even without existing tests
 
 ### Final Verification
 
 After merge/review (order: relevant tests -> build -> ALL tests):
-- [x] run relevant tests
-- [x] check build
-- [x] run ALL tests
-- [ ] run ALL tests only at release (release = the commit that bundles several items with the version bump; never a tag)
+- [x] (§0c7y) run relevant tests
+- [x] (§aq02) check build
+- [x] (§3dy3) run ALL tests
+- [ ] (§8eyz) run ALL tests only at release (release = the commit that bundles several items with the version bump; never a tag)
 
-### Test Commands
+### Test Commands (§ly5v)
 
 Per-stage commands, all optional (missing line = Claude decides as before).
 Optional branch filter in brackets: the stage only applies when its branch is listed
@@ -307,9 +309,11 @@ is integrated into - local merge, push, or PR/MR into it). No filter = every bra
 | git commit | Creates commits | Asks first | Blocked |
 | git push | Pushes to remote | Asks first | Blocked |
 | delete files | Deletes files | Asks first | Logged to TO-DELETE.md |
+
+Every setting carries a fixed id `(§xxxx)` right after its checkbox (same id in every repo). dogma and credo find a setting by its id first, so the text may be reworded or translated freely; keep the id. A line without an id is still found by its old text.
 ```
 
-Replace markers based on user choices. The "Worktree files" lines above are examples: write the list only when the user chose a custom list, otherwise leave it out (the default list applies). The `### Test Commands` lines above are examples: write only the stages the user confirmed (with their filters), and omit the whole subsection when every stage was left empty.
+Replace markers based on user choices. Keep every `(§xxxx)` id exactly as in the template (they are fixed, identical in every repo and listed in `docs/permission-ids.md`); only the checkbox state changes. The "Worktree files" lines above are examples: write the list only when the user chose a custom list, otherwise leave it out (the default list applies). The `### Test Commands` lines above are examples: write only the stages the user confirmed (with their filters), and omit the whole subsection when every stage was left empty.
 
 ## Step 5: Confirm
 

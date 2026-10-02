@@ -277,6 +277,66 @@ run_test "get_permission_mode: Testing 'before push' still 'deny'" "deny" "$resu
 echo ""
 
 # ============================================================================
+echo "--- Stable ids (§ly5v heading, ids stripped from summary labels) ---"
+
+ID_DIR="$TEST_TMP_DIR/ids"
+mkdir -p "$ID_DIR"
+cat > "$ID_DIR/DOGMA-PERMISSIONS.md" <<'EOF'
+<permissions>
+## Git Permissions
+- [x] (§6gpt) May run `git add` autonomously
+- [?] (§bww9) Darf pushen
+- [ ] (§2w1t) May create commits on its own
+
+## File Operations
+- [ ] (§0lgy) May delete files autonomously (rm, unlink, git clean)
+
+## Workflow Permissions
+
+### Test Commands
+- all: `should not count, the id heading wins`
+
+### Final Verification
+- [x] (§3dy3) run ALL tests
+
+#### Befehle je Stufe (§ly5v)
+- commit: `make lint`
+- all [main]: `make test`
+</permissions>
+EOF
+
+capture "$TC" get commit --dir "$ID_DIR"
+run_test "id: reworded heading in another subsection found by §ly5v" "make lint" "$OUT"
+capture "$TC" get all main --dir "$ID_DIR"
+run_test "id: heading with id wins over a plain '### Test Commands'" "make test" "$OUT"
+
+OLDH_DIR="$TEST_TMP_DIR/old-heading-with-id"
+mkdir -p "$OLDH_DIR"
+printf '<permissions>\n### Test Commands (§ly5v)\n- build: `make build`\n</permissions>\n' > "$OLDH_DIR/DOGMA-PERMISSIONS.md"
+capture "$TC" get build --dir "$OLDH_DIR"
+run_test "id: template heading '### Test Commands (§ly5v)'" "make build" "$OUT"
+
+capture "$PS" "$ID_DIR"
+run_test "permissions-summary: ids stripped from labels" "file=$ID_DIR/DOGMA-PERMISSIONS.md
+ask=Darf pushen
+deny=create commits on its own
+deny=delete files" "$OUT"
+case "$OUT" in
+    *"§"*) w=yes ;;
+    *) w=no ;;
+esac
+run_test "permissions-summary: no id in any label" "no" "$w"
+capture "$PS" --json "$ID_DIR"
+JSON_CHECK="$(printf '%s' "$OUT" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print("valid" if d["ask"] == ["Darf pushen"] and d["deny"] == ["create commits on its own", "delete files"] else "mismatch")
+' 2>&1)"
+run_test "permissions-summary --json: ids stripped" "valid" "$JSON_CHECK"
+
+echo ""
+
+# ============================================================================
 echo "============================================"
 echo "Results: $TESTS_PASSED/$TESTS_TOTAL tests passed"
 

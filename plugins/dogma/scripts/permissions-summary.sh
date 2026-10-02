@@ -11,7 +11,8 @@
 #
 # dir: where to start the upward search for DOGMA-PERMISSIONS.md (default: $PWD).
 # Label of an entry: its first `code` span (`git add`), else its text without
-# "May", "autonomously" and parentheses (e.g. "delete files").
+# "May", "autonomously" and parentheses (e.g. "delete files"). A stable setting id
+# "(§xxxx)" is never part of a label.
 #
 # Exit codes: 0 summary printed, 4 no DOGMA-PERMISSIONS.md found (prints nothing),
 # 1 bad argument.
@@ -54,6 +55,8 @@ for line in sys.stdin:
     if not m:
         continue
     text = re.sub(r"<!--.*?-->", "", m.group(2))
+    # the stable setting id "(§xxxx)" is not part of the label
+    text = re.sub(r"\(\u00a7[0-9a-z]{4}\)\s*", "", text)
     # drop an inline explanation after " -- " (e.g. "-- deny = log to TO-DELETE.md")
     text = re.split(r"\s+--\s", text, maxsplit=1)[0].strip()
     code = re.search(r"`([^`]+)`", text)

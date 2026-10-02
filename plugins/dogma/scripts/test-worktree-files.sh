@@ -123,6 +123,28 @@ run_test "configured json" "configured copy .env.local" \
     "$(printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); e=d["entries"][2]; print(d["source"], e["kind"], e["path"])')"
 
 echo ""
+echo "--- Stable id (§47p9) ---"
+ID_DIR="$TEST_TMP_DIR/ids"
+mkdir -p "$ID_DIR"
+# Reworded label in another subsection; a plain "Worktree files" list in ### Hydra must lose.
+printf '%s\nWorktree files (excluded files only):\n- link: from-text-label\n\n### Arbeitsbäume\nDateien für neue Worktrees (§47p9):\n- link: CLAUDE.md\n- copy: .env.local\n</permissions>\n' "$BASE_PERMS" > "$ID_DIR/DOGMA-PERMISSIONS.md"
+capture "$WF" "$ID_DIR"
+run_test "id: reworded label in another subsection wins" "link CLAUDE.md
+copy .env.local" "$OUT"
+
+TPL_DIR="$TEST_TMP_DIR/template-label"
+mkdir -p "$TPL_DIR"
+printf '<permissions>\n### Hydra\n- [x] (§xw1i) use Hydra for 2+ independent tasks\n\nWorktree files (§47p9) (excluded files only; versioned files come with git checkout):\n- link: GUIDES/\n</permissions>\n' > "$TPL_DIR/DOGMA-PERMISSIONS.md"
+capture "$WF" "$TPL_DIR"
+run_test "id: template label" "link GUIDES/" "$OUT"
+
+OLDF_DIR="$TEST_TMP_DIR/old-no-id"
+mkdir -p "$OLDF_DIR"
+printf '%s\nWorktree files (excluded files only; versioned files come with git checkout):\n- link: CLAUDE.md\n</permissions>\n' "$BASE_PERMS" > "$OLDF_DIR/DOGMA-PERMISSIONS.md"
+capture "$WF" "$OLDF_DIR"
+run_test "old file without ids: text fallback in ### Hydra" "link CLAUDE.md" "$OUT"
+
+echo ""
 echo "--- Arguments ---"
 capture "$WF" --bogus
 run_test "unknown flag: exit 1" "1" "$RC"

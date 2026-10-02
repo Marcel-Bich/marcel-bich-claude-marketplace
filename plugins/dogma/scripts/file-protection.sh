@@ -76,7 +76,7 @@ DELETE_MODE="deny"  # Default: deny (log to TO-DELETE.md)
 
 if [ -n "$PERMS_FILE" ] && [ -f "$PERMS_FILE" ]; then
     PERMS_SECTION=$(get_permissions_section "$PERMS_FILE")
-    DELETE_MODE=$(get_permission_mode "$PERMS_SECTION" "delete files")
+    DELETE_MODE=$(get_permission_mode "$PERMS_SECTION" "§0lgy|delete files")
     dogma_debug_log "Delete mode: $DELETE_MODE"
 fi
 

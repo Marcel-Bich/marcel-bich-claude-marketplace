@@ -181,6 +181,49 @@ For each missing plugin:
 
 This is mandatory - a plugin without registry entry will NOT appear in `/plugin` list.
 
+## Step 4b2: Assemble changelog fragments (only with a versioned `changelog.d/`)
+
+Some repos collect one small changelog fragment per change in a `changelog.d/` directory at
+the repo root and assemble them only at release. This step applies only when ALL of these hold:
+
+- `changelog.d/` exists at the repo root AND is versioned: `git ls-files changelog.d` lists at
+  least one fragment (an excluded or ignored `changelog.d/` does not count)
+- this run is a release: it produces the bundling commit with a version bump (Step 0 bumped the
+  version, or the user asked for the release now). A pure mismatch fix without a bump is NOT a
+  release - leave the fragments alone
+
+If `changelog.d/` does not exist (or is not versioned), skip this step - nothing changes. Works
+the same for every language and project type; only the files below are read or written.
+
+1. **Version and date:** `X.Y.Z` = the version just bumped for the component the changelog
+   belongs to (the root group, or the group whose directory holds the CHANGELOG). When several
+   groups were bumped and it is unclear which one the changelog tracks, ask. Date = today,
+   `YYYY-MM-DD`.
+2. **Fragments:** every versioned file directly in `changelog.d/`, sorted by name, except
+   `README*`, `.gitkeep`, hidden files and templates (`template*`, `_template*`). The fragment
+   content is the entry text (keep it as written; one fragment may hold several bullets). A type
+   in the name (towncrier style `<id>.<type>.md`, e.g. `42.fixed.md`) or a first heading inside
+   the fragment says which subsection it belongs to.
+3. **Target file and format:** the existing changelog at the root (`CHANGELOG.md`, `CHANGELOG`,
+   `CHANGES.md`, `HISTORY.md`, first match). Keep the repo's existing format: read the newest
+   release section and reuse its heading style and subsection headings (for example Keep a
+   Changelog `### Added` / `### Changed` / `### Fixed`). Without a deviating existing style the
+   new section is `## [X.Y.Z] - YYYY-MM-DD`. When the format is unclear (mixed styles, unknown
+   fragment types, no changelog file yet), ask via AskUserQuestion before writing.
+4. **Insert:** prepend the new section above the newest existing release section - below the
+   title/intro and below an `## [Unreleased]` heading if the file has one (an Unreleased section
+   that already has entries: ask whether they belong to this release). Group the fragments under
+   the matching subsections; fragments without a type go to the repo's default subsection or, if
+   there is none, directly under the version heading.
+5. **Consume:** remove the consumed fragments in the SAME commit as the version bump and the
+   changelog (`git rm changelog.d/<fragment>`), keeping `README*`, `.gitkeep` and templates so
+   the directory stays. Respect the delete setting of DOGMA-PERMISSIONS.md (`§0lgy`): `[?]` =
+   confirm first, `[ ]` = leave the fragments and tell the user which ones to remove.
+6. **Never tag:** the release is this normal commit. Do not create a git tag or a hosted
+   release (that stays a separate, explicit user action).
+
+Show the assembled section in the summary (Step 5) before committing.
+
 ## Step 4c: Documentation sync
 
 After version sync, use AskUserQuestion to ask the user interactively:
@@ -206,7 +249,8 @@ Version Sync Complete:
     - root: 2.0.0 (1 file)
 ```
 
-If changes were made, commit:
+If changes were made, commit (one commit: version bump, synced files and - at a release with
+`changelog.d/` - the assembled changelog plus the removed fragments; no tag):
 ```bash
 git add -A && git commit -m "Sync versions across all version files"
 ```
@@ -217,3 +261,4 @@ git add -A && git commit -m "Sync versions across all version files"
 - Different components can have different versions (that's OK)
 - Files within the SAME component must be in sync
 - When in doubt about grouping, ask the user
+- `changelog.d/` fragments are assembled only at a release (bump commit), never tagged; without a versioned `changelog.d/` nothing changes

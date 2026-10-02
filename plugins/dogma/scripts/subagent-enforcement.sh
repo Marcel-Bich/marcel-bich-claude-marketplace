@@ -101,7 +101,7 @@ PERMS_CONTENT=$(cat "$PERMS_FILE" 2>/dev/null || true)
 # === CHECK HYDRA PERMISSION ===
 # Pattern: [x] use Hydra for 2+ independent tasks
 HYDRA_ENABLED="false"
-if echo "$PERMS_CONTENT" | grep -qiE '^\s*-\s*\[x\].*use Hydra.*2\+.*independent'; then
+if perm_is_checked "$PERMS_CONTENT" xw1i 'use Hydra.*2\+.*independent'; then
     HYDRA_ENABLED="true"
     dogma_debug_log "Hydra enforcement enabled"
 fi
@@ -109,7 +109,7 @@ fi
 # === CHECK SUBAGENT FALLBACK PERMISSION ===
 # Pattern: [x] spawn subagent for verification
 SUBAGENT_FALLBACK_ENABLED="false"
-if echo "$PERMS_CONTENT" | grep -qiE '^\s*-\s*\[x\].*spawn subagent.*verification'; then
+if perm_is_checked "$PERMS_CONTENT" 33tc 'spawn subagent.*verification'; then
     SUBAGENT_FALLBACK_ENABLED="true"
     dogma_debug_log "Subagent fallback enforcement enabled"
 fi
@@ -117,14 +117,14 @@ fi
 # === CHECK DELEGATION SETTINGS ===
 # Pattern: [x] Task tool usage counts as delegation
 TASK_COUNTS_AS_DELEGATION="false"
-if echo "$PERMS_CONTENT" | grep -qiE '^\s*-\s*\[x\].*Task tool.*counts as delegation'; then
+if perm_is_checked "$PERMS_CONTENT" o85w 'Task tool.*counts as delegation'; then
     TASK_COUNTS_AS_DELEGATION="true"
     dogma_debug_log "Task counts as delegation"
 fi
 
 # Pattern: [x] Skill tool usage counts as delegation
 SKILL_COUNTS_AS_DELEGATION="false"
-if echo "$PERMS_CONTENT" | grep -qiE '^\s*-\s*\[x\].*Skill tool.*counts as delegation'; then
+if perm_is_checked "$PERMS_CONTENT" i397 'Skill tool.*counts as delegation'; then
     SKILL_COUNTS_AS_DELEGATION="true"
     dogma_debug_log "Skill counts as delegation"
 fi
