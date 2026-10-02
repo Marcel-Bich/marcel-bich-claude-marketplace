@@ -17,6 +17,11 @@ Git Worktree management for parallel agent execution - isolated working director
 - `/hydra:merge` - Merge worktree branch back (merge or rebase)
 - `/hydra:cleanup` - Automatically remove already merged worktrees
 
+### Worktree Setup and Cleanup
+
+- `scripts/worktree-setup.sh <worktree-path> [main-checkout]` runs right after `git worktree add` (in `/hydra:create` and `/hydra:parallel`). A fresh worktree only has versioned files; the setup links (relative symlinks) or copies the excluded ones agents need - the "Worktree files" list in the `### Hydra` subsection of DOGMA-PERMISSIONS.md (read via dogma when installed), else CLAUDE.md, CLAUDE/, GUIDES/, DOGMA-PERMISSIONS.md and everything unversioned under `.credo/`. Versioned paths are skipped, existing paths are never overwritten. It prints the main checkout path, which spawned agents get for read-only lookups.
+- `/hydra:cleanup` removes only worktrees whose branch is fully merged and that have no changes to tracked files. With credo installed this happens automatically at item close, controlled by `[x] clean up merged worktrees automatically` in DOGMA-PERMISSIONS.md.
+
 ### Typical Workflow
 
 ```bash

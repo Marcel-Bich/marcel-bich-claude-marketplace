@@ -37,7 +37,22 @@ fi
 git worktree list | tail -n +2
 ```
 
-### 3. Check Each Worktree for Merge Status
+### 3. Check Each Worktree (same criteria as credo's automatic cleanup)
+
+A worktree is a removal candidate only when ALL of these hold - otherwise it is kept and listed with its reason:
+- not the main worktree, not the worktree you are in, not locked, not on a detached HEAD
+- its branch is fully merged into the main branch (the branch checked out in the main worktree)
+- no changes to tracked files (`git -C <wt> status --porcelain --untracked-files=no` is empty); untracked scratch (cache/, the symlinks from `worktree-setup.sh`) goes with it
+- a branch that never got a commit may belong to an agent that just started: keep it while it is younger than 24h or has untracked, non-ignored files
+
+When credo is installed, its `credo-worktree-cleanup.sh [--dry-run] [--json]` implements exactly these checks; prefer it:
+
+```bash
+CREDO_CLEANUP=$(ls -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/*/credo/*/scripts/credo-worktree-cleanup.sh 2>/dev/null | sort -V | tail -1)
+[ -n "$CREDO_CLEANUP" ] && "$CREDO_CLEANUP" --dry-run
+```
+
+Without credo, check by hand:
 
 For each worktree:
 
@@ -45,10 +60,10 @@ For each worktree:
 # Branch of the worktree
 BRANCH=$(git worktree list --porcelain | grep -A2 "$WORKTREE_PATH" | grep "branch " | sed 's/branch refs\/heads\///')
 
-# Is the branch merged into main/master?
-MAIN_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
+# Main branch = branch checked out in the main worktree
+MAIN_BRANCH=$(git worktree list --porcelain | awk 'NF==0{exit} /^branch /{sub(/^branch refs\/heads\//,""); print; exit}')
 
-git branch --merged "$MAIN_BRANCH" | grep -q "$BRANCH"
+git merge-base --is-ancestor "refs/heads/$BRANCH" "refs/heads/$MAIN_BRANCH"
 if [[ $? -eq 0 ]]; then
   echo "MERGED: $WORKTREE_NAME ($BRANCH)"
 else
@@ -97,8 +112,9 @@ Options:
 For each confirmed worktree:
 
 ```bash
-# Remove worktree
-git worktree remove "$WORKTREE_PATH"
+# Remove worktree (--force only for verified merged+clean candidates: it lets git
+# drop untracked scratch; git unlinks symlinks and never follows them)
+git worktree remove --force "$WORKTREE_PATH"
 
 # Remove branch
 git branch -d "$BRANCH"
@@ -132,10 +148,21 @@ Active worktrees:
 Use /hydra:merge {name} to merge worktrees.
 ```
 
+## Automatic cleanup at item close (credo)
+
+With credo installed, closing an item (move to done, verified or archived) runs the same cleanup automatically, controlled by the checkbox in the `### Hydra` subsection of DOGMA-PERMISSIONS.md:
+
+```
+- [x] clean up merged worktrees automatically
+```
+
+`[x]` removes merged+clean worktrees without asking, `[?]` (or no checkbox) lists them and asks, `[ ]` never. Every run covers all worktrees of the repo, so older ones are swept too.
+
 ## Safety Features
 
 - Main worktree (project root) is NEVER touched - always excluded
-- Only fully merged branches are removed
+- Only fully merged branches with no changes to tracked files are removed
+- Locked worktrees and fresh worktrees without commits (an agent may be starting) are kept
 - No force-delete (`git branch -d` not `-D`)
 - Confirmation before deletion (except dry-run)
 - Non-merged worktrees are always kept

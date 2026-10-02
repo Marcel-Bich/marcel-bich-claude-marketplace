@@ -70,8 +70,12 @@ WORKTREES_DIR="$(dirname "$REPO_ROOT")/${REPO_NAME}-worktrees"
 
 for WT in feature-x feature-y; do
   git worktree add -b "hydra/$WT" "$WORKTREES_DIR/$WT"
+  # bring excluded files (rules, .credo/, ...) into the fresh worktree
+  "${CLAUDE_PLUGIN_ROOT}/scripts/worktree-setup.sh" "$WORKTREES_DIR/$WT"
 done
 ```
+
+Run `worktree-setup.sh` right after every `git worktree add` (see `/hydra:create`).
 
 ### 3. Start All Agents in Parallel
 
@@ -84,6 +88,8 @@ subagent_type: general-purpose
 run_in_background: true
 prompt: [like in /hydra:spawn]
 ```
+
+Every prompt also names the absolute main checkout path (the `main=` line of `worktree-setup.sh`) with this rule: when something important is missing in the worktree (neither checked out, linked nor copied), look it up READ-ONLY in the main checkout; never write, commit or run state-changing git commands there; mention in the report anything that should be added to the worktree files list.
 
 All Task calls must be in ONE response for true parallelism.
 

@@ -62,7 +62,13 @@ mkdir -p "$(dirname "$WORKTREE_PATH")"
 
 # Create worktree with new branch
 git worktree add -b "hydra/$ARGUMENTS" "$WORKTREE_PATH"
+
+# Bring excluded files (CLAUDE.md, CLAUDE/, GUIDES/, DOGMA-PERMISSIONS.md, .credo/, ...)
+# into the new worktree - a fresh worktree only has versioned files
+"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-setup.sh" "$WORKTREE_PATH"
 ```
+
+`worktree-setup.sh` links (relative symlinks) or copies the paths of the worktree files list: the "Worktree files" list in the `### Hydra` subsection of DOGMA-PERMISSIONS.md (read via dogma's `worktree-files.sh` when dogma is installed), else the default list (link CLAUDE.md, CLAUDE/, GUIDES/, DOGMA-PERMISSIONS.md and everything unversioned under .credo/, each only if it exists). Versioned paths are skipped, existing paths are never overwritten. Always run it right after `git worktree add`; report its `linked` / `copied` lines in the output.
 
 ### 5. Output
 
@@ -73,6 +79,8 @@ Worktree created:
 
   Path:   {absolute path}
   Branch: hydra/{name}
+  Main:   {main checkout path}   (read-only lookups of anything missing in the worktree)
+  Setup:  {linked / copied paths from worktree-setup.sh}
 
 Next steps:
   - cd {path}                     # Switch manually
@@ -98,3 +106,4 @@ Possible causes:
 - Uncommitted changes in current directory do NOT block creation
 - New worktree starts from current HEAD
 - Branch prefix `hydra/` helps with organization
+- Merged and clean worktrees are removed by `/hydra:cleanup` (or automatically by credo at item close, see `/hydra:cleanup`)

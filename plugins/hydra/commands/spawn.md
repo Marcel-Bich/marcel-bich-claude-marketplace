@@ -71,6 +71,9 @@ WORKTREE_PATH=$(git worktree list --porcelain | grep -B1 "$WORKTREE_NAME" | grep
 
 # Convert to absolute path
 WORKTREE_PATH=$(cd "$WORKTREE_PATH" && pwd)
+
+# Main checkout (first entry of the worktree list)
+MAIN_CHECKOUT=$(git worktree list --porcelain | sed -n '1s/^worktree //p')
 ```
 
 ### 4. Start Agent with Task Tool
@@ -93,6 +96,14 @@ IMPORTANT - Your working directory:
 
 All file operations must be relative to this directory.
 Use absolute paths or ensure you are in the correct directory.
+
+Main checkout (READ-ONLY for you):
+  {MAIN_CHECKOUT}
+
+If something important is missing in your worktree (neither checked out, linked
+nor copied - e.g. a rule file or local config), look it up read-only in the main
+checkout. Never write, commit or run state-changing git commands there. Mention in
+your report anything that should be added to the worktree files list.
 
 Your task:
 {AGENT_PROMPT}
