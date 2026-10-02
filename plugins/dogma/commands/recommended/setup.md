@@ -31,7 +31,7 @@ The user provided: `$ARGUMENTS`
 **Source detection (same as sync.md "Parse Arguments" section):**
 - Starts with `http://` or `https://` = Remote Git repo
 - Starts with `~/`, `./`, `../`, `/` = Local path
-- Empty = Use DEFAULT_SOURCE from sync.md
+- Empty = use `CLAUDE_MB_DOGMA_SOURCE` when set, else DEFAULT_SOURCE from sync.md (same order as /dogma:sync)
 
 ### Step 2: Fetch Source
 
