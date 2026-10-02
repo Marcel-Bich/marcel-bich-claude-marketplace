@@ -5,7 +5,10 @@
 # user's dogma source (CLAUDE_MB_DOGMA_SOURCE) broadcasts an entry in its
 # NOTICES.md, tell Claude ONCE per repo via hookSpecificOutput.additionalContext;
 # Claude then asks the user (Run / Later / Never). The notice list, the per-repo
-# relevance check and the seen state live in scripts/notices-pending.sh (source
+# relevance check and the seen state live in scripts/notices-pending.sh (context:
+# the git toplevel of the session cwd, else the credo pinned project, else the cwd
+# itself when a DOGMA-PERMISSIONS.md applies there, also outside git; the "repo" is
+# the directory of the effective DOGMA-PERMISSIONS.md the notices concern; source
 # broadcasts via scripts/source-cache.sh, whose fetch runs in the background and
 # never delays the session). Nothing in the repo is ever changed here.
 #
@@ -63,17 +66,19 @@ hint = data.get("hint") or ""
 if not notices and not hint:
     sys.exit(0)
 mark = shlex.quote(os.environ["SCRIPT"]) + " mark"
-repo = shlex.quote(data.get("repo") or os.environ["CWD"])
+repo_dir = data.get("repo") or os.environ["CWD"]
+repo = shlex.quote(repo_dir)
 
 lines = []
 if notices:
-    lines.append("[dogma] Update notice(s) for this repo ({} pending). A dogma plugin update or the user\x27s dogma source announced something the user may want to act on:".format(len(notices)))
+    lines.append("[dogma] Update notice(s) for {} ({} pending). A dogma plugin update or the user\x27s dogma source announced something the user may want to act on:".format(repo_dir, len(notices)))
     for n in notices:
         origin = "from the user\x27s dogma source (NOTICES.md)" if n.get("kind") == "source" else "from the dogma plugin"
         action = n.get("action") or "none (information only)"
         lines.append("- {} [{}]: {} Action: {}".format(n.get("id", ""), origin, n.get("text", ""), action))
     lines += [
         "",
+        "They concern the dogma setup (DOGMA-PERMISSIONS.md / synced rules) in {}: run every action with that directory as the target (e.g. cd there first), not in another folder.".format(repo_dir),
         "How to handle them (do not change anything in the repo on your own):",
         "- Do not interrupt urgent work; raise this at the first natural pause.",
         "- If a human is present: ask via your Ask tool (AskUserQuestion), one question per notice, options \"Run <action>\", \"Later\", \"Never\" (a notice without an action: \"Got it\" = mark seen, \"Later\"). Without an Ask tool, ask the same in plain text.",

@@ -11,27 +11,42 @@
 #           hand-written NOTICES.md at the source root, read through
 #           scripts/source-cache.sh (cached clone, refreshed at most once a day,
 #           entries older than CLAUDE_MB_DOGMA_NOTICES_MAX_AGE_DAYS skipped). Their ids
-#           are prefixed "src:" (src:n001). Only repos that use dogma (a
-#           DOGMA-PERMISSIONS.md or a CLAUDE/ dir at the git toplevel) get them, and
-#           never the source repo itself.
+#           are prefixed "src:" (src:n001). Only contexts that use dogma get them
+#           (see "Context" below), never the source repo itself.
+#
+# Context (which dogma setup the notices concern):
+#   start   the git toplevel of dir; else the credo pinned project (listing only,
+#           lib-permissions.sh dogma_pinned_dir); else dir itself (also a non-git
+#           folder)
+#   file    the effective DOGMA-PERMISSIONS.md for it, resolved exactly like the
+#           permission hooks do (lib-permissions.sh dogma_resolve: own file upward
+#           or in the main worktree, else the inherited session-folder file;
+#           session folder = DOGMA_SESSION_DIR, default dir)
+#   uses dogma = such a file resolves, or the git toplevel has a CLAUDE/ dir
+#   repo    the directory the notices refer to and are keyed by: the git toplevel
+#           when the file lies inside it (or the toplevel only has CLAUDE/), else
+#           the directory of the effective file (e.g. the session folder's file
+#           inherited by a pinned project without its own file, or a non-git
+#           folder). `mark` takes that directory and never consults the pin.
 #
 # Usage:
 #   notices-pending.sh [--json] [--hint] [dir]   pending notices of the repo at dir (default $PWD)
 #       kv:   one block per notice (id=..., kind=..., action=..., text=...), blank line between
-#       json: {"repo": "<toplevel>", "notices": [{"id", "kind", "text", "action"}]}
+#       json: {"repo": "<repo dir>", "notices": [{"id", "kind", "text", "action"}]}
 #       --hint: also report, at most once a day, that the dogma source is not
 #               reachable (kv: hint=..., json: "hint"); consumes the daily hint, so
 #               only the SessionStart hook passes it
 #   notices-pending.sh mark <id> [dir]           mark a notice seen for that repo
+#                                                (pass the "repo" dir of the listing)
 #
 # Seen state (per profile, per repo):
 #   ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/dogma/notices-seen/<key>/<id>        plugin notices
 #   ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/dogma/notices-seen/<key>/.src/<id>   source notices
-#   key = first 16 hex chars of sha256(absolute git toplevel); empty files
+#   key = first 16 hex chars of sha256(absolute repo dir); empty files
 #
-# Exit codes: listing 0 = notices (or a hint) printed, 4 = none pending, not a git
-# repo, or any error (silent, fail safe). mark: 0 = marked, 1 = bad argument /
-# unknown id, 4 = not a git repo or state not writable.
+# Exit codes: listing 0 = notices (or a hint) printed, 4 = none pending, no dogma
+# context, or any error (silent, fail safe). mark: 0 = marked, 1 = bad argument /
+# unknown id, 4 = no dogma context or state not writable.
 # Needs python3 or jq (source notices need python3).
 
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -115,9 +130,10 @@ print(json.dumps(d))
     fi
 }
 
-# does the repo at $1 use dogma (synced rules or permissions file at the toplevel)?
+# does the context use dogma? (an effective permissions file, or synced rules at the
+# git toplevel; set by the context resolution below)
 uses_dogma() {
-    [ -f "$1/DOGMA-PERMISSIONS.md" ] || [ -d "$1/CLAUDE" ]
+    [ -n "$EFF_FILE" ] || { [ -n "$CTX_TOP" ] && [ -d "$CTX_TOP/CLAUDE" ]; }
 }
 
 # is the repo at $1 the local dogma source itself? (its owner is not nagged)
@@ -133,12 +149,18 @@ is_source_repo() {
     [ "$(cd "$src" && pwd -P)" = "$(cd "$1" && pwd -P)" ]
 }
 
-# source notices (TSV id, action, date, text) applicable to the repo at $1
+# is the context (repo dir or git toplevel) the dogma source itself?
+ctx_is_source() {
+    is_source_repo "$REPO" && return 0
+    [ -n "$CTX_TOP" ] && is_source_repo "$CTX_TOP"
+}
+
+# source notices (TSV id, action, date, text) applicable to the context
 source_entries() {
     [ -n "${CLAUDE_MB_DOGMA_SOURCE:-}" ] || return 1
     [ -x "$SOURCE_CACHE" ] || return 1
-    uses_dogma "$1" || return 1
-    is_source_repo "$1" && return 1
+    uses_dogma || return 1
+    ctx_is_source && return 1
     "$SOURCE_CACHE" notices 2>/dev/null
 }
 
@@ -174,19 +196,38 @@ if ! cd "$DIR" 2>/dev/null; then
     exit 4
 fi
 
-TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)" || TOPLEVEL=""
-if [ -z "$TOPLEVEL" ] && [ "$CMD" = "list" ]; then
+DIR="$(pwd -P)"
+# shellcheck source=lib-permissions.sh
+. "$PLUGIN_ROOT/scripts/lib-permissions.sh" 2>/dev/null || exit 4
+# the session folder whose file a context without its own file inherits
+export DOGMA_SESSION_DIR="${DOGMA_SESSION_DIR:-$DIR}"
+
+# --- context: start dir, effective file, repo dir (see header) ---
+
+START="$DIR"
+CTX_TOP="$(git rev-parse --show-toplevel 2>/dev/null)" || CTX_TOP=""
+if [ -z "$CTX_TOP" ] && [ "$CMD" = "list" ] && PINNED="$(dogma_pinned_dir)" && [ -d "$PINNED" ]; then
     # session folder outside any repo (a parent / workspace folder): the credo pinned
-    # project is the repo the work happens in (lib-permissions.sh dogma_pinned_dir;
-    # skipped when credo is not installed)
-    # shellcheck source=lib-permissions.sh
-    if . "$PLUGIN_ROOT/scripts/lib-permissions.sh" 2>/dev/null && PINNED="$(dogma_pinned_dir)" \
-        && cd "$PINNED" 2>/dev/null; then
-        TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)" || TOPLEVEL=""
-    fi
+    # project is where the work happens (skipped when credo is not installed)
+    START="$PINNED"
+    CTX_TOP="$(git -C "$PINNED" rev-parse --show-toplevel 2>/dev/null)" || CTX_TOP=""
 fi
-[ -n "$TOPLEVEL" ] || exit 4
-HASH="$(sha256_hex "$TOPLEVEL")" || exit 4
+dogma_resolve "$START"
+EFF_FILE="${DOGMA_RESOLVED_FILE:-}"
+REPO=""
+if [ -n "$EFF_FILE" ]; then
+    EFF_DIR="$(cd "$(dirname "$EFF_FILE")" 2>/dev/null && pwd -P)" || exit 4
+    case "$EFF_DIR/" in
+        "$CTX_TOP"/*) [ -n "$CTX_TOP" ] && REPO="$CTX_TOP" ;;
+    esac
+    [ -n "$REPO" ] || REPO="$EFF_DIR"
+elif [ -n "$CTX_TOP" ]; then
+    # no permissions file: plugin notices may still apply (their own check decides),
+    # source notices only with synced rules (CLAUDE/)
+    REPO="$CTX_TOP"
+fi
+[ -n "$REPO" ] || exit 4
+HASH="$(sha256_hex "$REPO")" || exit 4
 KEY="${HASH:0:16}"
 [ ${#KEY} -eq 16 ] || exit 4
 SEEN_DIR="$SEEN_ROOT/$KEY"
@@ -197,7 +238,7 @@ if [ "$CMD" = "mark" ]; then
     case "$MARK_ID" in
         src:*)
             # only ids of the current NOTICES.md; never fetch here
-            KNOWN="$(CLAUDE_MB_DOGMA_SOURCE_FETCH=off source_entries "$TOPLEVEL" | cut -f1)" || KNOWN=""
+            KNOWN="$(CLAUDE_MB_DOGMA_SOURCE_FETCH=off source_entries | cut -f1)" || KNOWN=""
             MARK_FILE="$SEEN_DIR/.src/${MARK_ID#src:}"
             MARK_CMP="${MARK_ID#src:}"
             ;;
@@ -228,15 +269,17 @@ while IFS=$'\037' read -r id action applies text; do
         ''|/*|*..*) continue ;;
     esac
     [ -x "$PLUGIN_ROOT/$applies" ] || continue
+    # run from the context's start dir: its resolution (with DOGMA_SESSION_DIR) yields
+    # the same effective file as above
     if command -v timeout >/dev/null 2>&1; then
-        timeout 5 "$PLUGIN_ROOT/$applies" </dev/null >/dev/null 2>&1 || continue
+        (cd "$START" && timeout 5 "$PLUGIN_ROOT/$applies" </dev/null >/dev/null 2>&1) || continue
     else
-        "$PLUGIN_ROOT/$applies" </dev/null >/dev/null 2>&1 || continue
+        (cd "$START" && "$PLUGIN_ROOT/$applies" </dev/null >/dev/null 2>&1) || continue
     fi
     PENDING+="${id}"$'\t'"${action}"$'\t'"plugin"$'\t'"${text}"$'\n'
 done <<< "$(printf '%s' "$ENTRIES" | tr '\t' '\037')"
 
-SRC_ENTRIES="$(source_entries "$TOPLEVEL")" || SRC_ENTRIES=""
+SRC_ENTRIES="$(cd "$START" && source_entries)" || SRC_ENTRIES=""
 while IFS=$'\037' read -r id action _date text; do
     valid_id "$id" || continue
     [ -e "$SEEN_DIR/.src/$id" ] && continue
@@ -245,15 +288,15 @@ done <<< "$(printf '%s' "$SRC_ENTRIES" | tr '\t' '\037')"
 
 HINT=""
 if [ "$WANT_HINT" -eq 1 ] && [ -n "${CLAUDE_MB_DOGMA_SOURCE:-}" ] && [ -x "$SOURCE_CACHE" ] \
-    && uses_dogma "$TOPLEVEL" && ! is_source_repo "$TOPLEVEL"; then
-    HINT="$("$SOURCE_CACHE" hint 2>/dev/null | tr '\t\n' '  ')" || HINT=""
+    && uses_dogma && ! ctx_is_source; then
+    HINT="$(cd "$START" && "$SOURCE_CACHE" hint 2>/dev/null | tr '\t\n' '  ')" || HINT=""
     HINT="${HINT% }"
 fi
 
 [ -n "$PENDING" ] || [ -n "$HINT" ] || exit 4
 
 if [ "$MODE" = "json" ]; then
-    printf '%s' "$PENDING" | emit_json "$TOPLEVEL" "$HINT" || exit 4
+    printf '%s' "$PENDING" | emit_json "$REPO" "$HINT" || exit 4
 else
     first=1
     while IFS=$'\037' read -r id action kind text; do

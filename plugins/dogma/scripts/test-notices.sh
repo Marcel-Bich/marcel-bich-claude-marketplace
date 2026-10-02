@@ -2,10 +2,12 @@
 # Test script for notices-pending.sh, notice-applies-test-commands.sh and the
 # SessionStart hook hooks/notices-inject.sh.
 # Covers: applies / not applies, mark, seen not listed again, two repos independent,
-# JSON validity, not a git repo -> 4, hook silent / valid JSON; source broadcasts
+# JSON validity, no dogma context -> 4, hook silent / valid JSON; source broadcasts
 # (NOTICES.md) as local path and file:// clone, daily throttle, background fetch,
 # unreachable source silent + hint once a day, seen per repo, max age, src: prefix,
-# both kinds together.
+# both kinds together; non-git folders with a DOGMA-PERMISSIONS.md, a credo pinned
+# project inheriting the session folder's file (keyed to that file's dir), the old
+# git toplevel key for a repo with its own file.
 
 set -e
 
@@ -135,14 +137,13 @@ make_repo "$REPO_NOFILE"
 capture "$NP" "$REPO_NOFILE"
 run_test "no DOGMA-PERMISSIONS.md: exit 4" "4" "$RC"
 
-NOGIT="$TEST_TMP_DIR/nogit"
+NOGIT="$TEST_TMP_DIR/nogit"       # no git, no DOGMA-PERMISSIONS.md: no dogma context
 mkdir -p "$NOGIT"
-printf '%s' "$PERMS_NO_SECTION" > "$NOGIT/DOGMA-PERMISSIONS.md"
 capture "$NP" "$NOGIT"
-run_test "not a git repo: exit 4" "4" "$RC"
-run_test "not a git repo: no output" "" "$OUT"
+run_test "not a git repo without a permissions file: exit 4" "4" "$RC"
+run_test "not a git repo without a permissions file: no output" "" "$OUT"
 capture "$NP" mark "$ID" "$NOGIT"
-run_test "mark in not a git repo: exit 4" "4" "$RC"
+run_test "mark in a folder without dogma: exit 4" "4" "$RC"
 
 capture "$NP" "$TEST_TMP_DIR/does-not-exist"
 run_test "missing dir: exit 4" "4" "$RC"
@@ -248,8 +249,8 @@ CLAUDE_MB_DOGMA_ENABLED=false capture run_hook "$REPO_C"
 run_test "hook: CLAUDE_MB_DOGMA_ENABLED=false -> no output" "" "$OUT"
 
 capture run_hook "$NOGIT"
-run_test "hook: not a git repo -> exit 0" "0" "$RC"
-run_test "hook: not a git repo -> no output" "" "$OUT"
+run_test "hook: no dogma context -> exit 0" "0" "$RC"
+run_test "hook: no dogma context -> no output" "" "$OUT"
 
 echo ""
 
@@ -471,6 +472,107 @@ run_test "invalid source: silent (exit 4)" "4" "$RC"
 unset CLAUDE_MB_DOGMA_SOURCE CLAUDE_MB_DOGMA_SOURCE_FETCH
 capture "$NP" "$REPO_D"
 run_test "no source configured: no source notices (exit 4)" "4" "$RC"
+
+echo ""
+
+# ============================================================================
+echo "--- Non-git folders and inheritance ---"
+
+# Separate profile so the seen state of the sections above does not interfere.
+export CLAUDE_CONFIG_DIR="$TEST_TMP_DIR/config-inherit"
+export CLAUDE_MB_DOGMA_SOURCE="$SRC"
+SEEN="$CLAUDE_CONFIG_DIR/dogma/notices-seen"
+key_of() { printf '%s' "$1" | sha256sum | cut -c1-16; }
+repo_of() { printf '%s' "$1" | python3 -c 'import json, sys; print(json.load(sys.stdin)["repo"])'; }
+real() { (cd "$1" && pwd -P); }
+
+# a non-git session folder holding DOGMA-PERMISSIONS.md (e.g. a workstation folder)
+WS="$TEST_TMP_DIR/workstation"
+mkdir -p "$WS/notes"
+printf '%s' "$PERMS_NO_SECTION" > "$WS/DOGMA-PERMISSIONS.md"
+WS_REAL="$(real "$WS")"
+
+# fake credo: resolve-project prints the pinned project's .credo dir (FAKE_PIN)
+FAKE_CREDO="$TEST_TMP_DIR/fake-credo-config.sh"
+printf '#!/bin/bash\n[ "$1" = resolve-project ] && [ -n "$FAKE_PIN" ] && echo "$FAKE_PIN/.credo"\n' > "$FAKE_CREDO"
+
+DOGMA_SESSION_DIR="$WS" capture "$NP" "$WS"
+run_test "non-git session folder: exit 0" "0" "$RC"
+run_test "non-git session folder: plugin + source notices" "dogma-test-commands src:n001 src:n002 src:n003 src:n004" "$(ids_of "$OUT")"
+DOGMA_SESSION_DIR="$WS" capture "$NP" --json "$WS/notes"
+run_test "non-git subfolder: repo = the file's dir" "$WS_REAL" "$(repo_of "$OUT")"
+
+unset DOGMA_SESSION_DIR
+capture run_hook "$WS"
+HOOK_WS_CHECK="$(printf '%s' "$OUT" | WS="$WS_REAL" python3 -c '
+import json, os, sys
+c = json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"]
+ws = os.environ["WS"]
+ok = ("dogma-test-commands" in c and "src:n001" in c and ("mark <id> " + ws) in c
+      and ("in " + ws + ":") in c)
+print("valid" if ok else c)
+' 2>&1)"
+run_test "hook: non-git session folder -> notices naming that dir" "valid" "$HOOK_WS_CHECK"
+export DOGMA_SESSION_DIR="$TEST_TMP_DIR/session"
+
+DOGMA_SESSION_DIR="$WS" capture "$NP" mark "src:n001" "$WS"
+run_test "non-git: mark src:n001 exit 0" "0" "$RC"
+run_test "non-git: seen keyed to the folder" "yes" "$([ -f "$SEEN/$(key_of "$WS_REAL")/.src/n001" ] && echo yes || echo no)"
+
+# credo pinned project without its own file: inherits the session folder's file
+PIN="$TEST_TMP_DIR/werkbank"
+make_repo "$PIN"
+PIN_NOGIT="$TEST_TMP_DIR/werkbank-nogit"
+mkdir -p "$PIN_NOGIT"
+for P in "$PIN" "$PIN_NOGIT"; do
+    label="pinned git project"
+    [ "$P" = "$PIN_NOGIT" ] && label="pinned non-git project"
+    FAKE_PIN="$P" DOGMA_CREDO_CONFIG="$FAKE_CREDO" DOGMA_SESSION_DIR="$WS" capture "$NP" --json "$WS"
+    run_test "$label without own file: repo = session folder" "$WS_REAL" "$(repo_of "$OUT")"
+    FAKE_PIN="$P" DOGMA_CREDO_CONFIG="$FAKE_CREDO" DOGMA_SESSION_DIR="$WS" capture "$NP" "$WS"
+    run_test "$label: src:n001 already seen via the session folder" "dogma-test-commands src:n002 src:n003 src:n004" "$(ids_of "$OUT")"
+done
+
+FAKE_PIN="$PIN" DOGMA_CREDO_CONFIG="$FAKE_CREDO" DOGMA_SESSION_DIR="$WS" capture "$NP" mark "src:n002" "$WS"
+run_test "pinned: mark via the named dir: exit 0" "0" "$RC"
+DOGMA_SESSION_DIR="$WS" capture "$NP" "$WS"
+run_test "shown once across both: session folder sees src:n002 marked" "dogma-test-commands src:n003 src:n004" "$(ids_of "$OUT")"
+FAKE_PIN="$PIN" DOGMA_CREDO_CONFIG="$FAKE_CREDO" DOGMA_SESSION_DIR="$WS" capture "$NP" mark "$ID" "$WS"
+FAKE_PIN="$PIN" DOGMA_CREDO_CONFIG="$FAKE_CREDO" DOGMA_SESSION_DIR="$WS" capture "$NP" "$WS"
+run_test "pinned: plugin notice marked once" "src:n003 src:n004" "$(ids_of "$OUT")"
+run_test "inheritance: one key dir only" "1" "$(find "$SEEN" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+
+# the inherited file already has Test Commands: the plugin notice does not apply
+WS2="$TEST_TMP_DIR/workstation2"
+mkdir -p "$WS2"
+printf '%s' "$PERMS_WITH_SECTION" > "$WS2/DOGMA-PERMISSIONS.md"
+FAKE_PIN="$PIN" DOGMA_CREDO_CONFIG="$FAKE_CREDO" DOGMA_SESSION_DIR="$WS2" capture "$NP" "$WS2"
+run_test "pinned inherits a file with Test Commands: only source notices" "src:n001 src:n002 src:n003 src:n004" "$(ids_of "$OUT")"
+
+# pinned project with its own file: keyed to its git toplevel, not to the session folder
+PIN_OWN="$TEST_TMP_DIR/werkbank-own"
+make_repo "$PIN_OWN"
+printf '%s' "$PERMS_NO_SECTION" > "$PIN_OWN/DOGMA-PERMISSIONS.md"
+FAKE_PIN="$PIN_OWN" DOGMA_CREDO_CONFIG="$FAKE_CREDO" DOGMA_SESSION_DIR="$WS" capture "$NP" --json "$WS"
+run_test "pinned project with own file: repo = its toplevel" "$(git -C "$PIN_OWN" rev-parse --show-toplevel)" "$(repo_of "$OUT")"
+
+# git repo with its own file keeps the old key (sha256 of the git toplevel)
+REPO_K="$TEST_TMP_DIR/repo-k"
+make_repo "$REPO_K"
+printf '%s' "$PERMS_NO_SECTION" > "$REPO_K/DOGMA-PERMISSIONS.md"
+mkdir -p "$REPO_K/sub"
+capture "$NP" mark "$ID" "$REPO_K/sub"
+run_test "git repo with own file: old key (git toplevel)" "yes" "$([ -f "$SEEN/$(key_of "$(git -C "$REPO_K" rev-parse --show-toplevel)")/$ID" ] && echo yes || echo no)"
+capture "$NP" --json "$REPO_K/sub"
+run_test "git repo with own file: repo = toplevel" "$(git -C "$REPO_K" rev-parse --show-toplevel)" "$(repo_of "$OUT")"
+
+# a git repo inside the session folder without its own file: keyed to the session folder
+mkdir -p "$WS/inner"
+make_repo "$WS/inner"
+DOGMA_SESSION_DIR="$WS" capture "$NP" --json "$WS/inner"
+run_test "git repo inheriting the session file: repo = session folder" "$WS_REAL" "$(repo_of "$OUT")"
+
+unset CLAUDE_MB_DOGMA_SOURCE
 
 echo ""
 

@@ -1481,19 +1481,20 @@ Would you like to set it up?
 
 ### 8.3 Mark source broadcasts asking for a sync as seen
 
-A completed sync answers every pending source broadcast whose action is `/dogma:sync`, so mark those seen for this repo (no fetch, nothing in the repo changes):
+A completed sync answers every pending source broadcast whose action is `/dogma:sync`, so mark those seen for this repo (no fetch, nothing in the repo changes). The listing names the directory the notices are keyed to (`repo`: the git toplevel, or the directory of the effective `DOGMA-PERMISSIONS.md`, e.g. an inherited session-folder file or a non-git folder); mark them there:
 
 ```bash
 NP="${CLAUDE_PLUGIN_ROOT}/scripts/notices-pending.sh"
 CLAUDE_MB_DOGMA_SOURCE_FETCH=off "$NP" --json . 2>/dev/null | python3 -c '
 import json, sys
 try:
-    for n in json.load(sys.stdin).get("notices", []):
+    d = json.load(sys.stdin)
+    for n in d.get("notices", []):
         if n.get("kind") == "source" and n.get("action", "").split()[:1] == ["/dogma:sync"]:
-            print(n["id"])
+            print(n["id"] + "\t" + d.get("repo", "."))
 except ValueError:
     pass
-' | while read -r id; do CLAUDE_MB_DOGMA_SOURCE_FETCH=off "$NP" mark "$id" .; done
+' | while IFS="$(printf '\t')" read -r id repo; do CLAUDE_MB_DOGMA_SOURCE_FETCH=off "$NP" mark "$id" "$repo"; done
 ```
 
 Skip this step when the sync was cancelled. Other source broadcasts (other actions, information only) stay pending; Claude asks about them as usual.
