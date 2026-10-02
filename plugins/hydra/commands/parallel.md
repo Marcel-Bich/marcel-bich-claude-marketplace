@@ -89,7 +89,7 @@ run_in_background: true
 prompt: [like in /hydra:spawn]
 ```
 
-Every prompt also names the absolute main checkout path (the `main=` line of `worktree-setup.sh`) with this rule: when something important is missing in the worktree (neither checked out, linked nor copied), look it up READ-ONLY in the main checkout; never write, commit or run state-changing git commands there; mention in the report anything that should be added to the worktree files list.
+Every prompt also names the absolute main checkout path (the `main=` line of `worktree-setup.sh`) with this rule: when something important is missing in the worktree (neither checked out, linked nor copied), look it up READ-ONLY in the main checkout; never write, commit or run state-changing git commands there; mention in the report anything that should be added to the worktree files list. Inside its own worktree the agent may commit on its worktree branch, but never push or merge - that stays with the main agent.
 
 All Task calls must be in ONE response for true parallelism.
 

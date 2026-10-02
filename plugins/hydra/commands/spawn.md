@@ -109,7 +109,7 @@ Your task:
 {AGENT_PROMPT}
 
 When finished:
-1. Commit your changes in the worktree
+1. Commit your changes on the worktree branch (never push, never merge - the main agent does that)
 2. Show git status and git log -3
 ```
 
