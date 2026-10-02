@@ -31,7 +31,7 @@
 # it was typed in (session_id from the hook stdin JSON, else $CREDO_SESSION_ID /
 # $CLAUDE_CODE_SESSION_ID); other sessions' autonomous runs are never touched.
 #
-# Failure-safe: never blocks a prompt (never exits 2). If no valid session_id can
+# Failure-safe: never blocks a user prompt (never exits 2; only a stale wake is dropped, above). If no valid session_id can
 # be resolved the state cannot be keyed: a note goes to stderr and the hook exits
 # 1 (a non-blocking hook error) WITHOUT writing anything.
 #
@@ -58,6 +58,25 @@ if command -v jq >/dev/null 2>&1; then
     prompt="$(printf '%s' "$input" | jq -r '.prompt // empty' 2>/dev/null || true)"
     stdin_session_id="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || true)"
 fi
+
+# A self-scheduled wake that fires after autonomy ended (the user switched to
+# active/passive, or ended the run) is stale: drop it so it never drives work in an
+# attended session. ScheduleWakeup cannot be cancelled from a hook, so this is the
+# backstop. Only a prompt that STARTS with the marker counts, and only when this
+# session's autonomy flag is gone.
+case "$prompt" in
+    "[CREDO-AUTONOMY-WAKE]"*)
+        if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/credo-autonomy-lib.sh" ]; then
+            # shellcheck source=credo-autonomy-lib.sh
+            . "$SCRIPT_DIR/credo-autonomy-lib.sh"
+            if wake_sid="$(credo_autonomy_resolve_id "$stdin_session_id")" \
+                && [ ! -f "$(credo_autonomy_dir "$wake_sid")/active" ]; then
+                printf '{"decision": "block", "reason": "credo: stale autonomy wake-up dropped - this session is no longer autonomous"}\n'
+                exit 0
+            fi
+        fi
+        ;;
+esac
 
 case "$prompt$input" in
     *"[CREDO-AUTONOMY-WAKE]"* | *"<task-notification>"* | *"[SYSTEM NOTIFICATION - NOT USER INPUT]"* | *"<cross-session-message"*)

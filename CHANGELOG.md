@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.72
 
+##### v0.72.8
+
+###### Fixed
+
+- A self-scheduled autonomy wake-up that fires after the session switched to active/passive is dropped instead of reaching the agent; /credo:session-active and /credo:session-passive stop the wake chain themselves
+
 ##### v0.72.7
 
 ###### Fixed

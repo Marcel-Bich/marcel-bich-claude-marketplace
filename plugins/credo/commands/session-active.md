@@ -27,4 +27,8 @@ Set the persistent, per-session credo mode to **active**.
    already active in your current context - do not reload it if you already have it. This
    puts the item model and go-gate in context from the start, instead of only when
    something later happens to trigger them.
-6. Confirm briefly: mode active, keep-alive off.
+6. End any autonomy wake-up chain: if this session scheduled wake-ups while autonomous
+   (ScheduleWakeup), call ScheduleWakeup with `stop: true` now, and CronDelete any
+   CronCreate job it set for the run. A wake that still fires later is dropped by the
+   credo-autonomy-clear hook (backstop), but do not rely on it.
+7. Confirm briefly: mode active, keep-alive off.

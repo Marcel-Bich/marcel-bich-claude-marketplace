@@ -53,6 +53,16 @@ expect "delivery notice keeps autonomy" kept
 arm; run_prompt "<task-notification>done</task-notification>"
 expect "task notification keeps autonomy" kept
 
+# stale wake (autonomy no longer active, e.g. switched to active/passive): dropped
+out_of() { jq -n --arg p "$1" --arg s "$SID" '{prompt: $p, session_id: $s}' | bash "$HOOK" 2>/dev/null; }
+arm; out="$(out_of "[CREDO-AUTONOMY-WAKE] standby check")"
+if printf '%s' "$out" | grep -q '"block"'; then fail=$((fail + 1)); echo "FAIL: live wake must not be blocked"; else pass=$((pass + 1)); fi
+rm -f "$CREDO_AUTONOMY_DIR/$SID/active"; printf 'active\n' > "$CREDO_SESSION_MODES_DIR/$SID"
+out="$(out_of "[CREDO-AUTONOMY-WAKE] standby check")"
+if printf '%s' "$out" | grep -q '"decision": *"block"'; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL: stale wake must be blocked (got: $out)"; fi
+out="$(out_of "a normal user message")"
+if printf '%s' "$out" | grep -q '"block"'; then fail=$((fail + 1)); echo "FAIL: user message must never be blocked"; else pass=$((pass + 1)); fi
+
 rm -rf "$TMP"
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]

@@ -236,7 +236,7 @@ Peer sessions tend to over-communicate: every ack, status note or handoff lands 
 
 - **Receiver** (UserPromptSubmit): when the prompt is a `<cross-session-message>`, it injects the handling rule. `[urgent]` (or untagged but asking a question or needing a decision) is handled now; `[info]` and other untagged messages get no reply and no immediate action, and resulting `.credo`/item changes are batched into the next natural commit (idle time, next release, before a compact).
 - **Sender** (PreToolUse `SendMessage`): reminds the agent to start the message with `[info]` or `[urgent]`, bundle points, never send pure acks, and end with "No reply needed" when no answer is needed.
-- **Autonomy:** a peer message never pauses autonomy (`credo-autonomy-clear.sh` exempts it); only the user's own messages do.
+- **Autonomy:** a peer message never pauses autonomy (`credo-autonomy-clear.sh` exempts it); only the user's own messages do. Harness notices about other sessions (idle/delivery) are exempt too. A self-scheduled `[CREDO-AUTONOMY-WAKE]` wake that fires after the session left autonomy (switched to active/passive) is dropped by the same hook; the mode commands also stop the wake chain themselves.
 - **Disable** with `CREDO_PEER_ETIQUETTE=0`.
 
 ## Parallel work: touches and resource gate
