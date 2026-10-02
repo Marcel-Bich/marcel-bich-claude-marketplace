@@ -8,6 +8,16 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.72
 
+##### v0.72.3
+
+###### Security
+
+- LAN relay: the reply address check uses fullmatch with `\Z`, so `uds:/x` followed
+  by a newline is no longer accepted into the `from` attribute
+- LAN relay: the envelope delimiter check runs on an NFKC-normalized copy without
+  control characters, so look-alikes (fullwidth or small-form `<`) and a NUL after
+  `<` are rejected too
+
 ##### v0.72.2
 
 ###### Fixed
