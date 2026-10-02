@@ -117,6 +117,13 @@ the fresh listing in "Empty buildable queue = end-of-run" below). Building every
 item IS the mandate of autonomous mode, not over-reach. "I built the thread I started with" is
 NOT a reason to stop while other buildable items remain.
 
+Build in parallel where it is safe: before spawning builders, run the overlap check
+(`credo-touches-check.sh` over the candidate `2_go` items; overlapping items run
+sequentially) and, before each spawn, the resource gate (`credo-resource-check.sh
+--running <N>`, plus `--heavy` for a `heavy: true` item). On `wait`, start nothing new and
+re-check on the next completion notification. Full procedure: credo `orchestration` skill,
+"Parallel code tracks: touches and resource gate".
+
 Autonomous / AFK runs are read-heavy, so isolated writing pre-work has room here: for a clarify
 item blocked by a missing measurement, mockup, or feasibility proof, use the `sandbox` skill
 (`.credo/sandbox-tmp/`, no production code, no commit) rather than making a product decision.

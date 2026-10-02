@@ -76,6 +76,10 @@ If no -> Sequential delegation
 
 You decide this autonomously. Maximum parallelization where sensible.
 
+With credo items, parallel code tracks are limited only by file overlap (item `touches:`,
+`credo-touches-check.sh`) and the resource gate (`credo-resource-check.sh`, `heavy: true`
+items) - there is no fixed track cap. Details: credo `orchestration` skill.
+
 ### Rule 3: Subagent Context
 
 When spawning Task, ALWAYS include:

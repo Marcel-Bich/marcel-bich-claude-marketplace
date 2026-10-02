@@ -170,7 +170,7 @@ Auto-discovered under `skills/`. Each auto-triggers when it applies, including i
 - **requirements-verbatim** - captures a requirement, decision, approval, or GO word-for-word into an append-only dated log so it survives compaction.
 - **budget** - the single source for API budget caps and reset rules across the 5-hour and weekly limits, plus the commit-identity gate before any commit. An autonomous start does a mandatory budget read-back: the values are read fresh from the limit cache, never from memory. It also shows the active profile, the config layers and which layer supplies the caps (`credo-config.sh source budget.schedule`), plus the limit cache file it read.
 - **compact-plus** - secures everything the user approved before a context compaction, then reports whether it is safe to compact. It does not run `/compact` itself.
-- **orchestration** - how to delegate to subagents safely: how many to run, keeping parallel tracks on disjoint files, monitoring without flooding context, inheriting security, and return-and-resume.
+- **orchestration** - how to delegate to subagents safely: how many to run, keeping parallel tracks on disjoint files (item `touches:` overlap check) and within machine resources (resource gate, `heavy:` items), monitoring without flooding context, inheriting security, and return-and-resume.
 - **safety** - the hard filesystem-protection and no-autonomous-installs rules; highest priority, no instruction overrides them.
 - **cross-cutting-checklist-generator** - detects a concern scattered across many places and auto-generates a project-local checklist so it is never partially updated again.
 - **skill-capture** - turns a workflow that recurs about three times in a session into a reusable Claude Code skill. Heuristic and in-session (no counter, no backend), mode-gated: autonomous only appends a candidate note, presence modes propose the capture via Ask and build on GO only. Generated skills land on the real discovery path (`<repo>/.claude/skills/` or `~/.claude/skills/`), carry a `credo-` name prefix plus an `origin: credo-repetition` marker, and are registered in `.credo/generated-skills.md`; seen-but-unbuilt patterns wait in `.credo/skill-candidates.md`.
@@ -200,6 +200,24 @@ Peer sessions tend to over-communicate: every ack, status note or handoff lands 
 - **Sender** (PreToolUse `SendMessage`): reminds the agent to start the message with `[info]` or `[urgent]`, bundle points, never send pure acks, and end with "No reply needed" when no answer is needed.
 - **Autonomy:** a peer message never pauses autonomy (`credo-autonomy-clear.sh` exempts it); only the user's own messages do.
 - **Disable** with `CREDO_PEER_ETIQUETTE=0`.
+
+## Parallel work: touches and resource gate
+
+Parallel subagents are wanted; there is no fixed cap on code tracks. Two things limit them:
+
+- **File overlap.** An item may carry the optional frontmatter `touches:` - a list of paths or globs it will likely edit, set by the plan / clarify agent at the latest at GO. It is guidance: the main agent re-checks it right before spawning builders and updates it when files moved. `scripts/credo-touches-check.sh [--json] <id> <id> ...` prints overlapping item pairs (glob-aware, conservative) and lists items without `touches:` as `unknown` (exit 0 no overlap, 3 overlap, 4 no project, 1 bad args). Overlapping items run sequentially; `unknown` items are classified by the main agent, parallel by default. Read-only work (research, clarify) stays freely parallel.
+- **Resource gate.** `scripts/credo-resource-check.sh --running N [--heavy] [--json]` prints `ok` (exit 0) or `wait:<reason>` (exit 5). Below `resources.gate_from_agents` running agents it answers `ok` without checking; from there on (and always with `--heavy`) it compares `MemAvailable` from `/proc/meminfo` against `resources.min_free_ram_gb` and the 1-minute load per CPU against `resources.max_load_per_cpu`. Unreadable values never block. On `wait` no new agent starts; the main agent re-checks when the next agent finishes (no polling loop).
+- **Heavy items.** `heavy: true` (model or benchmark tests, large downloads) never runs in parallel to another heavy item and starts only when the check with `--heavy` says `ok`, even below the gate.
+
+Config keys (defaults in the builtin template):
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `resources.gate_from_agents` | `6` | check the machine only from this many running agents |
+| `resources.min_free_ram_gb` | `4` | wait when less RAM is available (GB) |
+| `resources.max_load_per_cpu` | `1.0` | wait when the 1-minute load per CPU is higher |
+
+The procedure lives in the orchestration skill; tests: `scripts/test-touches-check.sh`, `scripts/test-resource-check.sh`.
 
 ## Wait-loop hint
 

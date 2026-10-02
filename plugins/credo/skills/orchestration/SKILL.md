@@ -1,6 +1,6 @@
 ---
 name: orchestration
-description: Delegate work to subagents safely and efficiently - decide how many subagents to run, keep parallel tracks on disjoint files, monitor them without flooding your context, inherit security to every subagent, and use return-and-resume so a subagent can ask a question and continue with full context. Use whenever you are about to spawn one or more subagents, run work in parallel, or coordinate delegated tasks. Applies to any agent that delegates, including subagents that spawn their own helpers.
+description: Delegate work to subagents safely and efficiently - decide how many subagents to run, keep parallel tracks on disjoint files (item `touches:` overlap check) and within machine resources (resource gate, `heavy:` items), monitor them without flooding your context, inherit security to every subagent, and use return-and-resume so a subagent can ask a question and continue with full context. Use whenever you are about to spawn one or more subagents, run work in parallel, or coordinate delegated tasks. Applies to any agent that delegates, including subagents that spawn their own helpers.
 ---
 
 # orchestration
@@ -28,16 +28,64 @@ large reads or long builds that a subagent can carry.
 - The delegating agent decides the count based on the actual work. There is NO fixed
   colony pattern and no rule to always fan out wide. Large colonies are expensive; use
   them only ad hoc when a specific task genuinely benefits.
-- For code tracks that touch the repository, keep it to roughly two tracks running at a
-  time. More than that raises collision and integration cost faster than it buys speed.
-- Read-only exploration can fan out more freely than code-editing tracks, since it does
-  not write files.
+- Parallelism is wanted. There is no fixed cap on code tracks; parallel code tracks are
+  limited only by (a) file overlap (`touches:`, below) and (b) the resource gate (below).
+- Read-only work (research, clarify, exploration) stays freely parallel: it writes no
+  files, so it needs no overlap check (the resource gate still applies to every spawn).
+
+## Parallel code tracks: touches and resource gate
+
+### (a) File overlap - `touches:`
+
+An item may carry the optional frontmatter field `touches:` - a list of paths or globs the
+item will likely edit (credo `items` skill). The plan / clarify agent sets it, at the
+latest at GO.
+
+- It is GUIDANCE, not a contract. Until implementation it is the source of truth for
+  planning parallelism.
+- Before spawning builders, run
+  `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-touches-check.sh" <id> <id> ...` over the candidate
+  items. Exit 0 = no overlap, 3 = overlapping pairs printed (`--json` for a structured
+  result); items without `touches:` are listed as `unknown`.
+- Overlapping items run SEQUENTIALLY, never in parallel.
+- Right before spawning, quickly re-check that the listed paths still exist and fit (files
+  may have been renamed or moved since planning). If that check disagrees, the main agent's
+  re-assessment wins: it updates the item's `touches:` / plan instead of sending a
+  subagent down a wrong track.
+- Items without `touches:` (`unknown`): the main agent classifies them itself, best-effort,
+  from the item text and plan. Parallel is the default; run them sequentially only in
+  serious doubt, or when clearly foreseeable conflicts that are not easy to resolve would
+  occur.
+
+### (b) Resource gate - `credo-resource-check.sh`
+
+Before every spawn, run
+`"${CLAUDE_PLUGIN_ROOT}/scripts/credo-resource-check.sh" --running <N>` with N = agents
+currently running (add `--heavy` for a heavy item). It prints `ok` (exit 0) or
+`wait:<reason>` (exit 5).
+
+- Below `resources.gate_from_agents` running agents (default 6) it answers `ok` without
+  looking at the machine. From that count on it checks free RAM
+  (`resources.min_free_ram_gb`, default 4) and the 1-minute load per CPU
+  (`resources.max_load_per_cpu`, default 1.0). Thresholds live in the credo config.
+- On `wait`: start no new agent. Re-check when the next running agent finishes (its
+  completion notification) - no polling loop, no sleep loop.
+- Fail-safe: unreadable system values never block (`ok` plus a note on stderr).
+
+### Heavy items - `heavy: true`
+
+An item with the optional frontmatter `heavy: true` (model or benchmark tests, large
+downloads):
+
+- never runs in parallel to another heavy item, and
+- starts only when `credo-resource-check.sh --running <N> --heavy` says `ok` - the check
+  always runs for heavy items, even below the agent gate.
 
 ## Parallel safety
 
 - Disjoint files: parallel tracks must edit non-overlapping file sets. Assign each
-  track its own files up front. If two tracks would touch the same file, they are not
-  independent - sequence them instead.
+  track its own files up front (from `touches:` where set). If two tracks would touch the
+  same file, they are not independent - sequence them instead.
 - Sequential commit: the MAIN agent commits, one track's result at a time. Subagents do
   not commit in parallel. This keeps history clean and avoids two agents racing on the
   index or on a shared file. (By the same index-race logic, the default agent roles put

@@ -232,6 +232,16 @@ budget_failsafe:
   five_hour_percent: 98
   weekly_percent: 99
 
+# --- resource gate for parallel subagents (scripts/credo-resource-check.sh) ---
+# Below gate_from_agents running agents a new agent starts without a machine
+# check; from that count on (and always for a `heavy: true` item) the check
+# answers "wait" when free RAM or the 1-min load per CPU crosses a threshold.
+# The rules live in the credo orchestration skill; only thresholds live here.
+resources:
+  gate_from_agents: 6
+  min_free_ram_gb: 4
+  max_load_per_cpu: 1.0
+
 # --- personal / environment fields (left EMPTY, filled just-in-time) ---------
 # Never committed with real values in the shipped template. The global config
 # holds the user's real values; those live in ~/.claude/credo/config, not here.

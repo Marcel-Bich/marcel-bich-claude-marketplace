@@ -18,6 +18,8 @@ Optional: clarify_depth: waived  (only the USER sets it, with a short reason) ma
   item skips the deep over-clarify standard + pre-GO self-check. Unset = full clarify applies.
 Optional: audit: full  forces the full audit tier (credo audit skill, risk tiers). Absent by
   default = tier picked by risk. There is no lean override.
+Optional: touches: [paths or globs]  files the item will likely edit (parallel planning,
+  credo orchestration skill); heavy: true  for model/benchmark tests or large downloads.
 Blocker relations are structured (not free-form) and REQUIRED only while the item sits in
 1_todo/3_blocked:  blocked_by: [ids] on the blocked item, blocks: [ids] on the blocker.
 They are a dependency graph, not a second status source. Omit them outside 3_blocked.

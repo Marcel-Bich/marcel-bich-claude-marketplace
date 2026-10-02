@@ -221,6 +221,21 @@ an agent NEVER self-waives to save effort (same spirit as "never self-demote / s
 grounds"). Like the blocker relations it is optional and adds no second status source - the
 folder still owns status.
 
+Two further optional fields serve parallel scheduling (credo `orchestration` skill,
+"Parallel code tracks: touches and resource gate"). Both are normally absent and, like the
+fields above, add no second status source:
+
+- `touches` (optional): a list of paths or globs the item will likely edit, e.g.
+  `touches: [plugins/credo/scripts/credo-touches-check.sh, docs/*.md]` or a block list.
+  The plan / clarify agent sets it, at the latest at GO. It is guidance, not a contract:
+  the main agent re-checks it right before spawning builders and updates it when files were
+  renamed or moved. `credo-touches-check.sh <id> <id> ...` reports overlapping items, which
+  then run sequentially. Absent = the main agent classifies the item itself (parallel by
+  default).
+- `heavy` (optional): `heavy: true` marks model / benchmark tests or large downloads. A
+  heavy item never runs in parallel to another heavy item and starts only when
+  `credo-resource-check.sh --heavy` says `ok`.
+
 ## Filenames and ids
 
 - File name: `<id>-<slug>.md`, e.g. `124-live-reload-panel.md`. The slug is a short,
@@ -608,7 +623,9 @@ Valid transitions (folder = status):
   item at a time, each item in its own Ask round - see "One item per Ask round" in the
   common core (session-active skill). Before proposing that GO, discharge the over-clarify
   standard and its pre-GO self-check unless `clarify_depth: waived` (credo `session-active`
-  skill, CLARIFY-FIRST).
+  skill, CLARIFY-FIRST). At the latest at GO, set the optional `touches:` (and `heavy: true`
+  where it applies) when the likely edited files are foreseeable - see the optional fields
+  above.
 - `2_go -> 3_blocked` when a concrete blocker on another unbuilt item is found (block-guard
   above; requires `blocked_by`). NOT for "too big / too hard".
 - `2_go -> 1_clarify` when a genuine user-only decision surfaces (the Named-Decision-Test

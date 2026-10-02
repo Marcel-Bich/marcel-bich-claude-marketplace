@@ -43,6 +43,12 @@ case "$event" in
     PreToolUse)
         tool="$(printf '%s' "$input" | jq -r '.tool_name // empty' 2>/dev/null || true)"
         [ "$tool" = "SendMessage" ] || exit 0
+        # messages to this session's own subagents (agentId "a" + hex) or to
+        # "main" are not peer traffic
+        to="$(printf '%s' "$input" | jq -r '.tool_input.to // empty' 2>/dev/null || true)"
+        if [ "$to" = "main" ] || printf '%s' "$to" | grep -Eq '^a[0-9a-f]{16}$'; then
+            exit 0
+        fi
         emit PreToolUse "[credo-peer] Before sending to a peer: start the message with [info] or [urgent] (urgent only for budget, priority or stop orders and questions that block you). Bundle several points into one message instead of sending them one by one, never send a pure ack or thanks, and end with \"No reply needed\" when you need no answer. Skip the message entirely if it can wait for the next real update."
         ;;
 esac
