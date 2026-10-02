@@ -79,6 +79,9 @@ const PER_STATUS = 15
 
 // shorthands the prompt hint always lists (the band never shows them)
 const GENERAL_SHORTHANDS = ['???', 'cm', 'ph']
+// without an item system: cf / dd / vf still work on their own (clarify round,
+// done, verified/verify); only the #N item moves (go bk pk ar) need items
+const ITEMLESS_SHORTHANDS = ['cf', 'dd', 'vf', ...GENERAL_SHORTHANDS]
 
 // one pane for both views, so at most one is ever open
 const PANE = 'credo-panel'
@@ -288,11 +291,9 @@ export const register: Register = on => {
   // under the prompt: only the shorthands the band does not already show
   // (statuses hidden by the preset, plus the general ones)
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
-    if ((await read($, counts)) === null) {
-      // no item system: only the general shorthands, and only while credo runs here
-      if ((await read($, session)).mode === null) return next(e)
-      return next({ ...e, props: { ...e.props, tail: `Shortcuts: ${GENERAL_SHORTHANDS.join(' ')}` } })
-    }
+    const hasItems = (await read($, counts)) !== null
+    // no item system: only while credo runs in this session
+    if (!hasItems && (await read($, session)).mode === null) return next(e)
     const current = presetOf(await read($, preset))
     const hidden = GROUPS.filter((_, gi) => !current.groups.includes(gi))
       .flat()
@@ -301,7 +302,7 @@ export const register: Register = on => {
     const long = await read($, isExpanded)
     const legend = await read($, shorthands)
     const word = (k: string) => legend.find(s => s.key === k || s.key === `#N ${k}`)?.word ?? '?'
-    const keys = [...hidden, ...GENERAL_SHORTHANDS]
+    const keys = hasItems ? [...hidden, ...GENERAL_SHORTHANDS] : ITEMLESS_SHORTHANDS
     const tail = `Shortcuts: ${keys.map(k => (long ? `${k}(${word(k)})` : k)).join(' ')}`
     return next({ ...e, props: { ...e.props, tail } })
   })
@@ -316,7 +317,9 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
     if ((await read($, panelView)) === 'help') {
-      const legend = await read($, shorthands)
+      // without an item system the #N item shorthands do not apply
+      const hasItems = (await read($, counts)) !== null
+      const legend = (await read($, shorthands)).filter(s => hasItems || !s.key.startsWith('#N '))
       const width = Math.max(0, ...legend.map(s => s.key.length))
       return (
         <Box flexDirection="column">
