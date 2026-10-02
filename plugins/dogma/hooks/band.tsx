@@ -108,6 +108,24 @@ async function refresh($: EngineInterface) {
   await update($, gone, () => [])
 }
 
+// one toast at session start when update notices are pending for this repo;
+// Claude asks about them (SessionStart hook notices-inject.sh), this only hints.
+// exit 4 = none pending; any other failure only goes to the debug log
+async function noticeToast($: EngineInterface) {
+  try {
+    const r = await $.process.run([`${$.plugin.root}/scripts/notices-pending.sh`, '--json'], { timeoutMs: 5000 })
+    if (r.exitCode === 4) return
+    if (r.exitCode !== 0) {
+      $.ui.log(`dogma band: notices-pending.sh exit ${r.exitCode}: ${r.stderr.trim()}`, { to: 'debug' })
+      return
+    }
+    const n = (JSON.parse(r.stdout) as { notices?: unknown[] }).notices?.length ?? 0
+    if (n > 0) $.ui.toast(`dogma: ${n} new setting${n === 1 ? '' : 's'} - Claude will ask you`)
+  } catch (err) {
+    $.ui.log(`dogma band: notices-pending.sh failed: ${String(err)}`, { to: 'debug' })
+  }
+}
+
 // show the last dogma block for a few seconds, blinking, plus a toast
 async function showBlock($: EngineInterface, b: DogmaBlock) {
   $.ui.toast(`dogma blocked ${b.tool}: ${b.reason}`)
@@ -127,6 +145,7 @@ export const register: Register = on => {
     const started = await next(e)
     await refresh($)
     $.clock.every(REFRESH_MS, () => void refresh($))
+    void noticeToast($)
     return started
   })
 

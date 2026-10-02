@@ -1,6 +1,18 @@
 {
   "modules": ["./band.tsx"],
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/notices-inject.sh\"",
+            "timeout": 10,
+            "description": "Tell Claude about pending dogma update notices for this repo once (ENV: CLAUDE_MB_DOGMA_NOTICES=true)"
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [

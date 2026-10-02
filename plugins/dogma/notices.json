@@ -1,0 +1,9 @@
+[
+  {
+    "id": "dogma-test-commands",
+    "since": "1.37.0",
+    "text": "dogma can now record one test command per stage (commit, push, relevant, build, all; optional branch filters) in DOGMA-PERMISSIONS.md and run ALL tests only once at release. This repo has no Test Commands section yet.",
+    "action": "/dogma:permissions",
+    "applies": "scripts/notice-applies-test-commands.sh"
+  }
+]

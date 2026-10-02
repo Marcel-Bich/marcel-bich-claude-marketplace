@@ -69,9 +69,15 @@ Run `/dogma:permissions` to configure interactively.
 
 **Test commands (optional):** a `### Test Commands` subsection under `## Workflow Permissions` says WHICH command runs at which stage (the Testing / Final Verification checkboxes say WHEN), language-agnostic, one line per stage: `` - commit: `npm run lint` ``, `` - all [main, stage]: `npm test` ``. Stages: `commit` (fast static checks before every commit), `push` (before `git push`), `relevant` (tests for the changed code when an item is reported done; takes no branch filter), `build` (build check), `all` (full suite at integration into a filtered branch and in Final Verification). The optional `[branch, ...]` filter limits a stage to those branches. Every line is optional - a missing line or section means Claude decides as before. dogma never runs them itself: `scripts/test-commands.sh [--json] [dir]` lists them and `scripts/test-commands.sh get <stage> [branch] [--dir dir]` prints the command that applies (exit 4 when none does), so Claude or other tools run it at the stage. The Final Verification checkbox `run ALL tests only at release` (default off) skips `all` on each merge and runs it once in the release commit, the normal commit that bundles several items with the version bump (never a tag or hosted release; those stay with the user).
 
+### Update notices
+
+When a dogma update adds something you should act on (for example a new section in `DOGMA-PERMISSIONS.md`), you are told once per repo - nobody has to remember to look. Relevance has two layers: the plugin author only adds an entry to `notices.json` for changes that need user action (most version bumps add none), and each entry's `applies` script decides whether it fits THIS repo; repos where it does not apply never see it.
+
+At session start the `notices-inject.sh` hook tells Claude about pending notices. Claude asks you at the first natural pause (Ask tool, or plain text without one): **Run** the action (e.g. `/dogma:permissions`; marked seen after it completed), **Later** (asked again next session) or **Never** (marked seen). Running unattended/autonomously, Claude does not ask and leaves the notice pending. Seen state is per repo and per profile under `${CLAUDE_CONFIG_DIR:-~/.claude}/dogma/notices-seen/`. The notice mechanism never changes anything in the repo itself. With the band (below) a toast hints at pending notices at session start. `scripts/notices-pending.sh [--json] [dir]` lists them, `scripts/notices-pending.sh mark <id> [dir]` marks one seen.
+
 ### Claude Code band (optional)
 
-When dogma runs inside Claude Code with mods support, `hooks/band.tsx` (listed under `modules` in `hooks/hooks.json`) draws a band above the prompt: `◆ dogma` with the restricting entries from `permissions-summary.sh`, one row block per kind (`deny` red, `ask` yellow; `all auto` when nothing restricts). Changed entries flash for 6 s (moved fuchsia, new white, removed struck through). When a dogma hook blocks a tool call, a `⛔ blocked` row with the tool and reason shows for 15 s, plus a toast. With the credo band installed it sits below credo's band and hides at credo's `open only` preset; without credo it always shows. The band only reads and renders - the enforcement hooks work exactly the same without it and in harnesses without mods.
+When dogma runs inside Claude Code with mods support, `hooks/band.tsx` (listed under `modules` in `hooks/hooks.json`) draws a band above the prompt: `◆ dogma` with the restricting entries from `permissions-summary.sh`, one row block per kind (`deny` red, `ask` yellow; `all auto` when nothing restricts). Changed entries flash for 6 s (moved fuchsia, new white, removed struck through). When a dogma hook blocks a tool call, a `⛔ blocked` row with the tool and reason shows for 15 s, plus a toast. At session start a toast hints at pending update notices. With the credo band installed it sits below credo's band and hides at credo's `open only` preset; without credo it always shows. The band only reads and renders - the enforcement hooks work exactly the same without it and in harnesses without mods.
 
 ### Enforcement Hooks
 
@@ -95,6 +101,7 @@ When dogma runs inside Claude Code with mods support, `hooks/band.tsx` (listed u
 | `CLAUDE_MB_DOGMA_BUILTIN_INHERIT_MODEL` | `true` | Force built-in agents to inherit parent model |
 | `CLAUDE_MB_DOGMA_ALLOW_MODEL_DOWNGRADE` | `false` | Allow explicit model downgrades below parent |
 | `CLAUDE_MB_DOGMA_RESET_INTERVAL` | `2` | Reset interval for subagent enforcement state (number of prompts between resets). Set to 0 to disable enforcement entirely. |
+| `CLAUDE_MB_DOGMA_NOTICES` | `true` | Tell Claude once per repo about pending update notices at session start |
 | `CLAUDE_MB_DOGMA_TOKEN_ALLOW_DIRS` | - | Comma-separated list of directories whose files skip path-based name checks (content scanning still applies). `CLAUDE_PLUGIN_ROOT` is always allowed automatically. |
 
 ### Token and File Protection
