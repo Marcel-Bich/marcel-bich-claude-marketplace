@@ -252,13 +252,27 @@ async function openPanel($: EngineInterface, view: 'items' | 'help') {
   await $.ui.open({ id: PANE, title: 'credo' })
 }
 
-// "Open for testing: N, S" / "Open questions: Y"; a dash or nothing means none
+// "Open for testing: N, S" / "Open questions: Y" (or German "Offen zum Testen:" /
+// "Offene Fragen:"); a dash, "none", "keine" or nothing means none
 function parseLetters(answer: string): CredoLetters {
-  const grab = (label: string) => {
-    const m = answer.match(new RegExp(`${label}:\\s*([A-Za-z0-9, ]+)`))
-    return m?.[1] ? m[1].split(/[,\s]+/).map(x => x.trim()).filter(Boolean) : []
+  const grab = (labels: string) => {
+    const m = answer.match(
+      new RegExp(
+        `(?:${labels}):\\s*(?:\\*\\*\\s*)?([A-Za-z0-9,* \\t-]*?)(?=\\*\\*|\\s-(?:\\s|$)|[^A-Za-z0-9,* \\t-]|$)`,
+        'i',
+      ),
+    )
+    return m?.[1]
+      ? m[1]
+          .split(/[,\s]+/)
+          .map(x => x.replace(/^\*+|\*+$/g, ''))
+          .filter(x => x && !/^-+$/.test(x) && !/^(none|keine)$/i.test(x))
+      : []
   }
-  return { tests: grab('Open for testing'), questions: grab('Open questions') }
+  return {
+    tests: grab('Open for testing|Offen zum Testen'),
+    questions: grab('Open questions|Offene Fragen'),
+  }
 }
 
 export const register: Register = on => {

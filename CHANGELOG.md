@@ -8,6 +8,14 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.71
 
+##### v0.71.1
+
+###### Fixed
+
+- Status band shows open test/question letters again: codes with a hyphen
+  (e.g. `Task-I`) and German footer labels (`Offen zum Testen:` / `Offene Fragen:`)
+  are now parsed
+
 ##### v0.71.0
 
 ###### Added
