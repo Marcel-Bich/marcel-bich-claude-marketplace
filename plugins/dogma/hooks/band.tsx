@@ -41,6 +41,7 @@ const BLINK_MS = 500
 const BLOCK_MS = 15000
 const BLOCK_BLINK_MS = 6000
 const REFRESH_MS = 10000
+const NOTICE_TOAST_MS = 12000
 
 type Piece = { width: number; node: RenderChildren; gap?: number }
 
@@ -120,7 +121,7 @@ async function noticeToast($: EngineInterface) {
       return
     }
     const n = (JSON.parse(r.stdout) as { notices?: unknown[] }).notices?.length ?? 0
-    if (n > 0) $.ui.toast(`dogma: ${n} new setting${n === 1 ? '' : 's'} - Claude will ask you`)
+    if (n > 0) $.ui.toast(`dogma: ${n} new setting${n === 1 ? '' : 's'} - Claude will ask you`, { timeoutMs: NOTICE_TOAST_MS })
   } catch (err) {
     $.ui.log(`dogma band: notices-pending.sh failed: ${String(err)}`, { to: 'debug' })
   }
