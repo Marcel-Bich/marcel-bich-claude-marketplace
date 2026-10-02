@@ -12,7 +12,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import type { CredoCounts, CredoItemList, CredoLetters, CredoRestart, CredoSession, CredoShorthand } from '../types'
+import type { CredoCounts, CredoItemList, CredoRestart, CredoSession, CredoShorthand } from '../types'
+import { parseLetters } from './letters'
 import { parseMarker, restartNotice } from './self-restart-marker'
 import type { RestartMarker } from './self-restart-marker'
 
@@ -316,29 +317,6 @@ async function openPanel($: EngineInterface, view: 'items' | 'help') {
   await update($, panelView, () => view)
   if (view === 'items') await refreshItems($)
   await $.ui.open({ id: PANE, title: 'credo' })
-}
-
-// "Open for testing: N, S" / "Open questions: Y" (or German "Offen zum Testen:" /
-// "Offene Fragen:"); a dash, "none", "keine" or nothing means none
-function parseLetters(answer: string): CredoLetters {
-  const grab = (labels: string) => {
-    const m = answer.match(
-      new RegExp(
-        `(?:${labels}):\\s*(?:\\*\\*\\s*)?([A-Za-z0-9,* \\t-]*?)(?=\\*\\*|\\s-(?:\\s|$)|[^A-Za-z0-9,* \\t-]|$)`,
-        'i',
-      ),
-    )
-    return m?.[1]
-      ? m[1]
-          .split(/[,\s]+/)
-          .map(x => x.replace(/^\*+|\*+$/g, ''))
-          .filter(x => x && !/^-+$/.test(x) && !/^(none|keine)$/i.test(x))
-      : []
-  }
-  return {
-    tests: grab('Open for testing|Offen zum Testen'),
-    questions: grab('Open questions|Offene Fragen'),
-  }
 }
 
 export const register: Register = on => {

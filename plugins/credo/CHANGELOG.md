@@ -6,6 +6,16 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.72
 
+#### v0.72.6
+
+##### Changed
+
+- verify skill: the open-letters footer is a code list, open questions about an item still get their own letter
+
+##### Fixed
+
+- credo band shows item refs (#N) from the open-tests/questions footer, also when the footer is prose; plain words never show up
+
 #### v0.72.5
 
 ##### Fixed

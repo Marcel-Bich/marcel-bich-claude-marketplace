@@ -126,7 +126,10 @@ and every repo where credo is active:
   listing the open letters in bold, in the conversation language, e.g.
   `**Open for testing: C, D** · **Open questions: Y, Z**`. A letter leaves the footer when
   the user answered it (vf, a decision, "skip"); omit a part that has no open letters, and
-  omit the footer when nothing is open.
+  omit the footer when nothing is open. The footer is a comma list of codes, never prose:
+  an open question about an item still gets its own letter (`### ❓ Y) #177 <topic>`), and
+  item refs may stand next to letters (`**Open questions: Y, #177**`). credo's band reads
+  this line; from prose it keeps only `#N` refs and uppercase letter codes.
 - **Survives a compact.** The next free letter and the open letters are part of the
   handoff state (the credo `compact-plus` skill records them in HANDOFF.md), so the
   sequence continues after a `/compact` instead of restarting at A.
