@@ -91,5 +91,28 @@ check "flow setup = hydra script" "setup=$FAKE_HYDRA/scripts/worktree-setup.sh" 
 check "flow setup = credo script without hydra" "setup=$SCRIPT_DIR/credo-worktree-setup.sh" "$(CREDO_HYDRA_DIR=none "$FLOW_SH" "$TMP/a" | grep '^setup=')"
 check "flow json" hydra "$(CREDO_HYDRA_DIR="$FAKE_HYDRA" "$FLOW_SH" --json "$TMP/a" | python3 -c 'import json,sys; print(json.load(sys.stdin)["flow"])')"
 
+# stable ids (§xw1i use Hydra, §36ch cleanup): id first, anywhere in <permissions>
+mkdir -p "$TMP/ids"
+cat > "$TMP/ids/DOGMA-PERMISSIONS.md" <<'EOF'
+<permissions>
+## Workflow Permissions
+
+### Hydra
+- [x] clean up merged worktrees automatically
+
+### Parallelarbeit
+- [ ] (§xw1i) Worktrees für parallele Aufgaben nutzen
+- [?] (§36ch) Gemergte Worktrees beim Schließen aufräumen
+</permissions>
+EOF
+check "id: reworded line in another subsection" deny "$("$MODE_SH" --id xw1i Hydra "$HYD" "$TMP/ids")"
+check "id: id line wins over text line in ### Hydra" ask "$("$MODE_SH" --id 36ch Hydra "$CLEAN" "$TMP/ids")"
+check "id: unknown id -> text fallback" auto "$("$MODE_SH" --id zzzz Hydra "$CLEAN" "$TMP/ids")"
+check "id: old file without ids -> text fallback" auto "$("$MODE_SH" --id xw1i Hydra "$HYD" "$TMP/a")"
+check "id: old file, missing checkbox stays missing" missing "$("$MODE_SH" --id zzzz Hydra 'no such checkbox' "$TMP/a")"
+"$MODE_SH" --id XY12 Hydra "$HYD" "$TMP/a" >/dev/null 2>&1; check "id: bad id exit 1" 1 "$?"
+"$MODE_SH" --id >/dev/null 2>&1; check "id: --id without value exit 1" 1 "$?"
+check "flow by id [ ] reworded + hydra" native "$(flow "$FAKE_HYDRA" "$TMP/ids")"
+
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

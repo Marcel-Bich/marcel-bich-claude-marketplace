@@ -108,6 +108,8 @@ The path of an item:
 
 To onboard an existing repository into this structure, run `/credo:migrate` - it sets up `.credo/` and walks the repo through the migration procedure once.
 
+For a check-up of how the repo is organised, run `/credo:optimize`: after a freshness check (default branch, up to date with the remote) a read-only scan looks for conflict hotspots, changelog fragments, the test-stage convention, dogma settings and parallelism readiness, and offers each finding as Implement / Later / Never. It is opt-in per repo (asked once at onboarding or setup); with Yes it is offered again only when you return after a longer break (default 7 days idle), never while you are actively working.
+
 credo targets the repo you point it at (hub-aware): when your shell cwd is a launch hub rather than the repo you are working on, pin the real target with `/credo:project <path>` so the item tree and config resolve to the right place. A directory marked `hub: true` is never auto-targeted.
 
 **The Definition of Done is hard:** success criteria observably met, code wired in, an independent audit subagent (not the builder) passed it, UI work visually verified in a real browser with screenshot evidence, and docs updated in the same change - including the project wiki, via `/dogma:docs-update` where dogma is installed (a best-effort manual update otherwise). The audit gate dispositions every finding down to NITs and prefers a real code fix over a doc-only workaround. "The test passed" is not done.
@@ -157,13 +159,14 @@ You can type a few short shorthands in chat; credo's SessionStart hook teaches t
 | `/credo:setup`              | Initialize the framework and offer recommended/optional tools  |
 | `/credo:migrate`            | Migrate an existing repo into the `.credo/` structure          |
 | `/credo:project`            | Pin the active repo credo targets (hub-aware) or show it       |
+| `/credo:optimize`           | Opt-in optimisation audit: read-only scan, findings one by one |
 | `/credo:psalm`              | This guide - credo topics first, then the wider marketplace    |
 | `/credo:session-init`       | Load the main-agent delegation-first workflow                  |
 | `/credo:session-active`     | Set the session to active (live collaboration)                 |
 | `/credo:session-passive`    | Set the session to passive (clarifications only)               |
 | `/credo:session-autonomous` | Set the session to autonomous (unattended GO items, keep-alive)|
 
-credo also ships auto-discovered skills that trigger on their own (including audit, diag, verify, items, rules, requirements-verbatim, budget, compact-plus, orchestration, safety, cross-cutting-checklist-generator, skill-capture, wsl-env, pr-vetting, issue-triage, and the session-mode skills). You do not call them by hand; they apply when they apply, including inside subagents.
+credo also ships auto-discovered skills that trigger on their own (including audit, diag, verify, items, rules, requirements-verbatim, optimize, budget, compact-plus, orchestration, safety, cross-cutting-checklist-generator, skill-capture, wsl-env, pr-vetting, issue-triage, and the session-mode skills). You do not call them by hand; they apply when they apply, including inside subagents.
 
 ---
 

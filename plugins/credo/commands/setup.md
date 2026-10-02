@@ -118,6 +118,31 @@ e.g. "always allowed to restart local services without asking")
 If yes, invoke the credo `rules` skill (Skill tool) to write the rule verbatim into
 `.credo/RULES.md`. If no, continue - rules can be added later at any time.
 
+## Step 2c: Optimisation audit (optional, opt-in)
+
+Only in a git repo. Check whether the per-repo answer is already recorded:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-optimize-state.sh" optin
+```
+
+If it prints `yes` or `no`, skip this step. If it prints nothing, ask with AskUserQuestion
+(nothing is scanned before the answer):
+
+```
+Optimisation audit wanted for this repo? A read-only scan (conflict hotspots, changelog
+fragments, test-stage convention, dogma settings, parallelism readiness); every finding
+is offered to you as Implement / Later / Never.
+
+- Yes - run it after this setup; later it is offered again only when you return after a
+  longer break (default 7 days idle, config optimize.idle_days)
+- No - never offered automatically; /credo:optimize stays available any time
+```
+
+Record the answer with `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-optimize-state.sh" optin yes`
+or `... optin no`. On Yes, run `/credo:optimize` once the remaining setup steps are done
+(before "Setup Complete").
+
 ## Step 3: Install Recommended and Optional Plugins
 
 **Skip if:** `plugins.dogma = true` (and, if the user wants GSD, `plugins.gsd = true`)
@@ -558,6 +583,11 @@ setup, now offered automatically. It is idempotent: once the value is `credo:com
 a later run does nothing and does not ask.
 
 ## Setup Complete
+
+Before the message below: if Step 2c was skipped because `project.state` was `ready` and
+the optimisation-audit answer is still open (`credo-optimize-state.sh optin` prints
+nothing, in a git repo), ask Step 2c now. If the user said Yes in Step 2c, run
+`/credo:optimize` now.
 
 **If all steps were skipped (project.state was ready):**
 

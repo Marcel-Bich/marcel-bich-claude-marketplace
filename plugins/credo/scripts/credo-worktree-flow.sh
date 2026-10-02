@@ -1,7 +1,7 @@
 #!/bin/bash
 # credo-worktree-flow - decide how credo creates worktrees for parallel code tracks.
 #
-# Reads the dogma checkbox "use Hydra for 2+ independent tasks" (### Hydra subsection of
+# Reads the dogma checkbox "use Hydra for 2+ independent tasks" (stable id §xw1i, ### Hydra subsection of
 # DOGMA-PERMISSIONS.md, via credo-dogma-mode.sh - works without dogma) and whether the
 # hydra plugin is installed:
 #   [x] or missing (no checkbox / no DOGMA-PERMISSIONS.md) + hydra installed
@@ -60,7 +60,7 @@ PY
 }
 
 HYDRA="$(find_hydra_dir)"
-CHECK="$("$SCRIPT_DIR/credo-dogma-mode.sh" Hydra 'use Hydra for 2\+ independent tasks' "$DIR" 2>/dev/null || echo missing)"
+CHECK="$("$SCRIPT_DIR/credo-dogma-mode.sh" --id xw1i Hydra 'use Hydra for 2\+ independent tasks' "$DIR" 2>/dev/null || echo missing)"
 
 if [ -z "$HYDRA" ]; then
     FLOW="native"; REASON="hydra not installed"

@@ -11,6 +11,10 @@
 #      instruction telling the agent to ask the user - via AskUserQuestion -
 #      whether to use the credo workflow. Yes -> /credo:session-init; No -> record
 #      a "declined" marker so this is never asked again. Never in autonomous work.
+#      In a git repo whose optimisation-audit opt-in is still unanswered
+#      (credo-optimize-state.sh), the same Ask round also asks whether the
+#      optimisation audit is wanted (the recurring returner offer itself lives in
+#      credo-optimize-hook.sh).
 #
 #   2. KNOWLEDGE (re-feed after every reset). Once credo is ACTIVE for the
 #      session, re-inject the full credo command + skill list on every
@@ -183,13 +187,30 @@ fi
 read -r -d '' KNOWLEDGE <<'K'
 [credo] credo workflow is ACTIVE for this session. On non-trivial or complex work, actively use the fitting credo skill below instead of an ad-hoc approach (skip it for small/trivial changes - your judgment) so the workflow runs cleanly.
 
-SKILLS (auto-trigger by their description - use them actively whenever they apply): items (the work-item model = the task system), audit (mandatory post-completion review gate), verify (visual Definition of Done for any UI/runtime surface), diag (read-only root-cause diagnosis), safety (before ANY delete or install), rules (per-repo special rules from .credo/RULES.md - load and honor at start), requirements-verbatim (log approved intent word-for-word), sandbox (writing clarify pre-work - measurement/mockup/feasibility - under .credo/sandbox-tmp/, no production code, no commit), orchestration (delegation rules), budget (API cap + reset rules), compact-plus (secure approved state before a compact), pr-vetting, issue-triage, skill-capture, cross-cutting-checklist-generator, wsl-env.
+SKILLS (auto-trigger by their description - use them actively whenever they apply): items (the work-item model = the task system), audit (mandatory post-completion review gate), verify (visual Definition of Done for any UI/runtime surface), diag (read-only root-cause diagnosis), safety (before ANY delete or install), rules (per-repo special rules from .credo/RULES.md - load and honor at start), requirements-verbatim (log approved intent word-for-word), sandbox (writing clarify pre-work - measurement/mockup/feasibility - under .credo/sandbox-tmp/, no production code, no commit), optimize (opt-in optimisation audit: read-only scan, findings offered one by one), orchestration (delegation rules), budget (API cap + reset rules), compact-plus (secure approved state before a compact), pr-vetting, issue-triage, skill-capture, cross-cutting-checklist-generator, wsl-env.
 
 COMMANDS by execution class:
 [A] may be run by the agent itself when useful: /credo:session-init, /credo:project (show only, no path argument).
-[B] only on explicit user request (interactive or the user's call to make): /credo:session-active, /credo:session-passive, /credo:psalm, /credo:project <path> (pin a target).
+[B] only on explicit user request (interactive or the user's call to make): /credo:session-active, /credo:session-passive, /credo:psalm, /credo:project <path> (pin a target), /credo:optimize (optimisation audit; also right after the user says Yes to a credo-optimize offer).
 [C] NEVER run autonomously - only the user decides these (mode escalation / installs / structural migration): /credo:session-autonomous, /credo:setup, /credo:migrate.
 K
+
+# --- optimisation audit opt-in (asked together with the credo decision) -----
+# Only in a git repo whose per-repo opt-in is still unanswered; the answer lives in
+# credo-optimize-state.sh. Nothing is scanned before the user answers.
+OPTIMIZE_ASK=""
+OPTIMIZE_STATE="${_scripts_dir:-${CLAUDE_PLUGIN_ROOT:-}/scripts}/credo-optimize-state.sh"
+if [[ -x "$OPTIMIZE_STATE" ]] && git rev-parse --git-dir >/dev/null 2>&1; then
+    _optin="$("$OPTIMIZE_STATE" optin 2>/dev/null | tr -d '[:space:]')" || _optin=""
+    if [[ -z "$_optin" ]]; then
+        OPTIMIZE_ASK="
+
+In the same AskUserQuestion round, add a second question: is an optimisation audit wanted for this repo? It is a read-only scan (conflict hotspots, changelog fragments, test-stage convention, dogma settings, parallelism readiness) whose findings are then offered one by one; nothing is scanned or changed without consent. Apply its answer only if the user opted in to credo (Active or Passive). Options:
+- Yes -> run \`\"${OPTIMIZE_STATE}\" optin yes\`, then run /credo:optimize once the setup steps here are done (later it is offered again only when the user returns after a longer break)
+- No  -> run \`\"${OPTIMIZE_STATE}\" optin no\` (never offered automatically again; /credo:optimize stays available manually)
+Skip this question if the user chose No for credo."
+    fi
+fi
 
 # --- ASK block (credo decision still open) ---
 read -r -d '' ASK <<K
@@ -212,7 +233,7 @@ After the user picks Active or Passive (opting in), also pin the credo project t
 1. Run /credo:project with no argument to show the currently resolved target and whether the cwd is a hub.
 2. Ask via AskUserQuestion which repo credo should target this session. If the current directory is a git repo (git rev-parse --show-toplevel succeeds), offer its top-level path as the default option AND an option to enter a different target path. If the cwd is NOT a git repo, ask only for the target repo path (no cwd default).
 3. Pin the chosen repo with /credo:project <absolute path>, then confirm the resolved target.
-Skip this pin step if the user chose No.
+Skip this pin step if the user chose No.${OPTIMIZE_ASK}
 
 Do NOT offer autonomous as a selectable option - only mention it can be turned on anytime via /credo:session-autonomous. Do NOT ask this in autonomous/unattended work. This is a one-time setup question - handle it first, then continue with the user's request.
 K

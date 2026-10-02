@@ -242,6 +242,14 @@ resources:
   min_free_ram_gb: 4
   max_load_per_cpu: 1.0
 
+# --- optimisation audit (/credo:optimize) -------------------------------------
+# The audit is opt-in per repo (asked at credo setup / onboarding) and is offered
+# again only to RETURNING users: when every activity signal of the repo (credo's
+# last-seen, the reflog, the git index, modified files) is at least idle_days old.
+# Never offered to someone actively working, never in autonomous mode.
+optimize:
+  idle_days: 7
+
 # --- personal / environment fields (left EMPTY, filled just-in-time) ---------
 # Never committed with real values in the shipped template. The global config
 # holds the user's real values; those live in ~/.claude/credo/config, not here.

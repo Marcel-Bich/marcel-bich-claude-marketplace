@@ -168,6 +168,15 @@ out="$(cd "$R2" && CREDO_DIR="$R2/.credo" "$MOVE" 3 done 2>&1)"
 contains "move [x]: removed" "worktree cleanup: removed $W2/x" "$out"
 check "move [x]: worktree gone" no "$(exists "$W2/x")"
 check "move [x]: item moved" yes "$(exists "$R2/.credo/items/2_done/3-t.md")"
+# stable id §36ch: reworded line in another subsection wins over a stale text line
+printf -- '---\nid: 4\ntitle: t\n---\n' > "$R2/.credo/items/1_todo/2_go/4-t.md"
+git -C "$R2" worktree add -q -b wt/y "$W2/y"
+commit_in "$W2/y" y.txt y
+git -C "$R2" merge -q --no-ff -m "merge y" wt/y
+printf '<permissions>\n## Workflow Permissions\n\n### Hydra\n- [ ] clean up merged worktrees automatically\n\n### Aufräumen\n- [x] (§36ch) Gemergte Worktrees ohne Rückfrage entfernen\n</permissions>\n' > "$R2/DOGMA-PERMISSIONS.md"
+out="$(cd "$R2" && CREDO_DIR="$R2/.credo" "$MOVE" 4 done 2>&1)"
+contains "move id [x] reworded: removed" "worktree cleanup: removed $W2/y" "$out"
+check "move id [x] reworded: worktree gone" no "$(exists "$W2/y")"
 
 # argument errors
 "$SUT" --bogus >/dev/null 2>&1; check "bad arg exit 1" 1 "$?"

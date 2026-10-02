@@ -281,7 +281,7 @@ case "$TARGET" in
         WT_REPO="$(git -C "$(dirname "$CREDO_DIR")" rev-parse --show-toplevel 2>/dev/null || true)"
         if [ -n "$WT_REPO" ] && [ -x "$SCRIPT_DIR/credo-worktree-cleanup.sh" ] \
             && [ "$(git -C "$WT_REPO" worktree list 2>/dev/null | wc -l)" -gt 1 ]; then
-            WT_MODE="$("$SCRIPT_DIR/credo-dogma-mode.sh" Hydra 'clean up merged worktrees automatically' "$WT_REPO" 2>/dev/null || echo missing)"
+            WT_MODE="$("$SCRIPT_DIR/credo-dogma-mode.sh" --id 36ch Hydra 'clean up merged worktrees automatically' "$WT_REPO" 2>/dev/null || echo missing)"
             case "$WT_MODE" in
                 auto)
                     "$SCRIPT_DIR/credo-worktree-cleanup.sh" "$WT_REPO" 2>&1 \

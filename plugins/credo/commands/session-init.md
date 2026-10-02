@@ -3,6 +3,7 @@ description: credo - Initialize session with main agent workflow instructions
 allowed-tools:
     - Read
     - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-decision-set.sh:*)
+    - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-optimize-state.sh:*)
 ---
 
 # Session Initialization
@@ -123,11 +124,11 @@ Before naming a specialized agent, confirm it is actually listed in your environ
 
 These are the credo capabilities available in this session. Prefer them over the generic/default approach so the workflow runs cleanly. Commands are tagged by execution class so it is clear what you may run yourself.
 
-**Skills** (auto-trigger by their description - use them actively whenever they apply): `items` (the work-item model = the task system), `audit` (mandatory post-completion review gate), `verify` (visual Definition of Done for any UI/runtime surface), `diag` (read-only root-cause diagnosis), `safety` (before ANY delete or install), `rules` (per-repo special rules from `.credo/RULES.md` - load and honor at start), `requirements-verbatim` (log approved intent word-for-word), `orchestration` (delegation rules), `budget` (API cap + reset rules), `compact-plus` (secure approved state before a compact), `pr-vetting`, `issue-triage`, `skill-capture`, `cross-cutting-checklist-generator`, `wsl-env`.
+**Skills** (auto-trigger by their description - use them actively whenever they apply): `items` (the work-item model = the task system), `audit` (mandatory post-completion review gate), `verify` (visual Definition of Done for any UI/runtime surface), `diag` (read-only root-cause diagnosis), `safety` (before ANY delete or install), `rules` (per-repo special rules from `.credo/RULES.md` - load and honor at start), `requirements-verbatim` (log approved intent word-for-word), `optimize` (opt-in optimisation audit: read-only scan, findings offered one by one), `orchestration` (delegation rules), `budget` (API cap + reset rules), `compact-plus` (secure approved state before a compact), `pr-vetting`, `issue-triage`, `skill-capture`, `cross-cutting-checklist-generator`, `wsl-env`.
 
 **Commands by execution class:**
 - **[A] may be run by the agent itself when useful:** `/credo:session-init`, `/credo:project` (show only, no path argument).
-- **[B] only on explicit user request** (interactive, or the user's call to make): `/credo:session-active`, `/credo:session-passive`, `/credo:psalm`, `/credo:project <path>` (pin a target).
+- **[B] only on explicit user request** (interactive, or the user's call to make): `/credo:session-active`, `/credo:session-passive`, `/credo:psalm`, `/credo:project <path>` (pin a target), `/credo:optimize` (optimisation audit; also right after the user says Yes to a `[credo-optimize]` offer).
 - **[C] NEVER run autonomously** - only the user decides these (mode escalation / installs / structural migration): `/credo:session-autonomous`, `/credo:setup`, `/credo:migrate`.
 
 ## Harness task list (scratchpad, not the item store)
@@ -164,6 +165,19 @@ Then load this repo's per-repo special rules and honor them for the session (cre
 If it prints a `(present)` path, Read that file and honor its grants. If it prints
 `(missing)`, there are none - carry on. Exit 4 means no target is pinned here (a hub); do not
 guess - the user can pin one with `/credo:project <path>`.
+
+Then check whether the optimisation-audit opt-in for this repo is still open (only in a git
+repo; prints `yes`, `no` or nothing):
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-optimize-state.sh" optin
+```
+
+If it prints nothing and this is not autonomous work, ask once via AskUserQuestion whether
+an optimisation audit is wanted for this repo (read-only scan, findings offered one by one,
+nothing scanned or changed without consent). Record the answer with `... optin yes` or
+`... optin no`; on Yes run `/credo:optimize` after this confirmation. Skip the question when
+it was already asked in this session's onboarding.
 
 Then confirm you understand these working instructions, then ask how you can help.
 
