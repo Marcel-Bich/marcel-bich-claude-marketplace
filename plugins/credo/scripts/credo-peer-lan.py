@@ -144,6 +144,218 @@ def load_config():
 
 
 # ---------------------------------------------------------------------------
+# peer address normalization (routing is address-based: a peer is a host:port,
+# NOT a name). A config "peers" entry may be a plain "IP" / "IP:PORT" string or
+# the legacy {name?, host, port} object; both normalize to {host, port, name?}.
+# ---------------------------------------------------------------------------
+def split_host_port(text, default_port):
+    """Split "host" or "host:port" into (host, port). Only the trailing ":port"
+    (all digits) is treated as a port, so a bare host keeps default_port. IPv6
+    literals are out of scope (the user lists plain IPv4 addresses)."""
+    text = (text or "").strip()
+    if not text:
+        return None, default_port
+    if ":" in text:
+        head, _, tail = text.rpartition(":")
+        if head and tail.isdigit():
+            return head, int(tail)
+    return text, default_port
+
+
+def normalize_peer(entry, default_port):
+    """Normalize one peers[] entry to {host, port, name} or None if unusable.
+    Accepts a plain "IP"/"IP:PORT" string or a {name?, host, port} object."""
+    if isinstance(entry, str):
+        host, port = split_host_port(entry, default_port)
+        if not host:
+            return None
+        return {"host": host, "port": int(port), "name": None}
+    if isinstance(entry, dict):
+        host = entry.get("host")
+        if not host:
+            return None
+        return {
+            "host": host,
+            "port": int(entry.get("port", default_port)),
+            "name": entry.get("name"),
+        }
+    return None
+
+
+def normalize_peers(raw, default_port):
+    """Normalize + dedupe a peers list by (host, port), preserving order."""
+    out = []
+    seen = set()
+    if not isinstance(raw, list):
+        return out
+    for entry in raw:
+        p = normalize_peer(entry, default_port)
+        if not p:
+            continue
+        key = (p["host"], p["port"])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+    return out
+
+
+def peer_to_string(peer, default_port):
+    """Render a normalized peer back as the simple "host" or "host:port" string
+    stored in the config (the port is dropped when it equals the listen port)."""
+    if int(peer["port"]) == int(default_port):
+        return peer["host"]
+    return "%s:%d" % (peer["host"], int(peer["port"]))
+
+
+# ---------------------------------------------------------------------------
+# self-address detection + reachability probe (active setup help, so the user
+# never has to figure out which IP to enter on the other machines)
+# ---------------------------------------------------------------------------
+IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+
+
+def have_cmd(name):
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if d and os.path.exists(os.path.join(d, name)):
+            return True
+    return False
+
+
+def is_wsl():
+    """True on WSL (same detection the autostart hook uses). The proc-version
+    path is overridable with CREDO_PEER_LAN_PROCVERSION for deterministic tests."""
+    procver = os.environ.get("CREDO_PEER_LAN_PROCVERSION", "/proc/version")
+    try:
+        with open(procver) as fh:
+            if "microsoft" in fh.read().lower():
+                return True
+    except OSError:
+        pass
+    return bool(os.environ.get("WSL_DISTRO_NAME"))
+
+
+def is_lan_ipv4(ip):
+    """Reject addresses that are never a LAN-reachable peer address: loopback,
+    link-local, the VirtualBox host-only net, and the 172.16-31 range WSL/Docker
+    NAT uses. Used as a backstop when picking the self address."""
+    if not IPV4_RE.match(ip or ""):
+        return False
+    if ip.startswith("127.") or ip.startswith("169.254.") or ip.startswith("192.168.56."):
+        return False
+    parts = ip.split(".")
+    if parts[0] == "172":
+        try:
+            if 16 <= int(parts[1]) <= 31:
+                return False
+        except ValueError:
+            pass
+    return True
+
+
+def parse_ip_route_src(text):
+    """Extract the "src <ipv4>" address from `ip route get ...` output, ignoring
+    a 127.0.0.1 src (which means no real route). Returns the IP or None."""
+    m = re.search(r"\bsrc\s+(\d{1,3}(?:\.\d{1,3}){3})", text or "")
+    if m and m.group(1) != "127.0.0.1":
+        return m.group(1)
+    return None
+
+
+def self_ip_linux():
+    """Primary LAN IPv4 = src of the default route (not 127.0.0.1)."""
+    try:
+        out = subprocess.run(
+            ["ip", "route", "get", "1.1.1.1"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except Exception:
+        return None
+    return parse_ip_route_src(out.stdout)
+
+
+def self_ip_wsl():
+    """Windows host LAN IPv4 of the default-route adapter, via powershell.exe -
+    the address a LAN peer must use to reach this WSL machine. Read-only; returns
+    None (never raises) if powershell.exe is absent or the query fails."""
+    if not have_cmd("powershell.exe"):
+        return None
+    ps = (
+        "Get-NetIPConfiguration | Where-Object {$_.IPv4DefaultGateway} | "
+        "Select-Object -First 1 -ExpandProperty IPv4Address | "
+        "Select-Object -ExpandProperty IPAddress"
+    )
+    try:
+        out = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", ps],
+            capture_output=True, text=True, timeout=15,
+        )
+    except Exception:
+        return None
+    cands = [ln.strip() for ln in out.stdout.splitlines() if IPV4_RE.match(ln.strip())]
+    for ip in cands:
+        if is_lan_ipv4(ip):
+            return ip
+    return cands[0] if cands else None
+
+
+def detect_self_ip():
+    """This machine's LAN-reachable IPv4, or None if it cannot be determined.
+    Under WSL this is the Windows host IP; natively it is the default-route src."""
+    if is_wsl():
+        return self_ip_wsl()
+    return self_ip_linux()
+
+
+def probe_peer(host, port, timeout=1.5):
+    """True if a TCP connect to host:port succeeds within timeout (non-fatal)."""
+    try:
+        s = socket.create_connection((host, int(port)), timeout=timeout)
+        s.close()
+        return True
+    except Exception:
+        return False
+
+
+def print_self_address(cfg):
+    port = int(cfg.get("listen_port", DEFAULT_PORT))
+    ip = detect_self_ip()
+    if ip:
+        print(
+            'This machine is reachable at %s:%d - run "/credo:peer-lan init %s" '
+            "on your other machines." % (ip, port, ip)
+        )
+        return
+    print("Could not auto-detect this machine's LAN address.")
+    if is_wsl():
+        print(
+            "Under WSL2 enter this machine's WINDOWS HOST LAN IP (not the 172.x "
+            "WSL IP) on your other machines. Find it with: powershell.exe "
+            '-NoProfile -Command "Get-NetIPConfiguration | '
+            'Where-Object {$_.IPv4DefaultGateway}"'
+        )
+    else:
+        print("Find it with: ip route get 1.1.1.1 (use the 'src' address).")
+
+
+def probe_all_peers(cfg):
+    default_port = int(cfg.get("listen_port", DEFAULT_PORT))
+    peers = normalize_peers(cfg.get("peers", []), default_port)
+    if not peers:
+        print("No peers configured yet.")
+        return
+    print("Peer reachability:")
+    for p in peers:
+        if probe_peer(p["host"], p["port"]):
+            print("  %s:%d - reachable" % (p["host"], p["port"]))
+        else:
+            print(
+                "  %s:%d - not reachable (check that the peer is running and its "
+                "port is open)" % (p["host"], p["port"])
+            )
+
+
+# ---------------------------------------------------------------------------
 # line transport (HMAC-signed when a token is configured, unsigned otherwise)
 # ---------------------------------------------------------------------------
 def sign(token, body_str):
@@ -313,16 +525,9 @@ def run_holder(args):
         log("holder: no config, exiting")
         return 1
     token = cfg.get("token", "")
-    this_machine = args.this_machine or cfg.get("this_machine", "")
-    peer = None
-    for p in cfg.get("peers", []):
-        if isinstance(p, dict) and p.get("name") == args.peer_name:
-            peer = p
-            break
-    if peer is None:
-        log("holder: peer %r not in config, exiting" % args.peer_name)
-        return 1
-    host, port = peer.get("host"), int(peer.get("port", DEFAULT_PORT))
+    # Routing is address-based: the holder forwards straight to the peer host:port
+    # it was spawned with. No name lookup, so no name contract to get wrong.
+    host, port = args.peer_host, int(args.peer_port)
     sess_dir = sessions_dir()
     proxy = args.proxy
     parent = os.getppid()
@@ -355,8 +560,8 @@ def run_holder(args):
     signal.signal(signal.SIGTERM, _sig)
     signal.signal(signal.SIGINT, _sig)
     log(
-        "holder up: proxy=%s -> %s target=%s via %s:%s"
-        % (proxy, args.peer_name, args.target_session, host, port)
+        "holder up: proxy=%s target=%s via %s:%s"
+        % (proxy, args.target_session, host, port)
     )
 
     # Each accepted proxy connection is handled in its own short-lived daemon worker
@@ -466,7 +671,7 @@ def _forward(line, token, host, port, args, sess_dir):
     }
     try:
         send_to_peer(host, port, token, payload)
-        log("holder: forwarded deliver to %s (%s:%s)" % (args.peer_name, host, port))
+        log("holder: forwarded deliver to %s:%s" % (host, port))
     except Exception as exc:
         log("holder: forward to %s:%s failed: %s" % (host, port, exc))
 
@@ -487,12 +692,13 @@ class Daemon(object):
         self.this_machine = cfg.get("this_machine", socket.gethostname())
         self.listen_host = cfg.get("listen_host", "127.0.0.1")
         self.listen_port = int(cfg.get("listen_port", DEFAULT_PORT))
-        self.peers = [p for p in cfg.get("peers", []) if isinstance(p, dict)]
-        # names of configured peers; a roster from a machine NOT in here cannot be
-        # matched to a peer, so its holder would fail to start (see _on_roster warning)
-        self.peer_names = set(
-            p.get("name") for p in self.peers if p.get("name")
-        )
+        # Peers are normalized to {host, port, name?} and routing is ADDRESS-based:
+        # a peer is identified by its host:port, never by name. A string "IP"/"IP:PORT"
+        # and the legacy {name, host, port} object are both accepted.
+        self.peers = normalize_peers(cfg.get("peers", []), self.listen_port)
+        # addresses of configured peers; an inbound roster whose source address is
+        # NOT in here is "unexpected" inbound (warned once; see _on_roster)
+        self.peer_addrs = set((p["host"], p["port"]) for p in self.peers)
         self.roster_interval = float(
             cfg.get("roster_interval", DEFAULT_ROSTER_INTERVAL)
         )
@@ -514,8 +720,8 @@ class Daemon(object):
         self.lock = threading.Lock()
         # key (machine, sessionId) -> dict(holder=Popen, proxy, descriptor, pid)
         self.remotes = {}
-        self.machine_seen = {}  # machine -> last roster monotonic time
-        self.unknown_warned = set()  # machines warned once (not a configured peer)
+        self.machine_seen = {}  # peer addr "host:port" -> last roster monotonic time
+        self.unknown_warned = set()  # peer addrs warned once (not a configured peer)
         self.stop = threading.Event()
         self.srv = None
 
@@ -554,7 +760,7 @@ class Daemon(object):
                 self.listen_host,
                 self.listen_port,
                 self.this_machine,
-                [p.get("name") for p in self.peers],
+                ["%s:%d" % (p["host"], p["port"]) for p in self.peers],
             )
         )
         if not self.token:
@@ -647,12 +853,13 @@ class Daemon(object):
             if payload is None:
                 log("rejected unauthenticated/garbled message from %s" % (addr,))
                 continue
-            self._dispatch(payload)
+            src_ip = addr[0] if isinstance(addr, tuple) and addr else ""
+            self._dispatch(payload, src_ip)
 
-    def _dispatch(self, payload):
+    def _dispatch(self, payload, src_ip=""):
         kind = payload.get("kind")
         if kind == "roster":
-            self._on_roster(payload)
+            self._on_roster(payload, src_ip)
         elif kind == "deliver":
             self._on_deliver(payload)
         else:
@@ -697,40 +904,61 @@ class Daemon(object):
             payload = {
                 "kind": "roster",
                 "machine": self.this_machine,
+                # announce our listen port so the receiver can pair this roster
+                # (by source IP + this port) with the configured peer address to
+                # forward replies to - address-based routing, no name contract.
+                "listen_port": self.listen_port,
                 "sessions": sessions,
             }
             for peer in self.peers:
-                host, port = peer.get("host"), int(peer.get("port", DEFAULT_PORT))
-                if not host:
-                    continue
+                host, port = peer["host"], peer["port"]
                 try:
                     send_to_peer(host, port, self.token, payload)
                 except Exception as exc:
-                    log("roster to %s (%s:%s) failed: %s" % (peer.get("name"), host, port, exc))
+                    log("roster to %s:%s failed: %s" % (host, port, exc))
 
-    def _on_roster(self, payload):
+    def _resolve_peer_addr(self, src_ip, listen_port):
+        """Map an inbound roster's (source IP, announced listen_port) to the peer
+        address its replies forward to, and whether that address is configured.
+        A real multi-IP LAN uses the SAME port on every machine with DIFFERENT
+        hosts, while the loopback tests use the SAME host with DIFFERENT ports -
+        matching on host AND port handles both. An address not in the config is
+        still served (token-less casual default); it is only flagged unexpected."""
+        port = int(listen_port) if listen_port else DEFAULT_PORT
+        for p in self.peers:
+            if p["host"] == src_ip and p["port"] == port:
+                return (p["host"], p["port"]), True
+        return (src_ip, port), False
+
+    def _on_roster(self, payload, src_ip=""):
         machine = payload.get("machine")
         if not machine:
             return
         sessions = payload.get("sessions")
         if not isinstance(sessions, list):
             sessions = []
+        peer_addr, known = self._resolve_peer_addr(src_ip, payload.get("listen_port"))
+        addr_key = "%s:%d" % peer_addr
         now = time.monotonic()
         with self.lock:
-            self.machine_seen[machine] = now
-            # Misconfiguration signal: a roster from a machine that is not among our
-            # configured peer names means no peers[].name equals that machine's
-            # this_machine, so its holder cannot resolve the peer and the remote peer
-            # silently never appears. Warn once per unknown machine (no per-interval
-            # spam), at daemon level so it is visible in the main log, not only the
-            # holder-level "peer X not in config" line.
-            if machine not in self.peer_names and machine not in self.unknown_warned:
-                self.unknown_warned.add(machine)
+            self.machine_seen[addr_key] = now
+            # Unexpected-inbound signal: a roster whose source address is NOT among
+            # the configured peer addresses. Token-less this is still served (the
+            # receiving session's own consent gate is the protection), so it is only
+            # a warning, once per address (no per-interval spam). A correctly
+            # configured multi-IP setup matches a peer address and never warns.
+            if not known and addr_key not in self.unknown_warned:
+                self.unknown_warned.add(addr_key)
                 log(
-                    "roster from %r which is not among this daemon's configured peer "
-                    "names %s; a remote session only materializes when a peers[].name "
-                    "equals that machine's this_machine - check the config"
-                    % (machine, sorted(self.peer_names))
+                    "roster from %s (machine %r) whose address is not among this "
+                    "daemon's configured peer addresses %s - add it with "
+                    "'credo-peer-lan.py init %s' if this peer is expected"
+                    % (
+                        addr_key,
+                        machine,
+                        sorted("%s:%d" % a for a in self.peer_addrs),
+                        peer_addr[0],
+                    )
                 )
             present = {}
             for s in sessions:
@@ -742,18 +970,20 @@ class Daemon(object):
                 if len(present) >= self.max_remotes:
                     log(
                         "roster from %s over cap %d; ignoring extra sessions"
-                        % (machine, self.max_remotes)
+                        % (addr_key, self.max_remotes)
                     )
                     break
+                s = dict(s)
+                s["machine"] = machine  # announced this_machine, for the display name
                 present[sid] = s
-            # remove sessions that vanished from this machine's roster
+            # remove sessions that vanished from this peer's roster
             for (mkey, sid) in list(self.remotes.keys()):
-                if mkey == machine and sid not in present:
+                if mkey == addr_key and sid not in present:
                     self._remove_remote_locked((mkey, sid))
             # ensure a holder+descriptor for each present session
             template = self._template_descriptor_locked()
             for sid, s in present.items():
-                key = (machine, sid)
+                key = (addr_key, sid)
                 if key in self.remotes:
                     self._refresh_descriptor_locked(key, s)
                     continue
@@ -797,7 +1027,11 @@ class Daemon(object):
         return not d.get(MARK)
 
     def _create_remote_locked(self, key, sess, template):
-        machine, sid = key
+        addr_key, sid = key
+        host, port = split_host_port(addr_key, self.listen_port)
+        # the announced machine name is only for the display suffix; routing is by
+        # address. Fall back to the host when the roster did not annotate a machine.
+        machine = sess.get("machine") or host
         name = (sess.get("name") or sid) + "@" + machine
         proxy = os.path.join(self.sock_dir, "pl-%s.sock" % uuid.uuid4().hex[:12])
         env = dict(os.environ)
@@ -811,8 +1045,10 @@ class Daemon(object):
                 proxy,
                 "--target-session",
                 sid,
-                "--peer-name",
-                machine,
+                "--peer-host",
+                host,
+                "--peer-port",
+                str(port),
                 "--this-machine",
                 self.this_machine,
             ],
@@ -1076,6 +1312,77 @@ def run_daemon(_args):
     return 0
 
 
+def run_init(args):
+    """Write/update the config from one or more peer IPs, token-less, then print
+    this machine's own address and probe the configured peers. Pure: it never
+    starts the daemon or touches Windows (that is the command doc / autostart)."""
+    path = config_path()
+    cfg = load_config() or {}
+    cfg.setdefault("this_machine", socket.gethostname())
+    cfg.setdefault("listen_host", "0.0.0.0")
+    cfg.setdefault("listen_port", DEFAULT_PORT)
+    # token-less by default: NEVER add a token here (an existing one is kept as-is)
+    default_port = int(cfg.get("listen_port", DEFAULT_PORT))
+    peers = normalize_peers(cfg.get("peers", []), default_port)
+    seen = set((p["host"], p["port"]) for p in peers)
+    added = []
+    for raw in args.ips:
+        p = normalize_peer(raw, default_port)
+        if not p:
+            log("init: ignoring unparseable peer %r" % raw)
+            continue
+        key = (p["host"], p["port"])
+        if key in seen:
+            continue
+        seen.add(key)
+        peers.append(p)
+        added.append(p)
+    cfg["peers"] = [peer_to_string(p, default_port) for p in peers]
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(json.dumps(cfg, indent=2) + "\n")
+    except Exception as exc:
+        log("init: could not write %s: %s" % (path, exc))
+        return 1
+
+    print("Wrote %s" % path)
+    print("  this_machine: %s" % cfg["this_machine"])
+    print("  listen:       %s:%d" % (cfg["listen_host"], default_port))
+    print("  token:        %s" % ("set" if cfg.get("token") else "none (token-less)"))
+    if cfg["peers"]:
+        print("  peers:        %s" % ", ".join(cfg["peers"]))
+    else:
+        print("  peers:        (none yet - re-run with one or more peer IPs)")
+    if added:
+        print("  added:        %s" % ", ".join(peer_to_string(p, default_port) for p in added))
+    print("")
+    print_self_address(cfg)
+    print("")
+    probe_all_peers(cfg)
+    return 0
+
+
+def run_whoami(_args):
+    cfg = load_config() or {}
+    print_self_address(cfg)
+    return 0
+
+
+def run_check(_args):
+    cfg = load_config()
+    if cfg is None:
+        print(
+            "No config at %s - the relay is a no-op until it exists. Create it with "
+            "'credo-peer-lan.py init <peer-ip> ...'." % config_path()
+        )
+        return 0
+    print_self_address(cfg)
+    print("")
+    probe_all_peers(cfg)
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="credo LAN peer relay")
     sub = parser.add_subparsers(dest="cmd")
@@ -1083,10 +1390,27 @@ def main(argv=None):
     p_daemon = sub.add_parser("daemon", help="run the relay daemon (default)")
     p_daemon.set_defaults(func=run_daemon)
 
+    p_init = sub.add_parser(
+        "init", help="write/update the config from peer IPs (token-less)"
+    )
+    p_init.add_argument("ips", nargs="*", help="peer addresses: IP or IP:PORT")
+    p_init.set_defaults(func=run_init)
+
+    p_whoami = sub.add_parser(
+        "whoami", help="print this machine's LAN-reachable address"
+    )
+    p_whoami.set_defaults(func=run_whoami)
+
+    p_check = sub.add_parser(
+        "check", help="print this machine's address and probe configured peers"
+    )
+    p_check.set_defaults(func=run_check)
+
     p_holder = sub.add_parser("holder", help="internal: per-remote-session holder")
     p_holder.add_argument("--proxy", required=True)
     p_holder.add_argument("--target-session", required=True)
-    p_holder.add_argument("--peer-name", required=True)
+    p_holder.add_argument("--peer-host", required=True)
+    p_holder.add_argument("--peer-port", required=True)
     p_holder.add_argument("--this-machine", default="")
     p_holder.set_defaults(func=run_holder)
 

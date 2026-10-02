@@ -1,15 +1,14 @@
 {
-  "_comment": "Example credo LAN peer relay config. Copy to ~/.claude/credo/peer-lan.json (or point CREDO_PEER_LAN_CONFIG at it) and edit. The relay is a no-op until this file exists; once it does, it starts automatically on session start (one daemon per machine) and can be disabled with CREDO_PEER_LAN set to 0/false/no/off.",
-  "_token_comment": "The shared token is OPTIONAL. Left empty (as below) or omitted entirely, the relay runs TOKEN-LESS - the casual default for a trusted home LAN. WITHOUT a token, any device that can reach listen_host:listen_port can send messages to your sessions (gated only by the receiving session's own consent prompt; the relay never forges a trusted sender). Set the SAME non-empty token on every machine to restrict messaging to your own devices - recommended on untrusted or company networks. A machine whose token differs from a token-requiring peer is rejected by that peer. Enabling it later is just adding the same token here on every machine - no code change.",
-  "_peers_comment": "IMPORTANT: each peers[].name MUST equal that remote machine's own this_machine value. A remote session only materializes (its holder + descriptor are created) when the sender machine's this_machine matches a configured peer name here. A mismatch means the remote peer silently never appears. Example: on pc-hub below, the laptop machine must set this_machine to 'laptop' and the workbench machine must set this_machine to 'workbench'.",
+  "_comment": "Example credo LAN peer relay config. The easy way to create this is NOT to copy this file but to run '/credo:peer-lan init <peer-ip> ...' (or 'credo-peer-lan.py init <peer-ip> ...'), which writes ~/.claude/credo/peer-lan.json for you, token-less, and prints this machine's own address. The relay is a no-op until the config exists; once it does, it starts automatically on session start (one daemon per machine) and can be disabled with CREDO_PEER_LAN set to 0/false/no/off.",
+  "_peers_comment": "Routing is ADDRESS-based: a peer is identified by its host:port, NOT by a name. List each OTHER machine's LAN address. A plain \"IP\" uses listen_port; \"IP:PORT\" overrides the port. Multiple entries = multiple machines. You always enter the TARGET machine's LAN IP: for a WSL2 machine that is its WINDOWS HOST IP (not the 172.x WSL IP); for native Linux its own LAN IP. Run 'credo-peer-lan.py whoami' on each machine to print its own address so you never have to guess which IP to enter.",
+  "_token_comment": "The shared token is OPTIONAL and omitted here, so the relay runs TOKEN-LESS - the casual default for a trusted home LAN. WITHOUT a token, any device that can reach listen_host:listen_port can send messages to your sessions (gated only by the receiving session's own consent prompt; the relay never forges a trusted sender). To restrict messaging to your own devices, add the SAME non-empty \"token\" on every machine - recommended on untrusted or company networks. A machine whose token differs from a token-requiring peer is rejected by that peer.",
   "this_machine": "pc-hub",
   "listen_host": "0.0.0.0",
   "listen_port": 48610,
-  "token": "",
   "roster_interval": 5.0,
   "machine_timeout": 30.0,
   "peers": [
-    {"name": "laptop", "host": "192.168.1.50", "port": 48610},
-    {"name": "workbench", "host": "192.168.1.51", "port": 48610}
+    "192.168.1.50",
+    "192.168.1.51:48610"
   ]
 }

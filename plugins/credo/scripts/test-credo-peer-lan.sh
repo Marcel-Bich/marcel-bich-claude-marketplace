@@ -18,7 +18,15 @@
 #   - a "credoPeerLan"-marked descriptor is created for a remote session and it is
 #     NOT a "credoPeerBridge" one,
 #   - single instance: a second daemon on the same listen port exits 0 cleanly
-#     (EADDRINUSE lock) and the first daemon keeps relaying undisturbed.
+#     (EADDRINUSE lock) and the first daemon keeps relaying undisturbed,
+#   - whoami native path: a mocked `ip route get` yields the src IP, never 127.0.0.1,
+#   - reachability probe: a live loopback listener reads "reachable", a closed port
+#     reads "not reachable",
+#   - init writes a valid token-less config from one or many IPs and merges/dedupes
+#     on re-run,
+#   - ADDRESS-based routing: two daemons configured by plain IP strings (no name
+#     contract) still deliver proxy->inbox with NO from-mode, and a 3-peer config
+#     (one daemon, two peer addresses) starts without error.
 #
 # Usage: bash test-credo-peer-lan.sh
 
@@ -602,6 +610,198 @@ for _ in $(seq 1 25); do
     sleep 0.2
 done
 ok "token-requiring receiver stays responsive after an unsigned frame (valid signed deliver still succeeds)" "$([ -n "$mx_ok" ] && echo 0 || echo 1)"
+
+# --- WH: whoami native-path self-address detection (mock `ip route get`) ------
+# A fake `ip` on PATH emits a canned default-route line; a non-WSL /proc/version
+# override forces the native path (this test host is itself WSL2, so the override
+# keeps the test off the real powershell). whoami must report the src IP, never
+# 127.0.0.1.
+mkdir -p "$TMP/wh/bin" "$TMP/wh/cfg/credo"
+cat > "$TMP/wh/bin/ip" <<'EOF'
+#!/bin/bash
+# fake `ip`: a canned `ip route get` line with a known src address
+echo "1.1.1.1 via 192.168.178.1 dev eth0 src 192.168.178.39 uid 1000"
+echo "    cache"
+EOF
+chmod +x "$TMP/wh/bin/ip"
+printf 'Linux version 6.1.0-generic (gcc) #1 SMP\n' > "$TMP/wh/procversion-linux"
+cat > "$TMP/wh/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"WH","listen_host":"0.0.0.0","listen_port":48610,"peers":[]}
+EOF
+WH_OUT="$(PATH="$TMP/wh/bin:$PATH" CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+    CREDO_PEER_LAN_CONFIG="$TMP/wh/cfg/credo/peer-lan.json" "$PY" "$DAEMON" whoami 2>/dev/null)"
+case "$WH_OUT" in *"192.168.178.39:48610"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL whoami did not report the mocked src IP\n  %s\n' "$WH_OUT" ;; esac
+case "$WH_OUT" in *127.0.0.1*) FAIL=$((FAIL + 1)); printf 'FAIL whoami leaked 127.0.0.1\n' ;; *) PASS=$((PASS + 1)) ;; esac
+
+# --- PR: reachability probe (reachable live listener vs closed port) ----------
+read PR_LIVE PR_DEAD < <("$PY" - <<'PYEOF'
+import socket
+ps = []
+for _ in range(2):
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); ps.append(s.getsockname()[1]); s.close()
+print(ps[0], ps[1])
+PYEOF
+)
+cat > "$TMP/tcplisten.py" <<'PYEOF'
+import socket, sys
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(8)
+while True:
+    c, _ = s.accept(); c.close()
+PYEOF
+"$PY" "$TMP/tcplisten.py" "$PR_LIVE" & PIDS="$PIDS $!"
+for _ in $(seq 1 40); do
+    if "$PY" -c 'import socket,sys; socket.create_connection(("127.0.0.1",int(sys.argv[1])),timeout=1).close()' "$PR_LIVE" 2>/dev/null; then break; fi
+    sleep 0.1
+done
+mkdir -p "$TMP/pr/credo"
+cat > "$TMP/pr/credo/peer-lan.json" <<EOF
+{"this_machine":"PR","listen_host":"0.0.0.0","listen_port":48610,"peers":["127.0.0.1:$PR_LIVE","127.0.0.1:$PR_DEAD"]}
+EOF
+PR_OUT="$(PATH="$TMP/wh/bin:$PATH" CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+    CREDO_PEER_LAN_CONFIG="$TMP/pr/credo/peer-lan.json" "$PY" "$DAEMON" check 2>/dev/null)"
+case "$PR_OUT" in *"127.0.0.1:$PR_LIVE - reachable"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL probe did not report the live peer reachable\n  %s\n' "$PR_OUT" ;; esac
+case "$PR_OUT" in *"127.0.0.1:$PR_DEAD - not reachable"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL probe did not report the closed port not reachable\n  %s\n' "$PR_OUT" ;; esac
+
+# --- IN: init writes a valid token-less config; merges + dedupes peers --------
+mkdir -p "$TMP/in/credo"
+IN_CFG="$TMP/in/credo/peer-lan.json"
+PATH="$TMP/wh/bin:$PATH" CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+    CREDO_PEER_LAN_CONFIG="$IN_CFG" "$PY" "$DAEMON" init 192.168.1.10 >/dev/null 2>&1
+ok "init creates the config from one IP" "$([ -f "$IN_CFG" ] && echo 0 || echo 1)"
+IN_DEFAULTS="$("$PY" - "$IN_CFG" <<'PYEOF'
+import json, sys
+c = json.load(open(sys.argv[1]))
+ok = (c.get("listen_host") == "0.0.0.0" and int(c.get("listen_port")) == 48610
+      and c.get("this_machine") and not c.get("token")
+      and c.get("peers") == ["192.168.1.10"])
+print("OK" if ok else "BAD %r" % c)
+PYEOF
+)"
+case "$IN_DEFAULTS" in OK) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL init one-IP config wrong: %s\n' "$IN_DEFAULTS" ;; esac
+# re-run with more IPs incl an explicit port and a duplicate -> merge, no dupes
+PATH="$TMP/wh/bin:$PATH" CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+    CREDO_PEER_LAN_CONFIG="$IN_CFG" "$PY" "$DAEMON" init 192.168.1.11 192.168.1.12:50000 192.168.1.10 >/dev/null 2>&1
+IN_MERGE="$("$PY" - "$IN_CFG" <<'PYEOF'
+import json, sys
+c = json.load(open(sys.argv[1]))
+p = c["peers"]
+exp = {"192.168.1.10", "192.168.1.11", "192.168.1.12:50000"}
+dup = len([x for x in p if x == "192.168.1.10"])
+ok = exp.issubset(set(p)) and dup == 1 and not c.get("token")
+print("OK" if ok else "BAD %r" % p)
+PYEOF
+)"
+case "$IN_MERGE" in OK) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL init merge/dedupe wrong: %s\n' "$IN_MERGE" ;; esac
+# no IPs and no pre-existing file -> a valid token-less config with empty peers
+IN_EMPTY="$TMP/in/credo/empty.json"
+PATH="$TMP/wh/bin:$PATH" CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+    CREDO_PEER_LAN_CONFIG="$IN_EMPTY" "$PY" "$DAEMON" init >/dev/null 2>&1
+IN_EMPTY_OK="$("$PY" - "$IN_EMPTY" <<'PYEOF'
+import json, sys
+c = json.load(open(sys.argv[1]))
+print("OK" if c.get("peers") == [] and not c.get("token") and c.get("listen_host") == "0.0.0.0" else "BAD")
+PYEOF
+)"
+case "$IN_EMPTY_OK" in OK) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL init with no IPs did not write a valid empty token-less config\n' ;; esac
+
+# --- AB: address-based routing with STRING peers (NO name contract) -----------
+# Two daemons whose peers are plain "IP:PORT" strings - no peers[].name anywhere,
+# and the this_machine values are NOT referenced as peer names. Delivery must work
+# proxy->inbox, the mirrored name still carries the remote this_machine, the
+# injected message carries NO from-mode, and a correctly configured setup logs NO
+# unexpected-peer warning.
+read PG PH < <("$PY" - <<'PYEOF'
+import socket
+ps = []
+for _ in range(2):
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); ps.append(s.getsockname()[1]); s.close()
+print(ps[0], ps[1])
+PYEOF
+)
+for M in G H; do mkdir -p "$TMP/$M/cfg/sessions" "$TMP/$M/cfg/credo" "$TMP/$M/sock"; done
+INBOX_H="$TMP/H/inbox.sock"; SENDER_G="$TMP/G/sender.sock"; : > "$TMP/H/inbox.log"
+cat > "$TMP/G/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"nodeG","listen_host":"127.0.0.1","listen_port":$PG,
+ "roster_interval":0.3,"machine_timeout":60,"peers":["127.0.0.1:$PH"]}
+EOF
+cat > "$TMP/H/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"nodeH","listen_host":"127.0.0.1","listen_port":$PH,
+ "roster_interval":0.3,"machine_timeout":60,"peers":["127.0.0.1:$PG"]}
+EOF
+"$PY" "$TMP/inbox.py" "$INBOX_H" "$TMP/H/inbox.log" & PIDS="$PIDS $!"
+sleep 600 & SLEEP_G=$!; PIDS="$PIDS $SLEEP_G"
+sleep 600 & SLEEP_H=$!; PIDS="$PIDS $SLEEP_H"
+write_descriptor "$TMP/G/cfg/sessions/$SLEEP_G.json" "$SLEEP_G" "sid-G" "$SENDER_G" "werkbank-g"
+write_descriptor "$TMP/H/cfg/sessions/$SLEEP_H.json" "$SLEEP_H" "sid-H" "$INBOX_H" "werkbank-h"
+CLAUDE_CONFIG_DIR="$TMP/G/cfg" CREDO_PEER_LAN_CONFIG="$TMP/G/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/G/sock" "$PY" "$DAEMON" daemon >"$TMP/G/daemon.log" 2>&1 & PIDS="$PIDS $!"
+CLAUDE_CONFIG_DIR="$TMP/H/cfg" CREDO_PEER_LAN_CONFIG="$TMP/H/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/H/sock" "$PY" "$DAEMON" daemon >"$TMP/H/daemon.log" 2>&1 & PIDS="$PIDS $!"
+DESC_G=""
+for _ in $(seq 1 60); do
+    [ -n "$DESC_G" ] || DESC_G="$(marked_desc "$TMP/G/cfg/sessions" || true)"
+    [ -n "$DESC_G" ] && break
+    sleep 0.25
+done
+ok "address-based (string peers): daemon G mirrors the remote session" "$([ -n "$DESC_G" ] && echo 0 || echo 1)"
+if [ -n "$DESC_G" ]; then
+    nameG="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["name"])' "$DESC_G" 2>/dev/null)"
+    check "address-based: mirrored name still suffixed with remote this_machine" "werkbank-h@nodeH" "$nameG"
+    PROXY_G="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["messagingSocketPath"])' "$DESC_G" 2>/dev/null)"
+else
+    PROXY_G=""
+fi
+if [ -n "${PROXY_G:-}" ]; then
+    for _ in $(seq 1 40); do [ -S "$PROXY_G" ] && break; sleep 0.1; done
+    "$PY" "$TMP/sendproxy.py" "$PROXY_G" "localG" "hello address-based" "uds:$SENDER_G"
+    gotG=""
+    for _ in $(seq 1 60); do
+        if grep -q "hello address-based" "$TMP/H/inbox.log" 2>/dev/null; then gotG=1; break; fi
+        sleep 0.2
+    done
+    ok "address-based: message G proxy -> H inbox delivered (no name contract)" "$([ -n "$gotG" ] && echo 0 || echo 1)"
+    if [ -n "$gotG" ]; then
+        lineG="$(grep "hello address-based" "$TMP/H/inbox.log" | tail -n1)"
+        case "$lineG" in *from-mode*) FAIL=$((FAIL + 1)); printf 'FAIL address-based injected message contains from-mode (forbidden)\n  %s\n' "$lineG" ;; *) PASS=$((PASS + 1)) ;; esac
+    fi
+else
+    FAIL=$((FAIL + 1)); printf 'FAIL address-based: no proxy socket to test\n'
+fi
+if grep -q "not among this daemon's configured peer addresses" "$TMP/G/daemon.log" 2>/dev/null; then
+    FAIL=$((FAIL + 1)); printf 'FAIL address-based: spurious unexpected-peer warning on a correctly configured setup\n'
+else
+    PASS=$((PASS + 1))
+fi
+
+# --- 3P: a 3-peer config (one daemon, two configured peer addresses) ----------
+# J lists TWO peer addresses (the live H daemon + a dead port). It must start, keep
+# running, and log no traceback - multiple peers work and an unreachable one is
+# non-fatal.
+read PJ PDEAD3 < <("$PY" - <<'PYEOF'
+import socket
+ps = []
+for _ in range(2):
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); ps.append(s.getsockname()[1]); s.close()
+print(ps[0], ps[1])
+PYEOF
+)
+mkdir -p "$TMP/J/cfg/sessions" "$TMP/J/cfg/credo" "$TMP/J/sock"
+cat > "$TMP/J/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"nodeJ","listen_host":"127.0.0.1","listen_port":$PJ,
+ "roster_interval":0.3,"machine_timeout":60,"peers":["127.0.0.1:$PH","127.0.0.1:$PDEAD3"]}
+EOF
+sleep 600 & SLEEP_J=$!; PIDS="$PIDS $SLEEP_J"
+write_descriptor "$TMP/J/cfg/sessions/$SLEEP_J.json" "$SLEEP_J" "sid-J" "$TMP/J/sender.sock" "werkbank-j"
+CLAUDE_CONFIG_DIR="$TMP/J/cfg" CREDO_PEER_LAN_CONFIG="$TMP/J/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/J/sock" "$PY" "$DAEMON" daemon >"$TMP/J/daemon.log" 2>&1 & J_PID=$!; PIDS="$PIDS $J_PID"
+sleep 2
+ok "3-peer config: daemon with two peer addresses stays up" "$(kill -0 "$J_PID" 2>/dev/null && echo 0 || echo 1)"
+if grep -q "Traceback" "$TMP/J/daemon.log" 2>/dev/null; then
+    FAIL=$((FAIL + 1)); printf 'FAIL 3-peer daemon logged a traceback\n'
+else
+    PASS=$((PASS + 1))
+fi
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
