@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.72
 
+##### v0.72.5
+
+###### Fixed
+
+- LAN relay rosters to a loopback peer advertise 127.0.0.1 and the listen port instead of the LAN address, so a strict loopback-only receiver accepts them
+
 ##### v0.72.4
 
 ###### Fixed

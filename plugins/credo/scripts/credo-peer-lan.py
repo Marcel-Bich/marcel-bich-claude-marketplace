@@ -2342,13 +2342,18 @@ class Daemon(object):
         # CONFIGURED peer matching it, never to the raw inbound source IP (which
         # under WSL2 NAT is the gateway, not us). Omitted until detected, so an
         # old peer that never sends it still works via the receiver's fallback.
-        if self.advertise_host:
-            payload["advertise_host"] = self.advertise_host
-            payload["advertise_port"] = self.advertise_port
+        # A loopback peer is told our loopback address instead: it reaches us there,
+        # and a strict receiver configured with 127.0.0.1 would drop a LAN address.
         for peer in targets:
             host, port = peer["host"], peer["port"]
+            out = payload
+            if is_loopback_ip(host):
+                out = dict(payload, advertise_host="127.0.0.1", advertise_port=self.listen_port)
+            elif self.advertise_host:
+                out = dict(payload, advertise_host=self.advertise_host,
+                           advertise_port=self.advertise_port)
             try:
-                send_to_peer(host, port, self.token, payload)
+                send_to_peer(host, port, self.token, out)
             except Exception as exc:
                 log("roster to %s:%s failed: %s" % (host, port, exc))
         return len(targets)

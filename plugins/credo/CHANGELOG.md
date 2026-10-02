@@ -6,6 +6,12 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.72
 
+#### v0.72.5
+
+##### Fixed
+
+- LAN relay rosters to a loopback peer advertise 127.0.0.1 and the listen port instead of the LAN address, so a strict loopback-only receiver accepts them
+
 #### v0.72.4
 
 ##### Fixed

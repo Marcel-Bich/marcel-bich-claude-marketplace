@@ -1312,6 +1312,22 @@ d.roster_tick()
 hosts = sorted(h for h, _, _ in sent)
 expect(hosts == ["127.0.0.1", "192.168.1.50"], "enabled: only allowlisted peers %r" % hosts)
 
+# --- advertise: LAN peers get the LAN address, loopback peers the loopback address
+adv = []
+mod.send_to_peer = lambda h, p, t, payload, timeout=5.0: adv.append(
+    (h, payload.get("advertise_host"), payload.get("advertise_port")))
+d.advertise_host, d.advertise_port = "192.168.1.104", 48610
+d.roster_tick()
+adv_map = {h: (ah, ap) for h, ah, ap in adv}
+expect(adv_map.get("192.168.1.50") == ("192.168.1.104", 48610), "LAN peer gets LAN advertise %r" % adv_map)
+expect(adv_map.get("127.0.0.1") == ("127.0.0.1", 48610), "loopback peer gets loopback advertise %r" % adv_map)
+adv.clear()
+d.advertise_host = None
+d.roster_tick()
+adv_map = {h: (ah, ap) for h, ah, ap in adv}
+expect(adv_map.get("127.0.0.1") == ("127.0.0.1", 48610), "loopback advertise even before LAN detection %r" % adv_map)
+expect(adv_map.get("192.168.1.50") == (None, None), "LAN peer: no advertise before detection %r" % adv_map)
+
 # --- Windows data file writer: only on change
 path = os.path.join(tmp, "win", "credo", "peer-lan-allow.json")
 pay = mod.win_allow_payload(st, 48610)
