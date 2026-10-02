@@ -121,14 +121,21 @@ async function runScript($: EngineInterface, args: string[]) {
   })
 }
 
-// counts; exit 4 (no credo project) or any failure hides the band
+// counts; exit 4 (no credo project) hides the band. Any other failure (a
+// timeout under load, e.g. around a compact) keeps the last known value instead
+// of blanking the band, and logs the reason to the debug log.
 async function refresh($: EngineInterface) {
   let next: CredoCounts | null = null
   try {
     const r = await runScript($, ['credo-item-counts.sh', '--json'])
+    if (r.exitCode !== 0 && r.exitCode !== 4) {
+      $.ui.log(`credo band: credo-item-counts.sh exit ${r.exitCode}: ${r.stderr.trim()}`, { to: 'debug' })
+      return
+    }
     next = r.exitCode === 0 ? JSON.parse(r.stdout) : null
-  } catch {
-    next = null
+  } catch (err) {
+    $.ui.log(`credo band: credo-item-counts.sh failed: ${String(err)}`, { to: 'debug' })
+    return
   }
   const prev = await read($, counts)
   await update($, counts, () => next)
@@ -158,10 +165,12 @@ async function refreshStatus($: EngineInterface) {
   let status: { mode: string | null; role: string | null; autonomy: { running: boolean; wake_scheduled: number | null } }
   try {
     const r = await runScript($, ['credo-session-status.sh', '--json'])
-    if (r.exitCode !== 0) throw new Error(r.stderr)
+    if (r.exitCode !== 0) throw new Error(`exit ${r.exitCode}: ${r.stderr.trim()}`)
     status = JSON.parse(r.stdout)
-  } catch {
-    status = { mode: null, role: null, autonomy: { running: false, wake_scheduled: null } }
+  } catch (err) {
+    // keep the last known mode/role/autonomy rather than blanking the line
+    $.ui.log(`credo band: credo-session-status.sh failed: ${String(err)}`, { to: 'debug' })
+    return
   }
   const nextSession: CredoSession = { mode: status.mode, role: status.role }
   await update($, session, () => nextSession)
