@@ -94,12 +94,13 @@ It reads the DOGMA-PERMISSIONS checkbox `use Hydra for 2+ independent tasks` (`#
 subsection; read via `credo-dogma-mode.sh`, works without dogma) and whether hydra is
 installed:
 
-- `flow=hydra` (`[x]` + hydra installed): use hydra's create flow automatically
+- `flow=hydra` (`[x]`, no checkbox or no DOGMA-PERMISSIONS.md - default on - + hydra
+  installed): use hydra's create flow automatically
   (`git worktree add -b hydra/<name> ../<repo>-worktrees/<name>`, then hydra's
   `worktree-setup.sh`), as `/hydra:create` describes - no user command needed.
 - `flow=ask` (`[?]` + hydra installed): ask the user ONCE per batch whether to use hydra.
   In autonomous mode never ask - treat it as `native`.
-- `flow=native` (`[ ]`, no checkbox, no DOGMA-PERMISSIONS.md, or hydra not installed):
+- `flow=native` (`[ ]` or hydra not installed):
   plain `git worktree add -b <branch> <path>`, then `credo-worktree-setup.sh`.
 
 Right after EVERY `git worktree add`, run the `setup=` script on the new worktree

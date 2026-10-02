@@ -85,7 +85,7 @@ perms "$TMP/c" '?' x
 check "flow [?] + hydra" ask "$(flow "$FAKE_HYDRA" "$TMP/c")"
 check "flow [ ] + hydra" native "$(flow "$FAKE_HYDRA" "$TMP/b")"
 if [ ! -f "$(dirname "$TMP")/DOGMA-PERMISSIONS.md" ]; then
-    check "flow missing file" native "$(flow "$FAKE_HYDRA" "$TMP/none")"
+    check "flow missing file" hydra "$(flow "$FAKE_HYDRA" "$TMP/none")"
 fi
 check "flow setup = hydra script" "setup=$FAKE_HYDRA/scripts/worktree-setup.sh" "$(CREDO_HYDRA_DIR="$FAKE_HYDRA" "$FLOW_SH" "$TMP/a" | grep '^setup=')"
 check "flow setup = credo script without hydra" "setup=$SCRIPT_DIR/credo-worktree-setup.sh" "$(CREDO_HYDRA_DIR=none "$FLOW_SH" "$TMP/a" | grep '^setup=')"

@@ -4,10 +4,11 @@
 # Reads the dogma checkbox "use Hydra for 2+ independent tasks" (### Hydra subsection of
 # DOGMA-PERMISSIONS.md, via credo-dogma-mode.sh - works without dogma) and whether the
 # hydra plugin is installed:
-#   [x] + hydra installed   -> flow=hydra   (hydra's create flow, automatically)
+#   [x] or missing (no checkbox / no DOGMA-PERMISSIONS.md) + hydra installed
+#                           -> flow=hydra   (hydra's create flow, automatically; default on)
 #   [?] + hydra installed   -> flow=ask     (ask the user once per batch; in autonomous
 #                                            mode never ask - treat as native)
-#   [ ], missing, or hydra not installed -> flow=native (git worktree add + setup)
+#   [ ] or hydra not installed -> flow=native (git worktree add + setup)
 #
 # Usage: credo-worktree-flow.sh [--json] [dir]
 # Output (kv): flow=hydra|ask|native, reason=<text>, setup=<script to run right after
@@ -67,7 +68,7 @@ else
     case "$CHECK" in
         auto) FLOW="hydra"; REASON="[x] use Hydra for 2+ independent tasks" ;;
         ask)  FLOW="ask";   REASON="[?] use Hydra for 2+ independent tasks - ask once per batch (autonomous: native)" ;;
-        missing) FLOW="native"; REASON="no Hydra checkbox in DOGMA-PERMISSIONS.md" ;;
+        missing) FLOW="hydra"; REASON="no Hydra checkbox in DOGMA-PERMISSIONS.md - default on while hydra is installed" ;;
         *)    FLOW="native"; REASON="Hydra checkbox is off" ;;
     esac
 fi
