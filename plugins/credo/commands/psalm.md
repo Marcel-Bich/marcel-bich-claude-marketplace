@@ -149,7 +149,7 @@ You can type a few short shorthands in chat; credo's SessionStart hook teaches t
 - `cc-up` - you fully updated Claude Code (plugins, reload, restart); the agent takes it at face value.
 - `cm` - commit (repo rules, no push). `ph` - commit and push.
 - `exclude` / `excluded` - always `.git/info/exclude`, never `.gitignore` (say "ignore" / "gitignore" for that).
-- Test/question letters - tests `### 🧪 B) ...`, questions `### ❓ Y) ...`, one continuous letter sequence (A..Z, then A again); answer `B vf`, `B2 vf`, `Y: ...`; open letters listed in bold at the end of each reply.
+- Test/question letters - tests `### 🧪 B) ...`, questions `### ❓ Y) ...`, one continuous letter sequence (A..Z, then A again); answer `B vf`, `B2 vf`, `Y: ...`; open letters listed in bold at the end of each reply as a language-neutral footer `**🧪: C, D** · **❓: Y**`.
 - `#N` vs `§cct_N` - `#N` only for real items (credo items, issues, PRs, tickets); Claude's harness tasks and other numbering are `§cct_N` (`§cct_2 dd` = task 2 done).
 
 ### The Full Commandments (credo)

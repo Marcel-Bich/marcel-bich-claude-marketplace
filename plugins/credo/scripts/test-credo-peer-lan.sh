@@ -26,7 +26,15 @@
 #     on re-run,
 #   - ADDRESS-based routing: two daemons configured by plain IP strings (no name
 #     contract) still deliver proxy->inbox with NO from-mode, and a 3-peer config
-#     (one daemon, two peer addresses) starts without error.
+#     (one daemon, two peer addresses) starts without error,
+#   - return channel (RC): with one-way reachability both sides still mirror each
+#     other and delivers flow both ways over the single link; simultaneous opens end
+#     with exactly one channel; a dropped channel is re-established; a wrong-token
+#     link hello registers nothing; channel gates (RG) never fall back to raw sends,
+#   - return channel hardening (RH/RO/RP): proven address claims, same-source
+#     replacement, link caps, write deadline, per-link secret proofs for tie-break
+#     and replacement, --no-direct holders, busy relay retry, relay socket perms,
+#     old-peer marking, mirror machine rename.
 #
 # Usage: bash test-credo-peer-lan.sh
 
@@ -266,25 +274,43 @@ else
 fi
 
 # --- S3: a non-dict roster entry must not crash the handler; valid ones still ----
-# materialize. Injected as machine "C" so the live A<->B roster loops never touch it.
-# The non-dict entry is first in the list, so a pre-fix handler would raise before
-# reaching the valid entry and no acme-remote mirror descriptor would ever appear.
-# A holder refuses to start for a machine it does not know, so add "C" as a peer in
-# B's config file. The already-running daemon keeps its loaded peer list (no roster
-# traffic to C); only the freshly spawned holder reads this updated file.
-cat > "$TMP/B/cfg/credo/peer-lan.json" <<EOF
-{"this_machine":"B","listen_host":"127.0.0.1","listen_port":$PB,"token":"$TOKEN",
- "roster_interval":0.3,"machine_timeout":60,
- "peers":[{"name":"A","host":"127.0.0.1","port":$PA},{"name":"C","host":"127.0.0.1","port":$PA}]}
-EOF
+# materialize. A and B paired on their first link, and every fresh-connection roster to
+# B resolves to A's address (B has one configured peer), so a roster injected over a
+# fresh connection is now refused as a claim of the paired peer A's slot (only A's
+# paired link may announce sessions there) - asserted live below. The robustness part
+# (the non-dict entry is first, so a pre-fix handler would raise before reaching the
+# valid entry) runs at the module level against an unpaired daemon.
 ROSTER_C='{"kind":"roster","machine":"C","sessions":["i-am-not-a-dict",{"name":"acme-remote","sessionId":"sid-C","status":"idle"}]}'
 "$PY" "$TMP/sendtcp.py" 127.0.0.1 "$PB" "$TOKEN" "$ROSTER_C" 2>/dev/null || true
 gotC=""
-for _ in $(seq 1 60); do
+for _ in $(seq 1 10); do
     if grep -rqF -e '--`acme-remote`+' "$TMP/B/cfg/sessions" 2>/dev/null; then gotC=1; break; fi
     sleep 0.2
 done
-ok "roster with a non-dict entry does not crash; the valid entry materializes" "$([ -n "$gotC" ] && echo 0 || echo 1)"
+ok "a fresh-connection roster claiming the paired peer's address is not served" "$([ -z "$gotC" ] && echo 0 || echo 1)"
+grep -q "roster for paired peer 127.0.0.1:$PA not over its paired link; ignored" "$TMP/B/daemon.log"
+ok "... and that refusal is logged" "$?"
+mkdir -p "$TMP/S3/cfg/sessions" "$TMP/S3/sock"
+S3_OUT="$("$PY" - "$DAEMON" "$TMP/S3" <<'PYEOF'
+import importlib.util, os, sys
+daemon_path, root = sys.argv[1:3]
+os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(root, "cfg")
+os.environ["CREDO_PEER_LAN_SOCKDIR"] = os.path.join(root, "sock")
+spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.log = lambda m: None
+d = mod.Daemon({"this_machine": "B", "peers": ["127.0.0.1:41001"], "listen_port": 41002,
+                "keys_dir": os.path.join(root, "keys")})
+d._template_descriptor_locked = lambda: {"pidDomain": "x"}
+created = []
+d._create_remote_locked = lambda key, s, t: created.append((key, s.get("name")))
+d._on_roster({"kind": "roster", "machine": "C", "sessions": ["i-am-not-a-dict",
+              {"name": "acme-remote", "sessionId": "sid-C", "status": "idle"}]}, "127.0.0.1")
+print("S3_OK" if created == [(("127.0.0.1:41001", "sid-C"), "acme-remote")] else "S3_FAIL %r" % created)
+PYEOF
+)"
+check "roster with a non-dict entry does not crash; the valid entry materializes" "S3_OK" "$S3_OUT"
 
 # --- S1: a pre-existing NON-marker descriptor at the holder pid path is NOT ------
 # overwritten (pid-reuse guard). Driven at the module level so the collision is
@@ -325,7 +351,7 @@ rc = 0
 try:
     template = {"pidDomain": "linux:x:pid:[1]", "cwd": "/tmp",
                 "version": "1", "procStart": "123"}
-    d._create_remote_locked(("REMOTE", "sid-x"),
+    d._create_remote_locked(("127.0.0.1:41999", "sid-x"),
                             {"name": "werk", "status": "idle"}, template)
     p = holders[0]
     dp = os.path.join(d.sess_dir, "%d.json" % p.pid)
@@ -333,7 +359,7 @@ try:
         after = json.load(fh)
     assert after.get("sessionId") == "real-local-session", "foreign descriptor overwritten"
     assert mod.MARK not in after, "our marker leaked into a foreign descriptor"
-    assert ("REMOTE", "sid-x") not in d.remotes, "remote registered despite collision"
+    assert ("127.0.0.1:41999", "sid-x") not in d.remotes, "remote registered despite collision"
     for _ in range(40):
         if p.poll() is not None:
             break
@@ -821,7 +847,7 @@ fi
 
 # --- B1: forward target = CONFIGURED/ADVERTISED peer, never the raw source IP ------
 # The WSL2-NAT bug: an inbound roster's source IP seen by the receiving daemon is the
-# WSL gateway (e.g. 172.23.64.1), NOT the peer's real LAN IP. Keying the peer by that
+# WSL gateway (e.g. 172.20.0.1), NOT the peer's real LAN IP. Keying the peer by that
 # source IP makes the holder forward to the gateway -> timeout. Driven at the module
 # level (no real sockets) against _resolve_peer_addr: given a source IP that differs
 # from the configured/advertised peer host, the forward target must resolve to the
@@ -833,7 +859,7 @@ spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
-GW = "172.23.64.1"  # the WSL NAT gateway the receiver wrongly saw as the source
+GW = "172.20.0.1"  # the WSL NAT gateway the receiver wrongly saw as the source
 PEER = "192.168.1.72"
 
 # one configured peer; roster arrives from the NAT gateway but ADVERTISES the peer IP
@@ -1293,11 +1319,11 @@ expect(mod.source_allowed("192.168.1.50", st), "allowed source accepted")
 expect(mod.source_allowed("192.168.2.77", st), "group subnet source accepted")
 expect(not mod.source_allowed("192.168.1.99", st), "non-matching source rejected")
 expect(not mod.source_allowed("10.1.2.3", st), "other-group source rejected")
-wst = mod.compute_lan_state(cfg, n(dict(net_home, wsl_nat_gateway="172.23.64.1")), peers)
-expect(mod.source_allowed("172.23.64.1", wst, wsl=True), "WSL: NAT gateway accepted while enabled")
-expect(not mod.source_allowed("172.23.64.1", wst, wsl=False), "native: gateway not special")
-wst_off = mod.compute_lan_state({}, n(dict(net_home, wsl_nat_gateway="172.23.64.1")), peers)
-expect(not mod.source_allowed("172.23.64.1", wst_off, wsl=True), "WSL: NAT gateway rejected while disabled")
+wst = mod.compute_lan_state(cfg, n(dict(net_home, wsl_nat_gateway="172.20.0.1")), peers)
+expect(mod.source_allowed("172.20.0.1", wst, wsl=True), "WSL: NAT gateway accepted while enabled")
+expect(not mod.source_allowed("172.20.0.1", wst, wsl=False), "native: gateway not special")
+wst_off = mod.compute_lan_state({}, n(dict(net_home, wsl_nat_gateway="172.20.0.1")), peers)
+expect(not mod.source_allowed("172.20.0.1", wst_off, wsl=True), "WSL: NAT gateway rejected while disabled")
 
 # --- outbound: no roster attempts while disabled, only allowed peers when enabled
 sent = []
@@ -1514,7 +1540,7 @@ fwcheck() { PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION
     CREDO_PEER_LAN_CONFIG="$TMP/fw/credo/peer-lan.json" CREDO_PEER_LAN_NETINFO="$FW_NET" \
     "$PY" "$DAEMON" check 2>&1; }
 FC="$(CREDO_PEER_LAN_UFW_STATUS="@$TMP/fw/ufw-status" fwcheck)"
-case "$FC" in *"not allowed for: 192.168.1.72"*"! prefix"*"  sudo ufw allow from 192.168.1.72 to any port 48610 proto tcp comment 'credo-peer-lan'"*"  sudo ufw delete allow from 10.0.0.5 to any port 48610 proto tcp"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL check ufw commands: %s\n' "$FC" ;; esac
+case "$FC" in *"not allowed for: 192.168.1.72"*"in a separate terminal"*"  sudo ufw allow from 192.168.1.72 to any port 48610 proto tcp comment 'credo-peer-lan'"*"  sudo ufw delete allow from 10.0.0.5 to any port 48610 proto tcp"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL check ufw commands: %s\n' "$FC" ;; esac
 printf 'Status: active\n\n48610/tcp ALLOW 192.168.1.0/24\n' > "$TMP/fw/ufw-ok"
 FC="$(CREDO_PEER_LAN_UFW_STATUS="@$TMP/fw/ufw-ok" fwcheck)"
 case "$FC" in *"ufw active, port 48610 allowed for the effective allowlist"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL check ufw covered: %s\n' "$FC" ;; esac
@@ -1745,6 +1771,2387 @@ print("RD_FAIL " + " | ".join(fails) if fails else "RD_OK")
 PYEOF
 RD_OUT="$("$PY" "$TMP/RD/rdtest.py" "$DAEMON" "$TMP/RD" 2>&1)"
 case "$RD_OUT" in *RD_OK*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL roster dedupe / per-port names: %s\n' "$RD_OUT" ;; esac
+
+# ===========================================================================
+# RC: RETURN CHANNEL (persistent bidirectional link). Whichever side CAN connect
+# opens ONE link and both directions (rosters + delivers) flow over it, so a pair
+# behind a cascaded NAT (P reaches L, L never reaches P) still sees each other.
+# Loopback only: a DEAD loopback port stands in for P's unreachable real address.
+# ===========================================================================
+chan_live() { # daemon.log -> live channel conns (one "local>remote" per line)
+    "$PY" - "$1" <<'PYEOF'
+import re, sys
+live = []
+for line in open(sys.argv[1], errors="replace"):
+    m = re.search(r"channel (up|down): key=\S+ dir=\S+ .*conn=(\S+)", line)
+    if not m:
+        continue
+    if m.group(1) == "up":
+        live.append(m.group(2))
+    elif m.group(2) in live:
+        live.remove(m.group(2))
+print("\n".join(live))
+PYEOF
+}
+proxy_of() { # descriptor -> messagingSocketPath
+    "$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["messagingSocketPath"])' "$1" 2>/dev/null
+}
+mirror_of() { # sessions_dir name-fragment -> descriptor path of our mirror with that session
+    grep -lF -e "$2" "$1"/*.json 2>/dev/null | while read -r f; do
+        grep -q '"credoPeerLan"' "$f" && { echo "$f"; break; }
+    done
+}
+
+# --- RC-a: one-way reachability (P -> L only) ---------------------------------
+read PRP PRL PRDEAD < <("$PY" - <<'PYEOF'
+import socket
+ps = []
+for _ in range(3):
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); ps.append(s.getsockname()[1]); s.close()
+print(ps[0], ps[1], ps[2])
+PYEOF
+)
+for M in RP RL; do mkdir -p "$TMP/$M/cfg/sessions" "$TMP/$M/cfg/credo" "$TMP/$M/sock"; done
+INBOX_RP="$TMP/RP/inbox.sock"; INBOX_RL="$TMP/RL/inbox.sock"
+: > "$TMP/RP/inbox.log"; : > "$TMP/RL/inbox.log"
+# P (box-p) can reach L. L (box-l) only knows P by an address it can NEVER reach.
+cat > "$TMP/RP/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"box-p","listen_host":"127.0.0.1","listen_port":$PRP,"token":"$TOKEN",
+ "roster_interval":0.3,"machine_timeout":60,"peers":["127.0.0.1:$PRL"]}
+EOF
+cat > "$TMP/RL/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"box-l","listen_host":"127.0.0.1","listen_port":$PRL,"token":"$TOKEN",
+ "roster_interval":0.3,"machine_timeout":60,"bind_retry_total":4.0,"peers":["127.0.0.1:$PRDEAD"]}
+EOF
+"$PY" "$TMP/inbox.py" "$INBOX_RP" "$TMP/RP/inbox.log" & PIDS="$PIDS $!"
+"$PY" "$TMP/inbox.py" "$INBOX_RL" "$TMP/RL/inbox.log" & PIDS="$PIDS $!"
+sleep 600 & SLEEP_RP=$!; PIDS="$PIDS $SLEEP_RP"
+sleep 600 & SLEEP_RL=$!; PIDS="$PIDS $SLEEP_RL"
+write_descriptor "$TMP/RP/cfg/sessions/$SLEEP_RP.json" "$SLEEP_RP" "sid-RP" "$INBOX_RP" "acme-p"
+write_descriptor "$TMP/RL/cfg/sessions/$SLEEP_RL.json" "$SLEEP_RL" "sid-RL" "$INBOX_RL" "acme-l"
+start_rl() {
+    CLAUDE_CONFIG_DIR="$TMP/RL/cfg" CREDO_PEER_LAN_CONFIG="$TMP/RL/cfg/credo/peer-lan.json" \
+        CREDO_PEER_LAN_SOCKDIR="$TMP/RL/sock" "$PY" "$DAEMON" daemon >>"$TMP/RL/daemon.log" 2>&1 &
+    RL_PID=$!; PIDS="$PIDS $RL_PID"
+}
+start_rl
+CLAUDE_CONFIG_DIR="$TMP/RP/cfg" CREDO_PEER_LAN_CONFIG="$TMP/RP/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/RP/sock" "$PY" "$DAEMON" daemon >"$TMP/RP/daemon.log" 2>&1 &
+RP_PID=$!; PIDS="$PIDS $RP_PID"
+M_L_OF_P=""; M_P_OF_L=""
+for _ in $(seq 1 60); do
+    [ -n "$M_L_OF_P" ] || M_L_OF_P="$(mirror_of "$TMP/RL/cfg/sessions" '`acme-p`+')"
+    [ -n "$M_P_OF_L" ] || M_P_OF_L="$(mirror_of "$TMP/RP/cfg/sessions" '`acme-l`+')"
+    [ -n "$M_L_OF_P" ] && [ -n "$M_P_OF_L" ] && break
+    sleep 0.25
+done
+ok "RC-a: one-way reachability - L mirrors P's session (rosters P->L)" "$([ -n "$M_L_OF_P" ] && echo 0 || echo 1)"
+ok "RC-a: one-way reachability - P mirrors L's session (rosters L->P over the channel)" "$([ -n "$M_P_OF_L" ] && echo 0 || echo 1)"
+grep -q "channel up: key=127.0.0.1:$PRDEAD dir=in peer='box-p'" "$TMP/RL/daemon.log"
+ok "RC-a: L registers P's inbound link under P's configured address" "$?"
+rc_deliver() { # mirror-desc body inbox.log -> 0 when the body arrives
+    local px; px="$(proxy_of "$1")"; [ -n "$px" ] || return 1
+    for _ in $(seq 1 40); do [ -S "$px" ] && break; sleep 0.1; done
+    "$PY" "$TMP/sendproxy.py" "$px" "rc-sender" "$2" "uds:$TMP/x.sock" 2>/dev/null || return 1
+    for _ in $(seq 1 60); do grep -q "$2" "$3" 2>/dev/null && return 0; sleep 0.2; done
+    return 1
+}
+if [ -n "$M_L_OF_P" ]; then
+    rc_deliver "$M_L_OF_P" "rc-l-to-p-over-channel" "$TMP/RP/inbox.log"
+    ok "RC-a: deliver from L's mirror of P reaches P's inbox (L cannot connect to P)" "$?"
+    grep -q "holder: forwarded deliver to 127.0.0.1:$PRDEAD (channel)" "$TMP/RL/daemon.log"
+    ok "RC-a: L's holder handed the deliver to the daemon, which used the channel" "$?"
+    lineRC="$(grep "rc-l-to-p-over-channel" "$TMP/RP/inbox.log" | tail -n1)"
+    case "$lineRC" in *from-mode*) FAIL=$((FAIL + 1)); printf 'FAIL RC-a channel deliver carries from-mode\n' ;; *) PASS=$((PASS + 1)) ;; esac
+else
+    FAIL=$((FAIL + 2)); printf 'FAIL RC-a: no mirror of P on L to deliver through\n'
+fi
+if [ -n "$M_P_OF_L" ]; then
+    rc_deliver "$M_P_OF_L" "rc-p-to-l" "$TMP/RL/inbox.log"
+    ok "RC-a: deliver from P's mirror of L reaches L's inbox" "$?"
+else
+    FAIL=$((FAIL + 1)); printf 'FAIL RC-a: no mirror of L on P to deliver through\n'
+fi
+
+# --- RC-k: the two real daemons paired automatically on their first link -------
+pk_state() { # key dir -> "<paired peers> <key of the first> <file modes>"
+    "$PY" - "$1" <<'PYEOF'
+import json, os, stat, sys
+d = sys.argv[1]
+names = sorted(os.listdir(d)) if os.path.isdir(d) else []
+keys = [json.load(open(os.path.join(d, n)))["key"] for n in names if n.startswith("peer-")]
+modes = sorted(set("%o" % stat.S_IMODE(os.stat(os.path.join(d, n)).st_mode) for n in names))
+dmode = "%o" % stat.S_IMODE(os.stat(d).st_mode) if os.path.isdir(d) else "-"
+print(len(keys), keys[0] if keys else "-", ",".join(modes) or "-", dmode)
+PYEOF
+}
+KP_RP="$TMP/RP/cfg/credo/peer-lan-keys"; KP_RL="$TMP/RL/cfg/credo/peer-lan-keys"
+for _ in $(seq 1 40); do
+    [ "$(pk_state "$KP_RP" | cut -d' ' -f1)" = 1 ] && [ "$(pk_state "$KP_RL" | cut -d' ' -f1)" = 1 ] && break
+    sleep 0.25
+done
+read -r PKN_P PKK_P PKM_P PKD_P < <(pk_state "$KP_RP")
+read -r PKN_L PKK_L PKM_L PKD_L < <(pk_state "$KP_RL")
+check "RC-k: P paired exactly one peer on its first link" "1" "$PKN_P"
+check "RC-k: L paired exactly one peer on its first link" "1" "$PKN_L"
+ok "RC-k: both daemons stored the same pairing key" "$([ "$PKK_P" = "$PKK_L" ] && [ "${#PKK_P}" = 64 ] && echo 0 || echo 1)"
+check "RC-k: every key file is 0600" "600 600" "$PKM_P $PKM_L"
+check "RC-k: key dirs are 0700" "700 700" "$PKD_P $PKD_L"
+grep -qF -- "$PKK_P" "$TMP/RP/daemon.log" "$TMP/RL/daemon.log"
+ok "RC-k: the pairing key never appears in a daemon log" "$([ $? -ne 0 ] && echo 0 || echo 1)"
+grep -q "channel up: key=127.0.0.1:$PRDEAD dir=in peer='box-p' .*paired=" "$TMP/RL/daemon.log"
+ok "RC-k: L's channel from P is authenticated by the pairing key" "$?"
+
+# --- RC-d: a link hello with a WRONG token is rejected, nothing registered -----
+cat > "$TMP/linkhello.py" <<'PYEOF'
+import hashlib, hmac, json, socket, sys
+host, port, token = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+body = json.dumps({"kind": "link", "machine": "acme-rogue", "listen_port": 1}, sort_keys=True)
+mac = hmac.new(token.encode(), body.encode(), hashlib.sha256).hexdigest()
+s = socket.create_connection((host, port), timeout=5)
+s.sendall((json.dumps({"mac": mac, "body": body}) + "\n").encode())
+s.settimeout(3)
+try:
+    data = s.recv(65536)
+except socket.timeout:
+    data = b"TIMEOUT"
+print("ACK" if data else "CLOSED")
+PYEOF
+up_before="$(grep -c "channel up" "$TMP/RL/daemon.log")"
+RCD="$("$PY" "$TMP/linkhello.py" 127.0.0.1 "$PRL" "wrong-token" 2>&1)"
+check "RC-d: wrong-token link hello is closed without an ack" "CLOSED" "$RCD"
+sleep 0.3
+check "RC-d: wrong-token link hello registers no channel" "$up_before" "$(grep -c "channel up" "$TMP/RL/daemon.log")"
+grep -q "acme-rogue" "$TMP/RL/daemon.log"
+ok "RC-d: the rogue link never shows up as a channel peer" "$([ $? -ne 0 ] && echo 0 || echo 1)"
+
+# --- RC-c: channel drop -> re-established (L restarts; P re-opens the link) ----
+kill -TERM "$RL_PID" 2>/dev/null || true
+for _ in $(seq 1 40); do kill -0 "$RL_PID" 2>/dev/null || break; sleep 0.1; done
+down=""
+for _ in $(seq 1 40); do grep -q "channel down: key=127.0.0.1:$PRL" "$TMP/RP/daemon.log" && { down=1; break; }; sleep 0.1; done
+ok "RC-c: P notices the dropped channel" "$([ -n "$down" ] && echo 0 || echo 1)"
+start_rl
+reup=""
+for _ in $(seq 1 80); do
+    [ "$(grep -c "channel up: key=127.0.0.1:$PRL dir=out" "$TMP/RP/daemon.log")" -ge 2 ] && { reup=1; break; }
+    sleep 0.2
+done
+ok "RC-c: P re-establishes the channel after L comes back" "$([ -n "$reup" ] && echo 0 || echo 1)"
+M_L_OF_P2=""
+for _ in $(seq 1 60); do
+    M_L_OF_P2="$(mirror_of "$TMP/RL/cfg/sessions" '`acme-p`+')"
+    [ -n "$M_L_OF_P2" ] && break
+    sleep 0.25
+done
+if [ -n "$M_L_OF_P2" ]; then
+    rc_deliver "$M_L_OF_P2" "rc-after-reconnect" "$TMP/RP/inbox.log"
+    ok "RC-c: deliver L->P works again over the re-established channel" "$?"
+else
+    FAIL=$((FAIL + 1)); printf 'FAIL RC-c: restarted L never mirrored P again\n'
+fi
+check "RC-c: exactly one live channel on P after the reconnect" "1" "$(chan_live "$TMP/RP/daemon.log" | grep -c .)"
+read -r PKN_L2 PKK_L2 _ _ < <(pk_state "$KP_RL")
+ok "RC-c: the restarted L kept its pairing key (no re-pairing)" "$([ "$PKN_L2" = 1 ] && [ "$PKK_L2" = "$PKK_L" ] && echo 0 || echo 1)"
+check "RC-c: the reconnect is authenticated by the stored key (paired link up twice on P)" "2" \
+    "$(grep -c "channel up: key=127.0.0.1:$PRL dir=out .*paired=" "$TMP/RP/daemon.log")"
+cat "$TMP/RP/daemon.log" "$TMP/RL/daemon.log" | grep -q "pair-reset"
+ok "RC-c: no pending repair after a restart (no manual step needed)" "$([ $? -ne 0 ] && echo 0 || echo 1)"
+
+# --- RC-b: both reachable, both open links -> exactly ONE channel per pair -----
+read PRX PRY < <("$PY" - <<'PYEOF'
+import socket
+ps = []
+for _ in range(2):
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); ps.append(s.getsockname()[1]); s.close()
+print(ps[0], ps[1])
+PYEOF
+)
+for M in RX RY; do mkdir -p "$TMP/$M/cfg/sessions" "$TMP/$M/cfg/credo" "$TMP/$M/sock"; done
+cat > "$TMP/RX/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"box-1","listen_host":"127.0.0.1","listen_port":$PRX,
+ "roster_interval":0.3,"machine_timeout":60,"peers":["127.0.0.1:$PRY"]}
+EOF
+cat > "$TMP/RY/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"box-2","listen_host":"127.0.0.1","listen_port":$PRY,
+ "roster_interval":0.3,"machine_timeout":60,"peers":["127.0.0.1:$PRX"]}
+EOF
+# start both at the same moment so both really try to open a link
+CLAUDE_CONFIG_DIR="$TMP/RX/cfg" CREDO_PEER_LAN_CONFIG="$TMP/RX/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/RX/sock" "$PY" "$DAEMON" daemon >"$TMP/RX/daemon.log" 2>&1 & PIDS="$PIDS $!"
+CLAUDE_CONFIG_DIR="$TMP/RY/cfg" CREDO_PEER_LAN_CONFIG="$TMP/RY/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/RY/sock" "$PY" "$DAEMON" daemon >"$TMP/RY/daemon.log" 2>&1 & PIDS="$PIDS $!"
+# wait for the converged STATE (not a fixed time): one live channel on each side, the
+# same connection seen from both ends, and the pairing stored on both
+rcb_state() { # -> "<live X> <live Y> <same conn 0/1> <pairs X> <pairs Y>"
+    local lx ly lym
+    lx="$(chan_live "$TMP/RX/daemon.log")"; ly="$(chan_live "$TMP/RY/daemon.log")"
+    lym="$(printf '%s' "$ly" | awk -F'>' '{print $2 ">" $1}')"
+    printf '%s %s %s %s %s\n' "$(printf '%s' "$lx" | grep -c .)" "$(printf '%s' "$ly" | grep -c .)" \
+        "$([ -n "$lx" ] && [ "$lx" = "$lym" ] && echo 1 || echo 0)" \
+        "$(ls "$TMP/RX/cfg/credo/peer-lan-keys"/peer-*.json 2>/dev/null | wc -l)" \
+        "$(ls "$TMP/RY/cfg/credo/peer-lan-keys"/peer-*.json 2>/dev/null | wc -l)"
+}
+RCB=""
+for _ in $(seq 1 120); do RCB="$(rcb_state)"; [ "$RCB" = "1 1 1 1 1" ] && break; sleep 0.25; done
+LX="$(chan_live "$TMP/RX/daemon.log")"; LY="$(chan_live "$TMP/RY/daemon.log")"
+check "RC-b: box-1 has exactly one live channel" "1" "$(printf '%s' "$LX" | grep -c .)"
+check "RC-b: box-2 has exactly one live channel" "1" "$(printf '%s' "$LY" | grep -c .)"
+# both ends must describe the SAME tcp connection (local>remote mirrored)
+LYM="$(printf '%s' "$LY" | awk -F'>' '{print $2 ">" $1}')"
+check "RC-b: both sides keep the same single connection" "$LX" "$LYM"
+# tie-break: when box-1's own outbound link came up while box-2's link existed too,
+# the link opened by the machine whose name sorts lower (box-1) is the one kept. If
+# box-1's first dial hit box-2 before it listened (connection refused, backoff),
+# box-2's link is up and proven first and box-1 correctly never dials again: then
+# there was no tie to break and box-2's outbound link is the single channel.
+X_OUT_UPS="$(grep -c "channel up: key=127.0.0.1:$PRY dir=out" "$TMP/RX/daemon.log")"
+if [ "$X_OUT_UPS" -ge 1 ]; then
+    printf '%s\n' "$LX" | grep -q "^127.0.0.1:[0-9]*>127.0.0.1:$PRY$"
+else
+    printf '%s\n' "$LY" | grep -q "^127.0.0.1:[0-9]*>127.0.0.1:$PRX$"
+fi
+ok "RC-b: the kept link follows the tie-break (box-1, the lower name, wins a real tie)" "$?"
+# no flapping: nothing new comes up or goes down in an observation window after the
+# converged state (a window is the only way to observe the absence of churn)
+UPS_X="$(grep -c "channel up:" "$TMP/RX/daemon.log")"; UPS_Y="$(grep -c "channel up:" "$TMP/RY/daemon.log")"
+sleep 1.5
+check "RC-b: still exactly one channel later (no flapping)" "1 1 1 1 1" "$(rcb_state)"
+check "RC-b: no reconnect churn (no new channel on either side)" "$UPS_X $UPS_Y" \
+    "$(grep -c "channel up:" "$TMP/RX/daemon.log") $(grep -c "channel up:" "$TMP/RY/daemon.log")"
+ok "RC-b: box-1's own outbound link came up at most once" "$([ "$X_OUT_UPS" -le 1 ] && echo 0 || echo 1)"
+read -r PKN_X PKK_X _ _ < <(pk_state "$TMP/RX/cfg/credo/peer-lan-keys")
+read -r PKN_Y PKK_Y _ _ < <(pk_state "$TMP/RY/cfg/credo/peer-lan-keys")
+ok "RC-b: simultaneous first contact still yields one shared pairing key" \
+    "$([ "$PKN_X" = 1 ] && [ "$PKN_Y" = 1 ] && [ "$PKK_X" = "$PKK_Y" ] && echo 0 || echo 1)"
+cat "$TMP/RP/daemon.log" "$TMP/RL/daemon.log" "$TMP/RX/daemon.log" "$TMP/RY/daemon.log" | grep -q Traceback
+ok "RC: no traceback in any return-channel daemon log" "$([ $? -ne 0 ] && echo 0 || echo 1)"
+
+# --- RG: channel gates (module level, no sockets) -----------------------------
+# A roster whose forward target is outside the outbound allowlist is ignored when it
+# arrives on a fresh connection, accepted ONLY over an accepted inbound channel; a
+# send to such an address never falls back to a raw connection.
+mkdir -p "$TMP/RG/cfg/sessions" "$TMP/RG/sock"
+cat > "$TMP/RG/rgtest.py" <<'PYEOF'
+import importlib.util, os, sys
+daemon_path, root = sys.argv[1:3]
+os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(root, "cfg")
+os.environ["CREDO_PEER_LAN_SOCKDIR"] = os.path.join(root, "sock")
+spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.log = lambda m: None
+fails = []
+def expect(cond, name):
+    if not cond:
+        fails.append(name)
+raw = []
+mod.send_to_peer = lambda h, p, t, payload, timeout=5.0: raw.append((h, p))
+d = mod.Daemon({"this_machine": "box-l", "peers": ["192.168.1.42"], "listen_port": 48610})
+d.lan_state = mod.compute_lan_state({}, None, d.peers)   # LAN disabled: outbound gate closed
+created = []
+def fake_create(key, s, template):
+    created.append(key)
+    d.remotes[key] = {"holder": None, "proxy": "/x", "descriptor": None, "pid": 0,
+                      "machine": s.get("machine")}
+d._create_remote_locked = fake_create
+d._template_descriptor_locked = lambda: {"pidDomain": "x"}
+roster = {"kind": "roster", "machine": "box-p", "listen_port": 48610,
+          "advertise_host": "192.168.1.42", "advertise_port": 48610,
+          "sessions": [{"sessionId": "sid-p", "name": "acme-p"}]}
+d._on_roster(dict(roster), "192.168.1.42")
+expect(created == [], "fresh-connection roster to a non-allowlisted target must be ignored")
+class FakeSock(object):
+    def __init__(self): self.sent = []
+    def sendall(self, b): self.sent.append(b)
+    def shutdown(self, how): pass
+    def close(self): pass
+    def getsockname(self): return ("127.0.0.1", 1)
+    def getpeername(self): return ("127.0.0.1", 2)
+fs = FakeSock()
+ch = mod.Channel(fs, ("192.168.1.42", 48610), True, "in", "192.168.1.42", "box-p", 48610, 0.3)
+expect(d._register_channel(ch), "inbound channel registers")
+d._on_roster(dict(roster), "192.168.1.42", ch)
+expect(created == [("192.168.1.42:48610", "sid-p")], "roster over an accepted inbound channel is served %r" % created)
+via = d.send_frame("192.168.1.42", 48610, {"kind": "deliver"}, allow_raw=False)
+expect(via == "channel" and len(fs.sent) == 1 and not raw, "send goes over the channel, not raw")
+d._drop_channel(ch, "test")
+try:
+    d.send_frame("192.168.1.42", 48610, {"kind": "deliver"}, allow_raw=False)
+    fails.append("send without a channel to a non-allowlisted address must fail")
+except Exception:
+    pass
+expect(not raw, "never a raw connection to a non-allowlisted address %r" % raw)
+# a channel frame is signed exactly like a fresh-connection frame
+d.token = "tok-123"
+ch2 = mod.Channel(FakeSock(), ("127.0.0.1", 5), True, "out", "127.0.0.1", "box-p", 5, 0.3)
+d._register_channel(ch2)
+d.send_frame("127.0.0.1", 5, {"kind": "ping"})
+line = ch2.sock.sent[0].decode()
+expect(mod.verify_line("tok-123", line) == {"kind": "ping"}, "channel frame signed with the token")
+expect(mod.verify_line("other", line) is None, "channel frame rejected with another token")
+print("RG_FAIL " + " | ".join(fails) if fails else "RG_OK")
+PYEOF
+RG_OUT="$("$PY" "$TMP/RG/rgtest.py" "$DAEMON" "$TMP/RG" 2>&1)"
+case "$RG_OUT" in *RG_OK*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL channel gates: %s\n' "$RG_OUT" ;; esac
+
+# --- RH: return channel hardening (module level, fake sockets, no LAN) --------
+# Each result line is "PASS <name>" or "FAIL <name>: <detail>" and counts on its own.
+#   M1  a link may claim a reachable configured peer address only from that peer's
+#       own source IP (or loopback / the WSL NAT gateway); a live channel is replaced
+#       only from the same source; our own outbound link beats an unverified inbound.
+#   M2  holders for via-inbound peers get --no-direct and are not created without
+#       the relay socket; a busy relay socket (EAGAIN) is retried, never bypassed.
+#   m1  channel writes have a short deadline; derived read timeouts are capped.
+#   m2  inbound links are capped per source IP and in total.
+#   m3  a random nonce breaks a tie between identical machine names and ports
+#       (between two links proven to come from the same peer).
+#   m5  the relay socket is created under umask 077 in a 0700 sock dir.
+#   m6  the relay socket rejects non-deliver frames.
+#   MR  a sender re-announcing a session under a new machine name renames the mirror.
+#   H1  a gateway/loopback link naming a reachable peer's machine leaves our outbound
+#       link in place (a per-link secret proof decides, never the name or the nonce);
+#       shared-source replacement needs a resume proof or an idle link.
+#   N1  fields copied from another link never replace our link; a simultaneous open
+#       still converges to exactly one connection, the same on both sides.
+#   N2  over a link, a second machine never takes over (or prunes) a live machine's
+#       sessions on the same address; once that machine is silent the rename applies.
+#   N3  a roster with a non-string machine is ignored, never raises.
+#   m3b refused-link and duplicate-session log tags stay bounded.
+#   m5b claims outside the allowlist only for configured peers; gateway capped at
+#       max(2, configured peers).
+#   MR2 a second machine on the same address never takes over or prunes sessions.
+#   Z1  a malformed chal / proof / resume (surrogate, non-hex, wrong type) counts as
+#       absent: no crash, no unacked zombie link, our own link still wins; a failure
+#       after registration drops the link, a failed outbound attempt backs off.
+mkdir -p "$TMP/RH/cfg/sessions" "$TMP/RH/sock"
+cat > "$TMP/RH/rhtest.py" <<'PYEOF'
+import errno, importlib.util, json, os, socket, stat, sys, threading, time
+daemon_path, root = sys.argv[1:3]
+os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(root, "cfg")
+os.environ["CREDO_PEER_LAN_SOCKDIR"] = os.path.join(root, "sock")
+spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+logs = []
+mod.log = lambda m: logs.append(m)
+def res(name, cond, detail=""):
+    print(("PASS %s" % name) if cond else ("FAIL %s: %s" % (name, detail)))
+def guard(name, fn):
+    try:
+        fn()
+    except Exception as exc:
+        res(name, False, "raised %s: %s" % (type(exc).__name__, exc))
+raw = []
+mod.send_to_peer = lambda h, p, t, payload, timeout=5.0: raw.append((h, p, payload.get("kind")))
+
+MAC = "aa:bb:cc:dd:ee:01"
+NET = mod.normalize_netinfo({"ip": "192.168.1.10", "subnet": "192.168.1.0/24", "gateway_mac": MAC,
+                             "wsl_nat_gateway": "172.20.0.1"})
+CFG = {"networks": {"home": {"fingerprint": {"gateway_mac": MAC, "subnet": "192.168.1.0/24"},
+                             "allow": ["192.168.1.0/24"]}}}
+PEERS = ["192.168.1.42", "192.168.1.43", "10.9.9.9"]   # 10.9.9.9 is outside the allowlist
+
+def new_daemon(peers=PEERS, machine="box-l", wsl=False):
+    d = mod.Daemon({"this_machine": machine, "token": "tok", "peers": list(peers), "listen_port": 48610})
+    d.wsl = wsl
+    d.lan_state = mod.compute_lan_state(CFG, NET, d.peers, wsl)
+    d._channel_reader = lambda ch, buf=b"": None   # keep accepted links registered
+    return d
+
+class FakeSock(object):
+    def __init__(self, peer=("127.0.0.1", 2)):
+        self.sent, self.closed, self.peer = [], False, peer
+    def sendall(self, b): self.sent.append(b)
+    def send(self, b): self.sent.append(bytes(b)); return len(b)
+    def recv(self, n): return b""
+    def settimeout(self, t): pass
+    def dup(self): return self
+    def shutdown(self, how): pass
+    def close(self): self.closed = True
+    def getsockname(self): return ("127.0.0.1", 1)
+    def getpeername(self): return self.peer
+
+def hello(machine, port=48610, adv=None, nonce=None, chal=None, proof=None, resume=None):
+    h = {"kind": "link", "machine": machine, "listen_port": port, "roster_interval": 0.3}
+    if adv:
+        h.update(advertise_host=adv, advertise_port=48610)
+    for k, v in (("nonce", nonce), ("chal", chal), ("proof", proof), ("resume", resume)):
+        if v is not None:
+            h[k] = v
+    return h
+
+def lproof(a, b):
+    """link_proof of the daemon, or a value no link can carry when it does not exist."""
+    fn = getattr(mod, "link_proof", None)
+    return fn(a, b) if fn else "no-link-proof"
+
+def rproof(a, b):
+    fn = getattr(mod, "resume_proof", None)
+    return fn(a, b) if fn else "no-resume-proof"
+
+def link_in(d, src, h):
+    s = FakeSock((src, 40000))
+    d._accept_link(s, (src, 40000), h, b"")
+    return s
+
+def acked(s):
+    for b in s.sent:
+        p = mod.verify_line("tok", b.decode().strip())
+        if p and p.get("kind") == "link" and p.get("ack"):
+            return True
+    return False
+
+# ---- M1: address hijack -------------------------------------------------------
+def m1_foreign_source():
+    d = new_daemon()
+    rogue = link_in(d, "192.168.1.43", hello("acme-rogue", adv="192.168.1.42"))
+    ch = d._get_channel("192.168.1.42:48610")
+    res("M1: link from another source never registers under a configured peer's address",
+        ch is None, "registered %r" % ((ch and (ch.src_ip, ch.remote_machine)),))
+    del raw[:]
+    d.send_frame("192.168.1.42", 48610, {"kind": "deliver", "body": "x"})
+    res("M1: delivers for that peer still go to the real peer, not to the rogue link",
+        raw == [("192.168.1.42", 48610, "deliver")]
+        and not any(b"deliver" in b for b in rogue.sent), "raw=%r rogue=%r" % (raw, rogue.sent))
+    real = link_in(d, "192.168.1.42", hello("box-p", adv="192.168.1.42"))
+    ch = d._get_channel("192.168.1.42:48610")
+    res("M1: the real peer's own link registers under its address",
+        ch is not None and ch.src_ip == "192.168.1.42" and acked(real), "ch=%r" % ch)
+guard("M1 foreign source", m1_foreign_source)
+
+def m1_single_peer_fallback():
+    d = new_daemon(peers=["192.168.1.42"])
+    link_in(d, "192.168.1.43", hello("acme-rogue"))
+    res("M1: single-peer fallback never maps a foreign source onto the configured peer",
+        d._get_channel("192.168.1.42:48610") is None, "channels=%r" % list(d.channels))
+guard("M1 single peer", m1_single_peer_fallback)
+
+def m1_replace_same_source_only():
+    d = new_daemon()
+    a = link_in(d, "192.168.1.50", hello("box-v", adv="10.9.9.9"))
+    ch = d._get_channel("10.9.9.9:48610")
+    res("M1: via-inbound link for an address outside the outbound allowlist registers",
+        ch is not None and ch.src_ip == "192.168.1.50" and acked(a), "channels=%r" % list(d.channels))
+    link_in(d, "192.168.1.51", hello("box-v", adv="10.9.9.9"))
+    ch2 = d._get_channel("10.9.9.9:48610")
+    res("M1: a live channel is not replaced by a link from another source",
+        ch2 is ch and not ch.closed, "now %r" % (ch2 and ch2.src_ip))
+    link_in(d, "192.168.1.50", hello("box-v", adv="10.9.9.9"))
+    ch3 = d._get_channel("10.9.9.9:48610")
+    res("M1: a link from the same source replaces the stale channel",
+        ch3 is not None and ch3 is not ch and ch.closed, "same=%r" % (ch3 is ch))
+guard("M1 replace", m1_replace_same_source_only)
+
+def m1_prefer_outbound():
+    log_path = os.path.join(root, "sendlog")
+    open(log_path, "w").close()
+    os.environ["CREDO_PEER_LAN_TEST_SENDLOG"] = log_path
+    try:
+        d = new_daemon(wsl=True)
+        # under WSL NAT every inbound link arrives from the gateway: the claim is
+        # allowed, but it is unverified, so we still open our own link to the peer
+        link_in(d, "172.20.0.1", hello("acme-rogue", adv="192.168.1.42"))
+        inb = d._get_channel("192.168.1.42:48610")
+        res("M1: WSL gateway link may claim a configured peer", inb is not None, "channels=%r" % list(d.channels))
+        d.link_tick()
+        time.sleep(0.3)
+        with open(log_path) as fh:
+            tried = fh.read()
+        res("M1: own outbound link is attempted despite an unverified inbound channel",
+            "link 192.168.1.42:48610" in tried, "sendlog=%r" % tried)
+        out = mod.Channel(FakeSock(("192.168.1.42", 48610)), ("192.168.1.42", 48610), True, "out",
+                          "192.168.1.42", "box-p", 48610, 0.3)
+        ok = d._register_channel(out)
+        cur = d._get_channel("192.168.1.42:48610")
+        res("M1: our own outbound link replaces the unverified inbound one",
+            ok and cur is out and inb.closed, "ok=%r cur=%r" % (ok, cur and cur.direction))
+        # a VERIFIED inbound (from the peer's own IP) needs no second link
+        d2 = new_daemon()
+        link_in(d2, "192.168.1.42", hello("box-p", adv="192.168.1.42"))
+        open(log_path, "w").close()
+        d2.link_tick()
+        time.sleep(0.3)
+        with open(log_path) as fh:
+            tried = fh.read()
+        res("M1: no extra link while the peer's verified link is alive",
+            "192.168.1.42" not in tried, "sendlog=%r" % tried)
+    finally:
+        os.environ.pop("CREDO_PEER_LAN_TEST_SENDLOG", None)
+guard("M1 prefer outbound", m1_prefer_outbound)
+
+# ---- M2: via-inbound holders never send directly --------------------------------
+class Args(object):
+    def __init__(self, relay, no_direct):
+        self.relay_sock, self.no_direct, self.target_session = relay, no_direct, "sid-x"
+FRAME = json.dumps({"type": "user", "message": {"content": "hi"}}).encode()
+def m2_holder_no_direct():
+    del raw[:]
+    mod._forward(FRAME, "tok", "10.9.9.9", 48610, Args(os.path.join(root, "nope.sock"), True), root)
+    res("M2: --no-direct holder never sends raw when the relay socket is missing", raw == [], "raw=%r" % raw)
+    del raw[:]
+    mod._forward(FRAME, "tok", "192.168.1.42", 48610, Args(os.path.join(root, "nope.sock"), False), root)
+    res("M2: a normal holder still falls back to a direct send", raw == [("192.168.1.42", 48610, "deliver")],
+        "raw=%r" % raw)
+guard("M2 no-direct", m2_holder_no_direct)
+
+def m2_relay_busy():
+    path = os.path.join(root, "busy.sock")
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(path); srv.listen(8)
+    def serve():
+        while True:
+            try:
+                c, _ = srv.accept()
+            except OSError:
+                return
+            c.recv(65536); c.sendall(b"ok channel\n"); c.close()
+    threading.Thread(target=serve, daemon=True).start()
+    real = mod.socket.socket
+    state = {"n": 0, "limit": 2}
+    class Busy(real):
+        def connect(self, addr):
+            if self.family == socket.AF_UNIX and state["n"] < state["limit"]:
+                state["n"] += 1
+                raise BlockingIOError(errno.EAGAIN, "Resource temporarily unavailable")
+            return real.connect(self, addr)
+    mod.socket.socket = Busy
+    try:
+        r = mod.relay_via_daemon(path, "192.168.1.42", 48610, {"kind": "deliver"})
+        res("M2: EAGAIN on the relay socket is retried", r.startswith("ok"), "reply=%r" % r)
+        state.update(n=0, limit=10 ** 6)
+        del raw[:]
+        mod._forward(FRAME, "tok", "192.168.1.42", 48610, Args(path, False), root)
+        res("M2: a persistently busy relay is never bypassed with a raw send", raw == [], "raw=%r" % raw)
+    finally:
+        mod.socket.socket = real
+        srv.close()
+    res("M2: relay socket backlog is raised", getattr(mod, "RELAY_BACKLOG", 0) >= 64,
+        "RELAY_BACKLOG=%r" % getattr(mod, "RELAY_BACKLOG", None))
+guard("M2 busy", m2_relay_busy)
+
+class FakeProc(object):
+    pid = 99999
+    def poll(self): return 1
+    returncode = 1
+def m2_via_inbound_holder():
+    argvs = []
+    real_popen = mod.subprocess.Popen
+    mod.subprocess.Popen = lambda argv, env=None: (argvs.append(argv), FakeProc())[1]
+    try:
+        d = new_daemon()
+        d._template_descriptor_locked = lambda: {"pidDomain": "x"}
+        ch = mod.Channel(FakeSock(), ("10.9.9.9", 48610), True, "in", "192.168.1.50", "box-v", 48610, 0.3)
+        d._register_channel(ch)
+        roster = {"kind": "roster", "machine": "box-v", "listen_port": 48610,
+                  "sessions": [{"sessionId": "sid-v", "name": "acme-v"}]}
+        d.relay_path = None
+        d._on_roster(dict(roster), "192.168.1.50", ch)
+        res("M2: no via-inbound holder while the relay socket is unavailable", argvs == [], "argv=%r" % argvs)
+        d.relay_path = os.path.join(root, "relay.sock")
+        d._on_roster(dict(roster), "192.168.1.50", ch)
+        res("M2: a via-inbound holder is spawned with --no-direct",
+            len(argvs) == 1 and "--no-direct" in argvs[0], "argv=%r" % argvs)
+        del argvs[:]
+        d._on_roster({"kind": "roster", "machine": "box-p", "listen_port": 48610,
+                      "advertise_host": "192.168.1.42", "advertise_port": 48610,
+                      "sessions": [{"sessionId": "sid-p", "name": "acme-p"}]}, "192.168.1.42")
+        res("M2: a holder for an allowlisted peer has no --no-direct",
+            len(argvs) == 1 and "--no-direct" not in argvs[0], "argv=%r" % argvs)
+    finally:
+        mod.subprocess.Popen = real_popen
+guard("M2 via-inbound holder", m2_via_inbound_holder)
+
+# ---- m1: slow peer --------------------------------------------------------------
+def m1_slow_peer():
+    d = new_daemon()
+    res("m1: derived read timeout is capped", d._chan_timeout(600) <= 61, "timeout=%r" % d._chan_timeout(600))
+    mod.CHAN_WRITE_TIMEOUT = 0.5
+    a, b = socket.socketpair()
+    a.settimeout(8)   # a read timeout, as on every real channel socket
+    ch = mod.Channel(a, ("10.9.9.9", 48610), True, "in", "192.168.1.50", "box-v", 48610, 0.3)
+    d._register_channel(ch)
+    big = {"kind": "deliver", "body": "x" * (2 * 1024 * 1024)}
+    t0 = time.monotonic()
+    err = None
+    try:
+        for _ in range(4):
+            d.send_frame("10.9.9.9", 48610, big, allow_raw=False)
+    except Exception as exc:
+        err = exc
+    took = time.monotonic() - t0
+    res("m1: a peer that stops reading times out quickly and the channel is dropped",
+        err is not None and took < 3.0 and d._get_channel("10.9.9.9:48610") is None,
+        "err=%r took=%.1f" % (err, took))
+    b.close()
+guard("m1 slow peer", m1_slow_peer)
+
+# ---- m2: inbound link caps -------------------------------------------------------
+def m2_caps():
+    d = new_daemon()
+    link_in(d, "192.168.1.50", hello("box-v", adv="10.9.9.9"))
+    s2 = link_in(d, "192.168.1.50", hello("box-w", port=5000))
+    res("m2: at most one inbound link per source IP",
+        d._get_channel("192.168.1.50:5000") is None and not acked(s2), "channels=%r" % list(d.channels))
+    d = new_daemon()
+    for i in range(6):
+        link_in(d, "192.168.1.%d" % (60 + i), hello("box-%d" % i))
+    n_in = len([c for c in d.channels.values() if c.direction == "in"])
+    res("m2: inbound links capped at len(peers)+2", n_in == len(PEERS) + 2, "inbound=%d" % n_in)
+guard("m2 caps", m2_caps)
+
+# ---- m3: nonce tie-break ---------------------------------------------------------
+def m3_nonce():
+    A = new_daemon(peers=["127.0.0.1:48610"], machine="box-1")
+    B = new_daemon(peers=["127.0.0.1:48610"], machine="box-1")
+    res("m3: link hello carries a nonce", bool(A._link_hello("127.0.0.1").get("nonce")), "hello=%r" % A._link_hello("127.0.0.1"))
+    na, nb = A._link_hello("127.0.0.1").get("nonce"), B._link_hello("127.0.0.1").get("nonce")
+    res("m3: nonces differ per daemon", na != nb, "%r %r" % (na, nb))
+    # connection 1 = A->B, connection 2 = B->A; each side sees its out first, then the in
+    # c1 carries A's per-link secret s1, c2 carries B's s2; each out link got an ack
+    # proof from the other side (both outs were pending when the ins were accepted)
+    def mk(direction, nonce, secret, proof=""):
+        return mod.Channel(FakeSock(), ("127.0.0.1", 48610), True, direction, "127.0.0.1",
+                           "box-1", 48610, 0.3, remote_nonce=nonce, secret=secret, proof=proof)
+    s1, s2 = "1" * 32, "2" * 32
+    a_out = mk("out", nb, s1, lproof(s2, s1)); a_in = mk("in", nb, s2)
+    b_out = mk("out", na, s2, lproof(s1, s2)); b_in = mk("in", na, s1)
+    A._register_channel(a_out); A._register_channel(a_in)
+    B._register_channel(b_out); B._register_channel(b_in)
+    a_keep = "c1" if A._get_channel("127.0.0.1:48610") is a_out else "c2"
+    b_keep = "c2" if B._get_channel("127.0.0.1:48610") is b_out else "c1"
+    res("m3: identical machine name and port still keep the SAME connection on both sides",
+        a_keep == b_keep, "A keeps %s, B keeps %s" % (a_keep, b_keep))
+guard("m3 nonce", m3_nonce)
+
+# ---- m5: relay socket permissions --------------------------------------------------
+def m5_perms():
+    sd = os.path.join(root, "sockperm")
+    real_chmod = mod.os.chmod
+    mod.os.chmod = lambda *a, **k: None   # prove the mode comes from creation, not a later chmod
+    try:
+        d = new_daemon()
+        d.sock_dir = sd
+        d._ensure_sock_dir()
+        d._start_relay()
+    finally:
+        mod.os.chmod = real_chmod
+    dmode = stat.S_IMODE(os.stat(sd).st_mode)
+    res("m5: sock dir is created 0700", dmode == 0o700, "mode=%o" % dmode)
+    smode = stat.S_IMODE(os.stat(d.relay_path).st_mode) if d.relay_path else 0o777
+    res("m5: relay socket is bound under umask 077 (no group/other bits)", smode & 0o077 == 0, "mode=%o" % smode)
+    d.stop.set()
+    d.relay_srv.close()
+guard("m5 perms", m5_perms)
+
+# ---- m6: relay rejects non-deliver frames ------------------------------------------
+def m6_relay_kinds():
+    d = new_daemon()
+    del raw[:]
+    for kind in ("roster", "link", "ping"):
+        a, b = socket.socketpair()
+        d.relay_sem.acquire()
+        t = threading.Thread(target=d._handle_relay, args=(b,))
+        t.start()
+        a.sendall((json.dumps({"peer_host": "192.168.1.42", "peer_port": 48610,
+                               "payload": {"kind": kind}}) + "\n").encode())
+        reply = a.recv(4096).decode()
+        t.join(5)
+        a.close()
+        res("m6: relay socket rejects a %s frame" % kind, reply.startswith("err"), "reply=%r" % reply)
+    res("m6: nothing was sent for rejected relay frames", raw == [], "raw=%r" % raw)
+guard("m6 relay kinds", m6_relay_kinds)
+
+# ---- H1: link hijack via the WSL NAT gateway / loopback --------------------------
+GW = "172.20.0.1"
+def sent_kinds(s):
+    out = []
+    for b in s.sent:
+        p = mod.verify_line("tok", b.decode().strip())
+        if p:
+            out.append(p.get("kind"))
+    return out
+def h1_hijack(src, wsl):
+    key = "192.168.1.42:48610"
+    # (a) our outbound link is up first; a shared-source link names the real peer's machine.
+    # Our machine name sorts higher, so a name-based tie-break would hand the link over.
+    d = new_daemon(wsl=wsl, machine="box-z")
+    real = FakeSock(("192.168.1.42", 48610))
+    out = mod.Channel(real, ("192.168.1.42", 48610), True, "out", "192.168.1.42", "box-p", 48610, 0.3,
+                      remote_nonce="n-real")
+    d._register_channel(out)
+    for nonce in ("", "0", "00000000"):
+        rogue = link_in(d, src, hello("box-p", adv="192.168.1.42", nonce=nonce))
+        if acked(rogue):
+            break
+    cur = d._get_channel(key)
+    res("H1 %s: an impersonating link never displaces our outbound link" % src,
+        cur is out and not out.closed and not acked(rogue), "cur=%r" % (cur and cur.direction))
+    res("H1 %s: the impersonating link does not mark our link as tie-lost" % src,
+        key not in d.link_tie_lost, "tie_lost=%r" % d.link_tie_lost)
+    raw.clear()
+    d.send_frame("192.168.1.42", 48610, {"kind": "deliver", "body": "x"})
+    res("H1 %s: delivers keep reaching the real peer" % src,
+        "deliver" in sent_kinds(real) and "deliver" not in sent_kinds(rogue) and raw == [],
+        "real=%r rogue=%r raw=%r" % (sent_kinds(real), sent_kinds(rogue), raw))
+    # (b) the impersonating link arrives first; our own outbound link still wins
+    d = new_daemon(wsl=wsl, machine="box-z")
+    rogue = link_in(d, src, hello("box-p", adv="192.168.1.42", nonce="0"))
+    real = FakeSock(("192.168.1.42", 48610))
+    out = mod.Channel(real, ("192.168.1.42", 48610), True, "out", "192.168.1.42", "box-p", 48610, 0.3,
+                      remote_nonce="n-real")
+    ok = d._register_channel(out)
+    res("H1 %s: our outbound link replaces an earlier impersonating link" % src,
+        ok and d._get_channel(key) is out and key not in d.link_tie_lost,
+        "ok=%r tie_lost=%r" % (ok, d.link_tie_lost))
+    # (c) a true simultaneous open of the same pair (the inbound link proves it knows
+    # our outbound link's secret) still uses the tie-break
+    d = new_daemon(wsl=wsl, machine="box-z")
+    x, y = "a" * 32, "b" * 32
+    out = mod.Channel(FakeSock(("192.168.1.42", 48610)), ("192.168.1.42", 48610), True, "out",
+                      "192.168.1.42", "box-p", 48610, 0.3, remote_nonce="n-real", secret=x)
+    d._register_channel(out)
+    link_in(d, src, hello("box-p", adv="192.168.1.42", nonce="n-real", chal=y, proof=lproof(y, x)))
+    cur = d._get_channel(key)
+    res("H1 %s: the same peer instance (proof of our link secret) still wins the tie-break" % src,
+        cur is not None and cur.direction == "in" and d.link_tie_lost.get(key) is cur,
+        "cur=%r tie_lost=%r" % (cur and cur.direction, d.link_tie_lost))
+    # (d) the matching nonce alone (it is public: every hello and ack carries it) never wins
+    d = new_daemon(wsl=wsl, machine="box-z")
+    out = mod.Channel(FakeSock(("192.168.1.42", 48610)), ("192.168.1.42", 48610), True, "out",
+                      "192.168.1.42", "box-p", 48610, 0.3, remote_nonce="n-real", secret=x)
+    d._register_channel(out)
+    rogue = link_in(d, src, hello("box-p", adv="192.168.1.42", nonce="n-real", chal=y, proof=lproof(y, "c" * 32)))
+    res("H1 %s: the peer's nonce plus a proof for another secret never displaces our link" % src,
+        d._get_channel(key) is out and not out.closed and not acked(rogue) and key not in d.link_tie_lost,
+        "cur=%r tie_lost=%r" % (d._get_channel(key) and d._get_channel(key).direction, d.link_tie_lost))
+guard("H1 gateway", lambda: h1_hijack(GW, True))
+guard("H1 loopback", lambda: h1_hijack("127.0.0.1", False))
+
+def h1_replace_shared_source():
+    d = new_daemon(wsl=True)
+    key = "10.9.9.9:48610"
+    y1, y2 = "d" * 32, "e" * 32
+    link_in(d, GW, hello("box-v", adv="10.9.9.9", nonce="n-v", chal=y1))
+    first = d._get_channel(key)
+    rogue = link_in(d, GW, hello("box-v", adv="10.9.9.9", nonce="n-x"))
+    res("H1: a shared-source link with another nonce never replaces a live link",
+        first is not None and d._get_channel(key) is first and not first.closed and not acked(rogue),
+        "cur=%r" % (d._get_channel(key) and d._get_channel(key).remote_nonce))
+    rogue = link_in(d, GW, hello("box-v", adv="10.9.9.9", nonce="n-v", chal="f" * 32))
+    res("H1: the live link's nonce alone (sniffed, it is public) never replaces it",
+        d._get_channel(key) is first and not first.closed and not acked(rogue),
+        "replaced=%r" % (d._get_channel(key) is not first))
+    again = link_in(d, GW, hello("box-v", adv="10.9.9.9", nonce="n-v", chal=y2, resume=rproof(y2, y1)))
+    second = d._get_channel(key)
+    res("H1: the same peer (proof of the old link's secret) replaces its own stale link",
+        second is not None and second is not first and acked(again), "same=%r" % (second is first))
+    if second is not None:
+        second.last_rx = time.monotonic() - 3600
+    link_in(d, GW, hello("box-v", adv="10.9.9.9", nonce="n-new"))
+    third = d._get_channel(key)
+    res("H1: a restarted peer (new nonce) replaces a dead/idle shared-source link",
+        third is not None and third is not second and third.remote_nonce == "n-new",
+        "cur=%r" % (third and third.remote_nonce))
+guard("H1 shared replace", h1_replace_shared_source)
+
+# ---- N1: a sniffed nonce / proof from another link never grants a takeover ---------
+# Two real daemons wired in-process (socketpairs, no network): C runs under WSL NAT
+# (every inbound connection arrives from the gateway), B is a LAN peer.
+C_ADDR, B_ADDR = "192.168.1.10", "192.168.1.42"
+def wire(opener, target, acceptor, src):
+    """opener._open_link(target) over a socketpair served by acceptor._handle_conn,
+    which sees the connection as coming from src."""
+    real = mod.open_link_socket
+    def ols(host, port, timeout):
+        a, b = socket.socketpair()
+        threading.Thread(target=acceptor._handle_conn, args=(b, (src, 40100)), daemon=True).start()
+        return a
+    mod.open_link_socket = ols
+    try:
+        opener._open_link(target, 48610)
+    finally:
+        mod.open_link_socket = real
+def frames(s):
+    out = []
+    for b in s.sent:
+        for line in b.decode().splitlines():
+            p = mod.verify_line("tok", line.strip())
+            if p:
+                out.append(p)
+    return out
+def pair(c_machine):
+    C = new_daemon(machine=c_machine, wsl=True)
+    C.advertise_host, C.advertise_port = C_ADDR, 48610
+    B = new_daemon(peers=[C_ADDR], machine="box-p")
+    B.advertise_host, B.advertise_port = B_ADDR, 48610
+    return C, B
+class SpySock(object):
+    """Wraps a real socket and records what is sent (C's side of its own link)."""
+    def __init__(self, s):
+        self.s, self.sent = s, []
+    def sendall(self, b):
+        self.sent.append(b)
+        return self.s.sendall(b)
+    def __getattr__(self, n):
+        return getattr(self.s, n)
+def n1_sniffed():
+    keyb, keyc = "%s:48610" % B_ADDR, "%s:48610" % C_ADDR
+    C, B = pair("box-z")
+    wire(C, B_ADDR, B, C_ADDR)                    # C's own outbound link to B
+    out = C._get_channel(keyb)
+    res("N1: C's outbound link to B is up on both sides",
+        out is not None and out.direction == "out" and B._get_channel(keyc) is not None,
+        "C=%r B=%r" % (out and out.direction, list(B.channels)))
+    # a third link talks to B once and keeps every field B sends
+    sniff = {}
+    for h in (hello("acme-x", port=7001), hello("acme-y", adv=C_ADDR)):
+        for p in frames(link_in(B, "192.168.1.43", h)):
+            sniff.update({k: v for k, v in p.items() if k not in ("kind", "ack", "refused", "machine")})
+    res("N1: the attacker did sniff B's nonce", bool(sniff.get("nonce")), "sniffed=%r" % sniff)
+    rogue = None
+    for src in (GW, "127.0.0.1"):
+        h = hello("box-p", adv=B_ADDR, chal="9" * 32)
+        h.update(sniff)
+        rogue = link_in(C, src, h)
+        cur = C._get_channel(keyb)
+        res("N1 %s: a link replaying B's sniffed nonce/proof never displaces C's link to B" % src,
+            cur is out and out is not None and not out.closed and not acked(rogue)
+            and keyb not in C.link_tie_lost,
+            "cur=%r tie_lost=%r acked=%r" % (cur and cur.direction, C.link_tie_lost, acked(rogue)))
+    if out is not None:
+        out.wsock = SpySock(out.wsock)
+    raw.clear()
+    C.send_frame(B_ADDR, 48610, {"kind": "deliver", "body": "x"})
+    res("N1: delivers meant for B keep going over C's own link",
+        out is not None and "deliver" in sent_kinds(out.wsock) and raw == [], "raw=%r" % raw)
+    rf = [p for p in frames(rogue) if p.get("refused")]
+    res("N1: a refused frame carries no nonce", bool(rf) and all("nonce" not in p for p in rf),
+        "refused=%r" % rf)
+guard("N1 sniffed", n1_sniffed)
+
+def n1_simultaneous(c_machine):
+    """Genuine simultaneous open: C's link is up, then B opens its own link to C
+    (via the gateway). Exactly one connection survives, the same one on both sides."""
+    keyb, keyc = "%s:48610" % B_ADDR, "%s:48610" % C_ADDR
+    C, B = pair(c_machine)
+    wire(C, B_ADDR, B, C_ADDR)
+    wire(B, C_ADDR, C, GW)
+    time.sleep(0.1)
+    cc, bc = C._get_channel(keyb), B._get_channel(keyc)
+    live_c = [c for c in C.channels.values() if not c.closed]
+    live_b = [c for c in B.channels.values() if not c.closed]
+    # B (box-p) sorts lower than box-z, higher than box-a: the lower one's link is kept
+    want_b_out = c_machine > "box-p"
+    ok = (cc is not None and bc is not None and len(live_c) == 1 and len(live_b) == 1
+          and (bc.direction == "out") == want_b_out and (cc.direction == "in") == want_b_out
+          and getattr(cc, "secret", 1) == getattr(bc, "secret", 2))
+    res("N1 sim %s: exactly one channel, the same connection on both sides" % c_machine, ok,
+        "C=%r B=%r" % ([(c.direction, c.closed) for c in C.channels.values()],
+                       [(c.direction, c.closed) for c in B.channels.values()]))
+    # the side whose own link lost does not keep re-dialing
+    loser, lkey, lch = (C, keyb, cc) if want_b_out else (B, keyc, bc)
+    res("N1 sim %s: the losing side records the tie-break and stops re-dialing" % c_machine,
+        lch is not None and loser.link_tie_lost.get(lkey) is lch, "tie_lost=%r" % loser.link_tie_lost)
+guard("N1 sim box-z", lambda: n1_simultaneous("box-z"))
+guard("N1 sim box-a", lambda: n1_simultaneous("box-a"))
+
+# ---- Z1: malformed chal / proof / resume never leave a zombie link -----------------
+# A signed hello whose chal, proof or resume is not a lowercase hex string (a lone
+# UTF-16 surrogate, non-hex text, another JSON type) carries no secret / proof: it
+# never raises, never leaves a registered link without an ack, and our own outbound
+# link to the real peer still wins. An exception after registration unregisters the
+# link; a failing outbound attempt records a backoff.
+SUR = json.loads('"\\ud800"')
+Z1_BAD = (("surrogate", SUR), ("hex+surrogate", "ab" + SUR), ("non-hex", "zz" * 16),
+          ("upper-hex", "AB" * 16), ("65 chars", "a" * 65), ("int", 123), ("list", ["ab"]),
+          ("dict", {"a": "b"}), ("bool", True))
+def z1_read(a):
+    """Frames the attacker received on its socket, and whether the relay closed it."""
+    a.settimeout(0.05)
+    data, eof = b"", False
+    while True:
+        try:
+            chunk = a.recv(65536)
+        except (socket.timeout, OSError):
+            break
+        if not chunk:
+            eof = True
+            break
+        data += chunk
+    out = [mod.verify_line("tok", l.strip()) for l in data.decode("utf-8", "replace").splitlines()]
+    return [p for p in out if p], eof
+def z1_attack(C, src, h):
+    """One signed hello to C over a real socketpair, as if it came from src."""
+    a, b = socket.socketpair()
+    a.sendall(mod.frame_for("tok", h).encode("utf-8"))
+    err = None
+    try:
+        C._handle_conn(b, (src, 40002))
+    except Exception as exc:
+        err = "%s: %s" % (type(exc).__name__, exc)
+    return a, err
+def z1_scenario(field, src):
+    """field = the hello field carrying the bad value; src = shared source (gateway or
+    loopback). Returns {check: [labels that failed]}."""
+    keyb = "%s:48610" % B_ADDR
+    fails = {"raise": [], "zombie": [], "own": [], "deliver": []}
+    for label, bad in Z1_BAD:
+        C = new_daemon(machine="box-c", wsl=(src == GW))
+        C.advertise_host, C.advertise_port = C_ADDR, 48610
+        B = new_daemon(peers=[C_ADDR], machine="box-p")
+        B.advertise_host, B.advertise_port = B_ADDR, 48610
+        C.link_out_secret[keyb] = "3" * 32
+        C.link_last_secret[(keyb, "out")] = "4" * 32
+        h = hello("box-p", adv=B_ADDR, nonce="n-z", chal="9" * 32)
+        if field == "proof":
+            wire(C, B_ADDR, B, C_ADDR)             # C's own link is up: the proof is checked
+        elif field == "resume":
+            link_in(C, src, hello("box-p", adv=B_ADDR, nonce="n-z", chal="8" * 32))  # live link
+        h[field] = bad
+        before = set(id(c) for c in C.channels.values())
+        a, err = z1_attack(C, src, h)
+        got, eof = z1_read(a)
+        if err:
+            fails["raise"].append("%s (%s)" % (label, err))
+        new = [c for c in C.channels.values() if id(c) not in before and c.registered and not c.closed]
+        ackd = any(p.get("kind") == "link" and p.get("ack") for p in got)
+        if (new and not ackd) or (not new and not eof):
+            fails["zombie"].append("%s (new=%d acked=%r eof=%r)" % (label, len(new), ackd, eof))
+        if field != "proof":
+            try:
+                wire(C, B_ADDR, B, C_ADDR)
+            except Exception as exc:
+                fails["own"].append("%s (wire raised %s)" % (label, type(exc).__name__))
+        cur = C._get_channel(keyb)
+        if not (cur is not None and cur.direction == "out" and keyb not in C.link_retry
+                and keyb not in C.link_pending):
+            fails["own"].append("%s (cur=%r retry=%r)" % (label, cur and cur.direction,
+                                                          C.link_retry.get(keyb)))
+            a.close()
+            continue
+        cur.wsock = SpySock(cur.wsock)
+        raw.clear()
+        C.send_frame(B_ADDR, 48610, {"kind": "deliver", "body": "x"})
+        got2, _ = z1_read(a)
+        if not ("deliver" in sent_kinds(cur.wsock) and raw == []
+                and not any(p.get("kind") == "deliver" for p in got2)):
+            fails["deliver"].append("%s (raw=%r attacker=%r)" % (label, raw, [p.get("kind") for p in got2]))
+        a.close()
+    return fails
+def z1_bad_fields(src):
+    for field in ("chal", "proof", "resume"):
+        f = z1_scenario(field, src)
+        res("Z1 %s %s: a malformed value never raises" % (src, field), not f["raise"], "%r" % f["raise"])
+        res("Z1 %s %s: no zombie (a registered link is acked, a refused one closed)" % (src, field),
+            not f["zombie"], "%r" % f["zombie"])
+        res("Z1 %s %s: our own outbound link to the reachable peer wins" % (src, field),
+            not f["own"], "%r" % f["own"])
+        res("Z1 %s %s: delivers go over our own link, never to the attacker" % (src, field),
+            not f["deliver"], "%r" % f["deliver"])
+guard("Z1 gateway", lambda: z1_bad_fields(GW))
+guard("Z1 loopback", lambda: z1_bad_fields("127.0.0.1"))
+
+def z1_values():
+    sec = mod._secret_str
+    kept = [label for label, v in Z1_BAD if sec(v) != ""]
+    res("Z1: only lowercase hex of 1..64 chars is accepted as a secret/proof",
+        kept == [] and sec("0a" * 32) == "0a" * 32 and sec("f") == "f", "kept=%r" % kept)
+    errs = []
+    for label, v in Z1_BAD:
+        try:
+            if mod.proof_eq(v, v) or mod.proof_eq(v, "ab"):
+                errs.append("%s: equal" % label)
+        except Exception as exc:
+            errs.append("%s: %s" % (label, type(exc).__name__))
+    res("Z1: proof_eq rejects malformed values without raising",
+        errs == [] and mod.proof_eq("ab", "ab"), "%r" % errs)
+    ch = mod.Channel(FakeSock(), ("192.168.1.42", 48610), True, "out", "192.168.1.42", "box-p", 48610, 0.3,
+                     secret=SUR, proof=SUR, resume=SUR)
+    res("Z1: a channel built from malformed values carries none of them",
+        (ch.secret, ch.proof, ch.resume) == ("", "", ""), "%r" % ((ch.secret, ch.proof, ch.resume),))
+guard("Z1 values", z1_values)
+
+def z1_unregister_on_error():
+    """Any exception after registration (here: building the ack) unregisters the link."""
+    key = "192.168.1.42:48610"
+    d = new_daemon()
+    def boom(*a, **k):
+        raise RuntimeError("injected")
+    d._link_hello = boom
+    s, err = FakeSock(("192.168.1.42", 40000)), None
+    try:
+        d._accept_link(s, ("192.168.1.42", 40000), hello("box-p", adv="192.168.1.42"), b"")
+    except Exception as exc:
+        err = type(exc).__name__
+    ch = d.channels.get(key)
+    res("Z1: an error after registration leaves no registered link",
+        ch is None and s.closed and err is None, "ch=%r closed=%r err=%r" % (ch, s.closed, err))
+    del d._link_hello
+    s2 = link_in(d, "192.168.1.42", hello("box-p", adv="192.168.1.42"))
+    res("Z1: ... and the peer's next link registers normally",
+        d._get_channel(key) is not None and acked(s2), "channels=%r" % list(d.channels))
+guard("Z1 unregister", z1_unregister_on_error)
+
+def z1_open_link_error():
+    """An exception inside an outbound attempt counts as a failed attempt (backoff)."""
+    keyb = "%s:48610" % B_ADDR
+    C, B = pair("box-c")
+    def boom(ch):
+        raise RuntimeError("injected")
+    C._register_channel = boom
+    errs = []
+    for _ in range(2):
+        try:
+            wire(C, B_ADDR, B, C_ADDR)
+        except Exception as exc:
+            errs.append(type(exc).__name__)
+    fails, until = C.link_retry.get(keyb, (0, 0.0))
+    res("Z1: a failing outbound attempt never raises and records a growing backoff",
+        errs == [] and fails == 2 and until > time.monotonic() and keyb not in C.link_pending
+        and C._get_channel(keyb) is None, "errs=%r retry=%r pending=%r"
+        % (errs, C.link_retry.get(keyb), keyb in C.link_pending))
+    del C._register_channel
+    C.link_retry.pop(keyb, None)
+    wire(C, B_ADDR, B, C_ADDR)
+    cur = C._get_channel(keyb)
+    res("Z1: ... and the next attempt brings the link up",
+        cur is not None and cur.direction == "out", "cur=%r" % (cur and cur.direction))
+guard("Z1 open_link error", z1_open_link_error)
+
+# ---- N2: over a link, a second machine never takes over a live machine's session ---
+def n2_link_takeover():
+    d = new_daemon(peers=["127.0.0.1:41001"])
+    d._template_descriptor_locked = lambda: {"pidDomain": "x"}
+    dropped = []
+    d._create_remote_locked = lambda key, s, t: d.remotes.__setitem__(
+        key, {"holder": None, "proxy": "/x", "descriptor": "/nonexistent-credo-test/x.json",
+              "pid": 0, "machine": s.get("machine")})
+    d._refresh_descriptor_locked = lambda key, s: d.remotes[key].__setitem__("machine", s.get("machine"))
+    real_drop = d._remove_remote_locked
+    def spy_drop(key):
+        dropped.append(key)
+        real_drop(key)
+    d._remove_remote_locked = spy_drop
+    ch = mod.Channel(FakeSock(("127.0.0.1", 41001)), ("127.0.0.1", 41001), True, "in",
+                     "127.0.0.1", "acme-bridge", 41001, 0.3)
+    def roster(machine, sids, chan=None):
+        d._on_roster({"kind": "roster", "machine": machine, "listen_port": 41001,
+                      "sessions": [{"sessionId": s} for s in sids]}, "127.0.0.1", chan)
+    roster("box-a", ["sid-a1", "sid-a2"])               # box-a: fresh connections, still active
+    roster("acme-bridge", ["sid-a1", "sid-b1"], ch)    # another machine over a link
+    owner = (d.remotes.get(("127.0.0.1:41001", "sid-a1")) or {}).get("machine")
+    res("N2: a roster over a link never takes over a live machine's sessionId",
+        owner == "box-a", "owner=%r" % owner)
+    res("N2: ... and never prunes that machine's other sessions",
+        ("127.0.0.1:41001", "sid-a2") in d.remotes and dropped == [], "dropped=%r" % dropped)
+    d.roster_interval = 0.05
+    time.sleep(0.2)                                    # box-a has gone silent
+    roster("acme-bridge", ["sid-a1", "sid-b1"], ch)
+    owner = (d.remotes.get(("127.0.0.1:41001", "sid-a1")) or {}).get("machine")
+    res("N2: once the old machine is silent the rename over the link applies",
+        owner == "acme-bridge", "owner=%r" % owner)
+guard("N2 link takeover", n2_link_takeover)
+
+# ---- N3: a roster with a non-string machine is ignored, never raises ---------------
+def n3_machine_types():
+    d = new_daemon(peers=["127.0.0.1:41001"])
+    d._template_descriptor_locked = lambda: {"pidDomain": "x"}
+    d._create_remote_locked = lambda key, s, t: d.remotes.__setitem__(key, {"machine": s.get("machine")})
+    bad = []
+    for m in (["box-l"], {"a": 1}, 123, True):
+        try:
+            d._on_roster({"kind": "roster", "machine": m, "listen_port": 41001,
+                          "sessions": [{"sessionId": "sid-n3"}]}, "127.0.0.1")
+        except Exception as exc:
+            bad.append("%r: %s" % (m, type(exc).__name__))
+    res("N3: a non-string roster machine never raises", bad == [], "raised=%r" % bad)
+    res("N3: ... and creates no mirror", d.remotes == {}, "remotes=%r" % d.remotes)
+guard("N3 machine types", n3_machine_types)
+
+# ---- m3b: refused-link log tags are bounded ---------------------------------------
+def m3b_tags():
+    d = new_daemon()
+    for i in range(300):
+        link_in(d, "192.168.1.43", hello("acme-%d" % i, port=20000 + i, adv="192.168.1.42"))
+    for i in range(300):
+        link_in(d, "192.168.1.50", hello("acme-x%d" % i, port=30000 + i))
+    d.wsl = True
+    link_in(d, GW, hello("box-v", adv="10.9.9.9", nonce="n-v"))
+    for i in range(300):
+        link_in(d, GW, hello("acme-g%d" % i, adv="10.9.9.9", nonce="n-g%d" % i))
+    res("m3b: refused-link log tags do not grow with sender-chosen values",
+        len(d.chan_reject_warned) <= 8, "tags=%d" % len(d.chan_reject_warned))
+    d._template_descriptor_locked = lambda: None
+    d.remotes.update({("192.168.1.43:48610", "sid-%d" % j): {"machine": "x"} for j in range(2000)})
+    for i in range(10):
+        d._on_roster({"kind": "roster", "machine": "box-p", "listen_port": 48610,
+                      "advertise_host": "192.168.1.42", "advertise_port": 48610,
+                      "sessions": [{"sessionId": "sid-%d" % (i * 200 + j)} for j in range(200)]},
+                     "192.168.1.42")
+    d.remotes.clear()
+    cap = getattr(mod, "WARN_TAGS_MAX", 0)
+    res("m3b: duplicate-session log tags are capped",
+        cap > 0 and len(d.dup_session_warned) <= cap, "tags=%d cap=%r" % (len(d.dup_session_warned), cap))
+guard("m3b tags", m3b_tags)
+
+# ---- m5b: address claims outside the allowlist + gateway cap ----------------------
+def m5b_claims():
+    d = new_daemon()
+    link_in(d, "192.168.1.50", hello("box-v", adv="10.8.8.8"))
+    res("m5b: a claim to an unconfigured address outside the allowlist is keyed by the source",
+        d._get_channel("10.8.8.8:48610") is None and d._get_channel("192.168.1.50:48610") is not None,
+        "channels=%r" % list(d.channels))
+    # the gateway cap is max(2, configured peers): a WSL host can serve every peer
+    # behind NAT, and never fewer than 2
+    for peers, want in ((PEERS, 3), (["192.168.1.42", "192.168.1.43"], 2)):
+        d = new_daemon(peers=peers, wsl=True)
+        for i in range(want + 1):
+            link_in(d, GW, hello("box-g%d" % i, port=5001 + i, nonce="n%d" % i))
+        n_gw = len([c for c in d.channels.values() if c.src_ip == GW and not c.closed])
+        res("m5b: %d configured peers -> the WSL NAT gateway is capped at %d inbound links"
+            % (len(peers), want), n_gw == want, "gateway links=%d" % n_gw)
+guard("m5b claims", m5b_claims)
+
+# ---- MR2: same address, two machines announcing the same sessionId ----------------
+def mr_shared_address():
+    d = new_daemon(peers=["127.0.0.1:41001"])
+    class P(object):
+        def poll(self): return None
+        def terminate(self): pass
+        def wait(self, timeout=None): return 0
+        def kill(self): pass
+    created, removed = [], []
+    def fake_create(key, s, template):
+        created.append(key)
+        d.remotes[key] = {"holder": P(), "proxy": "/x", "descriptor": "/nonexistent-credo-test/x.json",
+                          "pid": 0, "machine": s.get("machine")}
+    real_remove = d._remove_remote_locked
+    def spy_remove(key):
+        removed.append(key)
+        real_remove(key)
+    d._create_remote_locked = fake_create
+    d._remove_remote_locked = spy_remove
+    d._template_descriptor_locked = lambda: {"pidDomain": "x"}
+    def roster(machine, sids):
+        d._on_roster({"kind": "roster", "machine": machine, "listen_port": 41001,
+                      "sessions": [{"sessionId": s, "name": "acme-" + s} for s in sids]}, "127.0.0.1")
+    for _ in range(3):
+        roster("box-a", ["sid-a1", "sid-a2"])
+        roster("acme-bridge", ["sid-a1", "sid-b1"])
+    owner = (d.remotes.get(("127.0.0.1:41001", "sid-a1")) or {}).get("machine")
+    res("MR2: a second machine on the same address never takes over a live sessionId",
+        owner == "box-a", "owner=%r" % owner)
+    res("MR2: the first machine's other sessions survive the second machine's rosters",
+        ("127.0.0.1:41001", "sid-a2") in d.remotes and removed == [], "removed=%r" % removed)
+    res("MR2: no mirror flapping (each session created once)",
+        sorted(created) == sorted(set(created)) and len(created) == 3, "created=%r" % created)
+guard("MR2 shared address", mr_shared_address)
+
+def mr_rename_over_link():
+    d = new_daemon()
+    d._template_descriptor_locked = lambda: {"pidDomain": "x"}
+    d._create_remote_locked = lambda key, s, t: d.remotes.__setitem__(
+        key, {"holder": None, "proxy": "/x", "descriptor": "/nonexistent-credo-test/x.json",
+              "pid": 0, "machine": s.get("machine")})
+    d._refresh_descriptor_locked = lambda key, s: d.remotes[key].__setitem__("machine", s.get("machine"))
+    ch = mod.Channel(FakeSock(("192.168.1.42", 48610)), ("192.168.1.42", 48610), True, "out",
+                     "192.168.1.42", "box-p", 48610, 0.3, remote_nonce="n-real")
+    def roster(machine):
+        d._on_roster({"kind": "roster", "machine": machine, "listen_port": 48610,
+                      "sessions": [{"sessionId": "sid-p1"}]}, "192.168.1.42", ch)
+    roster("box-p")
+    roster("box-p2")
+    rec = d.remotes.get(("192.168.1.42:48610", "sid-p1")) or {}
+    res("MR2: a machine rename over a link applies at once", rec.get("machine") == "box-p2", "rec=%r" % rec)
+guard("MR2 rename over link", mr_rename_over_link)
+
+# ---- MR: mirror follows a machine rename -------------------------------------------
+def mr_rename():
+    d = new_daemon(peers=["127.0.0.1:41001"])
+    sess = os.path.join(root, "cfg", "sessions")
+    class P(object):
+        def poll(self): return None
+        def terminate(self): pass
+        def wait(self, timeout=None): return 0
+        def kill(self): pass
+    def fake_create(key, s, template):
+        path = os.path.join(sess, "mr-%d.json" % len(d.remotes))
+        with open(path, "w") as fh:
+            json.dump({"name": d._mirror_name(s, key[1], "127.0.0.1"), mod.MARK: True}, fh)
+        d.remotes[key] = {"holder": P(), "proxy": "/x", "descriptor": path, "pid": 0,
+                          "machine": s.get("machine")}
+    d._create_remote_locked = fake_create
+    d._template_descriptor_locked = lambda: {"pidDomain": "x"}
+    def roster(machine, sids):
+        d._on_roster({"kind": "roster", "machine": machine, "listen_port": 41001,
+                      "sessions": [{"sessionId": s, "name": "acme-" + s} for s in sids]}, "127.0.0.1")
+    d.roster_interval = 0.05
+    roster("box-old", ["sid-m1", "sid-m2"])
+    time.sleep(0.2)   # the old machine has been silent for more than 2 roster intervals
+    roster("box-new", ["sid-m1"])
+    rec = d.remotes.get(("127.0.0.1:41001", "sid-m1"))
+    name = ""
+    if rec:
+        with open(rec["descriptor"]) as fh:
+            name = json.load(fh)["name"]
+    res("MR: same sessionId + address under a new machine name renames the mirror",
+        "box-new" in name and "box-old" not in name, "name=%r" % name)
+    res("MR: the stored machine follows the rename", rec is not None and rec.get("machine") == "box-new",
+        "rec=%r" % rec)
+    res("MR: a session the renamed sender no longer announces is pruned",
+        ("127.0.0.1:41001", "sid-m2") not in d.remotes, "remotes=%r" % list(d.remotes))
+guard("MR rename", mr_rename)
+PYEOF
+RH_OUT="$("$PY" "$TMP/RH/rhtest.py" "$DAEMON" "$TMP/RH" 2>&1)"
+while IFS= read -r line; do
+    case "$line" in
+        PASS\ *) PASS=$((PASS + 1)) ;;
+        FAIL\ *) FAIL=$((FAIL + 1)); printf '%s\n' "$line" ;;
+    esac
+done <<< "$RH_OUT"
+case "$RH_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL RH: traceback\n%s\n' "$RH_OUT" ;; esac
+check "RH: expected number of hardening results" "106" "$(printf '%s\n' "$RH_OUT" | grep -cE '^(PASS|FAIL) ')"
+
+# --- PK: per-peer pairing keys (module level, socketpairs, no LAN) -------------
+# Acceptance for the pairing layer. Each result line counts on its own.
+#   a  two fresh daemons pair automatically on their first link and both store the
+#      same key K; K (and the private DH value) never appears in any frame or log
+#   b  after pairing, an unproven link from the WSL gateway or loopback never gets the
+#      paired peer's slot (peer OFFLINE) and no deliver meant for it
+#   c  the real peer reconnects after a restart (key persisted), no manual step
+#   d  a replayed hello + proof of a captured handshake fails
+#   e  downgrade (paired id or paired slot without a key proof) is refused, on the
+#      accepting and on the opening side
+#   f  an unpaired legacy peer (no pairing fields) still works token-only
+#   g  simultaneous open (also at first contact) converges to exactly one channel
+#      and one shared key
+#   h  a new id claiming a paired slot is refused, a pending repair is surfaced, and
+#      `pair-reset` then allows re-pairing
+#   i  malformed DH values / ids / proofs never raise and never leave a zombie link
+#   j  key files are 0600 in a 0700 dir (whatever the umask) and written atomically
+#   k  a paired id is never re-bound to another slot (a proven id at another address),
+#      the expectation is bound into the proofs, a pairing is stored only after the full
+#      handshake, and a refused legacy peer is surfaced
+#   l  an unreadable key store fails closed (every slot counts as paired: no token-only
+#      link, no fresh connection, holders drop), a missing key dir does not
+#   m  the identity is never replaced on a read error or when invalid (pairing stays
+#      off until it can be read), `pairs` reports an unreadable store, rosters filter
+mkdir -p "$TMP/PK/cfg/sessions" "$TMP/PK/sock"
+cat > "$TMP/PK/pktest.py" <<'PYEOF'
+import importlib.util, json, os, socket, stat, subprocess, sys, threading, time
+daemon_path, root = sys.argv[1:3]
+os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(root, "cfg")
+os.environ["CREDO_PEER_LAN_SOCKDIR"] = os.path.join(root, "sock")
+spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+logs = []
+mod.log = lambda m: logs.append(m)
+def res(name, cond, detail=""):
+    print(("PASS %s" % name) if cond else ("FAIL %s: %s" % (name, detail)))
+def guard(name, fn):
+    try:
+        fn()
+    except Exception as exc:
+        import traceback
+        res(name, False, "raised %s: %s %s" % (type(exc).__name__, exc,
+                                               traceback.format_exc().splitlines()[-3:]))
+raw = []
+mod.send_to_peer = lambda h, p, t, payload, timeout=5.0: raw.append((h, p, payload.get("kind")))
+
+MAC = "aa:bb:cc:dd:ee:01"
+NET = mod.normalize_netinfo({"ip": "192.168.1.10", "subnet": "192.168.1.0/24", "gateway_mac": MAC,
+                             "wsl_nat_gateway": "172.20.0.1"})
+CFG = {"networks": {"home": {"fingerprint": {"gateway_mac": MAC, "subnet": "192.168.1.0/24"},
+                             "allow": ["192.168.1.0/24"]}}}
+GW = "172.20.0.1"
+C_ADDR, B_ADDR = "192.168.1.10", "192.168.1.42"
+KEYB, KEYC = "%s:48610" % B_ADDR, "%s:48610" % C_ADDR
+_n = [0]
+def keys(tag):
+    _n[0] += 1
+    return os.path.join(root, "keys", "%s-%d" % (tag, _n[0]))
+
+def new_daemon(peers, machine, wsl=False, keys_dir=None, adv=None):
+    d = mod.Daemon({"this_machine": machine, "token": "tok", "peers": list(peers),
+                    "listen_port": 48610, "keys_dir": keys_dir or keys(machine)})
+    d.wsl = wsl
+    d.lan_state = mod.compute_lan_state(CFG, NET, d.peers, wsl)
+    d._channel_reader = lambda ch, buf=b"": None   # keep links registered, nothing reads
+    if adv:
+        d.advertise_host, d.advertise_port = adv, 48610
+    return d
+
+def pair_cb(c_machine="box-c", c_keys=None, b_keys=None):
+    """C runs under WSL NAT (every inbound link arrives from the gateway), B is a LAN peer."""
+    C = new_daemon(["192.168.1.42", "192.168.1.43", "10.9.9.9"], c_machine, wsl=True,
+                   keys_dir=c_keys, adv=C_ADDR)
+    B = new_daemon([C_ADDR], "box-p", keys_dir=b_keys, adv=B_ADDR)
+    return C, B
+
+def pump(src, dst, tap):
+    while True:
+        try:
+            data = src.recv(65536)
+        except OSError:
+            data = b""
+        if not data:
+            for s in (dst,):
+                try:
+                    s.shutdown(socket.SHUT_WR)
+                except OSError:
+                    pass
+            return
+        tap.append(data)
+        try:
+            dst.sendall(data)
+        except OSError:
+            return
+
+def wire(opener, target, acceptor, src, tap=None):
+    """opener._open_link(target) to acceptor._handle_conn (seen as coming from src),
+    every byte both ways recorded in tap."""
+    tap = tap if tap is not None else []
+    real = mod.open_link_socket
+    acc = []
+    def ols(host, port, timeout):
+        a1, a2 = socket.socketpair()
+        b1, b2 = socket.socketpair()
+        threading.Thread(target=pump, args=(a2, b1, tap), daemon=True).start()
+        threading.Thread(target=pump, args=(b1, a2, tap), daemon=True).start()
+        t = threading.Thread(target=acceptor._handle_conn, args=(b2, (src, 40100)), daemon=True)
+        t.start()
+        acc.append(t)
+        return a1
+    mod.open_link_socket = ols
+    try:
+        opener._open_link(target, 48610)
+    finally:
+        mod.open_link_socket = real
+    for t in acc:   # the acceptor side is done (its reader is a no-op in these tests)
+        t.join(5)
+    return tap
+
+def live(d):
+    return [c for c in d.channels.values() if not c.closed and c.registered]
+
+class ScriptSock(object):
+    """Fake inbound socket: recv() hands out the scripted bytes, then EOF."""
+    def __init__(self, peer, data=b""):
+        self.sent, self.closed, self.peer, self.data = [], False, peer, data
+    def sendall(self, b): self.sent.append(b)
+    def send(self, b): self.sent.append(bytes(b)); return len(b)
+    def recv(self, n):
+        d, self.data = self.data[:n], self.data[n:]
+        return d
+    def settimeout(self, t): pass
+    def dup(self): return self
+    def shutdown(self, how): pass
+    def close(self): self.closed = True
+    def getsockname(self): return ("127.0.0.1", 1)
+    def getpeername(self): return self.peer
+
+def hello(machine, adv=None, chal="9" * 32, **extra):
+    h = {"kind": "link", "machine": machine, "listen_port": 48610, "roster_interval": 0.3,
+         "nonce": "n-x"}
+    if adv:
+        h.update(advertise_host=adv, advertise_port=48610)
+    if chal is not None:
+        h["chal"] = chal
+    h.update(extra)
+    return h
+
+def link_in(d, src, h, follow=b""):
+    """One inbound link hello (already token-checked) from src; follow = bytes the
+    sender writes after the hello (e.g. its answer to a challenge)."""
+    s = ScriptSock((src, 40000), follow)
+    d._accept_link(s, (src, 40000), h, b"")
+    return s
+
+def frames_of(s):
+    out = []
+    for b in s.sent:
+        for line in b.decode("utf-8", "replace").splitlines():
+            try:
+                w = json.loads(line)
+                out.append(json.loads(w["body"]))
+            except Exception:
+                pass
+    return out
+
+def acked(s):
+    return any(p.get("kind") == "link" and p.get("ack") for p in frames_of(s))
+
+def rec(d, pid):
+    return d.pairs.get(pid)
+
+# ---------------------------------------------------------------- (a) pairing
+def pk_a():
+    C, B = pair_cb()
+    tap = wire(C, B_ADDR, B, C_ADDR)
+    rc, rb = rec(C, B.peer_id), rec(B, C.peer_id)
+    res("PK a: both sides pinned each other after the first link", rc is not None and rb is not None,
+        "C=%r B=%r" % (rc, rb))
+    if not (rc and rb):
+        return
+    res("PK a: both stored the same pairing key", rc["key"] == rb["key"] and len(rc["key"]) == 64,
+        "C=%r B=%r" % (rc["key"][:8], rb["key"][:8]))
+    res("PK a: each side bound the peer to its slot", rc.get("slot") == KEYB and rb.get("slot") == KEYC,
+        "C=%r B=%r" % (rc.get("slot"), rb.get("slot")))
+    cc, bc = C._get_channel(KEYB), B._get_channel(KEYC)
+    res("PK a: the link is up and authenticated as the paired id on both sides",
+        cc is not None and bc is not None and cc.pair_id == B.peer_id and bc.pair_id == C.peer_id,
+        "C=%r B=%r" % (cc and cc.pair_id, bc and bc.pair_id))
+    wire_bytes = b"".join(tap)
+    secrets_ = [rc["key"], "%x" % C.pairs.identity()["x"], "%x" % B.pairs.identity()["x"]]
+    res("PK a: the key and the private DH values never appear on the wire",
+        all(s.encode() not in wire_bytes for s in secrets_), "leaked")
+    res("PK a: ... nor in any log line", not any(s in l for s in secrets_ for l in logs), "leaked to log")
+    res("PK a: the public DH values and ids did travel (pairing is not out of band)",
+        C.peer_id.encode() in wire_bytes and B.peer_id.encode() in wire_bytes, "ids missing")
+    # frames after the handshake carry a pair MAC
+    cc_spy = []
+    class Spy(object):
+        def __init__(self, s): self.s = s
+        def sendall(self, b):
+            cc_spy.append(b)
+            return self.s.sendall(b)
+        def __getattr__(self, n): return getattr(self.s, n)
+    cc.wsock = Spy(cc.wsock)
+    C.send_frame(B_ADDR, 48610, {"kind": "ping"})
+    w = json.loads(cc_spy[0].decode()) if cc_spy else {}
+    res("PK a: channel frames of a paired link carry a pair MAC", bool(w.get("pmac")), "wire=%r" % w)
+guard("PK a", pk_a)
+
+# ------------------------------------------------- (b) NEW-2: squat while offline
+def squat_attempts(C, src, b_id, b_pub):
+    """Unproven links for B's slot from src. Returns the sockets."""
+    att = []
+    att.append(link_in(C, src, hello("box-p", adv=B_ADDR)))                         # legacy
+    att.append(link_in(C, src, hello("box-p", adv=B_ADDR, pid=b_id)))               # id, no dh
+    att.append(link_in(C, src, hello("box-p", adv=B_ADDR, pid=b_id, dh=b_pub),
+                       (mod.frame_for("tok", {"kind": "link", "auth": "ab" * 32})).encode()))
+    other = mod.PairStore(keys("attacker")).identity()
+    att.append(link_in(C, src, hello("box-p", adv=B_ADDR, pid=other["id"], dh=other["pub"])))
+    return att
+
+def pk_b():
+    C, B = pair_cb()
+    wire(C, B_ADDR, B, C_ADDR)
+    b_id, b_pub = B.peer_id, B.pairs.identity()["pub"]
+    ch = C._get_channel(KEYB)
+    if ch is None or not ch.pair_id:
+        res("PK b: precondition: paired link", False, "no paired link")
+        return
+    C._drop_channel(ch, "peer went offline")       # B is now OFFLINE
+    for src in (GW, "127.0.0.1"):
+        att = squat_attempts(C, src, b_id, b_pub)
+        cur = C._get_channel(KEYB)
+        res("PK b %s: no attempt gets the offline paired peer's slot" % src,
+            cur is None and not any(acked(s) for s in att),
+            "cur=%r acked=%r" % (cur and cur.remote_machine, [acked(s) for s in att]))
+        raw.clear()
+        err = None
+        try:
+            C.send_frame(B_ADDR, 48610, {"kind": "deliver", "body": "secret msg for B"})
+        except Exception as exc:
+            err = exc
+        got = [p.get("kind") for s in att for p in frames_of(s)]
+        res("PK b %s: a deliver for the paired peer reaches no attacker and no raw socket" % src,
+            "deliver" not in got and raw == [] and err is not None,
+            "attacker=%r raw=%r err=%r" % (got, raw, err))
+    res("PK b: no attacker slot left registered anywhere",
+        not [c for c in live(C) if c.key == KEYB], "live=%r" % [(c.key, c.src_ip) for c in live(C)])
+    # the idle-takeover variant (PoC S1b): B's link is live but idle (laptop asleep)
+    C2, B2 = pair_cb()
+    wire(C2, B_ADDR, B2, C_ADDR)
+    gch = C2._get_channel(KEYB)
+    if gch is not None:
+        gch.last_rx -= 1000
+    att = squat_attempts(C2, GW, B2.peer_id, B2.pairs.identity()["pub"])
+    res("PK b: an idle paired link is never taken over by a token holder",
+        C2._get_channel(KEYB) is gch and gch is not None and not any(acked(s) for s in att),
+        "cur=%r" % (C2._get_channel(KEYB) and C2._get_channel(KEYB).pair_id))
+    # a fresh-connection roster claiming the paired slot is not served
+    created = []
+    C._template_descriptor_locked = lambda: {"pidDomain": "x"}
+    C._create_remote_locked = lambda key, s, t: created.append(key)
+    C._on_roster({"kind": "roster", "machine": "box-p", "listen_port": 48610,
+                  "advertise_host": B_ADDR, "advertise_port": 48610,
+                  "sessions": [{"sessionId": "sid-fake", "name": "acme-fake"}]}, GW)
+    res("PK b: a fresh-connection roster for a paired slot is ignored", created == [], "created=%r" % created)
+guard("PK b", pk_b)
+
+# ------------------------------------------------- (c) persistence across restart
+def pk_c():
+    ck, bk = keys("c"), keys("b")
+    C, B = pair_cb(c_keys=ck, b_keys=bk)
+    wire(C, B_ADDR, B, C_ADDR)
+    k1 = (rec(C, B.peer_id) or {}).get("key")
+    C._drop_channel(C._get_channel(KEYB), "B restarts")
+    B2 = new_daemon([C_ADDR], "box-p", keys_dir=bk, adv=B_ADDR)      # B restarted
+    res("PK c: the restarted peer keeps its id", B2.peer_id == B.peer_id, "%r %r" % (B2.peer_id, B.peer_id))
+    wire(C, B_ADDR, B2, C_ADDR)
+    cc = C._get_channel(KEYB)
+    res("PK c: C reconnects to the restarted peer with the stored key",
+        cc is not None and cc.pair_id == B.peer_id, "cc=%r" % (cc and cc.pair_id))
+    res("PK c: the key did not change", (rec(C, B.peer_id) or {}).get("key") == k1
+        and (rec(B2, C.peer_id) or {}).get("key") == k1, "changed")
+    # the restarted peer opens the link itself (C restarted too)
+    C._drop_channel(cc, "both restart")
+    C2 = new_daemon(["192.168.1.42", "192.168.1.43", "10.9.9.9"], "box-c", wsl=True, keys_dir=ck, adv=C_ADDR)
+    wire(B2, C_ADDR, C2, GW)
+    c2 = C2._get_channel(KEYB)
+    res("PK c: the restarted peer's own link (via the gateway) is accepted with the stored key",
+        c2 is not None and c2.pair_id == B.peer_id and not C2.pairs.pending(),
+        "c2=%r pending=%r" % (c2 and c2.pair_id, C2.pairs.pending()))
+guard("PK c", pk_c)
+
+# ------------------------------------------------- (d) replay
+def pk_d():
+    C, B = pair_cb()
+    tap = wire(B, C_ADDR, C, GW)          # B opens to C via the gateway: capture it
+    if C._get_channel(KEYB) is None:
+        res("PK d: precondition", False, "no link")
+        return
+    lines = b"".join(tap).split(b"\n")
+    hello_line, auth_line = None, None
+    for l in lines:
+        try:
+            p = json.loads(json.loads(l)["body"])
+        except Exception:
+            continue
+        if p.get("kind") == "link" and p.get("pid") == B.peer_id and hello_line is None:
+            hello_line = l
+        if p.get("kind") == "link" and p.get("auth") and p.get("pid") is None:
+            auth_line = l
+    res("PK d: captured the opener's hello and proof", bool(hello_line and auth_line), "lines=%d" % len(lines))
+    if not (hello_line and auth_line):
+        return
+    C._drop_channel(C._get_channel(KEYB), "B offline")
+    for src in (GW, "127.0.0.1"):
+        a, b = socket.socketpair()
+        a.sendall(hello_line + b"\n" + auth_line + b"\n")
+        C._handle_conn(b, (src, 40200))
+        a.settimeout(0.3)
+        got = b""
+        try:
+            while True:
+                d = a.recv(65536)
+                if not d:
+                    break
+                got += d
+        except OSError:
+            pass
+        a.close()
+        res("PK d %s: a replayed hello + proof gets no slot" % src,
+            C._get_channel(KEYB) is None and b'"ack"' not in got.replace(b"\\", b""),
+            "cur=%r" % C._get_channel(KEYB))
+guard("PK d", pk_d)
+
+# ------------------------------------------------- (e) downgrade
+def pk_e():
+    C, B = pair_cb()
+    wire(C, B_ADDR, B, C_ADDR)
+    C._drop_channel(C._get_channel(KEYB), "offline")
+    s1 = link_in(C, GW, hello("box-p", adv=B_ADDR, pid=B.peer_id))      # paired id, no dh
+    s2 = link_in(C, GW, hello("box-p", adv=B_ADDR))                      # paired slot, no id
+    res("PK e: a paired id without a key proof is refused", not acked(s1) and C._get_channel(KEYB) is None,
+        "frames=%r" % frames_of(s1))
+    res("PK e: a paired slot claimed without any pairing fields is refused", not acked(s2), "frames=%r" % frames_of(s2))
+    res("PK e: the refusals are signed 'refused' frames (the peer backs off)",
+        any(p.get("refused") for p in frames_of(s1)) and any(p.get("refused") for p in frames_of(s2)),
+        "%r %r" % (frames_of(s1), frames_of(s2)))
+    # opening side: C dials B's address and something answers token-only (no challenge)
+    srv_seen = []
+    def legacy_acceptor(sock):
+        line, _ = mod.recv_line(sock, b"")
+        srv_seen.append(line)
+        sock.sendall(mod.frame_for("tok", {"kind": "link", "ack": True, "machine": "box-p",
+                                           "listen_port": 48610, "roster_interval": 0.3,
+                                           "nonce": "n-l"}).encode())
+        time.sleep(0.3)
+        sock.close()
+    real = mod.open_link_socket
+    def ols(host, port, timeout):
+        a, b = socket.socketpair()
+        threading.Thread(target=legacy_acceptor, args=(b,), daemon=True).start()
+        return a
+    mod.open_link_socket = ols
+    try:
+        C._open_link(B_ADDR, 48610)
+    finally:
+        mod.open_link_socket = real
+    res("PK e: our own link to a paired address answered token-only is not used",
+        C._get_channel(KEYB) is None and bool(srv_seen), "cur=%r" % C._get_channel(KEYB))
+guard("PK e", pk_e)
+
+# ------------------------------------------------- (f) legacy peer
+def pk_f():
+    C, B = pair_cb()
+    s = link_in(C, "192.168.1.43", hello("box-q", adv="192.168.1.43", chal="7" * 32))
+    ch = C._get_channel("192.168.1.43:48610")
+    res("PK f: an unpaired legacy peer still gets a token-only link",
+        ch is not None and acked(s) and not ch.pair_id, "ch=%r" % ch)
+    res("PK f: ... and nothing is pinned for it", C.pairs.records() == [] and not C.pairs.pending(),
+        "records=%r" % C.pairs.records())
+    # opening side: a legacy acceptor at an unpaired address works token-only
+    def legacy_acceptor(sock):
+        mod.recv_line(sock, b"")
+        sock.sendall(mod.frame_for("tok", {"kind": "link", "ack": True, "machine": "box-q",
+                                           "listen_port": 48610, "roster_interval": 0.3,
+                                           "nonce": "n-q"}).encode())
+        time.sleep(0.3)
+    real = mod.open_link_socket
+    def ols(host, port, timeout):
+        a, b = socket.socketpair()
+        threading.Thread(target=legacy_acceptor, args=(b,), daemon=True).start()
+        return a
+    mod.open_link_socket = ols
+    try:
+        C2, _ = pair_cb()
+        C2._open_link("192.168.1.43", 48610)
+    finally:
+        mod.open_link_socket = real
+    ch2 = C2._get_channel("192.168.1.43:48610")
+    res("PK f: our own link to an unpaired legacy relay is used token-only",
+        ch2 is not None and ch2.direction == "out" and not ch2.pair_id, "ch=%r" % ch2)
+guard("PK f", pk_f)
+
+# ------------------------------------------------- (g) simultaneous open
+def pk_g(c_machine, first_contact):
+    C, B = pair_cb(c_machine)
+    if not first_contact:
+        wire(C, B_ADDR, B, C_ADDR)
+        C._drop_channel(C._get_channel(KEYB), "reset")
+        B._drop_channel(B._get_channel(KEYC), "reset")
+    route = {B_ADDR: (B, C_ADDR), C_ADDR: (C, GW)}
+    real = mod.open_link_socket
+    def ols(host, port, timeout):
+        acc, src = route[host]
+        a, b = socket.socketpair()
+        threading.Thread(target=acc._handle_conn, args=(b, (src, 40100)), daemon=True).start()
+        return a
+    mod.open_link_socket = ols
+    try:
+        t1 = threading.Thread(target=C._open_link, args=(B_ADDR, 48610))
+        t2 = threading.Thread(target=B._open_link, args=(C_ADDR, 48610))
+        t1.start(); t2.start(); t1.join(10); t2.join(10)
+    finally:
+        mod.open_link_socket = real
+    time.sleep(0.2)
+    lc, lb = live(C), live(B)
+    cc, bc = C._get_channel(KEYB), B._get_channel(KEYC)
+    tag = "first contact" if first_contact else "paired"
+    res("PK g %s %s: exactly one channel, the same connection on both sides" % (c_machine, tag),
+        len(lc) == 1 and len(lb) == 1 and cc is not None and bc is not None
+        and cc.secret == bc.secret and cc.direction != bc.direction,
+        "C=%r B=%r" % ([(c.direction, c.secret[:4]) for c in lc], [(c.direction, c.secret[:4]) for c in lb]))
+    rc, rb = rec(C, B.peer_id), rec(B, C.peer_id)
+    res("PK g %s %s: one shared key on both sides" % (c_machine, tag),
+        rc is not None and rb is not None and rc["key"] == rb["key"], "C=%r B=%r" % (rc, rb))
+for _m in ("box-z", "box-a"):
+    for _fc in (True, False):
+        guard("PK g", lambda m=_m, fc=_fc: pk_g(m, fc))
+
+# ------------------------------------------------- (h) re-pair / pair-reset
+def pk_h():
+    ck = keys("c")
+    C, B = pair_cb(c_keys=ck)
+    wire(C, B_ADDR, B, C_ADDR)
+    C._drop_channel(C._get_channel(KEYB), "B reinstalled")
+    old_id = B.peer_id
+    Bn = new_daemon([C_ADDR], "box-p", adv=B_ADDR)        # reinstall: new key dir -> new id
+    wire(Bn, C_ADDR, C, GW)
+    res("PK h: a new id claiming the paired slot is refused", C._get_channel(KEYB) is None,
+        "cur=%r" % (C._get_channel(KEYB) and C._get_channel(KEYB).pair_id))
+    pend = C.pairs.pending()
+    res("PK h: the refusal is surfaced as a pending repair",
+        len(pend) == 1 and pend[0].get("slot") == KEYB and pend[0].get("new_id") == Bn.peer_id
+        and pend[0].get("old_id") == old_id, "pending=%r" % pend)
+    res("PK h: ... and logged", any("pair-reset" in l and KEYB in l for l in logs), "no log line")
+    pf = os.path.join(ck, "pending-repair.json")
+    res("PK h: the pending repair is a 0600 state file", os.path.isfile(pf)
+        and stat.S_IMODE(os.stat(pf).st_mode) == 0o600, "missing or wrong mode")
+    n_logs = len([l for l in logs if "pair-reset" in l])
+    wire(Bn, C_ADDR, C, GW)
+    res("PK h: a repeated attempt is not logged again",
+        len([l for l in logs if "pair-reset" in l]) == n_logs and len(C.pairs.pending()) == 1,
+        "pending=%r" % C.pairs.pending())
+    n_logs = len([l for l in logs if "pair-reset" in l])
+    for _ in range(20):
+        flood = mod.PairStore(keys("flood")).identity()
+        link_in(C, GW, hello("box-p", adv=B_ADDR, pid=flood["id"], dh=flood["pub"]))
+    res("PK h: a flood of fresh ids adds no pending entries and no log lines",
+        len(C.pairs.pending()) == 1 and len([l for l in logs if "pair-reset" in l]) == n_logs
+        and C._get_channel(KEYB) is None, "pending=%d" % len(C.pairs.pending()))
+    # the user accepts the new key with one command (CLI, against C's key dir)
+    cfgp = os.path.join(root, "pk-h.json")
+    with open(cfgp, "w") as fh:
+        json.dump({"keys_dir": ck, "this_machine": "box-c"}, fh)
+    env = dict(os.environ, CREDO_PEER_LAN_CONFIG=cfgp)
+    st = subprocess.run([sys.executable, daemon_path, "pairs"], env=env,
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+    out = st.stdout.decode()
+    res("PK h: `pairs` lists the pending repair with the command to accept it",
+        st.returncode == 0 and "pending" in out.lower() and ("pair-reset %s" % KEYB) in out, out)
+    st = subprocess.run([sys.executable, daemon_path, "pair-reset", KEYB], env=env,
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+    res("PK h: `pair-reset <slot>` succeeds", st.returncode == 0, st.stdout.decode())
+    res("PK h: ... removes the old pairing and the pending entry",
+        C.pairs.get(old_id) is None and C.pairs.pending() == [], "rec=%r pending=%r"
+        % (C.pairs.get(old_id), C.pairs.pending()))
+    wire(Bn, C_ADDR, C, GW)
+    cur = C._get_channel(KEYB)
+    res("PK h: the reinstalled peer then pairs again automatically",
+        cur is not None and cur.pair_id == Bn.peer_id and C.pairs.get(Bn.peer_id) is not None,
+        "cur=%r" % (cur and cur.pair_id))
+    st = subprocess.run([sys.executable, daemon_path, "pair-reset", "no-such-peer"], env=env,
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+    res("PK h: `pair-reset` of an unknown peer fails and changes nothing",
+        st.returncode != 0 and C.pairs.get(Bn.peer_id) is not None, st.stdout.decode())
+    # the opening side: C has B pinned at KEYB, a new id answers at that address
+    C3, B3 = pair_cb()
+    wire(C3, B_ADDR, B3, C_ADDR)
+    C3._drop_channel(C3._get_channel(KEYB), "B reinstalled")
+    B3n = new_daemon([C_ADDR], "box-p", adv=B_ADDR)
+    wire(C3, B_ADDR, B3n, C_ADDR)
+    pend = C3.pairs.pending()
+    res("PK h: our own link to a paired address answered by a new id is refused + surfaced",
+        C3._get_channel(KEYB) is None and len(pend) == 1 and pend[0].get("new_id") == B3n.peer_id,
+        "cur=%r pending=%r" % (C3._get_channel(KEYB), pend))
+guard("PK h", pk_h)
+
+# ------------------------------------------------- (i) malformed values
+def pk_i():
+    P = mod.PAIR_P
+    SUR = json.loads('"\\ud800"')
+    bad_dh = (("zero", "0"), ("one", "1"), ("p-1", "%x" % (P - 1)), ("p", "%x" % P), ("p+1", "%x" % (P + 1)),
+              ("huge", "f" * 600), ("non-hex", "zz" * 8), ("negative", "-5"), ("int", 5), ("float", 1.5),
+              ("list", ["ab"]), ("dict", {"a": 1}), ("bool", True), ("null", None), ("surrogate", SUR),
+              ("empty", ""), ("upper", "AB" * 8), ("order-2q", "%x" % (P - 2)))
+    bad_id = (("short", "ab"), ("upper", "AB" * 16), ("int", 7), ("list", ["a"]), ("surrogate", SUR),
+              ("long", "a" * 200), ("null", None))
+    ok_vals = [label for label, v in bad_dh if mod.dh_pub_value(v) is not None]
+    res("PK i: invalid DH public values are rejected (incl. 0, 1, p-1, >= p, outside the subgroup)",
+        ok_vals == [], "accepted=%r" % ok_vals)
+    C, B = pair_cb()
+    wire(C, B_ADDR, B, C_ADDR)
+    C._drop_channel(C._get_channel(KEYB), "offline")
+    raised, zombies = [], []
+    ident = mod.PairStore(keys("i")).identity()
+    cases = [("dh " + l, dict(pid=ident["id"], dh=v)) for l, v in bad_dh]
+    cases += [("pid " + l, dict(pid=v, dh=ident["pub"])) for l, v in bad_id]
+    cases += [("auth " + l, dict(pid=B.peer_id, dh=B.pairs.identity()["pub"], _auth=v))
+              for l, v in (("int", 1), ("list", []), ("surrogate", SUR), ("short", "ab"), ("null", None))]
+    for label, extra in cases:
+        auth = extra.pop("_auth", "missing")
+        follow = b"" if auth == "missing" else mod.frame_for("tok", {"kind": "link", "auth": auth}).encode()
+        for src in (GW, "127.0.0.1", "192.168.1.43"):
+            try:
+                s = link_in(C, src, hello("box-m", adv=B_ADDR, **extra), follow)
+            except Exception as exc:
+                raised.append("%s/%s: %s" % (label, src, type(exc).__name__))
+                continue
+            regs = [c for c in live(C) if c.src_ip == src]
+            if (regs and not acked(s)) or (not regs and not s.closed):
+                zombies.append("%s/%s" % (label, src))
+            for c in regs:
+                C._drop_channel(c, "test")
+    res("PK i: malformed pairing fields in a hello never raise", raised == [], "%r" % raised[:6])
+    res("PK i: ... and never leave a zombie (registered unacked / unclosed) link", zombies == [], "%r" % zombies[:6])
+    res("PK i: ... and never pin anything", [r["id"] for r in C.pairs.records()] == [B.peer_id],
+        "records=%r" % [r["id"] for r in C.pairs.records()])
+    # malformed challenges against our own outbound link
+    raised = []
+    for label, chal in (("dh", {"pid": B.peer_id, "dh": "1", "challenge": "ab" * 16, "auth": "cd" * 32}),
+                        ("pid", {"pid": 5, "dh": B.pairs.identity()["pub"], "challenge": "ab" * 16}),
+                        ("challenge", {"pid": B.peer_id, "dh": B.pairs.identity()["pub"], "challenge": SUR}),
+                        ("auth", {"pid": B.peer_id, "dh": B.pairs.identity()["pub"], "challenge": "ab" * 16,
+                                  "auth": ["x"]})):
+        def acceptor(sock, chal=chal):
+            mod.recv_line(sock, b"")
+            m = {"kind": "link", "machine": "box-p"}
+            m.update(chal)
+            sock.sendall(mod.frame_for("tok", m).encode())
+            time.sleep(0.2)
+            sock.close()
+        real = mod.open_link_socket
+        def ols(host, port, timeout, acceptor=acceptor):
+            a, b = socket.socketpair()
+            threading.Thread(target=acceptor, args=(b,), daemon=True).start()
+            return a
+        mod.open_link_socket = ols
+        try:
+            C.link_retry.pop(KEYB, None)
+            C._open_link(B_ADDR, 48610)
+        except Exception as exc:
+            raised.append("%s: %s" % (label, type(exc).__name__))
+        finally:
+            mod.open_link_socket = real
+    res("PK i: malformed challenges never raise and never bring up a link",
+        raised == [] and C._get_channel(KEYB) is None and KEYB not in C.link_pending,
+        "raised=%r cur=%r" % (raised, C._get_channel(KEYB)))
+    # garbage key files never crash the store
+    kd = keys("garbage")
+    os.makedirs(kd, mode=0o700)
+    for name, data in (("peer-%s.json" % ("a" * 32), "{not json"), ("peer-%s.json" % ("b" * 32), "[1,2]"),
+                       ("self.json", '{"id": 5}'), ("pending-repair.json", '{"x": 1}')):
+        with open(os.path.join(kd, name), "w") as fh:
+            fh.write(data)
+    err = None
+    try:
+        st = mod.PairStore(kd)
+        st.records(); st.pending(); st.get("a" * 32); st.by_slot(KEYB)
+    except Exception as exc:
+        err = "%s: %s" % (type(exc).__name__, exc)
+    res("PK i: corrupt peer and pending files never raise", err is None, "err=%r" % err)
+    try:
+        st.identity()
+        err = None
+    except ValueError as exc:
+        err = exc
+    with open(os.path.join(kd, "self.json")) as fh:
+        kept = fh.read()
+    res("PK i: a corrupt identity file is refused and kept (never silently replaced)",
+        err is not None and kept == '{"id": 5}', "err=%r kept=%r" % (err, kept))
+guard("PK i", pk_i)
+
+# ------------------------------------------------- (j) file permissions / atomicity
+def pk_j():
+    old = os.umask(0)
+    try:
+        kd = keys("perm")
+        st = mod.PairStore(kd)
+        ident = st.identity()
+        st.pin("c" * 32, ident["pub"], "d" * 64, KEYB, "box-p")
+        st.add_pending({"slot": KEYB, "old_id": "c" * 32, "new_id": "e" * 32, "machine": "box-p",
+                        "reason": "test"})
+    finally:
+        os.umask(old)
+    modes = {n: stat.S_IMODE(os.stat(os.path.join(kd, n)).st_mode) for n in os.listdir(kd)}
+    res("PK j: the key dir is 0700 even with umask 0", stat.S_IMODE(os.stat(kd).st_mode) == 0o700,
+        "%o" % stat.S_IMODE(os.stat(kd).st_mode))
+    res("PK j: every key file is 0600 even with umask 0", modes and all(m == 0o600 for m in modes.values()),
+        "%r" % {k: "%o" % v for k, v in modes.items()})
+    real = mod.os.replace
+    def boom(a, b):
+        raise OSError("disk full")
+    mod.os.replace = boom
+    try:
+        try:
+            st.pin("c" * 32, ident["pub"], "f" * 64, "10.0.0.1:1", "box-x")
+        except OSError:
+            pass
+    finally:
+        mod.os.replace = real
+    r = st.get("c" * 32)
+    res("PK j: a failed write leaves the previous record intact (atomic replace)",
+        r is not None and r["key"] == "d" * 64 and r["slot"] == KEYB, "rec=%r" % r)
+    res("PK j: no temp file is left behind", not [n for n in os.listdir(kd) if "tmp" in n],
+        "%r" % os.listdir(kd))
+    ok1 = st.pin("1" * 32, ident["pub"], "2" * 64, "10.0.0.9:1", "box-x")
+    ok2 = st.pin("3" * 32, ident["pub"], "4" * 64, "10.0.0.9:1", "box-y")
+    res("PK j: a slot belongs to one paired id (a racing second pin is refused)",
+        ok1 is True and ok2 is False and st.get("3" * 32) is None, "ok1=%r ok2=%r" % (ok1, ok2))
+    # concurrent identity creation on a fresh dir yields ONE identity
+    kd2 = keys("race")
+    ids = []
+    def mk():
+        ids.append(mod.PairStore(kd2).identity()["id"])
+    ts = [threading.Thread(target=mk) for _ in range(8)]
+    [t.start() for t in ts]
+    [t.join(10) for t in ts]
+    res("PK j: concurrent first starts agree on one identity", len(set(ids)) == 1 and len(ids) == 8,
+        "ids=%r" % set(ids))
+    # a symlinked key file is never followed
+    kd3 = keys("link")
+    st3 = mod.PairStore(kd3)
+    st3.identity()
+    target = os.path.join(root, "pk-link-target.json")
+    with open(target, "w") as fh:
+        json.dump({"id": "c" * 32, "pub": ident["pub"], "key": "1" * 64, "slot": KEYB}, fh)
+    os.symlink(target, os.path.join(kd3, "peer-%s.json" % ("c" * 32)))
+    res("PK j: a symlinked peer file is ignored", st3.get("c" * 32) is None, "followed the symlink")
+guard("PK j", pk_j)
+
+# ------------------------------------------------- (k) no silent slot migration
+# A dials an unpaired configured address Q, and the bytes reach its paired peer P:
+# A and P run the pairing handshake, but for slot Q. P stays bound to its own slot on
+# both sides.
+Q_ADDR = "192.168.1.43"
+KEYQ = "%s:48610" % Q_ADDR
+
+def pair_ap():
+    A = new_daemon([B_ADDR, Q_ADDR], "box-a", adv=C_ADDR)
+    P = new_daemon([C_ADDR], "box-p", adv=B_ADDR)
+    wire(A, B_ADDR, P, C_ADDR)
+    for d, k in ((A, KEYB), (P, KEYC)):
+        ch = d._get_channel(k)
+        if ch is not None:
+            d._drop_channel(ch, "P went offline")
+    return A, P
+
+def pk_k_relay(src):
+    A, P = pair_ap()
+    if rec(A, P.peer_id) is None or rec(P, A.peer_id) is None:
+        res("PK k %s: precondition: A and P paired" % src, False, "not paired")
+        return
+    wire(A, Q_ADDR, P, src)            # A dials Q, M relays it to P (seen as from src)
+    ra, rp = rec(A, P.peer_id), rec(P, A.peer_id)
+    res("PK k %s: A keeps P bound to its real slot (no silent migration to Q)" % src,
+        ra is not None and ra["slot"] == KEYB and A._bound(KEYQ) is None, "rec=%r" % ra)
+    res("PK k %s: P keeps A bound to its real slot" % src,
+        rp is not None and rp["slot"] == KEYC, "rec=%r" % rp)
+    cq = A._get_channel(KEYQ)
+    res("PK k %s: no link at Q authenticated as P" % src,
+        cq is None or cq.pair_id != P.peer_id, "cq=%r" % (cq and cq.pair_id))
+    pend = A.pairs.pending()
+    res("PK k %s: the paired id answering at another address is a pending repair" % src,
+        any(e["slot"] == KEYQ and e["new_id"] == P.peer_id and e.get("fix") == P.peer_id for e in pend),
+        "pending=%r" % pend)
+    # M now claims P's real slot token-only (P is offline): still refused
+    s = link_in(A, "127.0.0.1", hello("box-p", adv=B_ADDR))
+    raw.clear()
+    err = None
+    try:
+        A.send_frame(B_ADDR, 48610, {"kind": "deliver", "body": "secret msg for P"})
+    except Exception as exc:
+        err = exc
+    res("PK k %s: P's slot stays closed to a token holder afterwards" % src,
+        not acked(s) and A._get_channel(KEYB) is None and err is not None and raw == [],
+        "acked=%r err=%r raw=%r" % (acked(s), err, raw))
+    # the real P still links normally (no repair needed for its real address)
+    wire(A, B_ADDR, P, C_ADDR)
+    cb = A._get_channel(KEYB)
+    res("PK k %s: the real P still links at its own slot" % src,
+        cb is not None and cb.pair_id == P.peer_id, "cb=%r" % (cb and cb.pair_id))
+for _src in ("127.0.0.1", "192.168.1.66"):
+    guard("PK k", lambda s=_src: pk_k_relay(s))
+
+def pk_k_more():
+    # store level: a paired id is never moved to another slot by pin()
+    st = mod.PairStore(keys("move"))
+    ident = st.identity()
+    ok1 = st.pin("5" * 32, ident["pub"], "6" * 64, "10.0.0.5:1", "box-x")
+    ok2 = st.pin("5" * 32, ident["pub"], "6" * 64, "10.0.0.6:1", "box-x")
+    r = st.get("5" * 32)
+    res("PK k: pin() never moves a paired id to another slot",
+        ok1 is True and ok2 is False and r is not None and r["slot"] == "10.0.0.5:1", "ok2=%r rec=%r" % (ok2, r))
+    # the proofs and the session key bind the opener's expectation
+    k = "7" * 64
+    a, b = "8" * 32, "9" * 32
+    res("PK k: a proof is bound to the opener's expected peer id",
+        mod.pair_proof(k, "A", a, b, "1" * 32, "2" * 32, "*") != mod.pair_proof(k, "A", a, b, "1" * 32, "2" * 32, a)
+        and mod.pair_session_key(k, b, a, "1" * 32, "2" * 32, "*")
+        != mod.pair_session_key(k, b, a, "1" * 32, "2" * 32, a), "not bound")
+    # an acceptor that is not the peer the opener expects gives no proof at all
+    A, P = pair_ap()
+    other = mod.PairStore(keys("other")).identity()
+    s = link_in(P, C_ADDR, hello("box-a", adv=C_ADDR, pid=A.peer_id, dh=A.pairs.identity()["pub"],
+                                 expect=other["id"]))
+    fr = frames_of(s)
+    res("PK k: an acceptor the opener does not expect sends no proof and no ack",
+        not acked(s) and not any(f.get("auth") for f in fr) and s.closed, "frames=%r" % fr)
+    # pin only after the full handshake: an acceptor that verifies the opener's proof
+    # but then never acks leaves NO pairing on either side
+    A2 = new_daemon([B_ADDR], "box-a", adv=C_ADDR)
+    P2 = new_daemon([C_ADDR], "box-p", adv=B_ADDR)
+    P2._register_channel = lambda ch: (setattr(ch, "refuse_reason", "busy") or False)
+    wire(A2, B_ADDR, P2, C_ADDR)
+    res("PK k: no pairing is stored when the link is refused after the proofs (no ack)",
+        A2.pairs.records() == [] and P2.pairs.records() == [],
+        "A=%r P=%r" % (A2.pairs.records(), P2.pairs.records()))
+    A3 = new_daemon([B_ADDR], "box-a", adv=C_ADDR)
+    P3 = new_daemon([C_ADDR], "box-p", adv=B_ADDR)
+    real = mod.open_link_socket
+    def ols(host, port, timeout):
+        a1, a2 = socket.socketpair()
+        def acceptor():
+            line, rest = mod.recv_line(a2, b"")
+            h = mod.verify_line("tok", line.decode())
+            # run P3's pairing step, then die before any ack (crash window)
+            P3._pair_accept(a2, C_ADDR, KEYC, "box-a", h, rest)
+            a2.close()
+        threading.Thread(target=acceptor, daemon=True).start()
+        return a1
+    mod.open_link_socket = ols
+    try:
+        A3._open_link(B_ADDR, 48610)
+    finally:
+        mod.open_link_socket = real
+    time.sleep(0.1)
+    res("PK k: the opener stores nothing before the ack (crash between proof and ack)",
+        A3.pairs.records() == [] and P3.pairs.records() == [] and A3._get_channel(KEYB) is None,
+        "A=%r P=%r" % (A3.pairs.records(), P3.pairs.records()))
+    # a legacy peer refused at a slot another relay paired first: surfaced
+    L = new_daemon([B_ADDR, Q_ADDR], "box-l", adv=C_ADDR)
+    att = mod.PairStore(keys("squatter")).identity()
+    sq = mod.Daemon({"this_machine": "box-q", "token": "tok", "peers": [C_ADDR], "listen_port": 48610,
+                     "keys_dir": keys("squatter-d")})
+    sq.lan_state = mod.compute_lan_state(CFG, NET, sq.peers, False)
+    sq._channel_reader = lambda ch, buf=b"": None
+    sq.advertise_host, sq.advertise_port = Q_ADDR, 48610
+    wire(sq, C_ADDR, L, Q_ADDR)                     # the squatter pairs at Q first
+    L._drop_channel(L._get_channel(KEYQ), "gone")
+    sl = link_in(L, Q_ADDR, hello("box-legacy", adv=Q_ADDR))   # the real legacy peer at Q
+    pend = L.pairs.pending()
+    res("PK k: a legacy peer refused at a slot a token holder paired first is a pending repair",
+        not acked(sl) and any(e["slot"] == KEYQ for e in pend), "pending=%r" % pend)
+guard("PK k more", pk_k_more)
+
+def pk_k_adversarial():
+    # the paired peer itself (or a relay of its opener handshake) links in from ANOTHER
+    # configured address: refused at that slot, its own slot stays bound, surfaced
+    A, P = pair_ap()
+    P.advertise_host = Q_ADDR
+    wire(P, C_ADDR, A, Q_ADDR)
+    ra = rec(A, P.peer_id)
+    pend = A.pairs.pending()
+    res("PK k adv: a proven paired id linking in at another slot is refused there",
+        A._get_channel(KEYQ) is None and ra is not None and ra["slot"] == KEYB
+        and any(e["slot"] == KEYQ and e.get("fix") == P.peer_id for e in pend),
+        "rec=%r pending=%r" % (ra, pend))
+    # a captured paired handshake replayed at another slot gets nothing
+    P.advertise_host = B_ADDR
+    tap = wire(P, C_ADDR, A, B_ADDR)
+    lines = [l for l in b"".join(tap).split(b"\n") if l]
+    A._drop_channel(A._get_channel(KEYB), "P offline")
+    a, b = socket.socketpair()
+    a.sendall(b"\n".join(lines) + b"\n")
+    A._handle_conn(b, (Q_ADDR, 40300))
+    a.close()
+    res("PK k adv: a captured handshake replayed from another address gets no link",
+        A._get_channel(KEYQ) is None and A._get_channel(KEYB) is None
+        and rec(A, P.peer_id)["slot"] == KEYB, "q=%r" % A._get_channel(KEYQ))
+    # a changed opener expectation on the path: the proofs no longer match
+    A2, P2 = pair_ap()
+    real = mod.open_link_socket
+    def ols(host, port, timeout):
+        a1, a2 = socket.socketpair()
+        b1, b2 = socket.socketpair()
+        def mitm():
+            line, rest = mod.recv_line(a2, b"")
+            h = mod.verify_line("tok", line.decode())
+            h.pop("expect", None)
+            b1.sendall(mod.frame_for("tok", h).encode() + rest)
+            threading.Thread(target=pump, args=(b1, a2, []), daemon=True).start()
+            pump(a2, b1, [])
+        threading.Thread(target=mitm, daemon=True).start()
+        threading.Thread(target=P2._handle_conn, args=(b2, (C_ADDR, 40400)), daemon=True).start()
+        return a1
+    mod.open_link_socket = ols
+    try:
+        A2._open_link(B_ADDR, 48610)
+    finally:
+        mod.open_link_socket = real
+    time.sleep(0.1)
+    res("PK k adv: a stripped expectation breaks the proof (no link on either side)",
+        A2._get_channel(KEYB) is None and P2._get_channel(KEYC) is None
+        and rec(A2, P2.peer_id)["slot"] == KEYB and rec(P2, A2.peer_id)["slot"] == KEYC,
+        "a=%r p=%r" % (A2._get_channel(KEYB), P2._get_channel(KEYC)))
+guard("PK k adversarial", pk_k_adversarial)
+
+# ------------------------------------------------- (l) unreadable key store fails closed
+class Unreadable(object):
+    """os.listdir / os.open raise EMFILE (or EACCES) for paths under one key dir."""
+    def __init__(self, path, err):
+        self.path, self.err = path, err
+    def __enter__(self):
+        import errno as _e
+        self.real_ls, self.real_open = os.listdir, os.open
+        path, code = self.path, getattr(_e, self.err)
+        def ls(p="."):
+            if str(p).startswith(path):
+                raise OSError(code, os.strerror(code), p)
+            return self.real_ls(p)
+        def op(p, *a, **k):
+            if str(p).startswith(path):
+                raise OSError(code, os.strerror(code), p)
+            return self.real_open(p, *a, **k)
+        os.listdir, os.open = ls, op
+        return self
+    def __exit__(self, *a):
+        os.listdir, os.open = self.real_ls, self.real_open
+
+def pk_l():
+    C, B = pair_cb()
+    wire(C, B_ADDR, B, C_ADDR)
+    b_id, b_pub = B.peer_id, B.pairs.identity()["pub"]
+    ch = C._get_channel(KEYB)
+    if ch is None or not ch.pair_id:
+        res("PK l: precondition: paired link", False, "no paired link")
+        return
+    C._drop_channel(ch, "peer went offline")
+    for err in ("EMFILE", "EACCES"):
+        with Unreadable(C.pairs.path, err):
+            raised = None
+            try:
+                C.pairs.records()
+            except OSError as exc:
+                raised = exc
+            res("PK l %s: records() raises instead of returning no pairings" % err,
+                isinstance(raised, mod.PairStoreUnreadable), "raised=%r" % raised)
+            res("PK l %s: every slot counts as bound (B's and an unpaired one)" % err,
+                C._bound(KEYB) is not None and C._bound("192.168.1.43:48610") is not None
+                and not C._slot_trusted(KEYB, None), "bound=%r" % C._bound(KEYB))
+            att = squat_attempts(C, GW, b_id, b_pub)
+            att.append(link_in(C, "192.168.1.43", hello("box-q", adv="192.168.1.43", chal="7" * 32)))
+            res("PK l %s: no token-only claim gets a link" % err,
+                not any(acked(s) for s in att) and not live(C),
+                "acked=%r live=%r" % ([acked(s) for s in att], [c.key for c in live(C)]))
+            raw.clear()
+            errs = []
+            for addr in (B_ADDR, "192.168.1.43"):
+                try:
+                    C.send_frame(addr, 48610, {"kind": "deliver", "body": "msg"})
+                except Exception as exc:
+                    errs.append(exc)
+            res("PK l %s: no fresh connection to a configured peer" % err,
+                raw == [] and len(errs) == 2, "raw=%r errs=%r" % (raw, errs))
+    res("PK l: the unreadable store is logged once",
+        sum(1 for l in logs if "unreadable" in l and C.pairs.path in l) == 1,
+        "logs=%r" % [l for l in logs if "unreadable" in l])
+    res("PK l: no pending repair was recorded while unreadable", not C.pairs.pending(),
+        "pending=%r" % C.pairs.pending())
+    # readable again: B's paired link comes back
+    wire(C, B_ADDR, B, C_ADDR)
+    cc = C._get_channel(KEYB)
+    res("PK l: once readable, the paired peer links again",
+        cc is not None and cc.pair_id == b_id, "cc=%r" % (cc and cc.pair_id))
+    # a key dir that simply does not exist yet: unpaired peers keep working
+    D, _ = pair_cb()
+    res("PK l: a missing key dir means no pairings (not unknown)",
+        not os.path.exists(D.pairs.path) and D.pairs.records() == [] and D._bound(KEYB) is None,
+        "exists=%r" % os.path.exists(D.pairs.path))
+    # holder: unknown pairing state drops the direct send
+    hk = keys("holder")
+    os.makedirs(hk)
+    hcfg = os.path.join(root, "holder-cfg.json")
+    with open(hcfg, "w") as fh:
+        json.dump({"keys_dir": hk}, fh)
+    os.environ["CREDO_PEER_LAN_CONFIG"] = hcfg
+    try:
+        with Unreadable(hk, "EACCES"):
+            raw.clear()
+            mod._forward(json.dumps({"type": "user", "message": {"content": "hi"}}).encode(),
+                         "tok", "192.168.1.43", 48610, HArgs(), root)
+            res("PK l: a holder never sends directly while the pairing state is unknown",
+                raw == [], "raw=%r" % raw)
+        raw.clear()
+        mod._forward(json.dumps({"type": "user", "message": {"content": "hi"}}).encode(),
+                     "tok", "192.168.1.43", 48610, HArgs(), root)
+        res("PK l: ... and does again once the store is readable",
+            raw == [("192.168.1.43", 48610, "deliver")], "raw=%r" % raw)
+    finally:
+        os.environ.pop("CREDO_PEER_LAN_CONFIG", None)
+
+class HArgs(object):
+    relay_sock, no_direct, target_session = None, False, "sid-x"
+
+guard("PK l", pk_l)
+
+# ------------------------------------------------- (m) the identity survives read errors
+class SelfOpen(object):
+    """os.open on one key dir's self.json follows a script of errno names (one per
+    call, the last one repeats); "ok" opens the real file."""
+    def __init__(self, path, script):
+        self.target, self.script, self.n = os.path.join(path, "self.json"), list(script), 0
+    def __enter__(self):
+        import errno as _e
+        self.real = os.open
+        def op(p, *a, **k):
+            if str(p) == self.target:
+                step = self.script[min(self.n, len(self.script) - 1)]
+                self.n += 1
+                if step == "ENOENT":
+                    raise FileNotFoundError(_e.ENOENT, os.strerror(_e.ENOENT), p)
+                if step != "ok":
+                    code = getattr(_e, step)
+                    raise OSError(code, os.strerror(code), p)
+            return self.real(p, *a, **k)
+        os.open = op
+        return self
+    def __exit__(self, *a):
+        os.open = self.real
+
+def snap(kd):
+    with open(os.path.join(kd, "self.json"), "rb") as fh:
+        return fh.read()
+
+def pk_m():
+    import contextlib, io
+    kd = keys("ident")
+    first = mod.PairStore(kd).identity()
+    before = snap(kd)
+    for script in (["EACCES"], ["EMFILE"], ["EIO"], ["ENOENT", "EACCES"], ["ENOENT", "EIO"]):
+        raised = None
+        try:
+            with SelfOpen(kd, script):
+                mod.PairStore(kd).identity()
+        except OSError as exc:
+            raised = exc
+        res("PK m %s: an unreadable identity raises (never replaced)" % "/".join(script),
+            isinstance(raised, mod.PairStoreUnreadable) and snap(kd) == before
+            and not [n for n in os.listdir(kd) if "tmp" in n],
+            "raised=%r same=%r files=%r" % (raised, snap(kd) == before, os.listdir(kd)))
+    # a read error after the open (EIO from read()) is not mistaken for corruption
+    real_load = mod.json.load
+    def eio(fh, *a, **k):
+        import errno as _e
+        raise OSError(_e.EIO, "Input/output error")
+    mod.json.load = eio
+    try:
+        raised = None
+        try:
+            mod.PairStore(kd).identity()
+        except OSError as exc:
+            raised = exc
+    finally:
+        mod.json.load = real_load
+    res("PK m: a read error inside the file raises (never replaced)",
+        isinstance(raised, mod.PairStoreUnreadable) and snap(kd) == before, "raised=%r" % raised)
+    again = mod.PairStore(kd).identity()
+    res("PK m: once readable, the same identity comes back",
+        again["id"] == first["id"] and again["pub"] == first["pub"], "id=%r" % again["id"])
+    # a daemon whose identity cannot be read pairs with nobody for now (logged), then recovers
+    D = new_daemon([B_ADDR], "box-m", keys_dir=kd)
+    with SelfOpen(kd, ["EACCES"]):
+        pid_off = D.peer_id
+    res("PK m: the daemon turns pairing off while the identity is unreadable",
+        pid_off == "" and any("pairing disabled" in l and kd in l for l in logs) and snap(kd) == before,
+        "pid=%r" % pid_off)
+    res("PK m: ... and uses the same identity once readable", D.peer_id == first["id"], D.peer_id)
+    # an identity file that is present but not a valid identity is kept, not replaced
+    kc = keys("ident-bad")
+    os.makedirs(kc, mode=0o700)
+    for bad in ('{"id": 5}', "{not json", ""):
+        with open(os.path.join(kc, "self.json"), "w") as fh:
+            fh.write(bad)
+        raised = None
+        try:
+            mod.PairStore(kc).identity()
+        except (OSError, ValueError) as exc:
+            raised = exc
+        res("PK m %r: an invalid identity file raises and is left untouched" % bad[:9],
+            raised is not None and snap(kc) == bad.encode()
+            and os.listdir(kc) == ["self.json"], "raised=%r files=%r" % (raised, os.listdir(kc)))
+    # CLI: an unreadable key store is reported once, never as "no id yet"
+    os.chmod(os.path.join(kd, "self.json"), 0o600)
+    for err in ("EACCES", "EMFILE"):
+        out = io.StringIO()
+        with Unreadable(kd, err), contextlib.redirect_stdout(out):
+            mod.print_pairs({"keys_dir": kd})
+        txt = out.getvalue()
+        res("PK m %s: pairs reports the unreadable key store once" % err,
+            txt.count("key store unreadable:") == 1 and "no id yet" not in txt
+            and txt.count("[Errno") <= 1 and "paired peers: none yet" not in txt, txt)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        mod.print_pairs({"keys_dir": kc})
+    txt = out.getvalue()
+    res("PK m: pairs reports an invalid identity file, never as \"no id yet\"",
+        "no id yet" not in txt and "not a valid" in txt, txt)
+    # roster filter: unknown pairing state -> rosters only over key-authenticated links
+    C, B = pair_cb()
+    wire(C, B_ADDR, B, C_ADDR)
+    ch = C._get_channel(KEYB)
+    if ch is None or not ch.pair_id:
+        res("PK m: precondition: paired link", False, "no paired link")
+        return
+    n_ok = C.roster_tick()
+    with Unreadable(C.pairs.path, "EACCES"):
+        n_unknown = C.roster_tick()
+        C._drop_channel(ch, "peer went offline")
+        n_none = C.roster_tick()
+    res("PK m: while unreadable, rosters go only over key-authenticated links",
+        n_ok == 2 and n_unknown == 1 and n_none == 0, "ok=%r unknown=%r none=%r" % (n_ok, n_unknown, n_none))
+    # the unreadable warning is logged again in a later unreadable phase
+    def n_unr():
+        return sum(1 for l in logs if "unreadable" in l and C.pairs.path in l)
+    base = n_unr()
+    C._bound(KEYB)                      # readable again
+    with Unreadable(C.pairs.path, "EACCES"):
+        C._bound(KEYB)
+        C._bound(KEYB)
+    res("PK m: a second unreadable phase is logged again (once)", n_unr() == base + 1,
+        "base=%r now=%r" % (base, n_unr()))
+guard("PK m", pk_m)
+PYEOF
+PK_OUT="$("$PY" "$TMP/PK/pktest.py" "$DAEMON" "$TMP/PK" 2>&1)"
+while IFS= read -r line; do
+    case "$line" in
+        PASS\ *) PASS=$((PASS + 1)) ;;
+        FAIL\ *) FAIL=$((FAIL + 1)); printf '%s\n' "$line" ;;
+    esac
+done <<< "$PK_OUT"
+case "$PK_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL PK: traceback\n%s\n' "$PK_OUT" ;; esac
+check "PK: expected number of pairing results" "115" "$(printf '%s\n' "$PK_OUT" | grep -cE '^(PASS|FAIL) ')"
+
+# --- RO: an OLD peer (no link support) is marked after a few refusals; rosters keep -
+# flowing over fresh connections. The fake old relay reads one line per connection,
+# records its kind and closes without an ack (like a relay that predates the link).
+read PRO POLD < <("$PY" - <<'PYEOF'
+import socket
+ps = []
+for _ in range(2):
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); ps.append(s.getsockname()[1]); s.close()
+print(ps[0], ps[1])
+PYEOF
+)
+mkdir -p "$TMP/RO/cfg/sessions" "$TMP/RO/cfg/credo" "$TMP/RO/sock"
+cat > "$TMP/RO/oldpeer.py" <<'PYEOF'
+import json, socket, sys
+port, out = int(sys.argv[1]), sys.argv[2]
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", port)); s.listen(16)
+while True:
+    c, _ = s.accept()
+    c.settimeout(3)
+    buf = b""
+    try:
+        while b"\n" not in buf:
+            chunk = c.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+    except OSError:
+        pass
+    c.close()
+    try:
+        kind = json.loads(json.loads(buf.split(b"\n")[0])["body"]).get("kind")
+    except Exception:
+        kind = "?"
+    with open(out, "a") as fh:
+        fh.write("%s\n" % kind)
+PYEOF
+: > "$TMP/RO/kinds.log"
+"$PY" "$TMP/RO/oldpeer.py" "$POLD" "$TMP/RO/kinds.log" & PIDS="$PIDS $!"
+cat > "$TMP/RO/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"box-n","listen_host":"127.0.0.1","listen_port":$PRO,
+ "roster_interval":0.3,"machine_timeout":60,"peers":["127.0.0.1:$POLD"]}
+EOF
+sleep 600 & SLEEP_RO=$!; PIDS="$PIDS $SLEEP_RO"
+write_descriptor "$TMP/RO/cfg/sessions/$SLEEP_RO.json" "$SLEEP_RO" "sid-RO" "$TMP/RO/inbox.sock" "acme-n"
+CLAUDE_CONFIG_DIR="$TMP/RO/cfg" CREDO_PEER_LAN_CONFIG="$TMP/RO/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/RO/sock" "$PY" "$DAEMON" daemon >"$TMP/RO/daemon.log" 2>&1 &
+PIDS="$PIDS $!"
+marked=""
+for _ in $(seq 1 60); do grep -q "does not support the return channel" "$TMP/RO/daemon.log" && { marked=1; break; }; sleep 0.25; done
+ok "RO: an old peer is marked 'no link support' after a few refused links" "$([ -n "$marked" ] && echo 0 || echo 1)"
+links1="$(grep -c '^link$' "$TMP/RO/kinds.log")"; rosters1="$(grep -c '^roster$' "$TMP/RO/kinds.log")"
+sleep 2
+links2="$(grep -c '^link$' "$TMP/RO/kinds.log")"; rosters2="$(grep -c '^roster$' "$TMP/RO/kinds.log")"
+check "RO: no further link attempts once marked" "$links1" "$links2"
+ok "RO: at most a few link attempts in total ($links2)" "$([ "$links2" -le 4 ] && echo 0 || echo 1)"
+ok "RO: rosters keep flowing over fresh connections ($rosters1 -> $rosters2)" "$([ "$rosters2" -gt "$rosters1" ] && echo 0 || echo 1)"
+check "RO: the 'no link support' notice is logged once" "1" "$(grep -c "does not support the return channel" "$TMP/RO/daemon.log")"
+
+# --- RP: relay socket permissions on a live daemon (dir pre-created 0755 by the test)
+check "RP: sock dir tightened to 0700" "700" "$(stat -c %a "$TMP/RL/sock")"
+RPS="$(ls "$TMP/RL/sock"/relay-*.sock 2>/dev/null | head -n1)"
+check "RP: relay socket is 0600" "600" "$([ -n "$RPS" ] && stat -c %a "$RPS")"
 
 # --- winproxy -DryRun (only if powershell.exe is runnable; never the real task) -
 WP="$SCRIPT_DIR/credo-peer-lan-winproxy.ps1"

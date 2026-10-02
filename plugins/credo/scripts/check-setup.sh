@@ -105,6 +105,13 @@ else
     CREDO_PROJECT_REPORT="needs_explicit_target"
 fi
 
+# Claude Code task-list tools opt-in (CLAUDE_CODE_ENABLE_TODO_TOOLS) for the active profile
+TODO_TOOLS_STATUS="$("$CHECK_DIR/credo-todo-tools.sh" status 2>/dev/null)"
+TODO_TOOLS_STATE="$(printf '%s\n' "$TODO_TOOLS_STATUS" | sed -n 's/^state=//p')"
+[ -n "$TODO_TOOLS_STATE" ] || TODO_TOOLS_STATE="unknown"
+TODO_TOOLS_DECLINED="$(printf '%s\n' "$TODO_TOOLS_STATUS" | sed -n 's/^declined=//p')"
+[ -n "$TODO_TOOLS_DECLINED" ] || TODO_TOOLS_DECLINED="no"
+
 # Output structured results
 cat <<EOF
 CREDO_SETUP_CHECK_V1
@@ -133,6 +140,9 @@ task_backend: $TASK_BACKEND_REPORT
 credo_project:
   resolved: $CREDO_PROJECT_REPORT
   cwd_is_hub: $CREDO_CWD_IS_HUB
+todo_tools:
+  state: $TODO_TOOLS_STATE
+  declined: $TODO_TOOLS_DECLINED
 EOF
 
 # Output warnings for missing requirements

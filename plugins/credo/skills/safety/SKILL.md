@@ -59,6 +59,23 @@ worktree, not unmerged, dirty, locked or other worktrees, no other path, and no 
 command - git unlinks symlinks there and never follows them, so link targets in the main
 checkout survive.
 
+Carve-out - own temporary leftovers in `/tmp` (user rule): in every session mode, the MAIN
+agent cleans up the unimportant leftovers that THIS session (itself or its subagents)
+created under `/tmp/<name>` - mktemp dirs, test fixtures, sockets, logs, scratch output -
+without asking the user, when all of these hold: the path is a literal `/tmp/<name>` (no
+variable, no glob), it is not a symlink, it lies directly in `/tmp`, and a listing shows
+only throwaway material the session created. Delete it by its literal path. Cleaning up is
+the normal case; leaving such junk behind is not.
+Keep instead of deleting: a repo cloned for research or as a reference that is still in
+use, and anything that may still belong in a real repo or be needed later (move it there
+first, or keep it). Never touch `/tmp` content this session did not create - other
+sessions, running processes (their sockets, locks, caches) or the user may depend on it.
+Anything else - other locations, unclear origin, user data, a symlink - falls back to the
+rule above: ask in an attended session (Ask tool); in autonomous mode never ask (nobody is
+there) - leave it in place and list it in the end-of-run report for the user. A subagent
+whose cleanup was blocked by a delete guard reports the path; the main agent then checks
+and removes it.
+
 Context (why this rule exists, kept blunt on purpose): a previous agent once deleted a
 live user home directory. This rule exists so that never happens again.
 

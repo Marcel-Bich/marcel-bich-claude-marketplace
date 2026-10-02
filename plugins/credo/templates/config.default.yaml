@@ -153,8 +153,8 @@ budget:
   # Task-sizing recommendation by remaining 5h budget (percent used).
   # Recommendation only, must never cause a standstill.
   task_sizing:
-    large_below_percent: 60
-    medium_below_percent: 80
+    large_below_percent: 70
+    medium_below_percent: 90
   # Weekly reset handling in autonomous mode. When the weekly reset is NEAR
   # (seven_day.resets_at falls on the same local calendar day - read dynamically
   # from the limit cache, never hardcoded) and weekly usage reaches switch_percent,

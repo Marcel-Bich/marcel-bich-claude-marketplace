@@ -1,6 +1,6 @@
 ---
 name: orchestration
-description: Delegate work to subagents safely and efficiently - decide how many subagents to run, keep parallel tracks on disjoint files (item `touches:` overlap check) and within machine resources (resource gate, `heavy:` items), give each code track a set-up git worktree (hydra or native, automatic), monitor them without flooding your context, inherit security to every subagent, and use return-and-resume so a subagent can ask a question and continue with full context. Use whenever you are about to spawn one or more subagents, run work in parallel, or coordinate delegated tasks. Applies to any agent that delegates, including subagents that spawn their own helpers.
+description: Delegate work to subagents safely and efficiently - follow the measured default batch workflow (plan once, 3-4 builders plus 1 bundle in worktrees, fresh audit per item, one release per batch), decide how many subagents to run, keep parallel tracks on disjoint files (item `touches:` overlap check) and within machine resources (resource gate, `heavy:` items), give each code track a set-up git worktree (hydra or native, automatic), monitor them without flooding your context, inherit security to every subagent, and use return-and-resume so a subagent can ask a question and continue with full context. Use whenever you are about to spawn one or more subagents, run work in parallel, or coordinate delegated tasks. Applies to any agent that delegates, including subagents that spawn their own helpers.
 ---
 
 # orchestration
@@ -25,13 +25,66 @@ large reads or long builds that a subagent can carry.
 
 ## How many subagents (situational, no colony rule)
 
-- The delegating agent decides the count based on the actual work. There is NO fixed
-  colony pattern and no rule to always fan out wide. Large colonies are expensive; use
-  them only ad hoc when a specific task genuinely benefits.
+- The delegating agent decides the count based on the actual work. For a build batch the
+  measured default is "Default batch workflow" below; beyond that there is no rule to
+  always fan out wide. Large colonies are expensive; use them only ad hoc when a specific
+  task genuinely benefits.
 - Parallelism is wanted. There is no fixed cap on code tracks; parallel code tracks are
   limited only by (a) file overlap (`touches:`, below) and (b) the resource gate (below).
 - Read-only work (research, clarify, exploration) stays freely parallel: it writes no
   files, so it needs no overlap check (the resource gate still applies to every spawn).
+
+## Default batch workflow (measured)
+
+The default for building a batch of `2_go` items - the best workflow measured so far, in
+two unattended benchmark runs on real items. The numbers are current measurements and may
+be tuned; values marked tentative have too few trials yet. Deviate only when the work
+clearly calls for it, and say why.
+
+1. **Plan once per batch** with a planning subagent. Order by dependencies: tooling, then
+   shared foundations, then features. Cut batches by SHARED SURFACES, not only by files:
+   two items that each added an element to the same UI bar conflicted although they
+   touched different modules. Central registry files (command, route, menu or plugin
+   registries, shared indexes) are shared surfaces: items touching the same one run
+   sequentially or in one bundle.
+2. **Build in parallel: 3-4 single-item builders plus 1 bundle builder**, each in its own
+   worktree (below). A bundle is 2-3 small, related, low-risk items in one worktree with
+   one audit. Measured: 3-5 parallel builders cut wall time from about 120 min to 15-22
+   min per item. Above 4-5 builders shared resources become the limit (one browser
+   automation, one test runtime, the 5h budget). The overlap check and the resource gate
+   below still apply.
+3. **Audit every item** with a fresh subagent that reads the source, runs the tests and
+   fixes small findings itself ("Delegating audit subagents" below). Not optional: a MAJOR
+   defect was found in 14 of 18 single items (run 1) and 7 of 12 (run 2); in run 2 no
+   single item passed its first audit.
+4. **Merge as audits pass**, one branch at a time. **One release per batch**, with ONE
+   full test suite run before it: it caught 3 bugs that every changed-only test run had
+   missed.
+5. **Budget gate** before the batch and before each heavy step: credo `budget` skill,
+   "Batch budget gate". Stop each agent right after its final report (TaskStop) - leftover
+   agents and test servers keep burning budget (owner rule).
+
+### Brief rules for builders and auditors
+
+Add to every builder and audit brief (besides the item path, the main-checkout path and
+the security block):
+
+- In its OWN worktree the agent commits on its branch; push, merge and release stay with
+  the main agent ("Parallel safety" below). Say so explicitly - a generic "subagents never
+  commit" rule otherwise stalls it.
+- Every new CLI command or flag gets its GUI counterpart in the same item, and vice versa,
+  where the project has both.
+- Tick only fully met DoD points, never with a caveat.
+- Builders run the fast check (dogma `relevant` stage, else the changed tests), not the
+  full suite. An audit of a branch touching shared core files runs the whole core test
+  folder.
+
+### Being measured (not default yet)
+
+- Fix rounds that resume the builder's context are very expensive: one item needed about
+  1.45M builder tokens over 3 rounds.
+- Merge conflicts on central registry files: one run needed 5 resolver agents and about
+  400k tokens. Cutting batches by shared surfaces (step 1) is the current mitigation.
 
 ## Parallel code tracks: touches and resource gate
 
@@ -245,11 +298,16 @@ the item before and during the work.
 
 ## Delegating audit subagents
 
-When you spawn the mandatory audit subagent (never the builder), pick the audit tier per
-the credo `audit` skill ("Audit depth (risk tiers)": `full` or `lean`) and name tier plus a
-one-line reason in the brief. Several finished `lean` items may be batched into ONE audit
+When you spawn the mandatory audit subagent (never the builder, always a fresh one), pick
+the audit tier per the credo `audit` skill ("Audit depth (risk tiers)") and name tier plus
+a one-line reason in the brief. `full` is the default; `lean` (diff plus tests, about half
+the cost) only for small low-risk items - no security surface, no shared core files,
+nothing that writes user files or runs commands (tentative: 6 trials so far, 10+ needed).
+A bundle gets ONE audit; other finished `lean` items may be batched into one audit
 subagent (one verdict and report section per item); `full` items are always audited
-singly. The tier changes only the depth, never whether the audit runs.
+singly. The tier changes only the depth, never whether the audit runs. The auditor
+records its findings first, then fixes small ones itself on the item's worktree branch
+(credo `audit`, "Fixing small findings").
 
 ## Delegating verify / UI subagents
 
@@ -303,4 +361,7 @@ cascade (`builtin template < ~/.claude/credo/config < .credo/config`, read via
   `requirements-verbatim`).
 - Cross-track ordering constraints and HOLD notes between item implementations live in the
   harness task list (the ephemeral coordination layer), defined in the credo `items` skill
-  ("Harness task-list vs .credo items") - not duplicated here.
+  ("Harness task-list vs .credo items") - not duplicated here. If `TaskCreate` is not
+  available (the `CLAUDE_CODE_ENABLE_TODO_TOOLS` opt-in is off, so subagents lack it too),
+  follow that skill's "When the task-list tools are missing": say so once and point to the
+  opt-in, never silently track the list in prose.

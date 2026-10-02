@@ -122,7 +122,9 @@ Build in parallel where it is safe: before spawning builders, run the overlap ch
 sequentially) and, before each spawn, the resource gate (`credo-resource-check.sh
 --running <N>`, plus `--heavy` for a `heavy: true` item). On `wait`, start nothing new and
 re-check on the next completion notification. Full procedure: credo `orchestration` skill,
-"Parallel code tracks: touches and resource gate".
+"Parallel code tracks: touches and resource gate". The batch shape (plan once, 3-4
+builders plus 1 bundle, fresh audit per item, one release per batch) and its budget gate
+follow the measured default: credo `orchestration`, "Default batch workflow".
 
 Each parallel code track gets its own worktree, chosen by `credo-worktree-flow.sh` (hydra's
 flow on `[x] use Hydra for 2+ independent tasks` with hydra installed, else native
@@ -164,11 +166,14 @@ check its `blocks` and return any now-unblocked `3_blocked` item to `2_go`.
 
 Every finished item still goes through the mandatory dedicated-subagent audit before
 `2_done`. When spawning it, pick the tier per the credo `audit` skill ("Audit depth (risk
-tiers)"): `full` for UI, security, writes outside the repo, migration, large scope, or
-`audit: full`; `lean` otherwise. Lean items finished in the same stretch may be batched into
-one audit subagent (one verdict per item); `full` items are audited singly. Run the dogma
-`relevant` test stage per item where defined; the full suite runs only where dogma places it
-(e.g. once per release bundle), not per item.
+tiers)"): `full` by default and always for UI, security, writes outside the repo or running
+commands, shared core files, migration, large scope, or `audit: full`; `lean` only for small
+low-risk items. A bundle gets one audit; other lean items finished in the same stretch may
+be batched into one audit subagent (one verdict per item); `full` items are audited singly.
+The auditor fixes small findings itself after recording them (credo `audit`, "Fixing small
+findings"). Run the dogma `relevant` test stage per item where defined; the full suite runs
+only where dogma places it, else once per batch release, not per item. Pending human-only
+tests do not hold an item in `2_go` (credo `items`, "Human-only checks do not block done").
 
 ### Bringing up a local surface to verify (autonomous)
 

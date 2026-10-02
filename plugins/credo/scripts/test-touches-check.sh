@@ -23,7 +23,7 @@ export CREDO_DIR="$TMP/.credo"
 mkdir -p "$CREDO_DIR/items/1_todo/1_clarify" "$CREDO_DIR/items/1_todo/2_go" "$CREDO_DIR/items/2_done"
 
 item() { # id folder frontmatter-extra
-    printf -- "---\nid: %s\ntitle: Item %s\ncreated: 2026-10-07\ntype: feature\nui: false\n$3---\n\nbody\n" \
+    printf -- "---\nid: %s\ntitle: Item %s\ncreated: 2026-01-01\ntype: feature\nui: false\n$3---\n\nbody\n" \
         "$1" "$1" > "$CREDO_DIR/items/$2/$1-item-$1.md"
 }
 

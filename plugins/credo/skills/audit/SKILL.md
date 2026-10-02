@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Read-only quality gate that audits already-built work against its stated requirement and Definition of Done before it is allowed to move to 2_done/. Produces a severity-ranked decision proposal (BLOCKER/MAJOR/MINOR/NIT) with evidence, never a fix. Use when an item is claimed complete, before moving anything to 2_done/, when asked to audit or review finished work for completeness against requirements, or when acting as the dedicated post-completion review subagent. This gate is mandatory in every session mode. Not for diagnosing why something is broken (use diag) and not for verifying rendered UI behavior (use verify).
+description: Read-only quality gate that audits already-built work against its stated requirement and Definition of Done before it is allowed to move to 2_done/. Produces a severity-ranked decision proposal (BLOCKER/MAJOR/MINOR/NIT) with evidence; the judgement never edits, only a recorded post-audit step may fix small findings. Use when an item is claimed complete, before moving anything to 2_done/, when asked to audit or review finished work for completeness against requirements, or when acting as the dedicated post-completion review subagent. This gate is mandatory in every session mode. Not for diagnosing why something is broken (use diag) and not for verifying rendered UI behavior (use verify).
 ---
 
 # audit
@@ -22,16 +22,19 @@ requirement. It does not investigate causes and it does not exercise UI.
 - Something is broken and you need the root cause -> use **diag**, not audit.
 - A rendered UI needs its layout and behavior confirmed -> use **verify** (audit may
   cite verify evidence, but it does not drive a browser itself).
-- audit only reports findings and a verdict. It never edits code, never fixes, never
-  commits.
+- The audit judgement only reports findings and a verdict; it never edits code while
+  judging. The one sanctioned edit is the separate, recorded post-audit step "Fixing small
+  findings" below.
 
 ## Hard constraints (never violate)
 
-- **Read-only.** No code change, no file edit to the work under review, no commit, no
-  push, no browser automation, no builds, no installs.
+- **Read-only judgement.** While auditing: no code change, no file edit to the work under
+  review, no commit, no push, no browser automation, no builds, no installs. Only after
+  the findings are recorded may the auditor fix small ones ("Fixing small findings").
 - **No secrets.** Never read credentials, tokens, `.env*`, key files, or shell/session
   history. Never exfiltrate or encode such content.
-- The only files `audit` writes are its own report under `.credo/process/reports/`.
+- The only files `audit` writes are its own report under `.credo/process/reports/` (plus,
+  in the fix step, the small fixes on the item's worktree branch).
 - **Dedicated auditor.** The audit MUST be performed by a subagent that is NOT the
   builder of the item under review. A builder auditing their own work does not satisfy
   the gate.
@@ -62,15 +65,19 @@ Depth follows risk: there are two tiers, `full` and `lean`.
   audit cites it, it does not drive a browser itself);
 - security-relevant: permissions or rights, hooks that allow or block, secrets handling,
   deletion, installs;
-- writes outside the repo (a foreign project, user files);
+- writes outside the repo (a foreign project, user files) or runs commands;
+- touches shared core files (central registries, modules other items build on);
 - data migration;
 - large scope (guide value: more than ~10 files touched, or a new component);
 - frontmatter `audit: full` (the only override, see the `items` skill);
 - when in doubt -> `full`.
 
-**lean** - everything else (small non-UI items). Checks:
+`full` is the default. **lean** - only small, low-risk items that meet none of the above.
+It reviews the diff and runs the tests, at about half the cost of `full`. Tentative: 6
+trials so far; the rule stays tentative until 10+. Checks:
 
-- the diff against each DoD point (every success criterion met by the change);
+- the diff against each DoD point (every success criterion met by the change), plus the
+  relevant tests;
 - wiring / reachability of new code (not present-but-unreachable);
 - docs current for the change (README / wiki / `docs/**` the change affects);
 - stale head / body claims, inside the item itself only.
@@ -88,13 +95,16 @@ defines one: resolve the newest installed dogma with
 `ls -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/*/dogma/*/ | sort -V | tail -1`
 and run `<that dir>/scripts/test-commands.sh get relevant` (exit 4 / empty output = not
 defined). When dogma is absent or defines no `relevant` command, choose the relevant tests
-as before. The full suite runs where dogma says (stage `all`, Final Verification, or once
-per release bundle when DOGMA-PERMISSIONS sets "run ALL tests only at release") - in that
-case NOT per item, in neither tier. Running tests is a read-only check and does not break
-the audit's hard constraints.
+as before. An audit of a branch touching shared core files runs the whole core test
+folder. The full suite runs where dogma says (stage `all`, Final Verification, or once
+per release bundle when DOGMA-PERMISSIONS sets "run ALL tests only at release"), else
+once per batch release (credo `orchestration`, "Default batch workflow") - NOT per item,
+in neither tier. Running tests is a read-only check and does not break the audit's hard
+constraints.
 
-**Batching.** Several finished `lean` items from the same period may go to ONE audit
-subagent. Each item still gets its own verdict and its own report section (one report per
+**Batching.** A bundle (2-3 small related items built in one worktree, credo
+`orchestration`) gets ONE audit; bundle only `lean`-eligible items. Several finished
+`lean` items from the same period may also go to ONE audit subagent. Each item still gets its own verdict and its own report section (one report per
 item, or one report with a clearly separated section and verdict per item; the item move
 follows each item's own verdict). `full` items are always audited singly, never batched.
 
@@ -107,6 +117,11 @@ For the item under review, gather the ground truth first (read, do not guess):
 - The item's `Success Criteria (= DoD)` (the observable "user can X" statements).
 - The `ui` frontmatter flag. If `ui: true`, a visual verify (via the `verify` skill)
   is a DoD requirement, and its evidence must exist and be current.
+- Pending human-only checks (credo `items`, "Human-only checks do not block done"): a
+  check only the human can run is NOT a finding against the move to `2_done` when the item
+  records it in `## Verify` as `human-only: pending` with what to check. Flag it only when
+  that record is missing, or when the agent could have run the check itself.
+- Ticks: a DoD point ticked with a caveat ("done, but ...") is not met - flag it.
 - Any living conventions under `.credo/docs/` and relevant project `docs/**`.
 
 Then compare the actual built result (files, wiring, tests, verify evidence) against
@@ -203,10 +218,10 @@ getter should emit canonical lowercase booleans rather than leaking Python-style
 a clean code fix genuinely harms (a real, stated reason - e.g. it would break other
 callers) or is impossible. Convenience is not such a reason.
 
-**audit still only proposes.** audit is read-only: it names each finding and its
-recommended disposition, but it never edits, fixes, or commits. The disposition is carried
-out by the acting/building agent per the audit's proposal - that separation is the point of
-the gate.
+**The judgement only proposes.** The audit names each finding and its recommended
+disposition before anything is changed. Small findings the auditor then fixes itself ("Fixing
+small findings" below); everything else is carried out by the acting/building agent per the audit's
+proposal - that separation is the point of the gate.
 
 **How the acting agent acts on it, by session mode:**
 
@@ -220,6 +235,19 @@ the gate.
   reason), or the finding is genuinely independent of the audited item's core, it records
   a documented wontfix (the documented default standing in for the user) or defers it as a
   tracked item with the reason - never blocking the unattended run to ask.
+
+## Fixing small findings (post-audit step)
+
+Default in the batch workflow (credo `orchestration`): after the findings and the verdict
+are written down, the same fresh audit subagent (never the builder) fixes SMALL findings
+itself - a local, obvious fix with no design decision and no scope change (typically MINOR
+or NIT, also a MAJOR whose fix is local and clear). It commits on the item's worktree
+branch only (never push or merge), re-runs the relevant tests, and records each one as
+"Fixed now" in the report with the commit. The report keeps the original findings; the
+verdict states the state after the fixes. Anything larger - a BLOCKER, a redesign, a
+user-only decision - is not fixed here; it follows "Findings handling" above.
+In presence modes the fixes are listed to the user with the report; a borderline
+call is left unfixed for the user.
 
 ## Result: a decision proposal
 

@@ -2,7 +2,7 @@
 description: credo - Start, stop, or check the LAN peer relay (cross-machine peer messaging, no cloud)
 arguments:
   - name: action
-    description: setup | init | bind | unbind | networks | netinfo | token | whoami | check | start | restart | stop | status (default status). init takes peer IPs, bind takes --name/--group/--label/--allow.
+    description: setup | init | bind | unbind | networks | netinfo | token | whoami | check | pairs | pair-reset | start | restart | stop | status (default status). init takes peer IPs, bind takes --name/--group/--label/--allow, pair-reset takes a peer (slot host:port, id or machine).
     required: false
 allowed-tools:
   - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py:*)
@@ -86,8 +86,9 @@ Steps (`P="${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py"`):
    cleanup easy: `sudo ufw status | grep credo-peer-lan`). Show the user the exact
    lines and explain why (peers cannot reach this machine otherwise). sudo needs the
    user's password, so the agent never runs them itself and never handles the
-   password: tell the user to type each line with the `!` prefix in the prompt, e.g.
-   `! sudo ufw allow from 192.168.1.42 to any port 48610 proto tcp comment 'credo-peer-lan'`.
+   password: tell the user to run them in a separate terminal (sudo asks for the
+   password there). The `!` prefix in the Claude Code prompt only works when sudo needs
+   no password (it cannot answer a password prompt).
    Afterwards re-run `"$P" check` (it then reports `ufw active, port ... allowed`) and
    ask the user to run `check` on the other machine to confirm this one is reachable.
    If ufw rules are unreadable without root, `check` still prints the commands with a
@@ -144,6 +145,124 @@ local session (any local descriptor that is not one of the relay's own `credoPee
 mirrors) is skipped, and a `sessionId` already mirrored from another sender is skipped
 too (first owner wins, logged once). This keeps a bridge that re-announces local
 sessions (e.g. a Codex bridge service) from producing duplicates in ListAgents.
+
+## Return channel (one-way reachability)
+
+When only ONE side can open a TCP connection to the other (a router behind a router,
+NAT, a one-way firewall), fresh per-frame connections from the other side always fail
+and the pair never sees each other. So each daemon keeps one persistent LINK per peer:
+whichever side can connect opens it (`link` hello, answered with a `link` ack), and
+rosters, delivers and keepalive pings then flow in BOTH directions over that single
+connection. Holders hand their delivers to the local daemon (a 0600 unix socket in the
+0700 sock dir) so replies use the link too. Without a link, sends fall back to fresh
+connections as before. An older relay never acks: after 3 unanswered link attempts the
+peer is marked "no link support" (logged once) and only gets fresh connections until
+the next network change or daemon restart, so mixed versions keep working quietly.
+
+- **One channel per peer pair.** A side does not open a link while the peer's link to
+  it is alive. If both open at the same moment, the link opened by the machine whose
+  `this_machine` sorts lower is kept and the other is closed (listen port, then a
+  random per-run nonce break a tie). Every link carries a fresh random secret that its
+  opener sends only on that connection to the address it dialed. An inbound link counts as "both opened at once" only when a proof
+  derived from the secrets of both links comes with it (in its hello, or in the ack of
+  our own link); otherwise our own outbound link stays in place. A live link is only
+  replaced by a new link from the same source IP and machine; from loopback or the WSL
+  gateway it must also prove it knows the live link's secret (a reconnect of the same
+  peer), unless the live link has been silent for about two ping intervals.
+- **Address claims are proven.** An inbound link may stand for a configured peer that
+  this machine can reach itself only when it really comes from that peer's IP (or
+  loopback, or under WSL NAT the gateway every connection arrives from); otherwise it
+  is keyed by its own source address and never receives another peer's rosters or
+  messages. When the claim is not proven by the source (loopback / WSL gateway), this
+  side still opens its own outbound link and prefers it. A claim to an address outside
+  the outbound allowlist is honored only for a configured peer address.
+- **Unreachable peer inside the allowlist.** Such a peer (e.g. behind a real NAT) cannot
+  prove its configured address by its source IP: configure it by the address its links
+  arrive from (its NAT-visible address), or leave it to that peer to open the link.
+- **Bounded.** At most one inbound link per source IP (loopback exempt, the WSL gateway
+  at most `max(2, len(peers))`, so every configured peer behind NAT can hold a link) and
+  `len(peers) + 2` in total; excess links are refused. Refusals are
+  logged once per kind and source IP. Every write on a
+  link has a 5 s deadline (a peer that stops reading is dropped, never stalls the
+  others) and the silence timeout is capped at 60 s.
+- **Dead links heal.** Each side pings an idle link every roster interval (at least
+  every 15 s); about three intervals of silence (or EOF/error) drops it, and whichever
+  side can connect reopens it (capped backoff). The daemon log shows `channel up` /
+  `channel down` lines.
+- **Pairing keys (see below).** Once two relays have paired, a link between them
+  must prove the pairing key; that, not the source address, is what decides who gets
+  a paired peer's slot.
+- **Gates unchanged.** An inbound link must pass the same source allowlist as any
+  connection, every frame on it is token-checked (HMAC when a token is set), and an
+  outbound link is only opened to peers the outbound gate allows. A roster whose forward
+  target is outside the outbound allowlist is served only when it came over an accepted
+  inbound link, and the answer then goes back over that link only, never to the raw
+  address: such a mirror's holder runs with `--no-direct` (it never connects on its
+  own) and is not created at all while the relay socket is unavailable. The relay
+  still never forges a `from-mode`.
+
+## Pairing keys (automatic, trust on first use)
+
+All peers share one token, and under WSL NAT every inbound connection arrives from the
+same gateway address, so neither tells two peers apart. So each relay installation has
+a persistent random peer id and a static Diffie-Hellman key pair (RFC 3526 group 14,
+Python stdlib only), stored next to the config in `peer-lan-keys/` (dir 0700, files
+0600, every write atomic: fresh temp file, then rename; symlinks are never followed).
+An existing identity is never replaced: while it cannot be read or is not a valid
+identity, the relay pairs with nobody and `pairs` shows the reason.
+The machine name stays a display label.
+
+- **Automatic.** On the first link between two relays that do not know each other yet,
+  each side sends its id and DH public value in the link handshake, both derive the
+  same pairing key K = sha256(tag | sorted ids | DH shared secret), and both store it
+  for the other's id, bound to the peer address (slot) the link serves. K and the
+  private DH values are never transmitted or logged. Nothing to type, ever, in normal
+  use; a restart or reconnect reuses the stored key.
+- **Every later link proves K.** The acceptor answers a hello with a fresh challenge and
+  its own proof (HMAC with K over both ids, both fresh link secrets, its role and the
+  opener's expectation: the paired id the opener has bound to the address it dialed, or
+  "none"); the opener verifies that and answers with its proof. A captured proof is
+  useless later (fresh challenge from each side), a proof is never valid reflected (role
+  and id order are bound in), and an acceptor that is not the id the opener expects
+  sends no proof at all. Every frame on a
+  paired link then carries a second MAC under a per-link session key with a direction
+  label and a sequence number. A new pairing is stored only after the whole handshake
+  (both proofs and the ack); a link that breaks off earlier stores nothing.
+- **One slot per paired id, never moved silently.** A paired id is bound to exactly one
+  peer address. A link that proves a paired id's key but serves another address is
+  refused, the old address stays bound, and it is surfaced as a pending repair whose
+  command is `pair-reset <peer id>` - the only way to move a paired peer.
+- **Paired slots.** A slot bound to a paired peer goes only to a link that proves that
+  peer's key, whether or not the peer is online, from the WSL gateway, loopback or
+  anywhere else. A paired peer never falls
+  back to token-only (a hello without the proof, or a link to its address answered
+  without the challenge, is refused), rosters for a paired slot are served only over its
+  paired link, and delivers to a paired peer go only over that link, never over a fresh
+  connection to whoever holds its address meanwhile (they fail until it is back).
+- **Trust on first use.** The first link between two relays pairs them, so link each
+  pair of machines once on a network you trust. A later different id for that slot is
+  refused and surfaced as below.
+- **Unpaired peers keep working.** A relay without pairing support (an older relay, the
+  Codex peer) sends no pairing fields and keeps working token-only, as before, as long
+  as the slot it uses is not bound to a paired peer. If a link without pairing support
+  is refused at a slot that is already paired, that is surfaced as a pending repair
+  ("a link without pairing support"); after confirming it, `pair-reset <slot>` frees the
+  address again.
+- **Delivers.** Pairing decides who serves a peer's address and which link carries what
+  is sent to it. Inbound delivers are verified with the token when one is set; the
+  receiving session's consent gate decides what is done with a message.
+- **Reinstall / lost keys / moved peer.** A NEW id (or a changed key for a known id)
+  claiming a paired slot, or a paired id showing up at another address, is refused,
+  logged once with the exact command, and kept as a pending repair in
+  `peer-lan-keys/pending-repair.json`; `pairs`, `check` and `status` show it and the
+  session-start hook tells the agent. Accept it with ONE command on the machine that
+  reports it (only after confirming that peer really was reinstalled or reset), and
+  the next link pairs again automatically:
+  ```bash
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" pair-reset <slot host:port | peer id | machine>
+  ```
+  For a moved peer the command names its peer id (resetting the new address alone
+  would leave the old binding in place).
 
 ## Auto-start and single instance
 
@@ -258,9 +377,15 @@ sudo ufw allow from 192.168.1.42 to any port 48610 proto tcp comment 'credo-peer
   `%ProgramData%\credo` (no privilege escalation via the user-writable plugin cache).
 - **Native Linux.** No automatic firewall change (needs root); `check` prints the exact
   `ufw` (or firewalld) commands for the effective allowlist plus cleanup hints for
-  stale `credo-peer-lan` rules, and the user runs them with the `!` prefix.
+  stale `credo-peer-lan` rules, and the user runs them in a separate terminal (the `!`
+  prefix only works when sudo needs no password).
 - **IP allowlists are LAN trust, not cryptography.** Set the optional token for
   cryptographic sender verification.
+- **Pairing keys.** Paired peers authenticate each other with their own key (see
+  Pairing keys above), and a paired peer is never re-bound to another address without
+  `pair-reset`. Trust on first use: link each pair of machines once on a network you
+  trust; a later different id for a slot is refused and needs `pair-reset`. Peers that
+  have not paired (older relays) use the token and the allowlist.
 
 ## Upgrading from <= 0.71
 
@@ -336,10 +461,20 @@ allowlist-scoped firewall rule (the old rule allowed the whole LocalSubnet).
   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" whoami
   ```
 
+- **pairs** - print this installation's pairing id, the paired peers (id, machine,
+  slot; never a key) and any PENDING REPAIR with the command that accepts it:
+  `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" pairs`
+
+- **pair-reset `<peer>`** - forget the pairing with `<peer>` (slot `host:port`, host,
+  peer id or an 8+ character prefix, or machine label) and its pending repair, so the
+  next link pairs again (trust on first use). Only for a reinstalled peer or lost keys,
+  and only after the user confirmed it (Ask tool; never in autonomous mode). A running
+  daemon applies it at once; no restart. Exits 1 when nothing matches.
+
 - **check** - print this machine's address, the detected network, the matched profile
   and group, ENABLED/DISABLED with the reason, the effective allowlist, (WSL) the
-  firewall sync state (installed task script version, data file, applied rule), and probe
-  each configured peer for reachability:
+  firewall sync state (installed task script version, data file, applied rule), the
+  pairing state (as `pairs`), and probe each configured peer for reachability:
   ```bash
   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" check
   ```
@@ -356,6 +491,11 @@ allowlist-scoped firewall rule (the old rule allowed the whole LocalSubnet).
   read the state file (it records the live daemon's pid + version + port):
   ```bash
   cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/peer-lan.pid" 2>/dev/null || echo "no pidfile"
+  ```
+  Also show the pairing state; report any PENDING REPAIR line to the user (it names
+  the `pair-reset` command; run it only on the user's confirmation):
+  ```bash
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" pairs
   ```
   If there is no config file, say the relay is a no-op until
   `${CLAUDE_CONFIG_DIR:-~/.claude}/credo/peer-lan.json` exists (create it with `init`).

@@ -123,13 +123,15 @@ and every repo where credo is active:
   letter and a short topic: `### 🧪 T) Trainer` / `### ❓ Y) Which rank?`. A question asked
   through the Ask tool carries the same `❓ Y)` prefix in its question text.
 - **Open-letters footer.** End every reply that has open tests or questions with one line
-  listing the open letters in bold, in the conversation language, e.g.
-  `**Open for testing: C, D** · **Open questions: Y, Z**`. A letter leaves the footer when
+  listing the open letters in bold, in the language-neutral emoji form (the same in every
+  conversation language, no translated labels), e.g.
+  `**🧪: C, D** · **❓: Y, Z**`. A letter leaves the footer when
   the user answered it (vf, a decision, "skip"); omit a part that has no open letters, and
   omit the footer when nothing is open. The footer is a comma list of codes, never prose:
   an open question about an item still gets its own letter (`### ❓ Y) #177 <topic>`), and
-  item refs may stand next to letters (`**Open questions: Y, #177**`). credo's band reads
-  this line; from prose it keeps only `#N` refs and uppercase letter codes.
+  item refs may stand next to letters (`**❓: Y, #177**`). credo's band reads
+  this line (it still accepts the older English and German word labels); from prose it
+  keeps only `#N` refs and uppercase letter codes.
 - **Survives a compact.** The next free letter and the open letters are part of the
   handoff state (the credo `compact-plus` skill records them in HANDOFF.md), so the
   sequence continues after a `/compact` instead of restarting at A.
@@ -150,7 +152,8 @@ autonomous run:
   target does. Judge locality by where the process runs, never by the branch name.
 - **Locality NOT positively established** (any doubt, or any sign the target is a deployed,
   remote, or shared environment - a staging or production server, a shared host): do NOT
-  restart. Defer the visual verify as human-only and record why.
+  restart. Defer the visual verify as human-only (`human-only: pending` in the item, which
+  does not block the move to `2_done`) and record why.
 
 Get the bring-up command from config first; never guess one:
 
@@ -238,11 +241,14 @@ the naming rule exactly; only the naming is your responsibility.
 
 ## Definition-of-Done gate
 
-A change with a runtime surface is done only when its observable success criteria are
-`exercised` (or confirmed by the user for human-only criteria). For items marked
-`ui: true`, a passing visual verification at every configured viewport - measured
-layout, real interaction, live update where required, hard reload after rebuild, and
-saved screenshots - is mandatory before the item may move to done. If verification
+A change with a runtime surface is done only when every observable success criterion the
+agent can check is `exercised`. A genuinely human-only check never holds an item in
+`2_go`: it is written into the done item as `human-only: pending` with the numbered steps
+("Handing a manual test to the user") and the user runs it in the verify phase (credo
+`items`, "Human-only checks do not block done"). For items marked `ui: true`, a passing
+visual verification at every configured viewport - measured layout, real interaction,
+live update where required, hard reload after rebuild, and saved screenshots - is
+mandatory before the item may move to done. If verification
 surfaces a defect, the item is not done: it goes back to clarification with a note on
 what was missed, per the credo item model. Never downgrade or self-approve this gate.
 

@@ -182,7 +182,7 @@ These two interleave; run them together.
   item never sits in `2_go`. An item may move into `2_go` ONLY if ALL of these hold:
   - **G1 - provable GO.** An explicit, item-scoped user GO exists (date + the user as
     source). Agents never self-GO. The `-> go` History line must cite the GO source, e.g.
-    `-> go 2026-08-04 (GO: Marcel, <short context>)`.
+    `-> go 2026-08-04 (GO: user, <short context>)`.
   - **G2 - not deferred.** No "Bau FUTURE" (build FUTURE / deferred) marker in the item -> otherwise
     `parked/future`.
   - **G3 - no hard block on unbuilt work.** No hard dependency on an unbuilt item ->

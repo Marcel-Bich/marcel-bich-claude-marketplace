@@ -65,6 +65,15 @@ if [ "$state" = "unbound" ]; then
   echo "[credo-peer-lan] The LAN relay is DISABLED: no network is bound yet (new allowlist + network binding since credo 0.72). In an interactive session offer the user the guided setup from /credo:peer-lan (Setup flow) via the Ask tool; in autonomous mode do not ask, just mention it in the next report. Ask and explain in the user's language (the language of the conversation); fall back to English if unknown or unsure."
 fi
 
+# Pairing repair pending (the relay refused a new peer id at the address of a paired
+# peer, a paired peer at another address, or a relay without pairing support at a
+# paired address, and recorded it): tell the agent, never accept it on its own.
+# Reads one file.
+pending="$(dirname "$cfg")/peer-lan-keys/pending-repair.json"
+if [ -s "$pending" ] && grep -q '"slot"' "$pending" 2>/dev/null; then
+  echo "[credo-peer-lan] A LAN peer pairing repair is pending: the relay saw an unexpected key or address change (a new id at the address of a paired peer, a paired peer at another address, or a relay without pairing support at a paired address) and refused it. Run \`\${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py pairs\` and tell the user; run the pair-reset command it prints only after the user confirmed (Ask tool) that this peer really was reinstalled, reset or moved (or that the older relay really lives at that address). In autonomous mode never run it, just mention it in the next report. Explain in the user's language (the language of the conversation); fall back to English if unknown or unsure."
+fi
+
 mkdir -p "$cfgdir/credo" 2>/dev/null || true
 
 # Start detached via `ensure` so the hook returns at once and never blocks session

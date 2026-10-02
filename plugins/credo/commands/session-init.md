@@ -140,7 +140,9 @@ HOLD notes. An empty harness list does NOT mean "nothing to do" - the GO folder
 (`.credo/items/1_todo/2_go`) is always the primary work set. Completed entries PERSIST (do
 not clear them) so the user can review completed vs pending after a run. The full model,
 tag convention, and terminology live in the credo `items` skill under "Harness task-list vs
-.credo items".
+.credo items". If `TaskCreate` is not available (opt-in `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`
+missing), say so once and point to `/credo:setup` Step 10 instead of tracking the list in
+prose (same skill, "When the task-list tools are missing").
 
 ## Output convention
 

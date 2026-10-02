@@ -90,6 +90,29 @@ item. The user writes it the same way ("§cct_2 dd" = harness task 2 done).
 > **Terminology.** "task list" / "task liste" means primarily the harness `TaskCreate` /
 > `TaskList` entries; only if none exist may the agent interpret what was otherwise meant.
 
+**When the task-list tools are missing.** Newer Claude Code versions offer `TaskCreate` /
+`TaskGet` / `TaskUpdate` / `TaskList` on newer models only when the env var
+`CLAUDE_CODE_ENABLE_TODO_TOOLS=1` is set (profile `settings.json` `env` object or the process
+environment), and subagents only get them when the parent session has them. If you need the
+list and the tools are not available to you:
+
+1. Say so ONCE in the session (one short line, not on every turn), naming the opt-in: run
+   `/credo:setup` (Step 10) or answer yes to the `[credo-todo-tools]` session-start offer,
+   which sets the variable with a backup of `settings.json`. A subagent reports it back to
+   the main agent instead.
+2. Do NOT silently emulate the list in prose (no hand-numbered `§cct_N` lists in replies
+   pretending to be the harness list). The GO folder stays the primary work set, so work
+   continues; coordination notes that must survive go into the relevant `.credo` item body
+   or the handoff instead.
+3. Never set the variable yourself without the user's yes, and never ask about it in
+   autonomous mode (there, note it once in the end-of-run report). This also applies to
+   the `[credo-todo-tools]` session-start offer: at a fresh start the session mode is
+   often not set yet when the hook runs, so the offer itself opens with that rule - check
+   the mode before asking.
+4. After a yes, the tools may only appear after a restart of Claude Code
+   (`credo-todo-tools.sh status` shows `restart_needed=yes` while the variable is in
+   settings.json but not yet in the session).
+
 ## go=go - the folder is authoritative for building
 
 An item in `2_go` IS buildable, by definition of the folder. This is the build-side
@@ -287,7 +310,7 @@ Use these English headings in this order. A blank template ships at
 4. **Verify** - the honest 4-valued verification state, per layer. See below.
 5. **History (MANDATORY)** - the folder journey with dates. Every move writes a line
    `-> <target> <date> (<reason>)`, e.g.
-   `created (clarify) 2026-07-04 -> go 2026-07-04 (GO: Marcel, chat) -> done 2026-07-05`.
+   `created (clarify) 2026-07-04 -> go 2026-07-04 (GO: user, chat) -> done 2026-07-05`.
    Record why an item moved, especially any move backwards. **Folder<->History invariant:**
    the folder an item is in MUST match the target of its last History line. A mismatch is a
    detected mis-move - flag it and correct it. This is the contradiction detector, achieved
@@ -334,12 +357,29 @@ states - honestly, never optimistically:
   (for `ui`, that means a real visual verify - see the credo `verify` skill).
 
 For any `human-only` layer that only a person can confirm, add a `why_human` note
-explaining what the user must check and why an agent cannot.
+explaining what the user must check and why an agent cannot. Until the user has run it,
+that layer reads `human-only: pending` (see below).
 
 A verify attempt that surfaces a defect is a **failed** verify: that is not one of the
 four progress states above, it is a defect outcome that sends the item back (see "Bug
-found during verify"). Only `exercised` (or a user-confirmed human-only criterion) counts
-toward the Definition of Done.
+found during verify"). Only `exercised` counts toward the Definition of Done; a
+`human-only: pending` point does not hold the item back (next section).
+
+### Human-only checks do not block done
+
+Checks that only a human can run belong to the verify phase, not to done. An item is done
+as soon as everything is built and the agent cannot do anything more on it without a human;
+the human-only tests it still needs are recorded in the done item.
+
+- An item moves to `2_done` once everything is built and every check the agent CAN run is
+  `exercised`. Pending human-only tests never hold an item in `2_go`.
+- Write each one into the done item's `## Verify` as `human-only: pending` with the
+  `why_human` note and what to check (a numbered step list per the credo `verify` skill).
+  The user runs them in the verify phase (`2_done -> 3_verified`); a failure there sends the
+  item back per "Bug found during verify".
+- Not a loophole: a check the agent can run itself (a test, a CLI call, a local browser) is
+  never human-only. Human-only means it genuinely needs the human - their hands or eyes on
+  real hardware, their account, a remote or shared environment the agent must not touch.
 
 Wiring matters: new code with no caller / not reachable is a gap, not "done". At most it
 is `present`. The DoD requires `exercised`, which forces the wiring to exist and to run.
@@ -380,7 +420,8 @@ the building agent MUST, in the SAME turn, bring the item file into line with th
 
 1. Fill `## Implemented` with concrete `file:line` evidence for what was built (which
    caller reaches the new code).
-2. Update the DoD / Success-Criteria ticks to match what is now true.
+2. Update the DoD / Success-Criteria ticks to match what is now true. Tick only fully met
+   points, never with a caveat ("done, but ..." stays unticked).
 3. Move `## Verify` off `not-started` for the built layer(s) - at minimum to `present`, or
    `wired-but-behavior-unverified` when the code is reachable and called. (`not-started`
    means "work has not begun"; a build commit proves it has.)
@@ -420,9 +461,10 @@ not-started contradiction above - flag it and reconcile it in the same turn.
 
 An item may move into `2_done/` ONLY when ALL of these hold. This gate is hard.
 
-1. **Every Success Criterion is `exercised`** (or, for a human-only criterion, explicitly
-   confirmed by the user). Nothing left at `not-started`, `present`, or
-   `wired-but-behavior-unverified`.
+1. **Every Success Criterion the agent can check is `exercised`.** Nothing left at
+   `not-started`, `present`, or `wired-but-behavior-unverified`. A genuinely human-only
+   criterion does not block: it is recorded as `human-only: pending` with what to check and
+   runs in the verify phase ("Human-only checks do not block done").
 2. **If `ui: true`, a passing visual verify is mandatory** - the credo `verify` skill at
    every configured viewport (measured layout, real interaction, live update where
    required, hard reload after rebuild), with screenshots saved under
@@ -430,8 +472,11 @@ An item may move into `2_done/` ONLY when ALL of these hold. This gate is hard.
    follow the name pattern `<slug>-<viewport>-<YYYY-MM-DD>.png` - this holds even when an
    ad-hoc verifier (not the formal `verify` skill) produces them, so every screenshot is
    found in one place under one convention. The required level of test obligation is
-   defined by the credo `verify` skill (config `verify.primary_test`), not here.
-3. **No open remainder** - nothing needed for the item's core is still outstanding.
+   defined by the credo `verify` skill (config `verify.primary_test`), not here. Only a
+   visual verify the `verify` skill itself defers as human-only (locality not established)
+   may stay `human-only: pending`.
+3. **No open remainder** - nothing needed for the item's core is still outstanding that
+   the agent could do without the human (pending human-only tests are not a remainder).
 4. **Mandatory audit-after-completed by a DEDICATED subagent** - the credo `audit` skill
    MUST be run by a subagent that is NOT the builder of this item. A builder auditing
    their own work does not satisfy the gate. This applies in every session mode (active,
@@ -664,7 +709,8 @@ Valid transitions (folder = status):
   auto-unblock when EVERY blocker is in `2_done`/`3_verified` (not a new GO), enforced
   deterministically by `credo-unblock-sweep.sh` on done/verified moves and at SessionStart.
   `4_archived` does NOT count as delivered.
-- `2_go -> 2_done` only after the full Definition of Done gate above passes.
+- `2_go -> 2_done` only after the full Definition of Done gate above passes (pending
+  human-only tests do not hold it in `2_go`).
 - `2_done -> 1_clarify` when a bug is found (see above).
 - any -> `parked/hold` (external block) or `parked/future` (deferred), or `4_archived`
   (abandoned/rejected); `3_blocked -> parked/*` or `4_archived` as usual.

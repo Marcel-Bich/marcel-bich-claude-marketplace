@@ -196,18 +196,38 @@ This guard is why the work-hours 5h cap is low. Read the reserve with:
 ## Task-sizing recommendation by remaining 5h (B12) - never a standstill
 
 Size the next chunk to the remaining 5h budget. Thresholds are in
-`budget.task_sizing` (`large_below_percent` default 60, `medium_below_percent` default 80),
+`budget.task_sizing` (`large_below_percent` default 70, `medium_below_percent` default 90),
 expressed as percent USED of the 5h window:
 
-- used below `large_below_percent` (default < 60) -> take large chunks first.
-- used between the two (default 60-80) -> take medium tasks.
-- used at or above `medium_below_percent` (default >= 80) -> take only small tasks, and
+- used below `large_below_percent` (default < 70) -> start large items.
+- used between the two (default 70-90) -> start medium items.
+- used at or above `medium_below_percent` (default >= 90) -> start small items, and
   check the limit more frequently (smaller overshoot / abort risk).
+- no small items left -> take any item that can be built well in smaller slices and
+  build it slice by slice (never a standstill).
 
 This is a RECOMMENDATION only. It must NEVER cause a standstill - never leave work
 unstarted because a task looks "too big". If budget is tight, go piecemeal: break the work
 down and make incremental progress. In doubt, prefer stopping a subagent with a saved
 intermediate result over a hard stop that loses work. This complements the 5h guard below.
+
+## Batch budget gate (default batch workflow)
+
+For the measured default batch workflow (credo `orchestration`, "Default batch workflow").
+The figures below are current cost measurements for planning, not caps - caps and live
+numbers still come only from the B13 reads above.
+
+- Plan about 2 % of the weekly budget per item (measured, orchestration included).
+- Start a batch only if the WHOLE batch fits into the current 5h window AND the weekly
+  budget; otherwise cut a smaller batch (task-sizing above still applies, never a
+  standstill).
+- 4 parallel builders use about 8 % of the 5h window per 10 minutes - check the 5h figure
+  at that pace.
+- Shortly before a 5h reset, pause heavy steps (no new spawns, no full test suite) instead
+  of killing running builders; TaskStop them only when they would blow the cap (5h guard
+  below).
+- Stop each agent right after its final report (TaskStop) - leftover agents and test
+  servers keep burning budget (owner rule).
 
 ## The 5-hour guard (B3) - skill behavior, no hook
 

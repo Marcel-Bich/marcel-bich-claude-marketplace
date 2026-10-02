@@ -201,7 +201,7 @@ message only wakes the session if it arrives AFTER the resumed session is runnin
 sent immediately would land before the restart and be lost.
 
 ```
-[urgent] I am restarting now for cc-up (self-restart). Please WAIT ABOUT 1 MINUTE, then send me one short wake message (e.g. 'wake up, continue') - only a message arriving after my resume wakes me. If I do not answer within 5 minutes after your wake message, notify the owner.
+[urgent] I am restarting now for cc-up (self-restart). Please WAIT ABOUT 1 MINUTE, then send me one short wake message starting with [credo-wake] (e.g. '[credo-wake] wake up, continue') - only a message arriving after my resume wakes me. I confirm it with one short '[info] resumed' reply. If that confirmation does not arrive within 5 minutes after your wake message, notify the owner.
 ```
 
 `check` prints the same template.

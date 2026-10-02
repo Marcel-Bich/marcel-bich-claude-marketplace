@@ -27,8 +27,35 @@ mirror name from mirror_name() (harness, network, device, user, profile, session
 "credoPeerLan" (NOT "credoPeerBridge", so the existing bridge never touches it).
 
 When a local session writes into a proxy socket, the holder forwards the message as a
-"deliver" over TCP to the owning remote daemon, which injects it into the real local
-target socket there.
+"deliver" to the owning remote daemon, which injects it into the real local target
+socket there. The holder hands the deliver to its local daemon (relay unix socket), so
+it travels over the return channel when one exists; only when the daemon's relay socket
+is unreachable does the holder connect directly - never a --no-direct holder (a peer
+outside the outbound allowlist, reachable only over the link it opened to us).
+
+Return channel: each daemon keeps ONE persistent link per peer, opened by whichever side
+can connect ("link" hello + ack), and rosters, delivers and pings flow in both
+directions over it. This fixes one-way reachability (router behind a router / NAT).
+Simultaneous opens are resolved deterministically (the link opened by the machine whose
+(this_machine, listen_port, nonce) sorts lower survives), but only between links that
+prove they come from the same peer: every link has a fresh random secret that its opener
+sends only on that connection, and a competing link must carry a proof derived from it
+(the nonce alone never grants anything); all gates and token checks apply to every link
+frame. An inbound link may stand for a configured peer we can reach
+ourselves only when its socket source is that peer (or loopback / the WSL NAT gateway),
+inbound links are capped, and writes have a short deadline. Without a link, frames go
+over fresh connections as before; an old relay that never acks is left on those.
+
+Pairing keys (trust on first use, see PairStore): every installation has a persistent
+peer id and a static DH key pair. The first link between two ids derives and stores a
+shared pairing key K on both sides (K never travels); every later link proves K against
+a fresh challenge from each side, and its frames carry a sequence-numbered MAC under a
+per-link session key. A peer address (slot) bound to a paired id goes only to a link
+that proves that id's key, rosters for it are served only over that link and frames to
+it never fall back to a fresh connection, also while the paired peer is offline.
+Unpaired peers (old relays, the Codex peer) keep
+working token-only; a new id at a paired slot is refused and recorded as a pending
+repair until `pair-reset` accepts it.
 
 SAFETY
   - The injected envelope NEVER carries a from-mode attribute. Omitting it is the
@@ -62,6 +89,7 @@ import getpass
 import hashlib
 import hmac
 import ipaddress
+import itertools
 import json
 import os
 import re
@@ -1339,13 +1367,19 @@ def _firewalld_running():
         return False
 
 
+# sudo prompts for a password, which Claude Code's `!` shell cannot take interactively
+SUDO_HINT = ("run these in a separate terminal (sudo asks for your password there; the ! "
+             "prefix in Claude Code only works when sudo needs no password)")
+
+
 def check_firewall_hint(cfg, state=None):
     """Native-Linux-only, read-only, best-effort firewall hint. It NEVER runs sudo and
     NEVER changes anything; any error (ufw absent, unreadable) is swallowed. When ufw
     is active and the LAN side is enabled it prints copy-paste-ready commands: one
     `ufw allow ... comment 'credo-peer-lan'` per allowlist entry not yet covered, plus
     `ufw delete` hints for credo-peer-lan rules whose entry was removed. The user runs
-    them (sudo needs the user's password; in Claude Code with the `!` prefix). On WSL
+    them in a separate terminal (sudo asks for the password there; Claude Code's `!`
+    prefix only works when sudo needs no password, see SUDO_HINT). On WSL
     there is no local firewall to consult (the Windows firewall is synced from the
     allowlist instead), so this is a no-op there."""
     if is_wsl():
@@ -1371,16 +1405,16 @@ def check_firewall_hint(cfg, state=None):
             if unreadable:
                 print(
                     "FIREWALL: ufw is active; its rules are not readable without root "
-                    "(verify with: sudo ufw status). If port %d is not allowed yet, run "
-                    "(in Claude Code with the ! prefix):" % port
+                    "(verify with: sudo ufw status). If port %d is not allowed yet, %s:"
+                    % (port, SUDO_HINT)
                 )
                 print("\n".join("  " + c for c in add_cmds))
             elif add_cmds or del_cmds:
                 if add_cmds:
                     print(
                         "FIREWALL: ufw is active and port %d is not allowed for: %s - peers "
-                        "cannot reach this relay. Run (sudo asks for your password; in Claude "
-                        "Code type each line with the ! prefix):" % (port, ", ".join(missing))
+                        "cannot reach this relay. %s%s:" % (port, ", ".join(missing),
+                                                            SUDO_HINT[0].upper(), SUDO_HINT[1:])
                     )
                     print("\n".join("  " + c for c in add_cmds))
                 if del_cmds:
@@ -1394,7 +1428,7 @@ def check_firewall_hint(cfg, state=None):
     if enabled and _firewalld_running():
         print(
             "FIREWALL: firewalld is running (rules not checked). If port %d is not allowed "
-            "yet, run (in Claude Code with the ! prefix):" % port
+            "yet, %s:" % (port, SUDO_HINT)
         )
         print("\n".join("  " + c for c in firewalld_rule_commands(allow, port)))
 
@@ -1457,6 +1491,688 @@ def send_to_peer(host, port, token, payload, timeout=5.0):
     try:
         s.sendall(line)
         s.shutdown(socket.SHUT_WR)
+    finally:
+        s.close()
+
+
+# ---------------------------------------------------------------------------
+# return channel (persistent link). Whichever side CAN connect opens ONE TCP link
+# to the peer ("link" hello, answered by a "link" ack) and keeps it open; rosters,
+# delivers and pings then flow in BOTH directions over it, framed and signed exactly
+# like fresh-connection frames. This fixes one-way reachability (router behind a
+# router / NAT): the side that cannot connect answers over the link the other side
+# opened. At most one channel per peer address; duplicates are resolved by a
+# deterministic tie-break (see Daemon._register_channel).
+# ---------------------------------------------------------------------------
+MAX_LINE = 4 * 1024 * 1024
+# A peer that stops reading must never stall the sender: every channel write has a
+# short total deadline, after which the channel is dropped (and later re-opened).
+CHAN_WRITE_TIMEOUT = 5.0
+# read timeout of a channel is ~3 roster intervals of the slower side, capped here so
+# a peer announcing a huge interval cannot pin a dead link (and its slot) for long
+CHAN_TIMEOUT_MAX = 60.0
+# idle channels are pinged at least this often (keeps every side under the cap above)
+CHAN_PING_MAX = 15.0
+# holders hand delivers to the daemon's relay unix socket; a burst must not overflow
+# its accept queue, and a full queue (EAGAIN) is retried briefly, never bypassed
+RELAY_BACKLOG = 128
+RELAY_BUSY_RETRIES = 20
+RELAY_BUSY_SLEEP = 0.05
+# consecutive link attempts that connect but get no ack (an older relay) before the
+# peer is marked "no link support" until the next network change or restart
+LINK_REFUSED_MAX = 3
+# inbound links from the WSL NAT gateway (every inbound connection under WSL NAT
+# arrives from it, so the per-source cap cannot apply): at most max(this, number of
+# configured peers) at once, so every configured peer behind NAT can hold a link
+GW_LINK_MIN = 2
+# once-only log tag sets hold at most this many entries (then start over), so a
+# sender cycling through chosen values cannot grow them without bound
+WARN_TAGS_MAX = 256
+
+
+LINK_SECRET_RE = re.compile(r"[0-9a-f]{1,64}")
+
+
+def _secret_str(v):
+    """A per-link secret / proof as carried in a frame: lowercase hex of 1-64 chars
+    (what os.urandom().hex() and sha256 hexdigest produce). Anything else (another
+    type, non-hex text, a lone surrogate that cannot be UTF-8 encoded) is "" - no
+    secret / no proof - so it never reaches a hash or compare that could raise."""
+    return v if isinstance(v, str) and LINK_SECRET_RE.fullmatch(v) else ""
+
+
+def link_proof(sender_out, receiver_out):
+    """Proof that the sender of a link frame is the peer behind a link we know: it
+    combines the secret of the sender's own outbound link (the receiver saw it as the
+    hello "chal" of its inbound link) with the secret of the receiver's outbound link
+    (the sender saw it in that link's hello). Each secret is sent only on its own
+    connection to the dialed peer address; the value is a SHA-256 over both secrets,
+    not the secrets themselves."""
+    if not sender_out or not receiver_out:
+        return ""
+    return hashlib.sha256(("credo-link-tie|%s|%s" % (sender_out, receiver_out))
+                          .encode("utf-8")).hexdigest()
+
+
+def resume_proof(new, old):
+    """Proof that a new outbound link comes from the opener of our live inbound link
+    whose secret is old (a reconnect replacing its own stale link)."""
+    if not new or not old:
+        return ""
+    return hashlib.sha256(("credo-link-resume|%s|%s" % (new, old))
+                          .encode("utf-8")).hexdigest()
+
+
+def proof_eq(got, want):
+    """Constant-time compare of a received proof with the expected one. Both must
+    be valid secret strings (_secret_str); anything else (empty, another type,
+    non-hex, a lone surrogate) never matches and never raises."""
+    if not _secret_str(got) or not _secret_str(want):
+        return False
+    return hmac.compare_digest(got.encode("utf-8"), want.encode("utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# per-peer pairing keys (trust on first use). Every relay installation has a
+# persistent random peer id and a static finite-field Diffie-Hellman key pair
+# (RFC 3526 group 14). On the first link between two ids both sides derive the same
+# pairing key K from their own private value and the other's public value; K and the
+# private values never travel. From then on every link between the two must prove K
+# against a fresh challenge from each side, and a slot (peer address) bound to a
+# paired id is never given to anything that cannot (token or not). Frames on a
+# paired link additionally carry a MAC under a per-link session key with a direction
+# label and a sequence number. Because the DH values are static, any two exchanges
+# between the same two installations (both directions, simultaneous, after a crash
+# halfway) yield the same K, so the pairing converges without a confirmation round.
+# ---------------------------------------------------------------------------
+PAIR_P = int(
+    "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74"
+    "020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F1437"
+    "4FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED"
+    "EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3DC2007CB8A163BF05"
+    "98DA48361C55D39A69163FA8FD24CF5F83655D23DCA3AD961C62F356208552BB"
+    "9ED529077096966D670C354E4ABC9804F1746C08CA18217C32905E462E36CE3B"
+    "E39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9DE2BCBF695581718"
+    "3995497CEA956AE515D2261898FA051015728E5A8AACAA68FFFFFFFFFFFFFFFF", 16)
+PAIR_G = 2
+PAIR_Q = (PAIR_P - 1) // 2  # p is a safe prime; 2 generates the subgroup of order q
+PAIR_X_BITS = 320
+PAIR_TAG = "credo-peer-lan-pair-v1"
+PAIR_HANDSHAKE_TIMEOUT = 10.0
+PENDING_REPAIR_MAX = 16
+PEER_ID_RE = re.compile(r"[0-9a-f]{32}")
+DH_HEX_RE = re.compile(r"[1-9a-f][0-9a-f]{0,511}")
+KEY_HEX_RE = re.compile(r"[0-9a-f]{64}")
+_DH_VALID = set()  # public values already checked (bounded like the log tag sets)
+
+
+def peer_id_str(v):
+    """A peer id as carried in a frame: 32 lowercase hex chars, anything else ""."""
+    return v if isinstance(v, str) and PEER_ID_RE.fullmatch(v) else ""
+
+
+def dh_pub_value(v):
+    """The peer's DH public value as an int, or None when it is not a canonical
+    lowercase hex number y with 1 < y < p-1 in the prime-order subgroup (y^q = 1),
+    so 0, 1, p-1, values >= p and small-subgroup elements are all refused."""
+    if not isinstance(v, str) or not DH_HEX_RE.fullmatch(v):
+        return None
+    y = int(v, 16)
+    if not 1 < y < PAIR_P - 1:
+        return None
+    if v not in _DH_VALID:
+        if pow(y, PAIR_Q, PAIR_P) != 1:
+            return None
+        if len(_DH_VALID) >= WARN_TAGS_MAX:
+            _DH_VALID.clear()
+        _DH_VALID.add(v)
+    return y
+
+
+def pair_key(ident, peer_id, peer_pub):
+    """K = sha256(tag | sorted ids | shared DH secret), hex. Both sides get the same K."""
+    shared = pow(peer_pub, ident["x"], PAIR_P)
+    lo, hi = sorted((ident["id"], peer_id))
+    return hashlib.sha256(("%s|%s|%s|%x" % (PAIR_TAG, lo, hi, shared)).encode("ascii")).hexdigest()
+
+
+PAIR_ANY = "*"   # the opener's expectation for an address bound to no paired id
+
+
+def pair_expect_str(v):
+    """The opener's "expect" field: the peer id it has bound to the address it dialed,
+    or PAIR_ANY (also for anything malformed)."""
+    return peer_id_str(v) or PAIR_ANY
+
+
+def pair_proof(key, role, sender, receiver, c_open, c_accept, expect):
+    """Proof of K for one handshake: bound to the role ("A" acceptor, "O" opener, so a
+    proof is never valid when reflected), both ids in sender order, the fresh
+    challenges of BOTH sides (so a captured proof is never valid again) and the
+    opener's expectation for the address it dialed (the id bound there, or PAIR_ANY).
+    Slot binding is enforced separately: a paired id is never accepted at another
+    slot than its own (see PairStore.pin, _pair_accept, _pair_open)."""
+    msg = "%s|proof|%s|%s|%s|%s|%s|%s" % (PAIR_TAG, role, sender, receiver, c_open, c_accept, expect)
+    return hmac.new(bytes.fromhex(key), msg.encode("ascii"), hashlib.sha256).hexdigest()
+
+
+def pair_session_key(key, opener, acceptor, c_open, c_accept, expect):
+    msg = "%s|session|%s|%s|%s|%s|%s" % (PAIR_TAG, opener, acceptor, c_open, c_accept, expect)
+    return hmac.new(bytes.fromhex(key), msg.encode("ascii"), hashlib.sha256).digest()
+
+
+class PairLink(object):
+    """Pairing state of one authenticated link: the paired peer id and the per-link
+    session key. Every frame carries, besides the token MAC, a "pmac" over the body
+    bound to the sending direction and a per-direction sequence number (TCP keeps the
+    order), so a frame is never valid when injected, replayed, reordered or reflected."""
+
+    def __init__(self, pair_id, skey, tx_label, rx_label, to_pin=None):
+        self.pair_id = pair_id
+        self.skey = skey
+        self.tx_label, self.rx_label = tx_label, rx_label
+        self.tx_seq = 0
+        self.rx_seq = 0
+        # (pid, pub, key, slot, machine) still to be stored: a new pairing is written
+        # only once the whole handshake (both proofs AND the ack) went through
+        self.to_pin = to_pin
+
+    def _mac(self, label, seq, body):
+        return hmac.new(self.skey, ("%s|%d|" % (label, seq)).encode("ascii") + body.encode("utf-8"),
+                        hashlib.sha256).hexdigest()
+
+    def frame(self, token, payload):
+        """One wire line. Callers serialize sends per link (Channel.wlock)."""
+        body = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        wire = {"body": body, "pmac": self._mac(self.tx_label, self.tx_seq, body)}
+        if token:
+            wire["mac"] = sign(token, body)
+        self.tx_seq += 1
+        return json.dumps(wire) + "\n"
+
+    def verify(self, token, line):
+        """The payload of the next frame from the peer, or None (wrong token MAC, wrong
+        or missing pair MAC, out of sequence). Only one reader per link calls this."""
+        payload = verify_line(token, line)
+        if payload is None:
+            return None
+        try:
+            wire = json.loads(line)
+            body, pm = wire.get("body"), wire.get("pmac")
+            if not proof_eq(pm, self._mac(self.rx_label, self.rx_seq, body)):
+                return None
+        except Exception:
+            return None
+        self.rx_seq += 1
+        return payload
+
+
+def default_keys_dir():
+    return os.path.join(os.path.dirname(config_path()), "peer-lan-keys")
+
+
+def keys_dir_for(cfg):
+    d = (cfg or {}).get("keys_dir")
+    return d if isinstance(d, str) and d else default_keys_dir()
+
+
+class PairStoreUnreadable(OSError):
+    """The pairing key dir exists (or may exist) but cannot be listed or read right
+    now (EACCES, EMFILE, EIO, ...). Callers treat every slot as bound to an unknown
+    paired peer (fail closed) instead of as unbound."""
+
+
+class PairIdentityInvalid(ValueError):
+    """This installation's identity file is present but not a valid identity. It is
+    left untouched (never replaced): pairing stays off until it is fixed or moved
+    away, and only then is a new identity created."""
+
+
+# _bound() stand-in while the key store is unreadable: an id no peer can have (not
+# 32 hex chars), so no link is ever authenticated as it.
+PAIR_UNKNOWN_ID = "unreadable"
+
+
+class PairStore(object):
+    """Pairing state on disk, one 0600 file per paired peer id plus this installation's
+    identity, in a 0700 dir. Every write goes to a fresh O_EXCL temp file and is then
+    renamed over the target (atomic: a reader sees the old or the new file, never a
+    torn one); files are opened with O_NOFOLLOW (a planted symlink is never followed).
+    Nothing is cached, so a `pair-reset` from the CLI applies to a running daemon at
+    once. Corrupt peer and pending files count as absent and never raise; the
+    identity file is never replaced once it exists (see identity())."""
+
+    SELF = "self.json"
+    PENDING = "pending-repair.json"
+
+    def __init__(self, path):
+        self.path = path
+        self.lock = threading.Lock()
+        self._ident = None
+
+    # -- files ----------------------------------------------------------------
+    def _ensure_dir(self):
+        old = os.umask(0o077)
+        try:
+            os.makedirs(self.path, mode=0o700, exist_ok=True)
+        finally:
+            os.umask(old)
+        st = os.stat(self.path)
+        if st.st_uid == os.getuid() and (st.st_mode & 0o777) != 0o700:
+            os.chmod(self.path, 0o700)
+
+    def _read(self, name, strict=False, missing=None):
+        """The JSON in name, None when it is corrupt, missing when it does not exist.
+        strict: an open or read error other than "missing" raises PairStoreUnreadable
+        instead."""
+        try:
+            fd = os.open(os.path.join(self.path, name), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        except FileNotFoundError:
+            return missing
+        except OSError as exc:
+            if strict:
+                raise PairStoreUnreadable(exc.errno, "pairing key file %s unreadable: %s"
+                                          % (name, exc.strerror or exc))
+            return None
+        try:
+            with os.fdopen(fd, "r") as fh:
+                return json.load(fh)
+        except OSError as exc:
+            if strict:
+                raise PairStoreUnreadable(exc.errno, "pairing key file %s unreadable: %s"
+                                          % (name, exc.strerror or exc))
+            return None
+        except Exception:
+            return None
+
+    def _tmp_write(self, name, obj):
+        """obj into a fresh 0600 temp file next to name; returns its path."""
+        self._ensure_dir()
+        tmp = os.path.join(self.path, ".%s.tmp-%d-%s" % (name, os.getpid(), secrets.token_hex(4)))
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            with os.fdopen(fd, "w") as fh:
+                os.fchmod(fh.fileno(), 0o600)
+                json.dump(obj, fh)
+                fh.flush()
+                os.fsync(fh.fileno())
+        except BaseException:
+            self._unlink_quiet(tmp)
+            raise
+        return tmp
+
+    def _unlink_quiet(self, path):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+    def _write(self, name, obj):
+        tmp = self._tmp_write(name, obj)
+        try:
+            os.replace(tmp, os.path.join(self.path, name))
+        except BaseException:
+            self._unlink_quiet(tmp)
+            raise
+
+    # -- identity ---------------------------------------------------------------
+    @staticmethod
+    def _valid_ident(d):
+        if not isinstance(d, dict) or not peer_id_str(d.get("id")):
+            return None
+        x, pub = d.get("x"), d.get("pub")
+        if not (isinstance(x, str) and DH_HEX_RE.fullmatch(x) and isinstance(pub, str)):
+            return None
+        xi = int(x, 16)
+        if xi < 2 or "%x" % pow(PAIR_G, xi, PAIR_P) != pub:
+            return None
+        return {"id": d["id"], "x": xi, "pub": pub}
+
+    def _existing_ident(self):
+        """The stored identity, or None when there is no identity file. Raises
+        PairStoreUnreadable when it cannot be read right now and PairIdentityInvalid
+        when it is present but not a valid identity; both leave the file untouched."""
+        absent = object()
+        d = self._read(self.SELF, strict=True, missing=absent)
+        if d is absent:
+            return None
+        ident = self._valid_ident(d)
+        if ident is not None:
+            return ident
+        raise PairIdentityInvalid(
+            "pairing identity %s is not a valid identity; it is left untouched (pairing "
+            "stays off until it is fixed or moved away, then a new identity is created)"
+            % os.path.join(self.path, self.SELF))
+
+    def identity(self):
+        """This installation's {id, x (private int), pub (hex)}; created on first use.
+        Concurrent first starts agree on one identity (link(2) never overwrites). An
+        existing identity file is never replaced: when it cannot be read or is not
+        valid this raises (OSError / ValueError) and the file stays as it is."""
+        with self.lock:
+            if self._ident is not None:
+                return self._ident
+            ident = self._existing_ident()
+            if ident is None:
+                x = secrets.randbits(PAIR_X_BITS) | (1 << (PAIR_X_BITS - 1))
+                new = {"id": secrets.token_hex(16), "x": "%x" % x, "pub": "%x" % pow(PAIR_G, x, PAIR_P)}
+                tmp = self._tmp_write(self.SELF, new)
+                try:
+                    os.link(tmp, os.path.join(self.path, self.SELF))
+                    ident = self._valid_ident(new)
+                except FileExistsError:
+                    # created meanwhile (a concurrent first start): use that one
+                    ident = self._existing_ident()
+                    if ident is None:
+                        raise PairStoreUnreadable(errno.EAGAIN, "pairing key file %s changed "
+                                                  "during creation; retried later" % self.SELF)
+                finally:
+                    self._unlink_quiet(tmp)
+            self._ident = ident
+            return ident
+
+    # -- paired peers -------------------------------------------------------------
+    @staticmethod
+    def _valid_rec(d, pid):
+        if not isinstance(d, dict) or d.get("id") != pid:
+            return None
+        pub, key, slot = d.get("pub"), d.get("key"), d.get("slot")
+        if not (isinstance(pub, str) and DH_HEX_RE.fullmatch(pub) and isinstance(key, str)
+                and KEY_HEX_RE.fullmatch(key) and isinstance(slot, str)):
+            return None
+        m = d.get("machine")
+        return {"id": pid, "pub": pub, "key": key, "slot": slot,
+                "machine": m[:60] if isinstance(m, str) else ""}
+
+    def get(self, pid, strict=False):
+        pid = peer_id_str(pid)
+        if not pid:
+            return None
+        return self._valid_rec(self._read("peer-%s.json" % pid, strict), pid)
+
+    def records(self):
+        """Every valid paired record. A key dir that does not exist yet has none; a
+        dir (or peer file) that cannot be read raises PairStoreUnreadable, never []."""
+        try:
+            names = sorted(os.listdir(self.path))
+        except FileNotFoundError:
+            return []
+        except OSError as exc:
+            raise PairStoreUnreadable(exc.errno, "pairing key dir %s unreadable: %s"
+                                      % (self.path, exc.strerror or exc))
+        out = []
+        for n in names:
+            if n.startswith("peer-") and n.endswith(".json"):
+                r = self.get(n[5:-5], strict=True)
+                if r is not None:
+                    out.append(r)
+        return out
+
+    def by_slot(self, slot):
+        for r in self.records():
+            if r["slot"] == slot:
+                return r
+        return None
+
+    def pin(self, pid, pub, key, slot, machine=""):
+        """Store the pairing of pid at slot (or refresh its machine label). A slot
+        belongs to at most one paired id and a paired id to exactly one slot: False
+        (nothing written) when another id already holds the slot, so two first
+        contacts racing for one slot can never both get it, and also when pid is
+        already bound to ANOTHER slot - a paired id is never moved silently (its old
+        slot would be left unbound for anyone); only `pair-reset` moves it."""
+        with self.lock:
+            other = self.by_slot(slot)
+            if other is not None and other["id"] != pid:
+                return False
+            cur = self.get(pid, strict=True)   # unreadable: raise, never overwrite it
+            if cur is not None and (cur["slot"] != slot or cur["pub"] != pub or cur["key"] != key):
+                return False
+            self._write("peer-%s.json" % pid, {"id": pid, "pub": pub, "key": key, "slot": slot,
+                                              "machine": str(machine or "")[:60]})
+            return True
+
+    # -- pending repairs (a new id or key at a paired slot, refused) ---------------
+    def pending(self, strict=False):
+        d = self._read(self.PENDING, strict)
+        if not isinstance(d, list):
+            return []
+        keep = ("slot", "old_id", "new_id", "machine", "reason")
+        out = []
+        for e in d:
+            if isinstance(e, dict):
+                r = {k: str(e.get(k, ""))[:120] for k in keep}
+                # the pair-reset argument that accepts it (older entries: the slot)
+                r["fix"] = str(e.get("fix") or r["slot"])[:120]
+                out.append(r)
+        return out
+
+    def add_pending(self, entry):
+        """Record a refused claim once per slot (the first one; later claims with other,
+        sender-chosen ids neither add entries nor log lines); True when it is new."""
+        with self.lock:
+            cur = self.pending(strict=True)   # unreadable: raise, never drop the others
+            if any(e["slot"] == entry.get("slot") for e in cur):
+                return False
+            cur.append({k: str(entry.get(k, "") or (entry.get("slot", "") if k == "fix" else ""))[:120]
+                        for k in ("slot", "old_id", "new_id", "machine", "reason", "fix")})
+            self._write(self.PENDING, cur[-PENDING_REPAIR_MAX:])
+            return True
+
+    def reset(self, selector):
+        """Forget the pairing(s) matching selector (peer id or an 8+ char prefix of it,
+        slot host:port, host, or machine label) and the pending repairs for them, so
+        the next link pairs again. Returns (removed records, removed pending)."""
+        sel = str(selector or "").strip()
+        if not sel:
+            return [], []
+
+        def hit_id(pid):
+            return bool(pid) and (pid == sel or (len(sel) >= 8 and pid.startswith(sel)))
+
+        def hit_slot(slot):
+            return bool(slot) and (slot == sel or slot.rsplit(":", 1)[0] == sel)
+
+        with self.lock:
+            gone = [r for r in self.records()
+                    if hit_id(r["id"]) or hit_slot(r["slot"]) or (r["machine"] and r["machine"] == sel)]
+            cur = self.pending(strict=True)   # read before anything is removed
+            for r in gone:
+                self._unlink_quiet(os.path.join(self.path, "peer-%s.json" % r["id"]))
+            slots = set(r["slot"] for r in gone)
+            ids = set(r["id"] for r in gone)
+            drop = [e for e in cur if e["slot"] in slots or e["old_id"] in ids or e["new_id"] in ids
+                    or hit_slot(e["slot"])
+                    or hit_id(e["new_id"]) or hit_id(e["old_id"]) or (e["machine"] and e["machine"] == sel)]
+            if drop:
+                self._write(self.PENDING, [e for e in cur if e not in drop])
+            return gone, drop
+
+
+def recv_line(sock, buf):
+    """Read one newline-terminated line. Returns (line, rest) or (None, buf) on EOF.
+    Raises socket.timeout / OSError, or ValueError for an oversize line."""
+    while b"\n" not in buf:
+        chunk = sock.recv(65536)
+        if not chunk:
+            return None, buf
+        buf += chunk
+        if len(buf) > MAX_LINE:
+            raise ValueError("oversize line")
+    line, _, rest = buf.partition(b"\n")
+    return line, rest
+
+
+def open_link_socket(host, port, timeout):
+    """TCP connect for an outbound link. TEST-ONLY: with CREDO_PEER_LAN_TEST_SENDLOG
+    set it records "link <host>:<port>" and connects nowhere (returns None), so LAN-
+    shaped peers in tests never touch a real network."""
+    testlog = os.environ.get("CREDO_PEER_LAN_TEST_SENDLOG")
+    if testlog:
+        with open(testlog, "a") as fh:
+            fh.write("link %s:%s\n" % (host, port))
+        return None
+    return socket.create_connection((host, int(port)), timeout=timeout)
+
+
+def _sock_desc(sock):
+    try:
+        loc, rem = sock.getsockname(), sock.getpeername()
+        return "%s:%s>%s:%s" % (loc[0], loc[1], rem[0], rem[1])
+    except (OSError, TypeError, IndexError):
+        return "?"
+
+
+_CHANNEL_IDS = itertools.count(1)
+
+
+class Channel(object):
+    """One persistent link to a peer address. direction "out" = we opened it, "in" =
+    the peer opened it. addr is the peer address its frames are attributed to (the
+    forward target, resolved like a roster); src_ip is the socket's remote IP.
+    secret = the link's random secret (generated by its opener, sent only in its
+    hello); proof = the link_proof the peer sent with it (hello for "in", ack for
+    "out"); resume = the resume_proof of an inbound hello. pair = the PairLink of a
+    link authenticated with a pairing key (None: an unpaired, token-only link)."""
+
+    def __init__(self, sock, addr, known, direction, src_ip, remote_machine,
+                 remote_port, remote_interval, remote_nonce="", secret="", proof="",
+                 resume="", pair=None):
+        self.cid = next(_CHANNEL_IDS)
+        self.sock = sock
+        # writes go through a dup of the socket with its own short timeout, so a peer
+        # that stops reading fails the write fast while the reader keeps its longer
+        # read timeout (Python timeouts are per socket object, not per fd)
+        try:
+            self.wsock = sock.dup()
+            self.wsock.settimeout(CHAN_WRITE_TIMEOUT)
+        except (AttributeError, OSError):
+            self.wsock = sock
+        self.write_timeout = CHAN_WRITE_TIMEOUT
+        self.addr = (addr[0], int(addr[1]))
+        self.key = "%s:%d" % self.addr
+        self.known = known
+        self.direction = direction
+        self.src_ip = src_ip
+        self.remote_machine = str(remote_machine or "")
+        try:
+            self.remote_port = int(remote_port or 0)
+        except (TypeError, ValueError):
+            self.remote_port = 0
+        try:
+            self.remote_interval = min(max(float(remote_interval or 0), 0.0), 600.0)
+        except (TypeError, ValueError):
+            self.remote_interval = 0.0
+        self.remote_nonce = str(remote_nonce or "")[:64]
+        self.secret = _secret_str(secret)
+        self.proof = _secret_str(proof)
+        self.resume = _secret_str(resume)
+        self.pair = pair
+        self.pair_id = pair.pair_id if pair is not None else ""
+        self.desc = _sock_desc(sock)
+        self.wlock = threading.Lock()
+        self.closed = False
+        self.registered = False
+        self.last_tx = time.monotonic()
+        self.last_rx = self.last_tx  # last frame received (idle detection)
+
+    def idle(self, limit):
+        """No frame received for longer than limit seconds (a half-dead link)."""
+        return time.monotonic() - self.last_rx > limit
+
+    def send_line(self, data):
+        """Write one frame within write_timeout (total, lock wait included). Raises
+        socket.timeout / OSError; the caller then drops the channel."""
+        self._send(lambda: data)
+
+    def send_payload(self, token, payload):
+        """Frame payload for this link (token MAC; plus the pair MAC and the next
+        sequence number on a paired link, assigned under the write lock so the wire
+        order matches the numbering) and write it like send_line."""
+        if self.pair is None:
+            return self._send(lambda: frame_for(token, payload).encode("utf-8"))
+        return self._send(lambda: self.pair.frame(token, payload).encode("utf-8"))
+
+    def verify(self, token, line):
+        """Payload of a frame read from this link, or None when it is not acceptable."""
+        if self.pair is None:
+            return verify_line(token, line)
+        return self.pair.verify(token, line)
+
+    def _send(self, make):
+        if not self.wlock.acquire(timeout=self.write_timeout):
+            raise socket.timeout("channel write busy for %.0fs" % self.write_timeout)
+        try:
+            if self.closed:
+                raise OSError("channel closed")
+            self.wsock.sendall(make())
+            self.last_tx = time.monotonic()
+        finally:
+            self.wlock.release()
+
+    def close(self):
+        self.closed = True
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        for s in (self.sock, self.wsock):
+            try:
+                s.close()
+            except OSError:
+                pass
+
+
+def warn_once(tags, tag):
+    """True the first time tag is seen (the caller logs then). The set is capped at
+    WARN_TAGS_MAX entries and starts over when full, so it never grows unbounded."""
+    if tag in tags:
+        return False
+    if len(tags) >= WARN_TAGS_MAX:
+        tags.clear()
+    tags.add(tag)
+    return True
+
+
+def _relay_connect(path, timeout):
+    """Connect to the daemon's relay unix socket. A full accept queue (EAGAIN, or a
+    connect timeout) is retried briefly and then reported as "busy" (None) - the
+    daemon is alive, so the caller must NOT bypass it. Raises ConnectionError only
+    when the socket is really unreachable (missing, refused)."""
+    for attempt in range(RELAY_BUSY_RETRIES + 1):
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        try:
+            s.connect(path)
+            return s
+        except (BlockingIOError, socket.timeout):
+            s.close()
+        except OSError as exc:
+            s.close()
+            if exc.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                raise ConnectionError(str(exc))
+        if attempt < RELAY_BUSY_RETRIES:
+            time.sleep(RELAY_BUSY_SLEEP)
+    return None
+
+
+def relay_via_daemon(path, host, port, payload, timeout=10.0):
+    """Holder -> local daemon: hand a deliver to the daemon's relay unix socket so it
+    goes out over the return channel when one exists. Raises ConnectionError only
+    when the relay socket cannot be reached (the caller may then send directly, the
+    pre-channel path, unless it is a --no-direct holder); a busy relay socket yields
+    an "err" reply instead; once connected, returns the daemon's one-line reply."""
+    s = _relay_connect(path, timeout)
+    if s is None:
+        return "err relay socket busy"
+    try:
+        req = {"peer_host": host, "peer_port": int(port), "payload": payload}
+        try:
+            s.sendall((json.dumps(req) + "\n").encode("utf-8"))
+            line, _ = recv_line(s, b"")
+        except (OSError, ValueError) as exc:
+            return "err relay: %s" % exc
+        return (line or b"err no reply").decode("utf-8", "replace").strip()
     finally:
         s.close()
 
@@ -1646,8 +2362,8 @@ def strip_uds(addr):
 # ---------------------------------------------------------------------------
 # A LAN peer controls body, from_name and (indirectly) the reply address, so all
 # three are untrusted. A body that carries an envelope delimiter (opening or closing
-# tag, any case, whitespace tolerated after "<" and "/") could close our envelope and
-# forge a second one with its own from/from-name - such a deliver is rejected outright.
+# tag, any case, whitespace tolerated after "<" and "/") is rejected outright, so a
+# message always stays inside exactly one envelope.
 ENVELOPE_DELIM_RE = re.compile(r"<\s*/?\s*cross-session-message", re.I)
 # reply addresses are our own local proxy sockets ("uds:/abs/path"); anything else
 # (quotes, spaces, angle brackets, ...) is dropped as an attribute, never escaped.
@@ -1882,6 +2598,40 @@ def _forward(line, token, host, port, args, sess_dir):
         "from_name": from_name,
         "body": body,
     }
+    # Prefer the daemon: it sends over the return channel when one exists (the only
+    # way to reach a peer that cannot be connected to). Only when the daemon's relay
+    # socket is unreachable does the holder fall back to its own direct connection.
+    # A --no-direct holder serves a via-inbound peer (outside the outbound allowlist,
+    # reachable only over the link it opened to us): it NEVER connects on its own.
+    relay = getattr(args, "relay_sock", None)
+    no_direct = bool(getattr(args, "no_direct", False))
+    if relay:
+        try:
+            reply = relay_via_daemon(relay, host, port, payload)
+        except ConnectionError as exc:
+            if no_direct:
+                log("holder: daemon relay unreachable (%s); %s:%s is reachable only over "
+                    "the return channel, deliver dropped" % (exc, host, port))
+                return
+            log("holder: daemon relay unreachable (%s), sending directly" % exc)
+        else:
+            if reply.startswith("ok"):
+                log("holder: forwarded deliver to %s:%s (%s)" % (host, port, reply[3:] or "daemon"))
+            else:
+                log("holder: forward to %s:%s failed: %s" % (host, port, reply))
+            return
+    elif no_direct:
+        log("holder: no daemon relay socket; %s:%s is reachable only over the return "
+            "channel, deliver dropped" % (host, port))
+        return
+    try:
+        if PairStore(keys_dir_for(load_config())).by_slot("%s:%s" % (host, port)) is not None:
+            log("holder: %s:%s is a paired peer, reachable only over its paired link; "
+                "deliver dropped" % (host, port))
+            return
+    except Exception as exc:
+        log("holder: pairing state for %s:%s unknown (%s); deliver dropped" % (host, port, exc))
+        return
     try:
         send_to_peer(host, port, token, payload)
         log("holder: forwarded deliver to %s:%s" % (host, port))
@@ -1952,6 +2702,9 @@ class Daemon(object):
         # key (machine, sessionId) -> dict(holder=Popen, proxy, descriptor, pid)
         self.remotes = {}
         self.machine_seen = {}  # peer addr "host:port" -> last roster monotonic time
+        # (peer addr, announced machine) -> last roster monotonic time; tells a real
+        # machine rename (old name went silent) from a second sender on one address
+        self.machine_last = {}
         self.unknown_warned = set()  # peer addrs warned once (not a configured peer)
         self.stop = threading.Event()
         self.srv = None
@@ -1970,13 +2723,49 @@ class Daemon(object):
         self.dup_session_warned = set()  # roster sessionIds skipped as duplicates (once)
         self._win_allow_path = None
         self._win_allow_resolved = False
+        # return channel state. Lock order: self.lock may be held while taking
+        # chan_lock, never the other way round.
+        self.chan_lock = threading.Lock()
+        self.channels = {}  # peer addr "host:port" -> Channel (at most one per key)
+        self.link_pending = set()  # keys with an outbound link attempt in flight
+        self.link_retry = {}  # key -> (consecutive failures, next attempt monotonic)
+        self.link_warned = set()  # keys whose link failure was already logged
+        self.chan_reject_warned = set()  # refused-link log tags, logged once each
+        # random per-run nonce: last tie-breaker between two links of daemons with an
+        # identical this_machine and listen port (both sides must pick the same link).
+        # It is public (every hello and ack carries it) and never proves identity;
+        # the per-link secrets below do that.
+        self.link_nonce = os.urandom(8).hex()
+        # per-link secrets, kept for configured peer keys only (bounded by the config):
+        # key -> secret of our latest outbound link attempt, and (key, direction) ->
+        # secret of the last channel registered for that key
+        self.link_out_secret = {}
+        self.link_last_secret = {}
+        self.link_refused = {}  # key -> consecutive links that connected but got no ack
+        self.link_unsupported = set()  # keys marked "no link support" (old relay)
+        self.link_tie_lost = {}  # key -> the channel our own link lost a tie-break to
+        self.no_relay_warned = set()  # via-inbound peers skipped for lack of a relay
+        self.relay_srv = None
+        self.relay_path = None
+        self.relay_sem = threading.Semaphore(MAX_HOLDER_WORKERS)
+        # pairing keys (see PairStore): this installation's id + one key per paired
+        # peer id, read from disk on every use (a CLI pair-reset applies at once)
+        self.pairs = PairStore(keys_dir_for(cfg))
+        self.pair_warned = set()  # pairing refusal log tags, logged once each
 
     # -- lifecycle ----------------------------------------------------------
-    def start(self):
+    def _ensure_sock_dir(self):
+        """Create the sock dir 0700 (proxy and relay sockets live there) and tighten
+        an existing one we own, so other local users can never reach the sockets."""
         try:
-            os.makedirs(self.sock_dir, exist_ok=True)
+            os.makedirs(self.sock_dir, mode=0o700, exist_ok=True)
+            if os.stat(self.sock_dir).st_uid == os.getuid():
+                os.chmod(self.sock_dir, 0o700)
         except OSError as exc:
             log("cannot create sock dir %s: %s" % (self.sock_dir, exc))
+
+    def start(self):
+        self._ensure_sock_dir()
         # Bind the listen port FIRST - it is the single-instance lock. On EADDRINUSE we
         # do NOT give up immediately: a restart's old daemon can still hold the port for
         # a moment while we start, so we poll-retry the bind for a bounded window. Only
@@ -2032,8 +2821,10 @@ class Daemon(object):
             # roster loop; until it resolves, rosters simply omit the advertise fields
             # (receivers then fall back - see _resolve_peer_addr).
             threading.Thread(target=self._detect_advertise_host, daemon=True).start()
+        self._start_relay()
         threading.Thread(target=self._netwatch_loop, daemon=True).start()
         threading.Thread(target=self._accept_loop, daemon=True).start()
+        threading.Thread(target=self._link_loop, daemon=True).start()
         threading.Thread(target=self._roster_loop, daemon=True).start()
         threading.Thread(target=self._janitor_loop, daemon=True).start()
 
@@ -2088,9 +2879,30 @@ class Daemon(object):
                 self._lan_key = key
                 self.outbound_skip_warned.clear()
                 self.rejected_warned.clear()
-                for rkey in list(self.remotes.keys()):
+                self.no_relay_warned.clear()
+                with self.chan_lock:
+                    # a peer marked "no link support" gets another try on a new network
+                    self.link_unsupported.clear()
+                    self.link_refused.clear()
+                # channels never outlive their gate: an outbound link needs the
+                # outbound gate, an inbound one the inbound source gate
+                with self.chan_lock:
+                    chans = list(self.channels.values())
+                for ch in chans:
+                    if ch.direction == "out":
+                        still = peer_allowed_outbound(ch.addr[0], state)
+                    else:
+                        still = source_allowed(ch.src_ip, state, self.wsl)
+                    if not still:
+                        self._drop_channel(ch, "no longer allowed on this network")
+                for rkey, rec in list(self.remotes.items()):
                     host = split_host_port(rkey[0], self.listen_port)[0]
-                    if not peer_allowed_outbound(host, state):
+                    if peer_allowed_outbound(host, state):
+                        continue
+                    # keep a mirror only while its peer's inbound link is alive AND its
+                    # holder can never send directly; a holder spawned while the address
+                    # was allowlisted is replaced by a --no-direct one on the next roster
+                    if not (self._inbound_channel(rkey[0]) and rec.get("no_direct")):
                         self._remove_remote_locked(rkey)
         if changed:
             if state["enabled"]:
@@ -2180,6 +2992,19 @@ class Daemon(object):
         except OSError:
             pass
         self._remove_pidfile()
+        with self.chan_lock:
+            chans = list(self.channels.values())
+        for ch in chans:
+            self._drop_channel(ch, "shutdown")
+        if self.relay_srv is not None:
+            try:
+                self.relay_srv.close()
+            except OSError:
+                pass
+            try:
+                os.unlink(self.relay_path)
+            except OSError:
+                pass
         with self.lock:
             keys = list(self.remotes.keys())
         for key in keys:
@@ -2245,6 +3070,7 @@ class Daemon(object):
             self.conn_sem.release()
 
     def _handle_conn(self, conn, addr):
+        handed_off = False
         try:
             conn.settimeout(10)
             buf = b""
@@ -2253,14 +3079,26 @@ class Daemon(object):
                     chunk = conn.recv(65536)
                 except socket.timeout:
                     break
+                except OSError:
+                    break
                 if not chunk:
                     break
                 buf += chunk
-                if len(buf) > 4 * 1024 * 1024:
+                if len(buf) > MAX_LINE:
                     log("oversize message from %s dropped" % (addr,))
                     return
+            # A verified "link" hello as the FIRST line turns this connection into a
+            # persistent return channel (source gate already passed in _accept_loop).
+            first, _, rest = buf.partition(b"\n")
+            if b"\n" in buf and first.strip():
+                hello = verify_line(self.token, first.strip().decode("utf-8", "replace"))
+                if hello is not None and hello.get("kind") == "link":
+                    handed_off = True
+                    self._accept_link(conn, addr, hello, rest)
+                    return
         finally:
-            conn.close()
+            if not handed_off:
+                conn.close()
         for line in buf.splitlines():
             line = line.strip()
             if not line:
@@ -2272,17 +3110,848 @@ class Daemon(object):
             src_ip = addr[0] if isinstance(addr, tuple) and addr else ""
             self._dispatch(payload, src_ip)
 
-    def _dispatch(self, payload, src_ip=""):
+    def _dispatch(self, payload, src_ip="", chan=None):
         kind = payload.get("kind")
         if kind == "roster":
-            self._on_roster(payload, src_ip)
+            self._on_roster(payload, src_ip, chan)
         elif kind == "deliver":
-            self._on_deliver(payload, src_ip)
+            self._on_deliver(payload, src_ip, chan)
+        elif kind in ("ping", "link"):
+            pass  # keepalive / a repeated hello: nothing to do
         else:
             log("unknown message kind %r" % kind)
 
+    # -- return channel (persistent link) -----------------------------------
+    def _link_hello(self, peer_host, ack=False, chal="", proof="", resume="", expect=""):
+        """The "link" frame: who we are, our listen port and roster cadence, plus
+        the same advertise fields a roster carries (so the acceptor resolves our
+        peer address exactly like it resolves our rosters). A hello carries the new
+        link's secret (chal) and, when we know one, the link_proof / resume_proof
+        tying it to the peer's link; an ack carries only a link_proof."""
+        hello = {
+            "kind": "link",
+            "machine": self.this_machine,
+            "listen_port": self.listen_port,
+            "roster_interval": self.roster_interval,
+            "nonce": self.link_nonce,
+        }
+        for k, v in (("chal", chal), ("proof", proof), ("resume", resume)):
+            if v:
+                hello[k] = v
+        ident = None if ack else self._ident()
+        if ident is not None:
+            # pairing: our persistent id and static DH public value (both public)
+            hello.update(pid=ident["id"], dh=ident["pub"])
+            if expect:
+                # the paired id we have bound to the address we dialed (bound into
+                # both proofs and the session key); absent = an unpaired address
+                hello["expect"] = expect
+        if ack:
+            hello["ack"] = True
+        elif is_loopback_ip(peer_host):
+            hello.update(advertise_host="127.0.0.1", advertise_port=self.listen_port)
+        elif self.advertise_host:
+            hello.update(advertise_host=self.advertise_host, advertise_port=self.advertise_port)
+        return hello
+
+    # -- pairing keys (trust on first use, see PairStore / PairLink) ---------
+    def _ident(self):
+        """Our pairing identity, or None when the key dir is unusable (then this
+        daemon pairs with nobody and works token-only, logged once)."""
+        try:
+            return self.pairs.identity()
+        except (OSError, ValueError) as exc:
+            if warn_once(self.pair_warned, "ident"):
+                log("pairing disabled: key dir %s unusable (%s)" % (self.pairs.path, exc))
+            return None
+
+    @property
+    def peer_id(self):
+        ident = self._ident()
+        return ident["id"] if ident else ""
+
+    def _bound(self, slot):
+        """The paired peer record bound to slot (a peer address key), or None. While
+        the key store cannot be read, every slot counts as bound to an unknown peer
+        (PAIR_UNKNOWN_ID, "unknown": True): no token-only link, no fresh connection."""
+        try:
+            rec = self.pairs.by_slot(slot)
+        except Exception as exc:
+            self._pair_log("unreadable",
+                           "pairing key store %s unreadable (%s): every peer address counts as "
+                           "paired until it can be read again; links without a stored key and "
+                           "fresh connections are refused" % (self.pairs.path, exc))
+            return {"id": PAIR_UNKNOWN_ID, "pub": "", "key": "", "slot": slot, "machine": "",
+                    "unknown": True}
+        self._pair_readable()
+        return rec
+
+    def _pair_readable(self):
+        """The key store reads again: a later unreadable phase is logged again."""
+        if "unreadable" in self.pair_warned:
+            self.pair_warned.discard("unreadable")
+            log("pairing key store %s readable again" % self.pairs.path)
+
+    def _slot_trusted(self, slot, chan):
+        """A frame attributed to slot may be served: the slot is not bound to a paired
+        peer, or the frame came over a link authenticated as exactly that peer."""
+        rec = self._bound(slot)
+        return rec is None or (chan is not None and chan.pair_id == rec["id"])
+
+    def _pair_log(self, tag, msg):
+        if warn_once(self.pair_warned, tag):
+            log(msg)
+
+    def _pair_conflict(self, slot, rec, new_id, machine, why, fix=None):
+        """A new id (or a changed key) claims a paired slot, or a paired id shows up
+        at another slot: refused, and surfaced once per slot as a pending repair
+        (state file + log line with the one command that accepts it, fix = the
+        pair-reset argument, default the slot). Never logs or stores anything secret."""
+        fix = fix or slot
+        entry = {"slot": slot, "old_id": rec["id"], "new_id": new_id,
+                 "machine": str(machine or "")[:60], "reason": why, "fix": fix}
+        try:
+            fresh = self.pairs.add_pending(entry)
+        except OSError:
+            fresh = warn_once(self.pair_warned, ("pending", slot))
+        if fresh:
+            log("pairing: %s at %s (peer id %s, machine %r), paired there: %s (%r); "
+                "refused. If that is expected (peer reinstalled, keys reset, moved to a new "
+                "address, or an older relay / the Codex peer lives there), accept it with: "
+                "credo-peer-lan.py pair-reset %s"
+                % (why, slot, (new_id or "none")[:8], entry["machine"], (rec["id"] or "none")[:8],
+                   rec["machine"], fix))
+
+    def _pair_moved(self, slot, rec, machine):
+        """A link that PROVED the key of paired id rec["id"] serves another slot than
+        the one that id is bound to: refused for this slot, the old slot stays bound,
+        surfaced as a pending repair; only `pair-reset <id>` moves it."""
+        self._pair_conflict(slot, {"id": rec["id"], "machine": rec["machine"]}, rec["id"], machine,
+                            "paired peer bound to %s" % rec["slot"], fix=rec["id"])
+
+    def _send_refusal(self, conn, why):
+        try:
+            conn.sendall(frame_for(self.token, {"kind": "link", "refused": why,
+                                                "machine": self.this_machine}).encode("utf-8"))
+        except OSError:
+            pass
+
+    def _pair_accept(self, conn, src, slot, machine, hello, rest):
+        """Pairing step of an inbound link keyed by slot. Returns (pair, rest):
+        pair = a PairLink (authenticated paired peer), None (unpaired, token-only) or
+        False (refused; a signed refusal was sent). A slot bound to a paired id only
+        goes to a link proving that id's key against our fresh challenge; a paired id
+        never gets in without that proof (no downgrade); a new id at a paired slot is
+        refused and surfaced as a pending repair."""
+        bound = self._bound(slot)
+        ident = self._ident()
+        if bound is not None and (ident is None or bound.get("unknown")):
+            # a paired (or, with an unreadable store, possibly paired) slot needs a key
+            # proof we cannot check right now: refused, nothing recorded
+            self._send_refusal(conn, "pairing required")
+            return False, rest
+        if ident is None:
+            return None, rest
+        pid = peer_id_str(hello.get("pid"))
+        if pid == ident["id"]:
+            pid = ""   # our own id is never a peer (a copied config dir, or a probe)
+        if bound is not None and bound["id"] != pid:
+            if pid:
+                self._pair_conflict(slot, bound, pid, machine, "a new peer id")
+            else:
+                self._pair_log(("downgrade", src),
+                               "link from %s for paired slot %s carries no pairing proof; refused "
+                               "(a paired peer never falls back to token-only)" % (src, slot))
+                # an older relay / the Codex peer whose slot a pairing peer took first
+                # (trust on first use) would otherwise be locked out silently
+                self._pair_conflict(slot, bound, "", machine, "a link without pairing support")
+            self._send_refusal(conn, "pairing required")
+            return False, rest
+        if not pid:
+            return None, rest
+        rec = self.pairs.get(pid)
+        pub = hello.get("dh")
+        y = dh_pub_value(pub)
+        c_open = _secret_str(hello.get("chal"))
+        if y is None or not c_open:
+            if rec is not None:
+                self._pair_log(("downgrade", src),
+                               "link from %s claims paired peer %s without a key proof; refused"
+                               % (src, pid[:8]))
+                self._send_refusal(conn, "pairing required")
+                return False, rest
+            return None, rest   # no usable pairing fields: an unpaired, token-only link
+        if rec is not None and rec["pub"] != pub:
+            self._pair_conflict(slot, rec, pid, machine, "a changed key for a paired id")
+            self._send_refusal(conn, "pairing required")
+            return False, rest
+        key = rec["key"] if rec is not None else pair_key(ident, pid, y)
+        expect = pair_expect_str(hello.get("expect"))
+        c_acc = os.urandom(16).hex()
+        challenge = {"kind": "link", "machine": self.this_machine, "pid": ident["id"],
+                     "dh": ident["pub"], "challenge": c_acc}
+        conn.settimeout(PAIR_HANDSHAKE_TIMEOUT)
+        if expect not in (PAIR_ANY, ident["id"]):
+            # the opener dialed an address it has bound to ANOTHER paired id: we are not
+            # who it wants, so we prove nothing; our id still goes out (no proof), so
+            # the opener can surface the new id at its paired address
+            self._pair_log(("expect", src),
+                           "link from %s expects another peer id at this address; no proof sent"
+                           % src)
+            conn.sendall(frame_for(self.token, challenge).encode("utf-8"))
+            return False, rest
+        challenge["auth"] = pair_proof(key, "A", ident["id"], pid, c_open, c_acc, expect)
+        conn.sendall(frame_for(self.token, challenge).encode("utf-8"))
+        line, rest = recv_line(conn, rest)
+        reply = verify_line(self.token, line.strip().decode("utf-8", "replace")) if line else None
+        want = pair_proof(key, "O", pid, ident["id"], c_open, c_acc, expect)
+        if not (reply and reply.get("kind") == "link" and proof_eq(reply.get("auth"), want)):
+            self._pair_log(("proof", src),
+                           "link from %s as peer %s failed the pairing key proof; refused"
+                           % (src, pid[:8]))
+            self._send_refusal(conn, "pairing failed")
+            return False, rest
+        if rec is not None and rec["slot"] != slot:
+            # a proven paired id at a slot that is not its own: never moved silently
+            self._pair_moved(slot, rec, machine)
+            self._send_refusal(conn, "pairing required")
+            return False, rest
+        to_pin = None
+        if rec is None or rec["machine"] != machine[:60]:
+            to_pin = (pid, pub, key, slot, machine)   # stored once the ack went out
+        return PairLink(pid, pair_session_key(key, pid, ident["id"], c_open, c_acc, expect),
+                        "a2o", "o2a", to_pin=to_pin), rest
+
+    def _pair_store(self, pair):
+        """Store a pairing whose handshake completed (both proofs and the ack). False
+        when it cannot be stored (another id took the slot meanwhile, or the id got
+        bound elsewhere): the caller drops the link, it is surfaced as a pending
+        repair. A failing disk also drops the link (logged; the next link retries)."""
+        if pair is None or not pair.to_pin:
+            return True
+        pid, pub, key, slot, machine = pair.to_pin
+        try:
+            new = self.pairs.get(pid) is None
+            stored = self.pairs.pin(pid, pub, key, slot, machine)
+        except OSError as exc:
+            self._pair_log(("store", slot), "pairing with %s at %s not stored (%s); link dropped"
+                           % (pid[:8], slot, exc))
+            return False
+        if not stored:
+            rec = self.pairs.get(pid)
+            if rec is not None and rec["slot"] != slot:
+                self._pair_moved(slot, rec, machine)
+            else:
+                other = self._bound(slot) or {"id": "?", "machine": ""}
+                self._pair_conflict(slot, other, pid, machine, "a new peer id")
+            return False
+        pair.to_pin = None
+        if new:
+            log("paired with peer %s (%r) at %s: pairing key stored" % (pid[:8], machine, slot))
+        return True
+
+    def _pair_open(self, sock, key, c_open, msg, expected):
+        """Pairing step of our own outbound link to key, after the acceptor's
+        challenge msg. Returns (PairLink, "") or (None, why). The acceptor proves the
+        key first (bound to our fresh chal); a paired address answered by another id
+        or key is refused and surfaced as a pending repair."""
+        ident = self._ident()
+        a_id = peer_id_str(msg.get("pid"))
+        pub = msg.get("dh")
+        y = dh_pub_value(pub)
+        c_acc = _secret_str(msg.get("challenge"))
+        machine = msg.get("machine") if isinstance(msg.get("machine"), str) else ""
+        if ident is None or not a_id or a_id == ident["id"] or y is None or not c_open or not c_acc:
+            return None, "malformed pairing challenge"
+        if expected is not None and expected.get("unknown"):
+            return None, "pairing key store unreadable"
+        if expected is not None and expected["id"] != a_id:
+            self._pair_conflict(key, expected, a_id, machine, "a new peer id")
+            return None, "a new peer id answers at a paired address"
+        rec = self.pairs.get(a_id)
+        if rec is not None and rec["pub"] != pub:
+            self._pair_conflict(key, rec, a_id, machine, "a changed key for a paired id")
+            return None, "the paired peer's key changed"
+        expect = expected["id"] if expected is not None else PAIR_ANY
+        k = rec["key"] if rec is not None else pair_key(ident, a_id, y)
+        if not proof_eq(msg.get("auth"), pair_proof(k, "A", a_id, ident["id"], c_open, c_acc, expect)):
+            self._pair_log(("proof", key),
+                           "link to %s: peer %s failed the pairing key proof; not used" % (key, a_id[:8]))
+            return None, "pairing key proof failed"
+        if rec is not None and rec["slot"] != key:
+            # a proven paired id answers at an address that is not its own: we send
+            # no proof, nothing moves, its own slot stays bound
+            self._pair_moved(key, rec, machine)
+            return None, "a paired peer answers at an address it is not bound to"
+        sock.sendall(frame_for(self.token, {
+            "kind": "link", "auth": pair_proof(k, "O", ident["id"], a_id, c_open, c_acc, expect),
+        }).encode("utf-8"))
+        to_pin = None
+        if rec is None or rec["machine"] != machine[:60]:
+            to_pin = (a_id, pub, k, key, machine)   # stored once the ack arrived
+        return PairLink(a_id, pair_session_key(k, ident["id"], a_id, c_open, c_acc, expect),
+                        "o2a", "a2o", to_pin=to_pin), ""
+
+    def _chan_timeout(self, remote_interval):
+        """Read timeout of a channel: about 3 roster intervals of the slower side.
+        Both sides send at least a ping every interval, so silence this long means
+        a half-dead link, which is then dropped and re-established."""
+        return min(3.0 * max(self.roster_interval, remote_interval or 0.0) + 1.0,
+                   CHAN_TIMEOUT_MAX)
+
+    def _ping_every(self):
+        return min(self.roster_interval * 0.9, CHAN_PING_MAX)
+
+    def _idle_limit(self, ch):
+        """Silence after which a live channel counts as idle: about 2 ping intervals
+        of the slower side (both sides send at least a ping every interval)."""
+        return 2.0 * min(max(self.roster_interval, ch.remote_interval), CHAN_PING_MAX) + 1.0
+
+    def _is_wsl_gw(self, src, state=None):
+        if not self.wsl:
+            return False
+        gw = ((state or self.lan_state or {}).get("netinfo") or {}).get("wsl_nat_gateway")
+        return bool(gw) and src == gw
+
+    @staticmethod
+    def _link_verified(src, host):
+        """The link's socket source IS the address it is keyed by (or both are local),
+        so the claim is proven by the connection itself, not by what it says."""
+        return src == host or (is_loopback_ip(src) and is_loopback_ip(host))
+
+    def _link_claim_ok(self, src, cand, state):
+        """May an inbound link from src be keyed by peer address cand (host, port)? An
+        address the outbound gate allows (one we may reach ourselves) only from that
+        host itself, loopback, or (WSL NAT) the gateway every inbound connection
+        arrives from. An address outside the outbound allowlist is the via-inbound
+        exception (we never send to it except over this very link, so nothing can be
+        redirected), but only for a CONFIGURED peer address: anything else is keyed by
+        the link's own source, so a sender cannot mint fresh keys to fill the slots."""
+        host = cand[0]
+        if not peer_allowed_outbound(host, state):
+            return tuple(cand) in self.peer_addrs
+        return self._link_verified(src, host) or is_loopback_ip(src) or self._is_wsl_gw(src, state)
+
+    def _is_peer_key(self, key):
+        """key ("host:port") is a configured peer address (per-link secrets are kept
+        only for those, so their maps stay bounded by the config)."""
+        return any("%s:%d" % (p["host"], p["port"]) == key for p in self.peers)
+
+    def _peer_link_proof_locked(self, key, their_out):
+        """link_proof we can offer the peer at key for its outbound link whose
+        secret is their_out: combined with our own latest outbound link to that key
+        (live or still pending). Must hold chan_lock."""
+        return link_proof(self.link_out_secret.get(key, ""), their_out)
+
+    def _get_channel(self, key):
+        with self.chan_lock:
+            ch = self.channels.get(key)
+        return ch if ch is not None and not ch.closed else None
+
+    def _inbound_channel(self, key):
+        ch = self._get_channel(key)
+        return ch if ch is not None and ch.direction == "in" else None
+
+    def _refuse_log(self, kind, src, msg):
+        """Log a refused link once per (kind, source IP): never keyed by values the
+        sender chooses (machine name, claimed address), so the tag set stays small."""
+        if warn_once(self.chan_reject_warned, (kind, src)):
+            log(msg)
+
+    def _inbound_cap_locked(self, ch):
+        """Slot caps for an inbound link (must hold chan_lock): one live inbound link
+        per source IP (loopback exempt; the WSL NAT gateway, which every inbound
+        connection under WSL NAT shares, at most max(GW_LINK_MIN, len(peers)), so
+        every configured peer behind NAT can hold one) and len(peers)+2 in total.
+        Replacing the link on the same key does not count. Returns a refusal reason
+        or None."""
+        ins = [c for c in self.channels.values()
+               if c.direction == "in" and not c.closed and c.key != ch.key]
+        same_src = len([c for c in ins if c.src_ip == ch.src_ip])
+        if self._is_wsl_gw(ch.src_ip):
+            gw_max = max(GW_LINK_MIN, len(self.peers))
+            if same_src >= gw_max:
+                return "WSL gateway link cap (%d) reached" % gw_max
+        elif not is_loopback_ip(ch.src_ip) and same_src:
+            return "another link from %s is already open" % ch.src_ip
+        if len(ins) >= len(self.peers) + 2:
+            return "inbound link cap (%d) reached" % (len(self.peers) + 2)
+        return None
+
+    def _register_channel(self, ch):
+        """Register ch as THE channel for its peer address. Returns False (the caller
+        closes ch; ch.refuse_reason says why) when it is refused. Rules:
+          - inbound links are capped (see _inbound_cap_locked),
+          - same direction: the new link replaces the live one only when it comes
+            from the SAME source IP and machine (a stale link after a reconnect). A
+            shared source (loopback / WSL gateway) does not identify the sender, so
+            there a new inbound link must also carry the resume_proof of the live
+            link's secret (sent only on that connection), unless the live link is
+            idle (no frame for 2 ping intervals); anything else never takes over an
+            address another link serves,
+          - one in + one out: the inbound link is a true simultaneous open only when
+            a link_proof over both links' secrets came with it (in its hello, or in
+            the ack of our outbound link). Each secret is sent only on its own
+            connection. Then the link opened by the machine whose (this_machine,
+            listen_port, nonce) sorts LOWER is kept (an idle link loses); both sides
+            apply the same rule, so exactly one connection survives. Without the
+            proof our own outbound link (we dialed the configured address) wins."""
+        drop = None
+        ch.refuse_reason = ""
+        with self.chan_lock:
+            if ch.direction == "in":
+                why = self._inbound_cap_locked(ch)
+                if why:
+                    ch.refuse_reason = "busy"
+                    self._refuse_log("cap", ch.src_ip,
+                                     "link from %s (%r) refused: %s" % (ch.src_ip, ch.remote_machine, why))
+                    return False
+            cur = self.channels.get(ch.key)
+            if cur is not None and not cur.closed:
+                # both links proved the same pairing key: the same peer installation
+                same_pair = bool(ch.pair_id) and ch.pair_id == cur.pair_id
+                if cur.direction == ch.direction:
+                    shared = is_loopback_ip(ch.src_ip) or self._is_wsl_gw(ch.src_ip)
+                    if ch.direction == "in":
+                        same_instance = proof_eq(ch.resume, resume_proof(ch.secret, cur.secret))
+                    else:  # two of our own outbound links (we dialed both)
+                        same_instance = bool(ch.remote_nonce) and ch.remote_nonce == cur.remote_nonce
+                    if (cur.pair_id and not same_pair) or (not same_pair and (
+                            cur.src_ip != ch.src_ip or cur.remote_machine != ch.remote_machine
+                            or (shared and not same_instance
+                                and not cur.idle(self._idle_limit(cur))))):
+                        ch.refuse_reason = "address served"
+                        self._refuse_log(
+                            "dup", ch.src_ip,
+                            "link from %s (%r) for %s refused: a live channel from %s (%r) "
+                            "already serves this address"
+                            % (ch.src_ip, ch.remote_machine, ch.key, cur.src_ip, cur.remote_machine))
+                        return False
+                else:
+                    inb, outb = (ch, cur) if ch.direction == "in" else (cur, ch)
+                    want = link_proof(inb.secret, outb.secret)
+                    proven = same_pair or proof_eq(inb.proof, want) or proof_eq(outb.proof, want)
+                    if not proven:
+                        # not provably the peer our own link talks to: ours wins
+                        keep = outb
+                    elif inb.idle(self._idle_limit(inb)) != outb.idle(self._idle_limit(outb)):
+                        keep = inb if outb.idle(self._idle_limit(outb)) else outb
+                    else:
+                        keep_ours = (self.this_machine, self.listen_port, self.link_nonce) < (
+                            inb.remote_machine, inb.remote_port, inb.remote_nonce)
+                        keep = outb if keep_ours else inb
+                    if keep is cur:
+                        ch.refuse_reason = "duplicate"
+                        if ch.direction == "out":
+                            self.link_tie_lost[ch.key] = cur
+                        return False
+                    if keep is inb:
+                        # our own link lost to the peer's: stop re-dialing it
+                        self.link_tie_lost[ch.key] = inb
+                drop = cur
+                cur.registered = False
+                log("channel down: key=%s dir=%s conn=%s (duplicate, replaced)"
+                    % (cur.key, cur.direction, cur.desc))
+            self.channels[ch.key] = ch
+            ch.registered = True
+            if ch.secret and self._is_peer_key(ch.key):
+                self.link_last_secret[(ch.key, ch.direction)] = ch.secret
+            self.link_warned.discard(ch.key)
+            self.link_retry.pop(ch.key, None)
+            self.link_refused.pop(ch.key, None)
+            log("channel up: key=%s dir=%s peer=%r conn=%s%s"
+                % (ch.key, ch.direction, ch.remote_machine, ch.desc,
+                   " paired=%s" % ch.pair_id[:8] if ch.pair_id else ""))
+        if drop is not None:
+            drop.close()
+        return True
+
+    def _drop_channel(self, ch, reason):
+        with self.chan_lock:
+            if self.channels.get(ch.key) is ch:
+                del self.channels[ch.key]
+            was = ch.registered
+            ch.registered = False
+        ch.close()
+        if was:
+            log("channel down: key=%s dir=%s conn=%s (%s)" % (ch.key, ch.direction, ch.desc, reason))
+
+    def _channel_reader(self, ch, buf=b""):
+        """Read frames from a channel until EOF/error/timeout and dispatch each one
+        through the normal frame path (token check included); then drop it."""
+        reason = "closed by peer"
+        try:
+            while not self.stop.is_set() and not ch.closed:
+                line, buf = recv_line(ch.sock, buf)
+                if line is None:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                payload = ch.verify(self.token, line.decode("utf-8", "replace"))
+                if payload is None:
+                    reason = "unauthenticated/garbled frame"
+                    log("rejected unauthenticated/garbled frame on channel %s" % ch.key)
+                    break
+                ch.last_rx = time.monotonic()
+                try:
+                    self._dispatch(payload, ch.src_ip, ch)
+                except Exception as exc:
+                    log("channel %s: frame handling failed: %s" % (ch.key, exc))
+        except socket.timeout:
+            reason = "timeout, no traffic"
+        except (OSError, ValueError) as exc:
+            reason = "error: %s" % exc
+        finally:
+            self._drop_channel(ch, reason)
+
+    def _link_addr(self, src, hello):
+        """Peer address an inbound link is keyed by. Resolved like a roster, but a
+        claim to an address we can reach ourselves must be proven by the socket
+        source (see _link_claim_ok); otherwise the link is keyed by its own source
+        address, which can never collide with another configured peer."""
+        state = self.lan_state
+        lp = int(hello.get("listen_port") or DEFAULT_PORT)
+        cand, known = self._resolve_peer_addr(
+            src, lp, hello.get("advertise_host"), hello.get("advertise_port"))
+        if self._link_claim_ok(src, cand, state):
+            return cand, known
+        self._refuse_log(
+            "claim", src,
+            "link from %s claims peer address %s:%d but does not come from it; keyed by "
+            "its source address instead" % (src, cand[0], cand[1]))
+        own = (src, lp)
+        return own, own in self.peer_addrs
+
+    def _accept_link(self, conn, addr, hello, rest):
+        """Inbound "link" hello (source gate and token already checked): resolve the
+        peer address, register the connection as that peer's channel, ack it, and
+        serve frames from it until it ends. A refused link gets a signed "refused"
+        reply so a current peer backs off instead of taking us for an old relay."""
+        src = addr[0] if isinstance(addr, tuple) and addr else ""
+        machine = hello.get("machine")
+        try:
+            if not isinstance(machine, str) or not machine:
+                raise ValueError("link hello without a machine")
+            conn.settimeout(self._chan_timeout(0.0))
+            peer_addr, known = self._link_addr(src, hello)
+            # pairing first: a slot bound to a paired peer goes only to a link that
+            # proves that peer's key (nothing is registered or acked before)
+            pair, rest = self._pair_accept(conn, src, "%s:%d" % peer_addr, machine[:120],
+                                           hello, rest)
+            if pair is False:
+                conn.close()
+                return
+            ch = Channel(conn, peer_addr, known, "in", src, machine[:120],
+                         hello.get("listen_port"), hello.get("roster_interval"),
+                         hello.get("nonce"), secret=hello.get("chal"),
+                         proof=hello.get("proof"), resume=hello.get("resume"), pair=pair)
+            conn.settimeout(self._chan_timeout(ch.remote_interval))
+        except Exception as exc:
+            log("link from %s rejected: %s" % (src, exc))
+            conn.close()
+            return
+        try:
+            registered = self._register_channel(ch)
+            # the link_proof (ack or refusal) only ever combines the opener's OWN
+            # secret with ours: it tells the peer which link won and carries no
+            # nonce and no secret
+            with self.chan_lock:
+                proof = self._peer_link_proof_locked(ch.key, ch.secret)
+            if not registered:
+                refusal = {"kind": "link", "refused": ch.refuse_reason or "refused",
+                           "machine": self.this_machine}
+                if proof:
+                    refusal["proof"] = proof
+                try:
+                    ch.send_payload(self.token, refusal)
+                except OSError:
+                    pass
+                ch.close()
+                return
+            ch.send_payload(self.token, self._link_hello(src, ack=True, proof=proof))
+            # handshake complete (opener proof verified, ack sent): store a new pairing
+            if not self._pair_store(pair):
+                self._drop_channel(ch, "pairing could not be stored")
+                return
+        except Exception as exc:
+            # never leave a registered link behind that was not acked and has no
+            # reader: it would serve the peer's address without ever timing out
+            log("link from %s failed: %s" % (src, exc))
+            self._drop_channel(ch, "link setup failed: %s" % exc)
+            return
+        self._channel_reader(ch, rest)
+
+
+    def _link_loop(self):
+        while not self.stop.is_set():
+            try:
+                self.link_tick()
+            except Exception as exc:
+                log("link tick failed: %s" % exc)
+            if self.stop.wait(min(self.roster_interval, CHAN_PING_MAX)):
+                break
+
+    def link_tick(self):
+        """Keepalive pings on idle channels, then (re)open an outbound link to every
+        peer the outbound gate allows that has no channel yet. An inbound channel the
+        peer opened counts only when its socket source proves the address (or our
+        own link already lost the tie-break to it); otherwise we prefer our own
+        outbound link. Peers marked "no link support" are skipped until the next
+        network change. Attempts run in their own threads with a capped backoff, so
+        a dead address never blocks the loop."""
+        state = self.lan_state  # lock-free read: never stall pings behind self.lock
+        now = time.monotonic()
+        with self.chan_lock:
+            chans = list(self.channels.values())
+        for ch in chans:
+            if now - ch.last_tx >= self._ping_every():
+                try:
+                    ch.send_payload(self.token, {"kind": "ping"})
+                except OSError as exc:
+                    self._drop_channel(ch, "ping failed: %s" % exc)
+        for peer in self.peers:
+            host, port = peer["host"], peer["port"]
+            key = "%s:%d" % (host, port)
+            if not peer_allowed_outbound(host, state):
+                continue
+            ch = self._get_channel(key)
+            if ch is not None and (ch.direction == "out" or self._link_verified(ch.src_ip, host)
+                                   or self.link_tie_lost.get(key) is ch):
+                continue
+            with self.chan_lock:
+                if key in self.link_pending or key in self.link_unsupported:
+                    continue
+                if self.link_retry.get(key, (0, 0.0))[1] > now:
+                    continue
+                self.link_pending.add(key)
+            threading.Thread(target=self._open_link, args=(host, port), daemon=True).start()
+
+    def _link_failed(self, key, why, silent=False):
+        """Count a failed link attempt (capped backoff). silent = it connected but got
+        no ack at all, the signature of a relay too old to know links: after
+        LINK_REFUSED_MAX of those in a row the peer is marked "no link support" and
+        left on fresh connections until the next network change or restart."""
+        marked = False
+        with self.chan_lock:
+            fails = self.link_retry.get(key, (0, 0.0))[0] + 1
+            backoff = min(self.roster_interval * (2 ** (fails - 1)), self.roster_interval * 6)
+            self.link_retry[key] = (fails, time.monotonic() + backoff)
+            if silent:
+                n = self.link_refused.get(key, 0) + 1
+                self.link_refused[key] = n
+                if n >= LINK_REFUSED_MAX and key not in self.link_unsupported:
+                    self.link_unsupported.add(key)
+                    marked = True
+            first = key not in self.link_warned
+            self.link_warned.add(key)
+        if first:
+            log("link to %s not established (%s); retrying, sends use fresh connections meanwhile" % (key, why))
+        if marked:
+            log("peer %s does not support the return channel (no link ack %d times); using "
+                "fresh connections, next try after a network change or restart"
+                % (key, LINK_REFUSED_MAX))
+
+    def _open_link(self, host, port):
+        key = "%s:%d" % (host, port)
+        sock = None
+        ch = None
+        try:
+            try:
+                sock = open_link_socket(host, port, min(5.0, max(1.0, 3 * self.roster_interval)))
+            except OSError as exc:
+                self._link_failed(key, str(exc))
+                return
+            if sock is None:
+                self._link_failed(key, "test mode")
+                return
+            # fresh per-link secret: sent only on this connection to the address we
+            # dialed. proof ties it to the peer's live inbound link (simultaneous
+            # open), resume to our own previous link it may replace (reconnect).
+            chal = os.urandom(16).hex()
+            with self.chan_lock:
+                cur = self.channels.get(key)
+                theirs = (cur.secret if cur is not None and not cur.closed and cur.direction == "in"
+                          else self.link_last_secret.get((key, "in"), ""))
+                proof = link_proof(chal, theirs)
+                resume = resume_proof(chal, self.link_last_secret.get((key, "out"), ""))
+                if self._is_peer_key(key):
+                    self.link_out_secret[key] = chal
+            # a paired peer bound to this address must prove its key (never token-only)
+            expected = self._bound(key)
+            try:
+                sock.settimeout(min(10.0, max(2.0, 3 * self.roster_interval)))
+                sock.sendall(frame_for(self.token, self._link_hello(
+                    host, chal=chal, proof=proof, resume=resume,
+                    expect=expected["id"] if expected is not None else "")).encode("utf-8"))
+                line, buf = recv_line(sock, b"")
+            except (OSError, ValueError) as exc:
+                self._link_failed(key, "no ack: %s" % exc, silent=True)
+                sock.close()
+                return
+            ack = verify_line(self.token, (line or b"").strip().decode("utf-8", "replace"))
+            pair = None
+            if ack and ack.get("kind") == "link" and "challenge" in ack:
+                pair, why = self._pair_open(sock, key, chal, ack, expected)
+                if pair is None:
+                    self._link_failed(key, why)
+                    sock.close()
+                    return
+                try:
+                    line, buf = recv_line(sock, buf)
+                except (OSError, ValueError) as exc:
+                    self._link_failed(key, "no ack after pairing: %s" % exc)
+                    sock.close()
+                    return
+                ack = pair.verify(self.token, (line or b"").strip().decode("utf-8", "replace"))
+            elif expected is not None and not (ack and ack.get("kind") == "link" and ack.get("refused")):
+                self._pair_log(("downgrade", key),
+                               "link to paired peer %s answered without a pairing proof; not used "
+                               "(a paired peer never falls back to token-only)" % key)
+                self._link_failed(key, "paired peer answered without a pairing proof")
+                sock.close()
+                return
+            if ack and ack.get("kind") == "link" and ack.get("refused"):
+                # a current relay refused this link (duplicate, cap, address served):
+                # back off, but it does support links
+                why = str(ack.get("refused"))[:80]
+                if why == "duplicate":
+                    # the peer kept its own link to us: stop re-dialing only when the
+                    # refusal proves it is the peer behind our live inbound link
+                    with self.chan_lock:
+                        cur = self.channels.get(key)
+                        if (cur is not None and not cur.closed and cur.direction == "in"
+                                and proof_eq(_secret_str(ack.get("proof")),
+                                             link_proof(cur.secret, chal))):
+                            self.link_tie_lost[key] = cur
+                self._link_failed(key, "peer refused the link: %s" % why)
+                sock.close()
+                return
+            if not ack or ack.get("kind") != "link" or not ack.get("ack"):
+                # an older relay (never acks) or a token mismatch
+                self._link_failed(key, "peer did not accept the link", silent=True)
+                sock.close()
+                return
+            # the handshake is complete (both proofs and the ack): only now is a new
+            # pairing stored (a crash or refusal before this point stores nothing)
+            if not self._pair_store(pair):
+                self._link_failed(key, "pairing could not be stored")
+                sock.close()
+                return
+            ch = Channel(sock, (host, port), True, "out", host, ack.get("machine"),
+                         ack.get("listen_port") or port, ack.get("roster_interval"),
+                         ack.get("nonce"), secret=chal, proof=ack.get("proof"), pair=pair)
+            sock.settimeout(self._chan_timeout(ch.remote_interval))
+            if not self._register_channel(ch):
+                ch.close()
+                return
+        except Exception as exc:
+            # any other failure still counts as a failed attempt (backoff), never a
+            # silent re-dial on every tick; nothing of this attempt stays registered
+            if ch is not None:
+                self._drop_channel(ch, "link setup failed: %s" % exc)
+            elif sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+            self._link_failed(key, "link setup failed: %s" % exc)
+            return
+        finally:
+            with self.chan_lock:
+                self.link_pending.discard(key)
+        self._channel_reader(ch, buf)
+
+
+    def send_frame(self, host, port, payload, allow_raw=True):
+        """Send one frame to a peer address: over its channel when one is alive,
+        else over a fresh connection (send_to_peer) - but only when allow_raw, i.e.
+        the address passes the outbound gate. Returns "channel" or "direct"."""
+        key = "%s:%d" % (host, int(port))
+        ch = self._get_channel(key)
+        bound = self._bound(key)
+        if bound is not None and (ch is None or ch.pair_id != bound["id"]):
+            # a paired peer is reached only over the link that proved its key, never
+            # over a fresh connection to whoever holds its address meanwhile
+            raise ConnectionError("%s is a paired peer without its paired link right now" % key)
+        if ch is not None:
+            try:
+                ch.send_payload(self.token, payload)
+                return "channel"
+            except OSError as exc:
+                self._drop_channel(ch, "send failed: %s" % exc)
+                if bound is not None:
+                    raise ConnectionError("paired link to %s failed: %s" % (key, exc))
+        if not allow_raw:
+            raise ConnectionError(
+                "no channel to %s and the address is outside the outbound allowlist" % key)
+        send_to_peer(host, int(port), self.token, payload)
+        return "direct"
+
+    # -- holder relay (local unix socket) -----------------------------------
+    def _start_relay(self):
+        """Unix socket the holders hand their delivers to, so they leave over the
+        return channel. Bound under umask 077 inside the 0700 sock dir (never a
+        moment with loose permissions), then chmod 0600. On failure normal holders
+        keep sending directly; via-inbound holders are then not created at all."""
+        path = os.path.join(self.sock_dir, "relay-%d.sock" % self.listen_port)
+        old_umask = None
+        try:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            old_umask = os.umask(0o077)
+            try:
+                srv.bind(path)
+            finally:
+                os.umask(old_umask)
+            os.chmod(path, 0o600)
+            srv.listen(min(RELAY_BACKLOG, socket.SOMAXCONN))
+        except OSError as exc:
+            log("holder relay socket %s unavailable (%s); holders send directly" % (path, exc))
+            return
+        self.relay_srv, self.relay_path = srv, path
+        threading.Thread(target=self._relay_loop, daemon=True).start()
+
+
+    def _relay_loop(self):
+        while not self.stop.is_set():
+            try:
+                conn, _ = self.relay_srv.accept()
+            except OSError:
+                break
+            if not self.relay_sem.acquire(timeout=ACQUIRE_TIMEOUT):
+                conn.close()
+                continue
+            threading.Thread(target=self._handle_relay, args=(conn,), daemon=True).start()
+
+    def _handle_relay(self, conn):
+        try:
+            conn.settimeout(10)
+            try:
+                line, _ = recv_line(conn, b"")
+                req = json.loads((line or b"").decode("utf-8"))
+                payload = req.get("payload") if isinstance(req, dict) else None
+                if not isinstance(payload, dict) or payload.get("kind") != "deliver":
+                    raise ValueError("only deliver frames are relayed")
+                host, port = str(req.get("peer_host")), int(req.get("peer_port"))
+                via = self.send_frame(host, port, payload,
+                                      allow_raw=peer_allowed_outbound(host, self.lan_state))
+                reply = "ok %s" % via
+            except Exception as exc:
+                reply = "err %s" % exc
+            try:
+                conn.sendall((reply.replace("\n", " ") + "\n").encode("utf-8"))
+            except OSError:
+                pass
+        finally:
+            conn.close()
+            self.relay_sem.release()
+
     # -- deliver (inject into a real local session) -------------------------
-    def _on_deliver(self, payload, src_ip=""):
+    def _on_deliver(self, payload, src_ip="", chan=None):
         target = payload.get("target_sessionId")
         body = payload.get("body", "")
         if not isinstance(body, str) or body_has_envelope_delim(body):
@@ -2299,7 +3968,7 @@ class Daemon(object):
         if not target_socket:
             log("deliver: no local session %r, dropped" % target)
             return
-        reply = self._reply_addr_for(payload.get("from_sessionId"))
+        reply = self._reply_addr_for(payload.get("from_sessionId"), chan)
         from_name = sanitize_from_name(payload.get("from_name", ""))
         try:
             inject(target_socket, from_name, body, reply)
@@ -2307,16 +3976,22 @@ class Daemon(object):
         except Exception as exc:
             log("deliver: inject into %s failed: %s" % (target_socket, exc))
 
-    def _reply_addr_for(self, from_session):
+    def _reply_addr_for(self, from_session, chan=None):
         """A local proxy socket that routes back to the remote sender, if we hold
-        one. Replies written there are forwarded home by that holder."""
+        one. Replies written there are forwarded home by that holder. A mirror of a
+        paired peer is offered as the reply route only to a deliver that came over
+        that peer's paired link (nobody else may pose as one of its sessions)."""
         if not from_session:
             return None
+        hit = None
         with self.lock:
-            for (machine, sid), rec in self.remotes.items():
+            for (mkey, sid), rec in self.remotes.items():
                 if sid == from_session:
-                    return "uds:" + rec["proxy"]
-        return None
+                    hit = (mkey, "uds:" + rec["proxy"])
+                    break
+        if hit is None or not self._slot_trusted(hit[0], chan):
+            return None
+        return hit[1]
 
     # -- roster -------------------------------------------------------------
     def _roster_loop(self):
@@ -2332,9 +4007,14 @@ class Daemon(object):
         targets = []
         for peer in self.peers:
             if peer_allowed_outbound(peer["host"], state):
-                targets.append(peer)
+                targets.append((peer, True))
                 continue
             addr = "%s:%d" % (peer["host"], peer["port"])
+            # outside the outbound allowlist but the peer opened an accepted channel to
+            # us (its source passed the inbound gate): answer over that channel only
+            if self._inbound_channel(addr):
+                targets.append((peer, False))
+                continue
             if addr not in self.outbound_skip_warned:
                 self.outbound_skip_warned.add(addr)
                 log(
@@ -2345,6 +4025,28 @@ class Daemon(object):
                         else "LAN disabled: " + state.get("reason", ""),
                     )
                 )
+        try:
+            bound = dict((r["slot"], r["id"]) for r in self.pairs.records())
+            self._pair_readable()
+        except Exception as exc:
+            self._pair_log("unreadable",
+                           "pairing key store %s unreadable (%s): every peer address counts as "
+                           "paired until it can be read again; links without a stored key and "
+                           "fresh connections are refused" % (self.pairs.path, exc))
+            bound = None
+        if bound is None:
+            # unknown pairing state: only links already authenticated by a key
+            targets = [t for t in targets
+                       if getattr(self._get_channel("%s:%d" % (t[0]["host"], t[0]["port"])),
+                                  "pair_id", "")]
+        elif bound:
+            def paired_ok(peer):
+                pid = bound.get("%s:%d" % (peer["host"], peer["port"]))
+                if pid is None:
+                    return True
+                ch = self._get_channel("%s:%d" % (peer["host"], peer["port"]))
+                return ch is not None and ch.pair_id == pid
+            targets = [t for t in targets if paired_ok(t[0])]
         if not targets:
             return 0
         sessions = [
@@ -2377,7 +4079,7 @@ class Daemon(object):
         # old peer that never sends it still works via the receiver's fallback.
         # A loopback peer is told our loopback address instead: it reaches us there,
         # and a strict receiver configured with 127.0.0.1 would drop a LAN address.
-        for peer in targets:
+        for peer, raw_ok in targets:
             host, port = peer["host"], peer["port"]
             out = payload
             if is_loopback_ip(host):
@@ -2386,7 +4088,7 @@ class Daemon(object):
                 out = dict(payload, advertise_host=self.advertise_host,
                            advertise_port=self.advertise_port)
             try:
-                send_to_peer(host, port, self.token, out)
+                self.send_frame(host, port, out, allow_raw=raw_ok)
             except Exception as exc:
                 log("roster to %s:%s failed: %s" % (host, port, exc))
         return len(targets)
@@ -2398,7 +4100,7 @@ class Daemon(object):
         is the WSL gateway, not the peer). Resolution order:
           1. the configured peer matching the roster's ADVERTISED host (the sender's
              own reachable address). An advertised address is only ever honored when
-             it matches the config, so a rogue cannot redirect traffic elsewhere.
+             it matches the config, so replies only ever go to a configured peer.
           2. the configured peer matching the raw source IP + announced port (the
              no-NAT / loopback case where the source IP really is the peer).
           3. the single configured peer, if exactly one is configured (unambiguous;
@@ -2427,37 +4129,69 @@ class Daemon(object):
         # 4. not resolvable to a configured peer
         return (src_ip, port), False
 
-    def _on_roster(self, payload, src_ip=""):
+    def _on_roster(self, payload, src_ip="", chan=None):
         machine = payload.get("machine")
-        if not machine:
-            return
+        if not machine or not isinstance(machine, str):
+            return  # a missing or non-string machine (also unhashable ones) is ignored
         sessions = payload.get("sessions")
         if not isinstance(sessions, list):
             sessions = []
-        peer_addr, known = self._resolve_peer_addr(
-            src_ip,
-            payload.get("listen_port"),
-            payload.get("advertise_host"),
-            payload.get("advertise_port"),
-        )
+        if chan is not None:
+            # a roster on a channel belongs to the peer address the channel serves
+            peer_addr, known = chan.addr, chan.known
+        else:
+            peer_addr, known = self._resolve_peer_addr(
+                src_ip,
+                payload.get("listen_port"),
+                payload.get("advertise_host"),
+                payload.get("advertise_port"),
+            )
         addr_key = "%s:%d" % peer_addr
+        if not self._slot_trusted(addr_key, chan):
+            # a paired peer announces its sessions only over its paired link
+            self._pair_log(("roster", addr_key),
+                           "roster for paired peer %s not over its paired link; ignored" % addr_key)
+            return
         now = time.monotonic()
         with self.lock:
             # outbound gate: never materialize a holder whose forward target is a LAN
-            # address the current allowlist does not permit (forwards would leak)
-            if not peer_allowed_outbound(peer_addr[0], self.lan_state):
+            # address the current allowlist does not permit (forwards would leak).
+            # Sole exception: the roster arrived over an ACCEPTED inbound channel (its
+            # socket source passed the inbound gate); replies then only ever go back
+            # over that channel (send_frame allow_raw=False), never to the raw address.
+            via_inbound = chan is not None and chan.direction == "in"
+            if not peer_allowed_outbound(peer_addr[0], self.lan_state) and not via_inbound:
                 if addr_key not in self.outbound_skip_warned:
                     self.outbound_skip_warned.add(addr_key)
                     log("roster from %s ignored: forward target not allowed" % addr_key)
                 return
             self.machine_seen[addr_key] = now
+            # per-(address, machine) last roster, bounded: stale entries go first,
+            # then the oldest one
+            if (addr_key, machine) not in self.machine_last and len(self.machine_last) >= WARN_TAGS_MAX:
+                stale = now - max(4.0 * self.roster_interval, self.machine_timeout)
+                for k in [k for k, t in self.machine_last.items() if t < stale]:
+                    del self.machine_last[k]
+                if len(self.machine_last) >= WARN_TAGS_MAX:
+                    del self.machine_last[min(self.machine_last, key=self.machine_last.get)]
+            silent_after = 2.0 * self.roster_interval
+
+            def renamed_from(rec):
+                """The mirror of a live sessionId may follow this sender to a new
+                machine name only when the mirror came from this very link (one peer
+                per channel) or its old machine has gone silent; otherwise it is a
+                second sender on the same address (single-peer fallback, or a link
+                beside a machine still sending over fresh connections) and the first
+                owner keeps it."""
+                if chan is not None and rec.get("chan") == chan.cid:
+                    return True
+                return now - self.machine_last.get((addr_key, rec.get("machine")), 0.0) > silent_after
             # Unexpected-inbound signal: a roster whose source address is NOT among
             # the configured peer addresses. Token-less this is still served (the
             # receiving session's own consent gate is the protection), so it is only
             # a warning, once per address (no per-interval spam). A correctly
             # configured multi-IP setup matches a peer address and never warns.
-            if not known and addr_key not in self.unknown_warned:
-                self.unknown_warned.add(addr_key)
+            if not known and warn_once(self.unknown_warned, addr_key):
                 log(
                     "roster from %s (machine %r) whose address is not among this "
                     "daemon's configured peer addresses %s - add it with "
@@ -2475,11 +4209,14 @@ class Daemon(object):
             # Skip a sessionId that is a real local session (not one of our mirrors),
             # and dedupe by sessionId across all senders - the first owner wins.
             local_ids = local_real_session_ids(self.sess_dir)
+            # owned by a DIFFERENT address, or by another machine on this address
+            # that is still alive (see renamed_from); a machine rename is refreshed below
             owned_elsewhere = {
-                sid
-                for (mkey, sid), rec in self.remotes.items()
-                if mkey != addr_key or rec.get("machine") != machine
+                sid for (mkey, sid), rec in self.remotes.items()
+                if mkey != addr_key or (rec.get("machine") != machine
+                                        and not renamed_from(rec))
             }
+            self.machine_last[(addr_key, machine)] = now
             for s in sessions:
                 if not isinstance(s, dict):
                     continue  # tolerate a malformed/hostile roster entry
@@ -2487,8 +4224,7 @@ class Daemon(object):
                 if not sid or not isinstance(sid, str):
                     continue
                 if sid in local_ids or sid in owned_elsewhere:
-                    if sid not in self.dup_session_warned:
-                        self.dup_session_warned.add(sid)
+                    if warn_once(self.dup_session_warned, sid):
                         log(
                             "roster from %s (machine %r): session %s skipped, %s"
                             % (
@@ -2518,8 +4254,15 @@ class Daemon(object):
             # the single-peer fallback (resolution rule 3) two different senders can map
             # to the same configured peer address, and a roster from one must never prune
             # the other's sessions.
+            # A machine rename (same address, same sessionId, new announced machine)
+            # carries the old name into the prune scope, so the renamed sender's
+            # vanished sessions go too.
+            scope = {machine}
+            for (mkey, sid), rec in self.remotes.items():
+                if mkey == addr_key and sid in present and rec.get("machine") != machine:
+                    scope.add(rec.get("machine"))
             for (mkey, sid), rec in list(self.remotes.items()):
-                if mkey == addr_key and rec.get("machine") == machine and sid not in present:
+                if mkey == addr_key and rec.get("machine") in scope and sid not in present:
                     self._remove_remote_locked((mkey, sid))
             # ensure a holder+descriptor for each present session
             template = self._template_descriptor_locked()
@@ -2527,10 +4270,14 @@ class Daemon(object):
                 key = (addr_key, sid)
                 if key in self.remotes:
                     self._refresh_descriptor_locked(key, s)
-                    continue
-                if template is None:
+                elif template is None:
                     continue  # no real local session to model yet; retry next tick
-                self._create_remote_locked(key, s, template)
+                else:
+                    self._create_remote_locked(key, s, template)
+                if key in self.remotes:
+                    # the link this mirror was last announced over (None: fresh
+                    # connections); only that link may carry a rename at once
+                    self.remotes[key]["chan"] = chan.cid if chan is not None else None
 
     # -- holder / descriptor lifecycle (must hold self.lock) ----------------
     def _template_descriptor_locked(self):
@@ -2593,6 +4340,16 @@ class Daemon(object):
         # roster did not annotate a machine.
         machine = sess.get("machine") or host
         name = self._mirror_name(sess, sid, host)
+        # via-inbound peer (outside the outbound allowlist, reachable only over the
+        # link it opened to us): its holder must never connect on its own, and
+        # without the relay socket it could not send at all - so it is not created
+        no_direct = not peer_allowed_outbound(host, self.lan_state)
+        if no_direct and not self.relay_path:
+            if addr_key not in self.no_relay_warned:
+                self.no_relay_warned.add(addr_key)
+                log("remote %s skipped: %s is reachable only over the return channel and "
+                    "the holder relay socket is unavailable" % (name, addr_key))
+            return
         proxy = os.path.join(self.sock_dir, "pl-%s.sock" % uuid.uuid4().hex[:12])
         env = dict(os.environ)
         env["CREDO_PEER_LAN_CONFIG"] = config_path()
@@ -2611,7 +4368,8 @@ class Daemon(object):
                 str(port),
                 "--this-machine",
                 self.this_machine,
-            ],
+            ] + (["--relay-sock", self.relay_path] if self.relay_path else [])
+            + (["--no-direct"] if no_direct else []),
             env=env,
         )
         # wait briefly for the holder to bind its proxy socket
@@ -2652,6 +4410,7 @@ class Daemon(object):
             "descriptor": desc_path,
             "pid": proc.pid,
             "machine": machine,
+            "no_direct": no_direct,
         }
         log("remote up: %s -> holder pid %d, proxy %s" % (name, proc.pid, proxy))
 
@@ -2671,8 +4430,11 @@ class Daemon(object):
             return
         now_ms = int(time.time() * 1000)
         d["status"] = sess.get("status", d.get("status", "idle"))
-        # follow a rename or a network change of the sender
+        # follow a rename (session or machine) or a network change of the sender
         d["name"] = self._mirror_name(sess, key[1], split_host_port(key[0], self.listen_port)[0])
+        if sess.get("machine"):
+            rec["machine"] = sess["machine"]
+            d[MARK_FROM] = sess["machine"]
         d["statusUpdatedAt"] = now_ms
         d["updatedAt"] = now_ms
         self._atomic_write(rec["descriptor"], d)
@@ -3118,6 +4880,70 @@ def run_check(_args):
     print("")
     probe_all_peers(cfg)
     check_firewall_hint(cfg, state)
+    print("")
+    print_pairs(cfg)
+    return 0
+
+
+def print_pairs(cfg):
+    """Pairing state: this installation's id, the paired peers and any pending
+    repair with the one command that accepts it. Never prints a key."""
+    store = PairStore(keys_dir_for(cfg))
+    print("Pairing (per-peer keys, trust on first use): %s" % store.path)
+    unreadable = None
+    try:
+        ident = store._existing_ident()
+        who = ident["id"] if ident else "no id yet (created on the first link)"
+    except PairStoreUnreadable as exc:
+        unreadable, who = exc, "unknown (key store unreadable)"
+    except PairIdentityInvalid as exc:
+        who = "none - %s" % exc
+    try:
+        recs = store.records()
+    except PairStoreUnreadable as exc:
+        unreadable, recs = unreadable or exc, None
+    if unreadable is not None:
+        print("  key store unreadable: %s" % unreadable)
+    print("  this installation: %s" % who)
+    if recs is None:
+        print("  paired peers: UNKNOWN (until the key store can be read, every peer address "
+              "counts as paired: links without a stored key and fresh connections are refused)")
+    if recs == []:
+        print("  paired peers: none yet (peers pair automatically on their first link)")
+    for r in recs or []:
+        print("  paired: %s  machine=%r  slot=%s" % (r["id"], r["machine"], r["slot"]))
+    pend = store.pending()
+    for e in pend:
+        print("  PENDING REPAIR at %s: %s (peer id %s, machine %r) was refused, paired there: %s. "
+              "If that is expected (peer reinstalled, keys reset, moved, or an older relay / the "
+              "Codex peer lives there), accept it with: credo-peer-lan.py pair-reset %s"
+              % (e["slot"], e["reason"], (e["new_id"] or "none")[:8], e["machine"],
+                 (e["old_id"] or "none")[:8], e["fix"]))
+    return pend
+
+
+def run_pairs(_args):
+    print_pairs(load_config() or {})
+    return 0
+
+
+def run_pair_reset(args):
+    """Forget a peer's pairing so its next link pairs again (trust on first use).
+    The only manual pairing step, for a reinstalled peer or lost keys."""
+    store = PairStore(keys_dir_for(load_config() or {}))
+    try:
+        gone, drop = store.reset(args.peer)
+    except PairStoreUnreadable as exc:
+        print("pair-reset: %s; nothing changed" % exc)
+        return 1
+    if not gone and not drop:
+        print("no pairing or pending repair matches %r (see: credo-peer-lan.py pairs)" % args.peer)
+        return 1
+    for r in gone:
+        print("removed pairing with %s (machine %r, slot %s)" % (r["id"], r["machine"], r["slot"]))
+    for e in drop:
+        print("cleared pending repair at %s (peer id %s)" % (e["slot"], e["new_id"][:8]))
+    print("the next link from that peer pairs again automatically")
     return 0
 
 
@@ -3366,6 +5192,18 @@ def main(argv=None):
     )
     p_check.set_defaults(func=run_check)
 
+    p_pairs = sub.add_parser(
+        "pairs", help="list this installation's pairing id, paired peers and pending repairs"
+    )
+    p_pairs.set_defaults(func=run_pairs)
+
+    p_preset = sub.add_parser(
+        "pair-reset",
+        help="forget a peer's pairing key (reinstalled peer / lost keys) so it pairs again",
+    )
+    p_preset.add_argument("peer", help="peer id (or 8+ char prefix), slot host:port, host or machine")
+    p_preset.set_defaults(func=run_pair_reset)
+
     p_netinfo = sub.add_parser("netinfo", help="print the detected network as JSON")
     p_netinfo.set_defaults(func=run_netinfo)
 
@@ -3419,6 +5257,9 @@ def main(argv=None):
     p_holder.add_argument("--peer-host", required=True)
     p_holder.add_argument("--peer-port", required=True)
     p_holder.add_argument("--this-machine", default="")
+    p_holder.add_argument("--relay-sock", default="")
+    p_holder.add_argument("--no-direct", action="store_true",
+                          help="never connect to the peer directly (via-inbound peer)")
     p_holder.set_defaults(func=run_holder)
 
     args = parser.parse_args(argv)

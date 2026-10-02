@@ -2,105 +2,90 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-10
 
-## dogma
-
-### v1
-
-#### v1.44
-
-##### v1.44.3
-
-###### Fixed
-
-- dogma band no longer shows a "blocked" line forever: the notice is time-stamped and hidden after 15 s even when a plugin reload cut its timer short, and a new session starts without it
-
-##### v1.44.2
-
-###### Fixed
-
-- Delete guard only analyzes a segment whose command word can delete, move or link; a verb inside an argument (a file name, a grep pattern with <...>) no longer blocks harmless commands
-
-##### v1.44.1
-
-###### Changed
-
-- Notice tests use an invented project name instead of a real one
-
-##### v1.44.0
-
-###### Added
-
-- Always-on delete guard: blocks deleting, moving or symlinking onto protected paths (/, first-level dirs, /home depth 0-2, the home and its children); targets are resolved first (~, $HOME, cwd and cd, symlinks, glob base), unresolvable targets are blocked, fails closed without python3
-
-###### Security
-
-- A symlink under /tmp pointing at a protected directory can no longer route a recursive delete past the /tmp allowance
-
-#### v1.43
-
-##### Added
-
-- DOGMA-PERMISSIONS.md is picked by action target, pinned project, then session folder, with per-id inheritance (default on)
-- Notices also show in non-git folders and for pinned projects that inherit permissions
-
-#### v1.42
-
-##### Added
-
-- Source broadcasts via NOTICES.md
-- `CLAUDE_MB_DOGMA_SOURCE` for sync and recommended setup
-- Per-folder git identity for the source fetch
-
-#### v1.41
-
-##### Added
-
-- Stable setting ids (`§xxxx`) matched first with a text fallback, plus an id registry
-- changelog.d assembly in `/dogma:versioning`
-
-#### v1.40
-
-##### Added
-
-- Worktree files list (link or copy, `.credo/` included by default) and a cleanup-merged-worktrees checkbox
-
-##### Changed
-
-- Subagents may commit in their own worktree, never push or merge
-
-#### v1.39
-
-##### Added
-
-- One-time per-repo update notices for updates that need user action (Run/Later/Never), with an optional band toast
-
-#### v1.38
-
-##### Added
-
-- Final Verification option to run all tests only at release
-
-#### v1.37
-
-##### Added
-
-- Optional per-stage test commands (commit, push, relevant, build, all) with branch filters
-
-#### v1.36
-
-##### Added
-
-- Optional Claude Code band showing restricting permissions with change highlights
-
-#### v1.35
-
-##### Added
-
-- `permissions-summary.sh` listing only the restricting DOGMA-PERMISSIONS entries
-
 ## credo
 
 ### v0
+
+#### v0.74
+
+##### v0.74.0
+
+###### Added
+
+- LAN relay return channel: whichever machine can connect opens one persistent link
+  per peer, and rosters plus delivers flow both ways over it, so a pair with one-way
+  reachability (router behind router, NAT) now sees and messages each other; at most
+  one channel per pair, dead links reconnect, all gates unchanged
+- Setup Step 10 checks whether the Claude Code task-list tools (TaskCreate/TaskList) are opted in for the active profile (`CLAUDE_CODE_ENABLE_TODO_TOOLS=1`), explains why credo benefits, and on a yes enables it in the profile `settings.json` with a backup (JSON-safe, all other content kept)
+- New helper `scripts/credo-todo-tools.sh` (status, enable, decline, undecline, periodic hint throttle) with tests in `scripts/test-todo-tools.sh`; the setup check reports `todo_tools.state`
+- New SessionStart hook `credo-todo-tools-hint.sh`: while the opt-in is off, it offers it again at most once per 7 days per profile (`CREDO_TODO_TOOLS_HINT_DAYS`), only on a human-present start with credo active, never in autonomous work, with a persistent "never ask again" (toggle `CREDO_TODO_TOOLS_HINT=false`)
+- The recommendation also mentions that Ctrl+T shows or hides the task list, since the list and a mod band cannot be visible at the same time
+
+###### Changed
+
+- Default batch workflow from two unattended benchmark runs: plan once per batch and cut it by shared surfaces, run 3-4 single-item builders plus 1 bundle builder in worktrees, give every item a fresh audit that fixes small findings itself, merge as audits pass, release once per batch with one full test suite
+- Audit tiers: `full` is the default, `lean` (diff plus tests) only for small low-risk items without shared core files, user-file writes or command execution
+- Batch budget gate: about 2 % of the weekly budget per item, start a batch only when it fits the current 5h window and the weekly budget, stop each agent right after its final report
+- Human-only tests no longer hold an item in `2_go`: they are recorded in the done item as `human-only: pending` and run by the user in the verify phase
+- Open-letters footer is language-neutral: replies end with `**🧪: C, D** · **❓: Y, #177**`
+  instead of translated labels (verify skill, session-start shorthands, shorthand list,
+  README, guide, psalm); the band still reads the older English and German labels
+- Skill examples use role words (user, owner) instead of a person name
+- Safety skill: in every session mode the main agent cleans up the throwaway leftovers its own session created directly under /tmp (literal path, no symlink) instead of asking the user; reference clones still in use and material that may belong in a real repo are kept, and /tmp content of other sessions or processes is never touched
+- Budget task sizing defaults: large items below 70 % of the 5h window, medium below 90 %, then small items; when none are left, any item that builds well in smaller slices (never a standstill)
+- Items and orchestration skills: when TaskCreate is not available, say so once and point to the opt-in instead of silently tracking the task list in prose
+
+###### Fixed
+
+- credo's band shows open test and question letters in any conversation language, not only
+  English and German; the footer parser also tolerates a missing U+FE0F, bold closed before
+  the colon, a space before the colon and a fullwidth colon
+- LAN relay mirror follows a machine rename of its sender (same session and address,
+  new `this_machine`) instead of keeping the old name until restart: at once when the
+  mirror came over the same link, otherwise once the old name has been silent for two
+  roster intervals, so a second sender on the same address (also one over a link) never
+  takes over or prunes the first one's sessions; a roster with a non-string machine is
+  ignored
+- `check` firewall hints say to run the sudo commands in a separate terminal (the `!`
+  prefix only works when sudo needs no password)
+- Self-restart peer safety net no longer leaves the waking peer waiting forever: the wake message carries a [credo-wake] tag, the resumed session confirms it with one short "[info] resumed" reply (an explicit exception to the no-ack rule), and the resume prompt reminds it to send that confirmation
+
+###### Security
+
+- LAN relay return channel hardened: an inbound link may only stand for a reachable
+  configured peer when it comes from that peer's IP (loopback / WSL gateway excepted),
+  every link carries a fresh random secret sent only on that connection, this side keeps
+  its own outbound link unless an inbound link proves that secret, a live link is
+  replaced only from the
+  same source (from loopback / the WSL gateway only by the same peer proving the live
+  link's secret, or once it is idle), claims outside the outbound allowlist only for
+  configured peers, inbound links are capped per source (WSL gateway at
+  `max(2, configured peers)`) and in total,
+  refusal log tags are bounded, writes have a 5 s deadline, holders for peers outside
+  the outbound allowlist never connect directly, a random nonce breaks name ties, the
+  relay socket is created 0600 in a 0700 dir, and old relays are no longer retried
+  every tick
+- LAN relay link hello fields `chal`, `proof` and `resume` count only as lowercase hex:
+  a malformed value (another type, non-hex text, a lone surrogate) counts as absent
+  instead of crashing link setup; a link that fails after registration is dropped, and a failed
+  outbound attempt always backs off
+- LAN relay per-peer pairing keys (automatic, trust on first use): each installation
+  has a persistent peer id and a static Diffie-Hellman key pair (RFC 3526 group 14,
+  stdlib only, 0600 files in a 0700 `peer-lan-keys/` dir, atomic writes); on the first
+  link two relays derive and store the same pairing key, which is never sent or logged.
+  Every later link proves it against a fresh challenge from each side (bound to the id
+  the opener expects at the address it dialed) and its frames carry a sequence-numbered
+  MAC under a per-link session key. A paired peer's slot goes only to a link that proves
+  its key, also while the peer is offline, and a paired peer is bound to one address and
+  never re-bound silently; a new pairing is stored only after the full handshake (both
+  proofs and the ack). A paired peer never falls back to token-only, rosters for it are
+  served only over its paired link, and delivers to it never fall back to a fresh
+  connection. Pairing is trust on first use (link each pair of machines once on a
+  network you trust); older relays and the Codex peer keep working token-only, and a
+  link without pairing support refused at a paired slot is shown as a pending repair.
+  A new id at a paired slot, or a paired peer at another address, is
+  refused and shown as a pending repair (`pairs`, `check`, session-start hint);
+  `pair-reset <peer>` accepts it
 
 #### v0.73
 
@@ -186,8 +171,8 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 ###### Security
 
 - LAN peer relay rejects a deliver whose body contains a cross-session-message tag
-  (any case, whitespace variants), so a peer can no longer close the envelope and
-  forge a second one; the reject is logged once per source and nothing is injected
+  (any case, whitespace variants), so a message always stays inside exactly one
+  envelope; the reject is logged once per source and nothing is injected
 - LAN peer relay validates the reply address strictly (uds:/ plus a safe path) and
   omits the from attribute otherwise; from-name is reduced to a safe character set
   and capped at 80 characters; every injected envelope starts with the framing line
@@ -474,6 +459,102 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 ##### Added
 
 - Budget read-back shows the active profile, config layers and the source of each cap
+
+## dogma
+
+### v1
+
+#### v1.44
+
+##### v1.44.3
+
+###### Fixed
+
+- dogma band no longer shows a "blocked" line forever: the notice is time-stamped and hidden after 15 s even when a plugin reload cut its timer short, and a new session starts without it
+
+##### v1.44.2
+
+###### Fixed
+
+- Delete guard only analyzes a segment whose command word can delete, move or link; a verb inside an argument (a file name, a grep pattern with <...>) no longer blocks harmless commands
+
+##### v1.44.1
+
+###### Changed
+
+- Notice tests use an invented project name instead of a real one
+
+##### v1.44.0
+
+###### Added
+
+- Always-on delete guard: blocks deleting, moving or symlinking onto protected paths (/, first-level dirs, /home depth 0-2, the home and its children); targets are resolved first (~, $HOME, cwd and cd, symlinks, glob base), unresolvable targets are blocked, fails closed without python3
+
+###### Security
+
+- A symlink under /tmp pointing at a protected directory can no longer route a recursive delete past the /tmp allowance
+
+#### v1.43
+
+##### Added
+
+- DOGMA-PERMISSIONS.md is picked by action target, pinned project, then session folder, with per-id inheritance (default on)
+- Notices also show in non-git folders and for pinned projects that inherit permissions
+
+#### v1.42
+
+##### Added
+
+- Source broadcasts via NOTICES.md
+- `CLAUDE_MB_DOGMA_SOURCE` for sync and recommended setup
+- Per-folder git identity for the source fetch
+
+#### v1.41
+
+##### Added
+
+- Stable setting ids (`§xxxx`) matched first with a text fallback, plus an id registry
+- changelog.d assembly in `/dogma:versioning`
+
+#### v1.40
+
+##### Added
+
+- Worktree files list (link or copy, `.credo/` included by default) and a cleanup-merged-worktrees checkbox
+
+##### Changed
+
+- Subagents may commit in their own worktree, never push or merge
+
+#### v1.39
+
+##### Added
+
+- One-time per-repo update notices for updates that need user action (Run/Later/Never), with an optional band toast
+
+#### v1.38
+
+##### Added
+
+- Final Verification option to run all tests only at release
+
+#### v1.37
+
+##### Added
+
+- Optional per-stage test commands (commit, push, relevant, build, all) with branch filters
+
+#### v1.36
+
+##### Added
+
+- Optional Claude Code band showing restricting permissions with change highlights
+
+#### v1.35
+
+##### Added
+
+- `permissions-summary.sh` listing only the restricting DOGMA-PERMISSIONS entries
 
 ## signal
 

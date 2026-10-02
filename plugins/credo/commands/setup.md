@@ -33,6 +33,7 @@ This outputs structured results for all checks. Parse the output to determine:
 - `directories.codebase_map` - Is codebase mapped? (only relevant if GSD is used)
 - `files.roadmap` - Does ROADMAP.md exist? (only relevant if GSD is used)
 - `project.state` - Overall state (needs_setup, needs_mapping, needs_project, needs_roadmap, ready)
+- `todo_tools.state` / `todo_tools.declined` - Is the Claude Code task-list tools opt-in on for the active profile (see Step 10)?
 
 **If project.state = ready:** Skip directly to "Setup Complete" section. Do NOT ask any questions.
 
@@ -582,12 +583,84 @@ This is the same env var credo's README and compact-plus docs describe for the m
 setup, now offered automatically. It is idempotent: once the value is `credo:compact-plus`,
 a later run does nothing and does not ask.
 
+## Step 10: Claude Code Task-List Tools (Recommended)
+
+Newer Claude Code versions offer the task-list tools (`TaskCreate` / `TaskGet` /
+`TaskUpdate` / `TaskList`) by default only on older models. On newer models they are
+missing unless the env var `CLAUDE_CODE_ENABLE_TODO_TOOLS` is `1` (Claude Code >= 2.1.233,
+see https://code.claude.com/docs/en/tools-reference#task-tool-availability). credo uses
+that list as its ephemeral coordination layer (the items skill section "Harness task-list
+vs .credo items": `[GO]` / `[HOLD]` / `[REMINDER]` entries and `§cct_N` refs, plus
+orchestration), and subagents only get the tools when the parent session has them.
+
+Inspect it with the helper (it checks the process environment and the `env` object of the
+ACTIVE profile settings file `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json`; it never
+writes anything for `status`):
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-todo-tools.sh" status
+```
+
+It prints key=value lines. `state=on` means opted in: the process environment (the running
+session, when called from inside Claude Code) has the variable as `1`, OR the settings file
+sets it to the string `"1"` (a JSON number `1` does not count). `in_process` / `in_settings`
+show each side, and `restart_needed=yes` (with a `summary` such as
+`on (settings), session: off -> restart needed`) means it is enabled in settings.json but
+not yet active in this session.
+
+- `state=on` -> do NOT ask. If `restart_needed=yes`, tell the user once that a restart of
+  Claude Code (e.g. `/credo:self-restart`) may be needed for the tools to appear.
+- `state=off` -> ask via AskUserQuestion (also when `declined=yes`: setup is a deliberate,
+  user-initiated moment; the decline only silences the periodic session-start hint).
+  Never in autonomous mode - there, skip this step silently.
+
+```
+credo works best with Claude Code's task-list tools (TaskCreate/TaskList). On newer models
+they are only offered when CLAUDE_CODE_ENABLE_TODO_TOOLS=1 is set. credo uses that list for
+[GO]/[HOLD]/[REMINDER] coordination entries and §cct_N refs, and subagents only get the
+tools when the parent session has them. Tip: Ctrl+T shows or hides the task list. The
+list and a mod band (such as the credo band) cannot be shown at the same time, so keep the
+list hidden and press Ctrl+T only when you want a quick look. Enable it in <settings path from status>?
+
+- Yes, enable (Recommended) - backs up settings.json, then adds the variable to its "env" object; everything else stays as it is
+- Not now - leave settings.json unchanged (credo reminds you at most once a week)
+- No, never ask again - leave settings.json unchanged and silence the periodic reminder
+```
+
+- "Yes" -> run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-todo-tools.sh" enable` and show
+  the user the printed backup path. The edit is JSON-safe (python, key order and all other
+  content kept, a symlinked settings.json is edited at its target); exit code 2 means the
+  file is not valid JSON, its `env` is not an object, or the backup / write failed (e.g. a
+  read-only profile directory) - then settings.json was not changed, tell the user and let
+  them fix it by hand. The file is rewritten with 2-space indentation, so its formatting
+  may change; the backup keeps the original bytes. If `declined=yes` was set, also run
+  `bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-todo-tools.sh" undecline`.
+  A restart of Claude Code (e.g. `/credo:self-restart`) may be needed for the tools to
+  appear; tell the user so. (They have been seen to appear live, but that is not
+  guaranteed - `status` shows `restart_needed=yes` while the session lacks them.)
+  Also tell them: Ctrl+T toggles the task list; it and a mod band cannot be visible at
+  once, so a common setup is list hidden, Ctrl+T for a quick look.
+- "Not now" -> do nothing.
+- "No, never ask again" -> run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-todo-tools.sh" decline`.
+
+Never change settings.json without a Yes. The periodic re-check is the SessionStart hook
+`credo-todo-tools-hint.sh`: while the opt-in is off and not declined, it offers it again
+at most once per `CREDO_TODO_TOOLS_HINT_DAYS` (default 7) days per profile, only on a
+human-present start of a session where credo is active, never in autonomous work
+(toggle: `CREDO_TODO_TOOLS_HINT=false`). At a fresh start the session mode is often not
+written yet when the hook runs, so the hook cannot always tell an unattended start; the
+injected text therefore opens with the rule never to ask in autonomous / unattended mode.
+It also stays silent (without using up its weekly slot) when the optimisation hook asks
+its own opt-in or welcome-back question at the same start, so a start carries at most one
+credo opt-in question.
+
 ## Setup Complete
 
 Before the message below: if Step 2c was skipped because `project.state` was `ready` and
 the optimisation-audit answer is still open (`credo-optimize-state.sh optin` prints
 nothing, in a git repo), ask Step 2c now. If the user said Yes in Step 2c, run
-`/credo:optimize` now.
+`/credo:optimize` now. Likewise, if Step 10 was skipped because `project.state` was
+`ready` and `todo_tools.state` is `off`, run Step 10 now.
 
 **If all steps were skipped (project.state was ready):**
 

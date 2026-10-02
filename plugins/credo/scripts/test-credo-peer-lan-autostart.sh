@@ -231,6 +231,15 @@ OUT="$(run_hook FAKE_ONB_STATE=bound)"
 check "onboarding: bound -> no injection" "" "$OUT"
 OUT="$(run_hook FAKE_ONB_STATE=unbound CREDO_PEER_LAN=off)"
 check "onboarding: off toggle silences the unbound note" "" "$OUT"
+# pairing repair pending -> the agent is told (never to accept it on its own)
+mkdir -p "$CFGDIR/credo/peer-lan-keys"
+printf '[{"slot":"192.168.1.42:48610","old_id":"a","new_id":"b","machine":"box-p","reason":"a new peer id"}]\n' \
+    > "$CFGDIR/credo/peer-lan-keys/pending-repair.json"
+OUT="$(run_hook FAKE_ONB_STATE=bound)"
+case "$OUT" in *"pairing repair is pending"*"credo-peer-lan.py pairs"*"only after the user confirmed"*"autonomous mode never run it"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL pending pairing repair note missing: %s\n' "$OUT" ;; esac
+printf '[]\n' > "$CFGDIR/credo/peer-lan-keys/pending-repair.json"
+OUT="$(run_hook FAKE_ONB_STATE=bound)"
+check "pairing: no pending repair -> no injection" "" "$OUT"
 
 # --- ensure via the hook: older running daemon replaced, same/newer left untouched ---
 # Drives the REAL daemon through the hook, loopback only, ephemeral port. ensure reads the
