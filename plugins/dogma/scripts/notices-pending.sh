@@ -21,7 +21,8 @@
 #   file    the effective DOGMA-PERMISSIONS.md for it, resolved exactly like the
 #           permission hooks do (lib-permissions.sh dogma_resolve: own file upward
 #           or in the main worktree, else the inherited session-folder file;
-#           session folder = DOGMA_SESSION_DIR, default dir)
+#           session folder = DOGMA_SESSION_DIR, else the session folder recorded
+#           by hooks/session-dir-record.sh, else dir)
 #   uses dogma = such a file resolves, or the git toplevel has a CLAUDE/ dir
 #   repo    the directory the notices refer to and are keyed by: the git toplevel
 #           when the file lies inside it (or the toplevel only has CLAUDE/), else
@@ -199,8 +200,12 @@ fi
 DIR="$(pwd -P)"
 # shellcheck source=lib-permissions.sh
 . "$PLUGIN_ROOT/scripts/lib-permissions.sh" 2>/dev/null || exit 4
-# the session folder whose file a context without its own file inherits
-export DOGMA_SESSION_DIR="${DOGMA_SESSION_DIR:-$DIR}"
+# the session folder whose file a context without its own file inherits (the recorded
+# one survives a cwd that drifted before a compact / clear or a `mark` from elsewhere)
+if [ -z "${DOGMA_SESSION_DIR:-}" ]; then
+    DOGMA_SESSION_DIR="$(dogma_recorded_session_dir)" || DOGMA_SESSION_DIR="$DIR"
+fi
+export DOGMA_SESSION_DIR
 
 # --- context: start dir, effective file, repo dir (see header) ---
 

@@ -611,6 +611,72 @@ fi
     run_test "summary: inherit [ ] -> own file only, switch not listed" "file=$PROJ/noinherit/DOGMA-PERMISSIONS.md " "$r"
 )
 
+# 8.7 session folder recorded by the SessionStart hook (cwd drift: cd <project> && ...)
+REC="$INH/rec"
+mkdir -p "$REC/dogma/session-dirs" "$REC/credo/session-dirs"
+printf '%s\n' "$WS" > "$REC/dogma/session-dirs/rec-sid"
+printf '%s\n' "$INH/gone" > "$REC/dogma/session-dirs/gone-sid"
+printf '%s\n' "$WS" > "$REC/credo/session-dirs/credo-sid"
+(
+    unset DOGMA_SESSION_DIR DOGMA_SESSION_ID
+    export CLAUDE_CONFIG_DIR="$REC" CLAUDE_CODE_SESSION_ID=rec-sid
+    cd "$PROJ/app/sub"
+    load_permissions "$PROJ/app"
+    run_test "recorded: cd into target -> inherit file is the session file" "$WS/DOGMA-PERMISSIONS.md" "$DOGMA_INHERIT_FILE"
+    run_test "recorded: cd into target -> inherited commit [?]" "ask" "$(get_permission_mode "$PERMS_SECTION" "§2w1t|git commit")"
+    r=$(find_permissions_file "$PROJ/nofile") || r=none
+    run_test "recorded: target without own file -> session file" "$WS/DOGMA-PERMISSIONS.md" "$r"
+    r=$(find_permissions_file) || r=none
+    run_test "recorded: no target -> the cwd's file still applies" "$PROJ/app/DOGMA-PERMISSIONS.md" "$r"
+    load_permissions
+    run_test "recorded: no target -> cwd file inherits" "ask" "$(get_permission_mode "$PERMS_SECTION" "§2w1t|git commit")"
+    r=$(CLAUDE_CODE_SESSION_ID=credo-sid; load_permissions "$PROJ/app"; get_permission_mode "$PERMS_SECTION" "§2w1t|git commit")
+    run_test "recorded: credo's record is read too" "ask" "$r"
+    r=$(CLAUDE_CODE_SESSION_ID=other-sid; load_permissions "$PROJ/app"; get_permission_mode "$PERMS_SECTION" "§2w1t|git commit")
+    run_test "recorded: no record -> \$PWD (old behaviour)" "auto" "$r"
+    r=$(CLAUDE_CODE_SESSION_ID=gone-sid; load_permissions "$PROJ/app"; get_permission_mode "$PERMS_SECTION" "§2w1t|git commit")
+    run_test "recorded: removed dir -> \$PWD" "auto" "$r"
+    r=$(DOGMA_SESSION_DIR="$PROJ/app"; load_permissions "$PROJ/app"; get_permission_mode "$PERMS_SECTION" "§2w1t|git commit")
+    run_test "recorded: explicit DOGMA_SESSION_DIR wins" "auto" "$r"
+    r=$(unset CLAUDE_CODE_SESSION_ID; DOGMA_SESSION_ID=rec-sid; load_permissions "$PROJ/app"; get_permission_mode "$PERMS_SECTION" "§2w1t|git commit")
+    run_test "recorded: DOGMA_SESSION_ID (hooks) finds the record" "ask" "$r"
+    json=$(jq -cn --arg c "git commit -m x" '{tool_name:"Bash", tool_input:{command:$c}}')
+    run_test "recorded: hook in the drifted cwd -> inherited ask" "ask" "$(decision "$(bash "$SCRIPT_DIR/git-permissions.sh" <<<"$json")")"
+    r=$(bash "$SCRIPT_DIR/test-commands.sh" get build --dir "$PROJ/app") || r=none
+    run_test "recorded: test-commands inherits the missing stage" "ws-build" "$r"
+)
+
+# 8.8 the SessionStart hook that writes the record
+REC_HOOK="$SCRIPT_DIR/../hooks/session-dir-record.sh"
+HK="$INH/hk"
+rec_hook() { # session_id cwd source [project_dir]
+    jq -cn --arg s "$1" --arg c "$2" --arg o "$3" '{session_id:$s, cwd:$c, source:$o, hook_event_name:"SessionStart"}' \
+        | (unset CLAUDE_PROJECT_DIR; [ -z "${4:-}" ] || export CLAUDE_PROJECT_DIR="$4"; CLAUDE_CONFIG_DIR="$HK" bash "$REC_HOOK")
+}
+rec_of() { cat "$HK/dogma/session-dirs/$1" 2>/dev/null || echo none; }
+run_test "record hook: silent" "" "$(rec_hook h1 "$WS" startup)"
+run_test "record hook: startup records cwd" "$WS" "$(rec_of h1)"
+rec_hook h1 "$PROJ/app" compact >/dev/null
+run_test "record hook: compact keeps the recorded dir" "$WS" "$(rec_of h1)"
+rec_hook h1 "$PROJ/app" resume >/dev/null
+run_test "record hook: resume overwrites" "$PROJ/app" "$(rec_of h1)"
+rec_hook h2 "$PROJ/app" clear >/dev/null
+run_test "record hook: clear writes when absent" "$PROJ/app" "$(rec_of h2)"
+rec_hook h2 "$PROJ/oldfile" compact "$WS" >/dev/null
+run_test "record hook: CLAUDE_PROJECT_DIR wins and always overwrites" "$WS" "$(rec_of h2)"
+rec_hook h3 "$INH/gone" startup >/dev/null
+run_test "record hook: missing cwd -> no record" "none" "$(rec_of h3)"
+rc=0; rec_hook '../evil' "$WS" startup >/dev/null || rc=$?
+run_test "record hook: bad session id exit 0" "0" "$rc"
+run_test "record hook: bad session id -> no record" "none" "$(cat "$HK/dogma/evil" 2>/dev/null || echo none)"
+mkdir -p "$HK/dogma/session-dirs"
+printf '%s\n' "$WS" > "$HK/dogma/session-dirs/old-sid"
+touch -d '40 days ago' "$HK/dogma/session-dirs/old-sid"
+rec_hook h4 "$WS" startup >/dev/null
+run_test "record hook: prunes records older than 30 days" "none" "$(rec_of old-sid)"
+r=$(unset DOGMA_SESSION_DIR; cd "$PROJ/app" && CLAUDE_CONFIG_DIR="$HK" CLAUDE_CODE_SESSION_ID=h4 bash "$SCRIPT_DIR/test-commands.sh" get build --dir "$PROJ/app") || r=none
+run_test "record hook: end to end with test-commands.sh" "ws-build" "$r"
+
 echo ""
 
 # ============================================================================

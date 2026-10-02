@@ -57,12 +57,20 @@ dogma_debug_log() {
 #      tool's own path (callers pass it to find_permissions_file / load_permissions).
 #   2. the credo PINNED project (credo-config.sh resolve-project: CREDO_DIR or the
 #      per-session pin of /credo:project) when credo is installed; skipped when the
-#      session folder lies inside that project anyway. dogma never needs credo.
-#   3. upward from the session folder ($PWD) - the behaviour before resolution existed.
+#      current dir lies inside that project anyway. dogma never needs credo.
+#   3. upward from the current dir ($PWD) - the behaviour before resolution existed.
 # For a target or a pinned project the main worktree of the repository is searched as
 # well when nothing is found upward (a linked worktree may lack the excluded file).
-# When the target / pinned project has no file of its own, the session folder's file
-# applies (everything is inherited).
+# When the target / pinned project / current dir has no file of its own, the session
+# folder's file applies (everything is inherited).
+#
+# Session folder = the folder the Claude Code session was started in: DOGMA_SESSION_DIR
+# when set, else the dir the SessionStart hook (hooks/session-dir-record.sh) recorded
+# for this session in ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/dogma/session-dirs/<id>
+# (credo's .../credo/session-dirs/<id> as well; id = CLAUDE_CODE_SESSION_ID, else
+# DOGMA_SESSION_ID) when that dir still exists, else $PWD. The record keeps
+# inheritance working when a Bash tool command ran `cd <project> && ...` first;
+# without a record everything behaves as before.
 #
 # Inheritance (checkbox "(§r3nx) inherit permissions", missing = on): when the resolved
 # file is not the session folder's file, every setting it does not define is taken
@@ -70,11 +78,45 @@ dogma_debug_log() {
 # Lookups go per setting id (text fallback for lines without ids, within each file).
 #
 # Env overrides (mainly for tests):
-#   DOGMA_SESSION_DIR   session folder (default $PWD)
+#   DOGMA_SESSION_DIR   session folder and current dir (default: recorded session
+#                       folder, else $PWD; current dir $PWD)
 #   DOGMA_CREDO_CONFIG  path to credo's credo-config.sh, or "none" to skip step 2
 #   DOGMA_SESSION_ID    session id for the credo pin (hooks set it from their input)
 
 DOGMA_INHERIT_ID="r3nx"
+
+# The session folder recorded by the SessionStart hook for this session (dogma's
+# record, then credo's). Prints it; returns 1 when there is none or the dir is gone.
+dogma_recorded_session_dir() {
+    local sid="${CLAUDE_CODE_SESSION_ID:-${DOGMA_SESSION_ID:-}}" base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" rec d
+    case "$sid" in
+        ""|.|..|*[!A-Za-z0-9._-]*) return 1 ;;
+    esac
+    for rec in "$base/dogma/session-dirs/$sid" "$base/credo/session-dirs/$sid"; do
+        [ -f "$rec" ] || continue
+        d=""
+        IFS= read -r d < "$rec" || true
+        case "$d" in
+            /*) [ -d "$d" ] && { printf '%s\n' "$d"; return 0; } ;;
+        esac
+    done
+    return 1
+}
+
+# The session folder: DOGMA_SESSION_DIR > recorded session folder > $PWD
+dogma_session_dir() {
+    if [ -n "${DOGMA_SESSION_DIR:-}" ]; then
+        printf '%s\n' "$DOGMA_SESSION_DIR"
+    else
+        dogma_recorded_session_dir || printf '%s\n' "$PWD"
+    fi
+}
+
+# The current dir (where the lookup without target / pin starts): DOGMA_SESSION_DIR
+# when set (tests, notices), else $PWD
+dogma_current_dir() {
+    printf '%s\n' "${DOGMA_SESSION_DIR:-$PWD}"
+}
 
 # Make a path absolute (relative to $PWD) without touching the filesystem.
 dogma_abs_path() {
@@ -196,7 +238,7 @@ dogma_credo_config() {
 }
 
 # The credo pinned project dir (prints it; returns 1 when there is none, credo is
-# absent, or the session folder lies inside the project anyway).
+# absent, or the current dir lies inside the project anyway).
 dogma_pinned_dir() {
     local cfg credo_dir proj sess
     cfg="$(dogma_credo_config)" || return 1
@@ -206,7 +248,7 @@ dogma_pinned_dir() {
     proj="$(dirname "$(dogma_abs_path "$credo_dir")")"
     [ -d "$proj" ] || return 1
     proj="$(cd "$proj" && pwd -P)"
-    sess="$(cd "${DOGMA_SESSION_DIR:-$PWD}" 2>/dev/null && pwd -P)" || sess=""
+    sess="$(cd "$(dogma_current_dir)" 2>/dev/null && pwd -P)" || sess=""
     case "$sess/" in
         "$proj"/*) return 1 ;;
     esac
@@ -225,13 +267,14 @@ dogma_same_file() {
 # Resolve the applicable file. Sets (no subshell):
 #   DOGMA_RESOLVED_FILE  the file that applies (empty when none)
 #   DOGMA_SESSION_FILE   the session folder's file (empty when none)
-#   DOGMA_RESOLVED_FROM  target | pinned | session
+#   DOGMA_RESOLVED_FROM  target | pinned | cwd | session
 # Usage: dogma_resolve [target]   (target: a dir or file path; empty = none)
 dogma_resolve() {
-    local target="${1:-}" start="" f=""
+    local target="${1:-}" start="" f="" sdir cur
     DOGMA_RESOLVED_FILE=""
     DOGMA_RESOLVED_FROM="session"
-    DOGMA_SESSION_FILE="$(dogma_find_up "$(dogma_abs_path "${DOGMA_SESSION_DIR:-$PWD}")")" || DOGMA_SESSION_FILE=""
+    sdir="$(dogma_session_dir)"
+    DOGMA_SESSION_FILE="$(dogma_find_up "$(dogma_abs_path "$sdir")")" || DOGMA_SESSION_FILE=""
     if [ -n "$target" ]; then
         start="$(dogma_existing_dir "$target")" || start=""
         [ -n "$start" ] && DOGMA_RESOLVED_FROM="target"
@@ -239,6 +282,12 @@ dogma_resolve() {
     if [ -z "$start" ]; then
         start="$(dogma_pinned_dir)" || start=""
         [ -n "$start" ] && DOGMA_RESOLVED_FROM="pinned"
+    fi
+    # a recorded session folder differs from the cwd: the cwd's own file comes first
+    cur="$(dogma_current_dir)"
+    if [ -z "$start" ] && [ "$cur" != "$sdir" ]; then
+        start="$(dogma_existing_dir "$cur")" || start=""
+        [ -n "$start" ] && DOGMA_RESOLVED_FROM="cwd"
     fi
     if [ -n "$start" ]; then
         f="$(dogma_find_from "$start")" || f=""
@@ -252,7 +301,8 @@ dogma_resolve() {
 }
 
 # Find permissions file (returns path or empty). Optional arg: the action's target
-# (dir or file path). Without it: pinned project, then upward from $PWD.
+# (dir or file path). Without it: pinned project, then upward from $PWD, then the
+# session folder's file.
 find_permissions_file() {
     dogma_resolve "${1:-}"
     if [ -n "$DOGMA_RESOLVED_FILE" ]; then
@@ -273,7 +323,7 @@ dogma_inherit_file() {
     if [ $# -ge 2 ]; then
         sess="$2"
     else
-        sess="$(dogma_find_up "$(dogma_abs_path "${DOGMA_SESSION_DIR:-$PWD}")")" || sess=""
+        sess="$(dogma_find_up "$(dogma_abs_path "$(dogma_session_dir)")")" || sess=""
     fi
     [ -n "$file" ] && [ -n "$sess" ] && [ -f "$sess" ] || return 1
     dogma_same_file "$file" "$sess" && return 1

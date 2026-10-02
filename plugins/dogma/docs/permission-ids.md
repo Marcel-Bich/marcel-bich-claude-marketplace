@@ -67,7 +67,8 @@ Rules:
 the permission sections; it strips `(§xxxx)` from the labels, so ids never show up there.
 
 Inheritance (`§r3nx`) is per id as well: a reader first looks a setting up in the file that
-applies (target of the action > credo pinned project > session folder); only when that file
+applies (target of the action > credo pinned project > current folder > session folder); only when that file
 does not define it (no line with its id, and no matching text line without id) the session
-folder's file is asked. `permissions-summary.sh` never lists `§r3nx` itself (a switch, not a
+folder's file is asked (the session folder is the one recorded at session start, see
+`hooks/session-dir-record.sh`, else `$PWD`). `permissions-summary.sh` never lists `§r3nx` itself (a switch, not a
 restriction) and marks inherited entries in its JSON output under `"source"`.
