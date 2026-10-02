@@ -36,7 +36,7 @@ _signal_git_toplevel() {
 }
 
 # Shorten a path to its last two segments: /a/b/c/d -> .../c/d
-# Paths with at most two segments (/tmp, /home/marcel, /) are returned as is.
+# Paths with at most two segments (/tmp, /home/myuser, /) are returned as is.
 signal_cwd_label() {
     local path="$1"
     [ -z "$path" ] && return 0

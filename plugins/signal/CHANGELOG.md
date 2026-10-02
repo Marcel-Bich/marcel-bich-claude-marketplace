@@ -1,5 +1,17 @@
 Changelog of the signal plugin. Newest first. Months group releases; no day dates. Releases up to v1.5 are summarized by minor version.
 
+# 2026-10
+
+## v1
+
+### v1.5
+
+#### v1.5.2
+
+##### Changed
+
+- Code comment uses a neutral example home path
+
 # 2026-09
 
 ## v1
