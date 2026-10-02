@@ -52,10 +52,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib-permissions.sh
 source "$SCRIPT_DIR/lib-permissions.sh"
 
-# Check for DOGMA-PERMISSIONS.md (workflow permissions)
+# Check for DOGMA-PERMISSIONS.md (workflow permissions): credo pinned project > upward
+# from $PWD (lib-permissions.sh load_permissions; missing settings are inherited from
+# the session folder's file). Old location .claude/DOGMA-PERMISSIONS.md as last resort.
 PERMISSIONS_FILE=""
-if [ -f "DOGMA-PERMISSIONS.md" ]; then
-    PERMISSIONS_FILE="DOGMA-PERMISSIONS.md"
+dogma_session_from_input "$INPUT"
+if load_permissions; then
+    PERMISSIONS_FILE="$PERMS_FILE"
 elif [ -f ".claude/DOGMA-PERMISSIONS.md" ]; then
     PERMISSIONS_FILE=".claude/DOGMA-PERMISSIONS.md"
 fi

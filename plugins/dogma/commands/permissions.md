@@ -29,7 +29,17 @@ Create or update DOGMA-PERMISSIONS.md to configure what Claude can do autonomous
 1. Check if `DOGMA-PERMISSIONS.md` exists in project root
 2. If exists, show current permissions and ask if user wants to update
    - When updating, keep every existing `(§xxxx)` id and add the template id (Step 4) to each recognized setting line or parsed heading that has none yet. Ids come only from the template / `docs/permission-ids.md` - never invent a new one.
+   - When the file has no `## Inheritance` section yet, ask Step 1b and add it at the top of the `<permissions>` block.
 3. If not exists, will create new file
+
+## Step 1b: Inheritance
+
+Ask via AskUserQuestion whether this file inherits settings from a parent or workspace folder (default: yes, `[x]`):
+
+- **yes** `[x]` (default): when Claude works in this project from another folder that has its own DOGMA-PERMISSIONS.md (for example a parent or workspace folder the session was started in), every setting this file does not define is taken from that folder's file. Settings defined here always win.
+- **no** `[ ]`: only this file counts; settings it does not define use dogma's defaults.
+
+Explain briefly which file applies (resolution order "target of the action > pinned project > session folder") with the example from the template's Inheritance section below. A file without this checkbox behaves like `[x]`.
 
 ## Step 2: Git & File Permissions
 
@@ -214,6 +224,22 @@ Mark with `[x]` for auto, `[?]` for ask, `[ ]` for deny.
 The `(§xxxx)` after a checkbox is the setting's stable id: keep it, reword the text freely.
 
 <permissions>
+## Inheritance
+- [x] (§r3nx) inherit permissions
+
+When Claude works in this project from another folder (a parent or workspace folder
+with its own DOGMA-PERMISSIONS.md), every setting this file does not define is taken
+from that folder's file. Settings defined here always win. With [ ] only this file counts.
+
+Which file applies: the target of the action (a `git -C <dir>` / `cd <dir> &&` command,
+or the edited file's own path) > the pinned project (credo `/credo:project`, when
+credo is installed) > the folder the session was started in. From there, the nearest
+DOGMA-PERMISSIONS.md upward counts.
+Example: the session starts in ~/workspace (with its own DOGMA-PERMISSIONS.md) and
+Claude runs `git -C ~/workspace-projects/app commit`. Then app's file applies; every
+setting app's file does not define comes from ~/workspace's file. With [ ] here, only
+app's file counts.
+
 ## Git Permissions
 - [x] (§6gpt) May run `git add` autonomously
 - [x] (§2w1t) May run `git commit` autonomously
@@ -311,6 +337,8 @@ is integrated into - local merge, push, or PR/MR into it). No filter = every bra
 | delete files | Deletes files | Asks first | Logged to TO-DELETE.md |
 
 Every setting carries a fixed id `(§xxxx)` right after its checkbox (same id in every repo). dogma and credo find a setting by its id first, so the text may be reworded or translated freely; keep the id. A line without an id is still found by its old text.
+
+Inheritance works per setting id: a setting this file defines (by id, or by its text on a line without id) always wins; a missing one comes from the session folder's file. The same holds per Test Commands stage and for the Worktree files list (a missing list is inherited, else the default list applies).
 ```
 
 Replace markers based on user choices. Keep every `(§xxxx)` id exactly as in the template (they are fixed, identical in every repo and listed in `docs/permission-ids.md`); only the checkbox state changes. The "Worktree files" lines above are examples: write the list only when the user chose a custom list, otherwise leave it out (the default list applies). The `### Test Commands` lines above are examples: write only the stages the user confirmed (with their filters), and omit the whole subsection when every stage was left empty.

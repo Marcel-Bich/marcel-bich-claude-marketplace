@@ -174,7 +174,17 @@ if ! cd "$DIR" 2>/dev/null; then
     exit 4
 fi
 
-TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 4
+TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)" || TOPLEVEL=""
+if [ -z "$TOPLEVEL" ] && [ "$CMD" = "list" ]; then
+    # session folder outside any repo (a parent / workspace folder): the credo pinned
+    # project is the repo the work happens in (lib-permissions.sh dogma_pinned_dir;
+    # skipped when credo is not installed)
+    # shellcheck source=lib-permissions.sh
+    if . "$PLUGIN_ROOT/scripts/lib-permissions.sh" 2>/dev/null && PINNED="$(dogma_pinned_dir)" \
+        && cd "$PINNED" 2>/dev/null; then
+        TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)" || TOPLEVEL=""
+    fi
+fi
 [ -n "$TOPLEVEL" ] || exit 4
 HASH="$(sha256_hex "$TOPLEVEL")" || exit 4
 KEY="${HASH:0:16}"

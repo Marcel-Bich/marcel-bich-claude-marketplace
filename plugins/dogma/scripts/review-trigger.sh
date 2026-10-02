@@ -43,23 +43,19 @@ if [ "$TOOL_NAME" != "Write" ] && [ "$TOOL_NAME" != "Edit" ]; then
     exit 0
 fi
 
-# Find DOGMA-PERMISSIONS.md by walking up directory tree
-find_permissions_file() {
-    local dir="$PWD"
-    while [ "$dir" != "/" ]; do
-        if [ -f "$dir/DOGMA-PERMISSIONS.md" ]; then
-            echo "$dir/DOGMA-PERMISSIONS.md"
-            return 0
-        fi
-        dir=$(dirname "$dir")
-    done
-    return 1
-}
+# Which DOGMA-PERMISSIONS.md applies: the edited file's own path (target) > credo
+# pinned project > upward from $PWD; missing settings inherited from the session
+# folder's file (see lib-permissions.sh load_permissions)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib-permissions.sh
+source "$SCRIPT_DIR/lib-permissions.sh"
+dogma_session_from_input "$INPUT"
+EDITED_FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
 
-PERMISSIONS_FILE=$(find_permissions_file)
-if [ -z "$PERMISSIONS_FILE" ] || [ ! -f "$PERMISSIONS_FILE" ]; then
+if ! load_permissions "$EDITED_FILE"; then
     exit 0
 fi
+PERMISSIONS_FILE="$PERMS_FILE"
 
 # Check if review after implementation is configured
 # Looking for: "Wann Review? - [x] nach Umsetzung" or similar pattern
@@ -68,9 +64,6 @@ REVIEW_CONFIGURED=false
 REVIEW_TRIGGER=""
 
 # Id first (§d33m = review after implementation), text as fallback
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib-permissions.sh
-source "$SCRIPT_DIR/lib-permissions.sh"
 if perm_is_checked "$(cat "$PERMISSIONS_FILE" 2>/dev/null)" d33m '(nach Umsetzung|after implementation)'; then
     REVIEW_CONFIGURED=true
     REVIEW_TRIGGER="nach Umsetzung"

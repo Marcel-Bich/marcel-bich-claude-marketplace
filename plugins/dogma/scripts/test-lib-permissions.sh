@@ -26,6 +26,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# hermetic: no session-folder file to inherit from, no credo pinned project
+mkdir -p "$TEST_TMP_DIR/session"
+export DOGMA_SESSION_DIR="$TEST_TMP_DIR/session" DOGMA_CREDO_CONFIG=none
+
 # Test helper function
 run_test() {
     local description="$1"
@@ -37,11 +41,13 @@ run_test() {
     if [ "$expected" = "$actual" ]; then
         echo "[PASS] $description"
         TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo P >> "$TEST_TMP_DIR/subshell-results"
     else
         echo "[FAIL] $description"
         echo "       Expected: '$expected'"
         echo "       Actual:   '$actual'"
         TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo F >> "$TEST_TMP_DIR/subshell-results"
     fi
 }
 
@@ -60,11 +66,13 @@ run_exit_test() {
     if [ "$expected_exit" = "$actual_exit" ]; then
         echo "[PASS] $description"
         TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo P >> "$TEST_TMP_DIR/subshell-results"
     else
         echo "[FAIL] $description"
         echo "       Expected exit: $expected_exit"
         echo "       Actual exit:   $actual_exit"
         TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo F >> "$TEST_TMP_DIR/subshell-results"
     fi
 }
 
@@ -225,12 +233,12 @@ run_test "Same pattern 'check lint' in 'Final Verification' returns 'all'" "all"
 # Verify they are actually different
 if [ "$result_dev" != "$result_final" ]; then
     echo "[PASS] Different sections return different results for same pattern"
-    TESTS_PASSED=$((TESTS_PASSED + 1))
+    TESTS_PASSED=$((TESTS_PASSED + 1)); echo P >> "$TEST_TMP_DIR/subshell-results"
 else
     echo "[FAIL] Different sections should return different results"
     echo "       Development Phase: '$result_dev'"
     echo "       Final Verification: '$result_final'"
-    TESTS_FAILED=$((TESTS_FAILED + 1))
+    TESTS_FAILED=$((TESTS_FAILED + 1)); echo F >> "$TEST_TMP_DIR/subshell-results"
 fi
 TESTS_TOTAL=$((TESTS_TOTAL + 1))
 
@@ -392,11 +400,226 @@ run_test "perm_has_heading: neither id nor text -> no" "no" "$r"
 result=$(LC_ALL=C get_permission_mode "$PERMS_IDS_SECTION" "§bww9|git push")
 run_test "id match works under LC_ALL=C" "deny" "$result"
 
+# ============================================================================
+# Test 8: Which file applies (target > pinned project > session folder) and
+#         inheritance from the session folder's file (§r3nx)
+# ============================================================================
+echo "--- File resolution and inheritance ---"
+
+INH="$TEST_TMP_DIR/inh"
+WS="$INH/workspace"
+PROJ="$INH/projects"
+mkdir -p "$WS" "$PROJ/app/sub" "$PROJ/noinherit" "$PROJ/nocheckbox" "$PROJ/oldfile" "$PROJ/nofile" "$INH/elsewhere"
+
+# session folder file: everything restrictive + test commands + worktree list
+cat > "$WS/DOGMA-PERMISSIONS.md" <<'EOF'
+<permissions>
+## Git Permissions
+- [x] (§6gpt) May run `git add` autonomously
+- [?] (§2w1t) May run `git commit` autonomously
+- [ ] (§bww9) May run `git push` autonomously
+
+## File Operations
+- [ ] (§0lgy) May delete files autonomously (rm, unlink, git clean)
+
+## Workflow Permissions
+
+### Hydra
+- [x] (§xw1i) use Hydra for 2+ independent tasks
+
+Worktree files (§47p9) (excluded files only):
+- link: WS-ONLY.md
+
+### Test Commands (§ly5v)
+- commit: `ws-lint`
+- build: `ws-build`
+- all [main]: `ws-all`
+</permissions>
+EOF
+
+# project file: defines only git push (allowed) and the commit stage; inherit [x]
+cat > "$PROJ/app/DOGMA-PERMISSIONS.md" <<'EOF'
+<permissions>
+## Inheritance
+- [x] (§r3nx) inherit permissions
+
+## Git Permissions
+- [x] (§bww9) May run `git push` autonomously
+
+## Workflow Permissions
+
+### Test Commands (§ly5v)
+- commit: `app-lint`
+</permissions>
+EOF
+
+# same, inheritance switched off
+sed 's/- \[x\] (§r3nx)/- [ ] (§r3nx)/' "$PROJ/app/DOGMA-PERMISSIONS.md" > "$PROJ/noinherit/DOGMA-PERMISSIONS.md"
+# same, no inheritance checkbox at all (= on)
+grep -v 'r3nx\|## Inheritance' "$PROJ/app/DOGMA-PERMISSIONS.md" > "$PROJ/nocheckbox/DOGMA-PERMISSIONS.md"
+# old file without ids
+cat > "$PROJ/oldfile/DOGMA-PERMISSIONS.md" <<'EOF'
+<permissions>
+## Git Permissions
+- [x] May run `git push` autonomously
+- [ ] May run `git commit` autonomously
+</permissions>
+EOF
+
+# 8.1 target detection from Bash commands
+(
+    cd "$WS"
+    r=$(dogma_target_from_command "git -C $PROJ/app commit -m x") || r=none
+    run_test "target: git -C <abs dir>" "$PROJ/app" "$r"
+    r=$(dogma_target_from_command "git -C ../projects/app push") || r=none
+    run_test "target: git -C <relative dir>" "$WS/../projects/app" "$r"
+    r=$(dogma_target_from_command "cd $PROJ/app && git push") || r=none
+    run_test "target: cd <dir> &&" "$PROJ/app" "$r"
+    r=$(dogma_target_from_command "cd \"$PROJ/app\"; git commit -m x") || r=none
+    run_test "target: cd \"<dir>\";" "$PROJ/app" "$r"
+    r=$(dogma_target_from_command "(cd $PROJ/app && git push)") || r=none
+    run_test "target: ( cd <dir> && ... )" "$PROJ/app" "$r"
+    r=$(dogma_target_from_command "cd $PROJ && git -C app push") || r=none
+    run_test "target: git -C relative to the cd dir" "$PROJ/app" "$r"
+    r=$(dogma_target_from_command "git push") || r=none
+    run_test "target: plain command -> none" "none" "$r"
+    r=$(dogma_target_from_command "git -C $PROJ/does-not-exist push") || r=none
+    run_test "target: missing dir -> none" "none" "$r"
+    r=$(HOME="$INH" dogma_target_from_command "git -C ~/projects/app push") || r=none
+    run_test "target: ~ expanded" "$INH/projects/app" "$r"
+)
+
+# 8.2 resolution order
+(
+    export DOGMA_SESSION_DIR="$WS"
+    cd "$WS"
+    r=$(find_permissions_file) || r=none
+    run_test "resolve: no target -> session folder file" "$WS/DOGMA-PERMISSIONS.md" "$r"
+    r=$(find_permissions_file "$PROJ/app/sub") || r=none
+    run_test "resolve: target dir -> upward from target" "$PROJ/app/DOGMA-PERMISSIONS.md" "$r"
+    r=$(find_permissions_file "$PROJ/app/sub/new-file.txt") || r=none
+    run_test "resolve: target file path (not yet existing)" "$PROJ/app/DOGMA-PERMISSIONS.md" "$r"
+    r=$(find_permissions_file "$PROJ/nofile") || r=none
+    run_test "resolve: target without own file -> session folder file" "$WS/DOGMA-PERMISSIONS.md" "$r"
+)
+
+# 8.3 per-id inheritance via load_permissions
+(
+    export DOGMA_SESSION_DIR="$WS"
+    cd "$WS"
+    load_permissions "$PROJ/app"
+    run_test "inherit: PERMS_FILE is the project file" "$PROJ/app/DOGMA-PERMISSIONS.md" "$PERMS_FILE"
+    run_test "inherit: DOGMA_INHERIT_FILE is the session file" "$WS/DOGMA-PERMISSIONS.md" "$DOGMA_INHERIT_FILE"
+    run_test "inherit: own id wins (push [x] over session [ ])" "auto" "$(get_permission_mode "$PERMS_SECTION" "§bww9|git push")"
+    run_test "inherit: missing id from session (commit [?])" "ask" "$(get_permission_mode "$PERMS_SECTION" "§2w1t|git commit")"
+    run_test "inherit: missing id from session (delete [ ])" "deny" "$(get_permission_mode "$PERMS_SECTION" "§0lgy|delete files")"
+    run_test "inherit: missing everywhere -> auto" "auto" "$(get_permission_mode "$PERMS_SECTION" "§zzzz|no such setting")"
+    check_permission "$PERMS_SECTION" "§0lgy|delete files" && r=allowed || r=blocked
+    run_test "inherit: check_permission uses the inherited deny" "blocked" "$r"
+    perm_is_checked "$(cat "$PERMS_FILE")" xw1i 'use Hydra' && r=on || r=off
+    run_test "inherit: perm_is_checked from session" "on" "$r"
+    run_test "inherit: perm_defining_file (inherited)" "$WS/DOGMA-PERMISSIONS.md" "$(perm_defining_file "§2w1t|git commit")"
+    run_test "inherit: perm_defining_file (own)" "$PROJ/app/DOGMA-PERMISSIONS.md" "$(perm_defining_file "§bww9|git push")"
+    run_test "inherit: file mode get_permission_mode" "ask" "$(get_permission_mode "§2w1t|git commit" "$PERMS_FILE")"
+
+    load_permissions "$PROJ/noinherit"
+    run_test "inherit [ ]: no inherit file" "" "$DOGMA_INHERIT_FILE"
+    run_test "inherit [ ]: missing id -> auto (only own file counts)" "auto" "$(get_permission_mode "$PERMS_SECTION" "§2w1t|git commit")"
+
+    load_permissions "$PROJ/nocheckbox"
+    run_test "inherit missing checkbox = on" "ask" "$(get_permission_mode "$PERMS_SECTION" "§2w1t|git commit")"
+
+    load_permissions "$PROJ/oldfile"
+    run_test "old file: text line wins over inherited id ([x] push)" "auto" "$(get_permission_mode "$PERMS_SECTION" "§bww9|git push")"
+    run_test "old file: text line [ ] commit stays deny" "deny" "$(get_permission_mode "$PERMS_SECTION" "§2w1t|git commit")"
+    run_test "old file: missing setting inherited (delete [ ])" "deny" "$(get_permission_mode "$PERMS_SECTION" "§0lgy|delete files")"
+
+    load_permissions
+    run_test "session itself: no inheritance" "" "$DOGMA_INHERIT_FILE"
+)
+
+# 8.4 git-permissions.sh hook end to end (session folder = workspace)
+hook() { # command -> hook stdout
+    local json
+    json=$(jq -cn --arg c "$1" '{tool_name:"Bash", tool_input:{command:$c}}')
+    (cd "$WS" && DOGMA_SESSION_DIR="$WS" bash "$SCRIPT_DIR/git-permissions.sh" <<<"$json")
+}
+decision() { # hook output -> deny|ask|allow
+    case "$1" in
+        *'"deny"'*) echo deny ;;
+        *'"ask"'*) echo ask ;;
+        *) echo allow ;;
+    esac
+}
+run_test "hook: git push in session folder -> deny" "deny" "$(decision "$(hook "git push")")"
+run_test "hook: git -C app push -> allowed by app's file" "allow" "$(decision "$(hook "git -C $PROJ/app push")")"
+run_test "hook: cd app && git push -> allowed" "allow" "$(decision "$(hook "cd $PROJ/app && git push")")"
+run_test "hook: git -C app commit -> inherited ask" "ask" "$(decision "$(hook "git -C $PROJ/app commit -m x")")"
+out=$(hook "git -C $PROJ/app commit -m x")
+case "$out" in *"$WS/DOGMA-PERMISSIONS.md"*) r=yes ;; *) r=no ;; esac
+run_test "hook: message names the file that defines the setting" "yes" "$r"
+run_test "hook: noinherit project -> commit allowed" "allow" "$(decision "$(hook "git -C $PROJ/noinherit commit -m x")")"
+
+# 8.5 credo pinned project (fake pin in a temp CLAUDE_CONFIG_DIR)
+CREDO_CFG="$SCRIPT_DIR/../../credo/scripts/credo-config.sh"
+if [ -f "$CREDO_CFG" ]; then
+    mkdir -p "$INH/cfg/credo/session-projects"
+    printf '%s\n' "$PROJ/app" > "$INH/cfg/credo/session-projects/test-sid"
+    (
+        unset CREDO_DIR
+        export DOGMA_SESSION_DIR="$WS" DOGMA_CREDO_CONFIG="$CREDO_CFG" CLAUDE_CONFIG_DIR="$INH/cfg"
+        export CREDO_SESSION_ID=test-sid
+        cd "$WS"
+        r=$(find_permissions_file) || r=none
+        run_test "pinned: no target -> pinned project file" "$PROJ/app/DOGMA-PERMISSIONS.md" "$r"
+        r=$(find_permissions_file "$PROJ/noinherit") || r=none
+        run_test "pinned: a target still wins over the pin" "$PROJ/noinherit/DOGMA-PERMISSIONS.md" "$r"
+        run_test "pinned: hook git push -> allowed by the pinned file" "allow" "$(decision "$(hook "git push")")"
+        run_test "pinned: hook git commit -> inherited ask" "ask" "$(decision "$(hook "git commit -m x")")"
+        r=$(DOGMA_CREDO_CONFIG=none find_permissions_file) || r=none
+        run_test "pinned: credo absent -> session folder" "$WS/DOGMA-PERMISSIONS.md" "$r"
+        r=$(DOGMA_SESSION_DIR="$PROJ/app/sub" find_permissions_file) || r=none
+        run_test "pinned: session inside the pinned project -> upward from session" "$PROJ/app/DOGMA-PERMISSIONS.md" "$r"
+    )
+else
+    echo "[SKIP] pinned project tests (credo not next to dogma)"
+fi
+
+# 8.6 readers: test-commands.sh per stage, worktree-files.sh, permissions-summary.sh
+(
+    export DOGMA_SESSION_DIR="$WS"
+    cd "$WS"
+    r=$(bash "$SCRIPT_DIR/test-commands.sh" get commit --dir "$PROJ/app") || r=none
+    run_test "test-commands: own stage wins" "app-lint" "$r"
+    r=$(bash "$SCRIPT_DIR/test-commands.sh" get build --dir "$PROJ/app") || r=none
+    run_test "test-commands: missing stage inherited" "ws-build" "$r"
+    r=$(bash "$SCRIPT_DIR/test-commands.sh" get all feature --dir "$PROJ/app") || r=none
+    run_test "test-commands: inherited branch filter applies" "none" "$r"
+    r=$(bash "$SCRIPT_DIR/test-commands.sh" --json "$PROJ/app" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["stages"]["build"].get("source",""), d["stages"]["commit"].get("source","own"))')
+    run_test "test-commands: json source only on inherited stages" "$WS/DOGMA-PERMISSIONS.md own" "$r"
+    r=$(bash "$SCRIPT_DIR/test-commands.sh" get build --dir "$PROJ/noinherit") || r=none
+    run_test "test-commands: inherit [ ] -> stage missing" "none" "$r"
+    r=$(bash "$SCRIPT_DIR/worktree-files.sh" "$PROJ/app")
+    run_test "worktree-files: list missing -> inherited list" "link WS-ONLY.md" "$r"
+    r=$(bash "$SCRIPT_DIR/worktree-files.sh" "$PROJ/noinherit" | head -n1)
+    run_test "worktree-files: inherit [ ] -> default list" "link CLAUDE.md" "$r"
+    r=$(bash "$SCRIPT_DIR/permissions-summary.sh" "$PROJ/app" | tr '\n' ' ')
+    run_test "summary: effective merged view" "file=$PROJ/app/DOGMA-PERMISSIONS.md ask=git commit deny=delete files " "$r"
+    r=$(bash "$SCRIPT_DIR/permissions-summary.sh" --json "$PROJ/app" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sorted(d["source"].items()))')
+    run_test "summary: json source key for inherited entries" "[('delete files', '$WS/DOGMA-PERMISSIONS.md'), ('git commit', '$WS/DOGMA-PERMISSIONS.md')]" "$r"
+    r=$(bash "$SCRIPT_DIR/permissions-summary.sh" "$PROJ/noinherit" | tr '\n' ' ')
+    run_test "summary: inherit [ ] -> own file only, switch not listed" "file=$PROJ/noinherit/DOGMA-PERMISSIONS.md " "$r"
+)
+
 echo ""
 
 # ============================================================================
 # Results
 # ============================================================================
+# counted from the results file: tests inside ( ... ) subshells count too
+TESTS_PASSED=$(grep -c '^P$' "$TEST_TMP_DIR/subshell-results" || true)
+TESTS_FAILED=$(grep -c '^F$' "$TEST_TMP_DIR/subshell-results" || true)
+TESTS_TOTAL=$((TESTS_PASSED + TESTS_FAILED))
 echo "============================================"
 echo "Results: $TESTS_PASSED/$TESTS_TOTAL tests passed"
 

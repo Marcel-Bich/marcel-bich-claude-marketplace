@@ -32,7 +32,9 @@
 #       json: {"file": "..."|null, "source": "configured"|"default",
 #              "entries": [{"kind": "link", "path": "CLAUDE.md"}, ...]}
 #
-# dir: where to start the upward search for DOGMA-PERMISSIONS.md (default: $PWD).
+# dir: the target - where to start the upward search for DOGMA-PERMISSIONS.md (default:
+# the credo pinned project, else $PWD). Settings the found file does not define are
+# inherited from the session folder's file (lib-permissions.sh load_permissions).
 # Invalid entries (absolute paths, "..", unknown kinds) are skipped with a warning on
 # stderr.
 #
@@ -58,13 +60,23 @@ case "${1:-}" in
     -*) usage_error "unknown argument: $1" ;;
 esac
 [ $# -le 1 ] || usage_error "unexpected argument: $2"
+TARGET=""
 if [ -n "${1:-}" ]; then
-    cd "$1" 2>/dev/null || usage_error "no such dir: $1"
+    TARGET="$(cd "$1" 2>/dev/null && pwd)" || usage_error "no such dir: $1"
 fi
 
-FILE="$(find_permissions_file)" || FILE=""
+# dir = the target (else credo pinned project, else $PWD); a file without its own list
+# inherits the session folder's list (load_permissions), else the default applies
+FILE=""
+PERMS_SECTION=""
+DOGMA_INHERIT_FILE=""
+DOGMA_INHERIT_SECTION=""
+if load_permissions "$TARGET"; then
+    FILE="$PERMS_FILE"
+fi
 
-{ if [ -n "$FILE" ]; then get_permissions_section "$FILE"; fi; } | MODE="$MODE" FILE="$FILE" python3 -c '
+printf '%s\n' "$PERMS_SECTION" | MODE="$MODE" FILE="$FILE" INHERIT_FILE="$DOGMA_INHERIT_FILE" \
+    INHERIT_SECTION="$DOGMA_INHERIT_SECTION" python3 -c '
 import json, os, re, sys
 
 DEFAULT = [("link", "CLAUDE.md"), ("link", "CLAUDE/"), ("link", "GUIDES/"),
@@ -73,62 +85,74 @@ DEFAULT = [("link", "CLAUDE.md"), ("link", "CLAUDE/"), ("link", "GUIDES/"),
 def warn(msg):
     print("worktree-files: " + msg, file=sys.stderr)
 
-entries = []
-in_hydra = False
-in_list = False
-lines = [re.sub(r"<!--.*?-->", "", l).strip() for l in sys.stdin.read().splitlines()]
 # Id first: the list label carrying the stable id (anywhere in the block, any wording);
 # only when no line carries it, the old "Worktree files" label inside "### Hydra".
-ID_LABEL = re.compile(r"^[^-#].*\(\u00a747p9\)")
-by_id = any(ID_LABEL.match(l) for l in lines)
-for s in lines:
-    if s.startswith("#") or s.startswith("</permissions>"):
-        in_hydra = bool(re.match(r"^###\s+hydra\s*(?:\(\u00a7[0-9a-z]{4}\)\s*)?$", s, re.I))
-        in_list = False
-        continue
-    if by_id:
-        if ID_LABEL.match(s):
-            in_list = True
+ID_LABEL = re.compile(r"^[^-#].*\(§47p9\)")
+
+def parse(text):
+    entries = []
+    in_hydra = False
+    in_list = False
+    lines = [re.sub(r"<!--.*?-->", "", l).strip() for l in text.splitlines()]
+    by_id = any(ID_LABEL.match(l) for l in lines)
+    for s in lines:
+        if s.startswith("#") or s.startswith("</permissions>"):
+            in_hydra = bool(re.match(r"^###\s+hydra\s*(?:\(§[0-9a-z]{4}\)\s*)?$", s, re.I))
+            in_list = False
             continue
-    else:
-        if not in_hydra:
+        if by_id:
+            if ID_LABEL.match(s):
+                in_list = True
+                continue
+        else:
+            if not in_hydra:
+                continue
+            if re.match(r"^worktree\s+files\b", s, re.I):
+                in_list = True
+                continue
+        if not in_list:
             continue
-        if re.match(r"^worktree\s+files\b", s, re.I):
-            in_list = True
+        if not s:
             continue
-    if not in_list:
-        continue
-    if not s:
-        continue
-    if not s.startswith("-") or re.match(r"^-\s*\[.\]", s):
-        in_list = False
-        continue
-    m = re.match(r"^-\s*(?:([A-Za-z]+)\s*:\s*)?(.+)$", s)
-    if not m:
-        continue
-    kind = (m.group(1) or "link").lower()
-    path = m.group(2).strip().strip("`").strip()
-    if kind not in ("link", "copy"):
-        warn("ignoring unknown kind: " + m.group(1))
-        continue
-    if not path:
-        continue
-    parts = [p for p in path.rstrip("/").split("/") if p not in ("", ".")]
-    if path.startswith("/") or ".." in parts or not parts:
-        warn("ignoring path outside the repo: " + path)
-        continue
-    norm = "/".join(parts) + ("/" if path.endswith("/") else "")
-    if any(e[1].rstrip("/") == norm.rstrip("/") for e in entries):
-        warn("duplicate path " + norm + ", keeping the first")
-        continue
-    entries.append((kind, norm))
+        if not s.startswith("-") or re.match(r"^-\s*\[.\]", s):
+            in_list = False
+            continue
+        m = re.match(r"^-\s*(?:([A-Za-z]+)\s*:\s*)?(.+)$", s)
+        if not m:
+            continue
+        kind = (m.group(1) or "link").lower()
+        path = m.group(2).strip().strip("`").strip()
+        if kind not in ("link", "copy"):
+            warn("ignoring unknown kind: " + m.group(1))
+            continue
+        if not path:
+            continue
+        parts = [p for p in path.rstrip("/").split("/") if p not in ("", ".")]
+        if path.startswith("/") or ".." in parts or not parts:
+            warn("ignoring path outside the repo: " + path)
+            continue
+        norm = "/".join(parts) + ("/" if path.endswith("/") else "")
+        if any(e[1].rstrip("/") == norm.rstrip("/") for e in entries):
+            warn("duplicate path " + norm + ", keeping the first")
+            continue
+        entries.append((kind, norm))
+    return entries
+
+env = os.environ
+file = env["FILE"]
+entries = parse(sys.stdin.read())
+if not entries and env.get("INHERIT_FILE"):
+    # list missing in the resolved file -> the session folder file list (inheritance)
+    entries = parse(env.get("INHERIT_SECTION", ""))
+    if entries:
+        file = env["INHERIT_FILE"]
 
 source = "configured" if entries else "default"
 if not entries:
     entries = DEFAULT
 
-if os.environ["MODE"] == "json":
-    print(json.dumps({"file": os.environ["FILE"] or None, "source": source,
+if env["MODE"] == "json":
+    print(json.dumps({"file": file or None, "source": source,
                       "entries": [{"kind": k, "path": p} for k, p in entries]}))
 else:
     for k, p in entries:

@@ -30,7 +30,9 @@
 #       prints the command when the stage is defined and applies (no filter, branch
 #       listed in the filter, or no branch given)
 #
-# dir: where to start the upward search for DOGMA-PERMISSIONS.md (default: $PWD).
+# dir: the target - where to start the upward search for DOGMA-PERMISSIONS.md (default:
+# the credo pinned project, else $PWD). Settings the found file does not define are
+# inherited from the session folder's file (lib-permissions.sh load_permissions).
 #
 # Exit codes: 0 ok, 4 no DOGMA-PERMISSIONS.md / no section / stage not applicable
 # (prints nothing), 1 bad argument (including an unknown stage).
@@ -95,64 +97,84 @@ else
 fi
 
 if [ -n "$DIR" ]; then
-    cd "$DIR" 2>/dev/null || usage_error "no such dir: $DIR"
+    DIR="$(cd "$DIR" 2>/dev/null && pwd)" || usage_error "no such dir: ${DIR}"
 fi
 
-FILE="$(find_permissions_file)" || exit 4
+# dir = the target (else credo pinned project, else $PWD); stages the file does not
+# define are inherited per stage from the session folder's file (load_permissions)
+load_permissions "$DIR" || exit 4
+FILE="$PERMS_FILE"
 
-get_permissions_section "$FILE" | MODE="$MODE" FILE="$FILE" STAGE="$STAGE" BRANCH="$BRANCH" python3 -c '
+printf '%s\n' "$PERMS_SECTION" | MODE="$MODE" FILE="$FILE" STAGE="$STAGE" BRANCH="$BRANCH" \
+    INHERIT_FILE="$DOGMA_INHERIT_FILE" INHERIT_SECTION="$DOGMA_INHERIT_SECTION" python3 -c '
 import json, os, re, sys
 
 STAGES = ["commit", "push", "relevant", "build", "all"]
-stages = {}
-found = False
-in_section = False
-lines = sys.stdin.read().splitlines()
 # Id first: a heading carrying the stable id (any level, any wording); only when no
 # heading carries it, the old "### Test Commands" text match (optional trailing id).
-ID_HEAD = re.compile(r"^#{2,}\s+.*\(\u00a7ly5v\)")
-TEXT_HEAD = re.compile(r"^###\s+test\s+commands\s*(?:\(\u00a7[0-9a-z]{4}\)\s*)?$", re.I)
-head = ID_HEAD if any(ID_HEAD.match(l.strip()) for l in lines) else TEXT_HEAD
-for line in lines:
-    s = line.strip()
-    if head.match(s):
-        in_section = found = True
-        continue
-    if not in_section:
-        continue
-    if s.startswith("##") or s.startswith("</permissions>"):
-        in_section = False
-        continue
-    m = re.match(r"^-\s*([A-Za-z]+)\s*(?:\[([^\]]*)\])?\s*:\s*(.*)$", s)
-    if not m:
-        continue
-    stage = m.group(1).lower()
-    if stage not in STAGES:
-        print("test-commands: ignoring unknown stage: " + m.group(1), file=sys.stderr)
-        continue
-    code = re.search(r"`([^`]+)`", m.group(3))
-    if not code or not code.group(1).strip():
-        continue
-    if stage in stages:
-        print("test-commands: duplicate stage " + stage + ", keeping the first", file=sys.stderr)
-        continue
-    branches = None
-    if m.group(2) is not None:
-        names = [b.strip() for b in m.group(2).split(",") if b.strip()]
-        if stage == "relevant":
-            if names:
-                print("test-commands: relevant takes no branch filter, ignoring [" + m.group(2) + "]", file=sys.stderr)
-        elif names:
-            branches = names
-    stages[stage] = {"command": code.group(1).strip(), "branches": branches}
+ID_HEAD = re.compile(r"^#{2,}\s+.*\(§ly5v\)")
+TEXT_HEAD = re.compile(r"^###\s+test\s+commands\s*(?:\(§[0-9a-z]{4}\)\s*)?$", re.I)
+
+def parse(lines, warn=True):
+    stages = {}
+    found = False
+    in_section = False
+    head = ID_HEAD if any(ID_HEAD.match(l.strip()) for l in lines) else TEXT_HEAD
+    for line in lines:
+        s = line.strip()
+        if head.match(s):
+            in_section = found = True
+            continue
+        if not in_section:
+            continue
+        if s.startswith("##") or s.startswith("</permissions>"):
+            in_section = False
+            continue
+        m = re.match(r"^-\s*([A-Za-z]+)\s*(?:\[([^\]]*)\])?\s*:\s*(.*)$", s)
+        if not m:
+            continue
+        stage = m.group(1).lower()
+        if stage not in STAGES:
+            if warn:
+                print("test-commands: ignoring unknown stage: " + m.group(1), file=sys.stderr)
+            continue
+        code = re.search(r"`([^`]+)`", m.group(3))
+        if not code or not code.group(1).strip():
+            continue
+        if stage in stages:
+            if warn:
+                print("test-commands: duplicate stage " + stage + ", keeping the first", file=sys.stderr)
+            continue
+        branches = None
+        if m.group(2) is not None:
+            names = [b.strip() for b in m.group(2).split(",") if b.strip()]
+            if stage == "relevant":
+                if names and warn:
+                    print("test-commands: relevant takes no branch filter, ignoring [" + m.group(2) + "]", file=sys.stderr)
+            elif names:
+                branches = names
+        stages[stage] = {"command": code.group(1).strip(), "branches": branches}
+    return found, stages
+
+env = os.environ
+found, stages = parse(sys.stdin.read().splitlines())
+inherit_file = env.get("INHERIT_FILE", "")
+if inherit_file:
+    # per stage: a stage the file defines wins, a missing one comes from the session folder
+    ifound, istages = parse(env.get("INHERIT_SECTION", "").splitlines(), warn=False)
+    found = found or ifound
+    for k, v in istages.items():
+        if k not in stages:
+            v["source"] = inherit_file
+            stages[k] = v
 
 if not found:
     sys.exit(4)
 
-mode = os.environ["MODE"]
+mode = env["MODE"]
 if mode == "get":
-    entry = stages.get(os.environ["STAGE"])
-    branch = os.environ["BRANCH"]
+    entry = stages.get(env["STAGE"])
+    branch = env["BRANCH"]
     if entry is None:
         sys.exit(4)
     if branch and entry["branches"] is not None and branch not in entry["branches"]:
@@ -160,9 +182,9 @@ if mode == "get":
     print(entry["command"])
 elif mode == "json":
     ordered = {k: stages[k] for k in STAGES if k in stages}
-    print(json.dumps({"file": os.environ["FILE"], "stages": ordered}))
+    print(json.dumps({"file": env["FILE"], "stages": ordered}))
 else:
-    print("file=" + os.environ["FILE"])
+    print("file=" + env["FILE"])
     for k in STAGES:
         if k in stages:
             print(k + "=" + stages[k]["command"])

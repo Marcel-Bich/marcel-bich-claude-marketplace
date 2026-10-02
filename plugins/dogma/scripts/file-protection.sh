@@ -5,10 +5,8 @@
 # Blocked: rm, del, unlink, git clean, rmdir
 # Allowed: git rm --cached, git reset (safe operations)
 #
-# Searches for permissions in (priority order):
-# 1. DOGMA-PERMISSIONS.md (project root)
-# 2. CLAUDE/CLAUDE.git.md (fallback)
-# 3. CLAUDE.git.md (fallback)
+# Which DOGMA-PERMISSIONS.md applies: see lib-permissions.sh load_permissions (the
+# command's target > credo pinned project > session folder, plus inheritance).
 #
 # Modes (based on checkboxes):
 # - [x] May delete files autonomously -> auto: allow all deletes
@@ -71,12 +69,15 @@ fi
 INPUT=$(cat 2>/dev/null || true)
 
 # === CHECK PERMISSIONS ===
-PERMS_FILE=$(find_permissions_file)
+# Target of the command (`cd <dir> && rm ...`, `git -C <dir> clean`) > credo pinned
+# project > $PWD; missing settings inherited from the session folder's file
+dogma_session_from_input "$INPUT"
+TARGET_DIR=$(dogma_target_from_command "$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)") || TARGET_DIR=""
 DELETE_MODE="deny"  # Default: deny (log to TO-DELETE.md)
 
-if [ -n "$PERMS_FILE" ] && [ -f "$PERMS_FILE" ]; then
-    PERMS_SECTION=$(get_permissions_section "$PERMS_FILE")
+if load_permissions "$TARGET_DIR" && [ -f "$PERMS_FILE" ]; then
     DELETE_MODE=$(get_permission_mode "$PERMS_SECTION" "§0lgy|delete files")
+    DELETE_SRC=$(perm_defining_file "§0lgy|delete files")
     dogma_debug_log "Delete mode: $DELETE_MODE"
 fi
 
@@ -166,7 +167,7 @@ if [ -n "$BLOCKED" ]; then
 
     if [ "$DELETE_MODE" = "ask" ]; then
         # Ask mode: Prompt user for confirmation
-        REASON_MSG="dogma: $BLOCKED ${TARGET:-command} requires confirmation. Change [?] to [x] in $PERMS_FILE to allow automatically."
+        REASON_MSG="dogma: $BLOCKED ${TARGET:-command} requires confirmation. Change [?] to [x] in ${DELETE_SRC:-$PERMS_FILE} to allow automatically."
         REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
         output_ask "$REASON_MSG"
     else
@@ -189,7 +190,7 @@ HEADER
         echo "- [ ] \`$BLOCKED ${TARGET:-unknown}\` - $REASON ($TIMESTAMP)" >> "$TO_DELETE_FILE"
 
         # Deny with info message
-        REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} logged to TO-DELETE.md. Change [ ] to [x] or [?] in $PERMS_FILE."
+        REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} logged to TO-DELETE.md. Change [ ] to [x] or [?] in ${DELETE_SRC:-$PERMS_FILE}."
         REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
         output_deny "$REASON_MSG"
     fi

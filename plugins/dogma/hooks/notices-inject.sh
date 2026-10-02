@@ -39,6 +39,17 @@ except Exception:
     print("")
 ' 2>/dev/null)"
 [ -n "$CWD" ] && [ -d "$CWD" ] || CWD="$PWD"
+# session id for the credo pin lookup (a session started in a folder outside any repo
+# gets the notices of its credo pinned project, see notices-pending.sh)
+DOGMA_SESSION_ID="$(printf '%s' "$INPUT" | python3 -c '
+import json, re, sys
+try:
+    sid = json.load(sys.stdin).get("session_id") or ""
+except Exception:
+    sid = ""
+print(sid if re.fullmatch(r"[A-Za-z0-9._-]+", sid) else "")
+' 2>/dev/null)"
+export DOGMA_SESSION_ID
 
 PENDING="$("$SCRIPT" --json --hint "$CWD" 2>/dev/null)" || exit 0
 [ -n "$PENDING" ] || exit 0

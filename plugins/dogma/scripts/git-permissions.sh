@@ -2,10 +2,10 @@
 # Dogma: Git Permissions Hook
 # Blocks git add/commit/push based on checkboxes in permissions file
 #
-# Searches for permissions in (priority order):
-# 1. DOGMA-PERMISSIONS.md (project root)
-# 2. CLAUDE/CLAUDE.git.md (fallback)
-# 3. CLAUDE.git.md (fallback)
+# Which DOGMA-PERMISSIONS.md applies (lib-permissions.sh load_permissions): the
+# command's target (`git -C <dir>`, leading `cd <dir> &&` / `cd <dir>;`), else the
+# credo pinned project, else upward from the session folder; settings that file does
+# not define are inherited from the session folder's file (checkbox §r3nx, default on).
 #
 # Reads <permissions> section and checks:
 # - [ ] = not allowed (blocked)
@@ -77,58 +77,61 @@ if [ "$TOOL_NAME" != "Bash" ]; then
     exit 0
 fi
 
-# Find permissions file
-PERMS_FILE=$(find_permissions_file)
-if [ -z "$PERMS_FILE" ]; then
+# Find the applicable permissions (target of the command > pinned project > $PWD,
+# plus inheritance from the session folder's file)
+dogma_session_from_input "$INPUT"
+TARGET_DIR=$(dogma_target_from_command "$TOOL_INPUT") || TARGET_DIR=""
+if ! load_permissions "$TARGET_DIR"; then
     # No permissions file - allow all by default
     dogma_debug_log "No permissions file found - allowing all"
     exit 0
 fi
-
-# Extract permissions section
-PERMS_SECTION=$(get_permissions_section "$PERMS_FILE")
+dogma_debug_log "Permissions file: $PERMS_FILE (inherits: ${DOGMA_INHERIT_FILE:-none})"
 dogma_debug_log "Permissions section: ${PERMS_SECTION:0:100}..."
 
-if [ -z "$PERMS_SECTION" ]; then
+if [ -z "$PERMS_SECTION" ] && [ -z "$DOGMA_INHERIT_SECTION" ]; then
     dogma_debug_log "No <permissions> section found - allowing all"
     exit 0
 fi
 
 # Check git add (also catches: && git add, ; git add, || git add)
-if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\||\||\$\(|\(|`)\s*git\s+add(\s|$)'; then
+if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\||\||\$\(|\(|`)\s*git\s+(-C\s+\S+\s+)?add(\s|$)'; then
     MODE=$(get_permission_mode "$PERMS_SECTION" "§6gpt|git add")
+    SRC=$(perm_defining_file "§6gpt|git add")
     case "$MODE" in
         deny)
-            output_deny "BLOCKED by dogma: git add not permitted. Change [ ] to [x] or [?] for git add in $PERMS_FILE or run manually."
+            output_deny "BLOCKED by dogma: git add not permitted. Change [ ] to [x] or [?] for git add in $SRC or run manually."
             ;;
         ask)
-            output_ask "dogma: git add requires confirmation. Change [?] to [x] in $PERMS_FILE to allow automatically."
+            output_ask "dogma: git add requires confirmation. Change [?] to [x] in $SRC to allow automatically."
             ;;
     esac
 fi
 
 # Check git commit (also catches chained commands)
-if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\||\||\$\(|\(|`)\s*git\s+commit(\s|$)'; then
+if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\||\||\$\(|\(|`)\s*git\s+(-C\s+\S+\s+)?commit(\s|$)'; then
     MODE=$(get_permission_mode "$PERMS_SECTION" "§2w1t|git commit")
+    SRC=$(perm_defining_file "§2w1t|git commit")
     case "$MODE" in
         deny)
-            output_deny "BLOCKED by dogma: git commit not permitted. Change [ ] to [x] or [?] for git commit in $PERMS_FILE or run manually."
+            output_deny "BLOCKED by dogma: git commit not permitted. Change [ ] to [x] or [?] for git commit in $SRC or run manually."
             ;;
         ask)
-            output_ask "dogma: git commit requires confirmation. Change [?] to [x] in $PERMS_FILE to allow automatically."
+            output_ask "dogma: git commit requires confirmation. Change [?] to [x] in $SRC to allow automatically."
             ;;
     esac
 fi
 
 # Check git push (also catches chained commands)
-if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\||\||\$\(|\(|`)\s*git\s+push(\s|$)'; then
+if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\||\||\$\(|\(|`)\s*git\s+(-C\s+\S+\s+)?push(\s|$)'; then
     MODE=$(get_permission_mode "$PERMS_SECTION" "§bww9|git push")
+    SRC=$(perm_defining_file "§bww9|git push")
     case "$MODE" in
         deny)
-            output_deny "BLOCKED by dogma: git push not permitted. Change [ ] to [x] or [?] for git push in $PERMS_FILE or push manually."
+            output_deny "BLOCKED by dogma: git push not permitted. Change [ ] to [x] or [?] for git push in $SRC or push manually."
             ;;
         ask)
-            output_ask "dogma: git push requires confirmation. Change [?] to [x] in $PERMS_FILE to allow automatically."
+            output_ask "dogma: git push requires confirmation. Change [?] to [x] in $SRC to allow automatically."
             ;;
     esac
 fi

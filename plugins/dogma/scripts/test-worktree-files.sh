@@ -20,6 +20,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# hermetic: no session-folder file to inherit from, no credo pinned project
+mkdir -p "$TEST_TMP_DIR/session"
+export DOGMA_SESSION_DIR="$TEST_TMP_DIR/session" DOGMA_CREDO_CONFIG=none
+
 run_test() {
     local description="$1"
     local expected="$2"

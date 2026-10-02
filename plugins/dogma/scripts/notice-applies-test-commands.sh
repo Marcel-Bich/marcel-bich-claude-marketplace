@@ -10,7 +10,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib-permissions.sh
 source "$SCRIPT_DIR/lib-permissions.sh"
 
-FILE="$(find_permissions_file)" || exit 1
+# the repo's own file only (no pinned project, no inheritance): the notice asks to edit it
+FILE="$(dogma_find_up "$(pwd)")" || exit 1
 if perm_has_heading "$(cat "$FILE" 2>/dev/null)" ly5v 'Test Commands'; then
     exit 1
 fi

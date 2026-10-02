@@ -88,9 +88,17 @@ if [ "$TOOL_NAME" = "Bash" ]; then
     dogma_debug_log "Bash command: $BASH_COMMAND"
 fi
 
-# Find permissions file
-PERMS_FILE=$(find_permissions_file)
-if [ -z "$PERMS_FILE" ]; then
+# Find permissions file: the action's target (Write/Edit file path, Bash `git -C` /
+# leading `cd`) > credo pinned project > $PWD; missing settings are inherited from
+# the session folder's file (perm_is_checked falls back to DOGMA_INHERIT_SECTION)
+dogma_session_from_input "$INPUT"
+TARGET_DIR=""
+if [ -n "${FILE_PATH:-}" ]; then
+    TARGET_DIR="$FILE_PATH"
+elif [ -n "$BASH_COMMAND" ]; then
+    TARGET_DIR=$(dogma_target_from_command "$BASH_COMMAND") || TARGET_DIR=""
+fi
+if ! load_permissions "$TARGET_DIR"; then
     dogma_debug_log "No permissions file found - skip enforcement"
     exit 0
 fi

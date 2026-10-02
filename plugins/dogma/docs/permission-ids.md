@@ -32,6 +32,7 @@ Rules:
 
 | Id | Section | Meaning | Read by |
 |----|---------|---------|---------|
+| `§r3nx` | Inheritance | inherit permissions (missing settings come from the session folder's file; missing checkbox = on) | `lib-permissions.sh` (`dogma_inherit_file`, all dogma readers), credo `credo-dogma-mode.sh` |
 | `§6gpt` | Git Permissions | May run `git add` autonomously | `git-permissions.sh` (via `lib-permissions.sh`) |
 | `§2w1t` | Git Permissions | May run `git commit` autonomously | `git-permissions.sh` |
 | `§bww9` | Git Permissions | May run `git push` autonomously | `git-permissions.sh` |
@@ -64,3 +65,9 @@ Rules:
 
 `permissions-summary.sh` (and the dogma band that renders it) lists the ask/deny entries of
 the permission sections; it strips `(§xxxx)` from the labels, so ids never show up there.
+
+Inheritance (`§r3nx`) is per id as well: a reader first looks a setting up in the file that
+applies (target of the action > credo pinned project > session folder); only when that file
+does not define it (no line with its id, and no matching text line without id) the session
+folder's file is asked. `permissions-summary.sh` never lists `§r3nx` itself (a switch, not a
+restriction) and marks inherited entries in its JSON output under `"source"`.
