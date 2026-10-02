@@ -1,0 +1,546 @@
+Changelog of the credo plugin. Newest first. Months group releases; no day dates. History before v0.65.0 is summarized by minor version.
+
+# 2026-10
+
+## v0
+
+### v0.70
+
+#### v0.70.0
+
+##### Added
+
+- LAN relay `ensure` and `restart` subcommands
+- Self-healing relay autostart
+
+##### Fixed
+
+- LAN relay restart is race-safe: pidfile and bind retry prevent a second instance
+
+### v0.69
+
+#### v0.69.0
+
+##### Added
+
+- `peer-lan init --replace` and `--remove` to update or drop a peer entry
+- Firewall (ufw) hint when the relay port is not reachable
+
+##### Changed
+
+- LAN relay forwards via the advertised peer address, so it works behind NAT
+
+##### Fixed
+
+- `stop` and `status` no longer match their own process
+
+### v0.68
+
+#### v0.68.3
+
+##### Changed
+
+- Mirrored LAN peer names use a `__` separator instead of `@`, so they are addressable by SendMessage
+
+#### v0.68.2
+
+##### Fixed
+
+- Windows portproxy refresh no longer aborts on wsl.exe stderr noise
+
+#### v0.68.1
+
+##### Fixed
+
+- credo band parses lowercase and space-separated test/question letter codes
+
+#### v0.68.0
+
+##### Added
+
+- `/credo:peer-lan init` for one-command LAN relay setup
+- whoami and reachability help for the LAN relay
+
+##### Changed
+
+- Peer routing is address-based
+
+### v0.67
+
+#### v0.67.0
+
+##### Changed
+
+- LAN relay shared token is optional; the default setup is token-less
+
+### v0.66
+
+#### v0.66.0
+
+##### Added
+
+- Self-healing WSL2 portproxy setup for the LAN relay
+- Native Linux path for the LAN relay
+
+### v0.65
+
+#### v0.65.2
+
+##### Added
+
+- Auto-start hook for the LAN relay
+- Single-instance guard for the relay
+
+##### Changed
+
+- Documented the peer-name contract
+
+#### v0.65.1
+
+##### Changed
+
+- Relay runs holder workers concurrently
+
+##### Security
+
+- LAN relay caps concurrent TCP handlers
+- Peer bridge skips LAN descriptors
+
+#### v0.65.0
+
+##### Added
+
+- LAN peer relay (`/credo:peer-lan`): cross-machine peer sessions over the local network without the cloud
+
+### v0.64
+
+#### Added
+
+- Optimisation audit `/credo:optimize` (opt-in, read-only scan, findings offered one by one, freshness check)
+
+#### Changed
+
+- credo readers understand dogma setting ids
+- dogma-mode detection uses the same file resolution and per-session inheritance as dogma
+
+### v0.63
+
+#### Added
+
+- Worktree flow for parallel items: hydra when installed and enabled, native git worktree fallback
+- Automatic cleanup of merged worktrees when an item closes
+
+#### Changed
+
+- Subagents may commit in their own worktree only; push and merge stay with the main agent
+
+### v0.62
+
+#### Added
+
+- Parallel work rules: touches-overlap check, resource gate and heavy items instead of a fixed two-track limit
+
+### v0.61
+
+#### Added
+
+- Audit risk tiers (full/lean) with an `audit: full` override and batched lean audits
+
+### v0.60
+
+#### Changed
+
+- credo band shows mode, role, open letters and autonomy even without an item system
+
+### v0.59
+
+#### Added
+
+- Wait-loop rule in the orchestration skill and a non-blocking hint for `pgrep -f` wait loops
+
+### v0.58
+
+#### Added
+
+- Peer etiquette: info/urgent handling rule for receivers, tag-and-bundle reminder for senders
+
+#### Changed
+
+- Peer messages no longer pause autonomy
+
+### v0.57
+
+#### Added
+
+- credo band shows a paused autonomous run and flashes the tag on pause and re-arm
+
+### v0.56
+
+#### Added
+
+- Optional Claude Code band with live item counts, session mode and role, open letters, autonomy line and an item and shorthand pane
+
+### v0.55
+
+#### Changed
+
+- Autonomy state is keyed per session, so one session's autonomy never affects another
+
+### v0.54
+
+#### Added
+
+- Per-status item counts script and item-move shorthands go/bk/pk/ar
+
+### v0.53
+
+#### Added
+
+- Budget read-back shows the active profile, config layers and the source of each cap
+
+# 2026-09
+
+## v0
+
+### v0.52
+
+#### Added
+
+- Visible test/question letter convention with continuous letters and an open-letters footer
+
+### v0.51
+
+#### Changed
+
+- `#N` is reserved for real items; harness tasks and other numbering use `§cct_N`
+
+### v0.50
+
+#### Added
+
+- User shorthand legend injected at every session start, in any directory
+
+### v0.49
+
+#### Added
+
+- Deterministic auto-unblock sweep: blocked items return when their blockers are done or verified
+
+### v0.48
+
+#### Changed
+
+- ntfy read-back must resolve the topic via the config and show the output
+
+### v0.47
+
+#### Added
+
+- Verify screenshots are relocated into the pinned project via a PostToolUse hook
+
+### v0.46
+
+#### Changed
+
+- Autonomy-off flag `--suspend-done` renamed to `--after-suspend`
+
+# 2026-08
+
+## v0
+
+### v0.45
+
+#### Changed
+
+- Read-back must show the command output as proof
+
+### v0.44
+
+#### Changed
+
+- Source of truth over paraphrase or memory for delegation, audit and config read-back
+
+### v0.43
+
+#### Added
+
+- Suspend-on-idle directive is enforced at the end of an autonomous run
+
+### v0.42
+
+#### Changed
+
+- Compact thresholds aligned to 80,92 (distance to auto-compact)
+
+### v0.41
+
+#### Changed
+
+- Budget numbers must be read first in the autonomous read-back
+
+### v0.40
+
+#### Changed
+
+- Item bodies are kept fresh, no more stale open items
+
+### v0.39
+
+#### Added
+
+- Persistent suspend-on-idle directive in autonomous mode
+
+### v0.38
+
+#### Added
+
+- credo sandbox for clarify pre-work
+
+### v0.37
+
+#### Added
+
+- Persistent session roles (plan/clarify, task/build)
+- Thorough-clarify standard and hardened subagent priming
+- Plugin-freshness reminder to stay on the latest cached plugin version
+
+#### Changed
+
+- Every autonomous start requires at least the short-form read-back
+
+### v0.36
+
+#### Added
+
+- Numbered user-test lists and verified move on explicit user instruction, enforced by a move-helper hook
+- Post-compact rehydrate and intent-aware autonomy resume
+- Per-directory onboarding decision with `/credo:disable` and `/credo:enable`
+- `/credo:explain` command and skill
+- Config-resolved ntfy send helper with a `personal.ntfy_server` key
+
+#### Changed
+
+- Mode opt-in eagerly loads the items skill
+
+### v0.35
+
+#### Changed
+
+- Attended pause and next-item meta-nags dropped in favour of a drive-forward rule with a throttled reminder
+
+### v0.34
+
+#### Added
+
+- 5h budget guard PreToolUse hook for autonomous runs, subagent-aware
+- compact-plus minimal mode
+
+### v0.33
+
+#### Added
+
+- Per-profile config override and profile-scoped state
+
+### v0.32
+
+#### Added
+
+- Cross-profile peer bridge for ListAgents/SendMessage
+
+### v0.31
+
+#### Added
+
+- Per-repo special rules in `.credo/RULES.md`
+
+### v0.30
+
+#### Added
+
+- Named-Decision-Test, local-only autonomous verify restart and a richer ntfy digest
+
+### v0.29
+
+#### Added
+
+- SessionStart hook with a one-time workflow ask and a knowledge re-feed
+
+### v0.28
+
+#### Added
+
+- `3_blocked` status with an entry gate for `2_go` and an empty-queue end-of-run
+
+#### Changed
+
+- go=go build rule
+
+# 2026-07
+
+## v0
+
+### v0.27
+
+#### Changed
+
+- Injected time and limits are kept fresh
+
+### v0.26
+
+#### Added
+
+- One-item-per-Ask-round discipline and session-mode awareness
+
+### v0.25
+
+#### Added
+
+- skill-capture: turn recurring workflows into reusable skills
+
+### v0.24
+
+#### Added
+
+- Setup wires the limit compact trigger to compact-plus
+
+### v0.23
+
+#### Changed
+
+- Audit and Definition-of-Done gate hardened with finding disposition and docs currency
+
+### v0.22
+
+#### Added
+
+- Budget guardrails with weekly pause and resume, opt-in machine sleep
+
+### v0.21
+
+#### Added
+
+- Autonomous mode bootstraps itself via skill auto-trigger without a host CLAUDE.md
+
+### v0.20
+
+#### Added
+
+- cwd-aware project resolution with hub guard, session pin and guided setup
+
+### v0.19
+
+#### Added
+
+- Config-driven task backend written by setup
+
+### v0.18
+
+#### Added
+
+- Autonomy keep-alive hooks (Stop and UserPromptSubmit)
+
+### v0.17
+
+#### Changed
+
+- credo is the mentor; GSD becomes an optional task backend
+
+### v0.16
+
+#### Changed
+
+- Verify becomes four-valued with a not-started layer state
+
+### v0.15
+
+#### Added
+
+- `/credo:migrate` command and skill for repo migration
+
+### v0.14
+
+#### Added
+
+- Opt-in versioning of `.credo/`, WSL endpoints, wiring verification, case-rename guard and identity cascade
+
+### v0.12
+
+#### Added
+
+- Subagent self-sufficiency: rules travel into subagents
+
+### v0.11
+
+#### Added
+
+- Session mode skills: active, passive, autonomous
+
+### v0.10
+
+#### Added
+
+- Portable safety skill
+
+### v0.9
+
+#### Added
+
+- Work-item model with folder-based status and a Definition of Done
+
+### v0.8
+
+#### Added
+
+- compact-plus skill
+
+### v0.7
+
+#### Added
+
+- Budget skill
+
+### v0.6
+
+#### Added
+
+- Building-block skills
+
+### v0.5
+
+#### Added
+
+- Per-session session-mode mechanic
+
+### v0.4
+
+#### Added
+
+- `.credo/` structure, id counter and config cascade
+
+# 2026-02
+
+## v0
+
+### v0.3
+
+#### Changed
+
+- Setup separated from psalm into its own `/credo:setup` command
+
+# 2026-01
+
+## v0
+
+### v0.2
+
+#### Added
+
+- `/credo:psalm` interactive guide with topic selection
+- Setup checks for required plugins and system tools, offers `/dogma:sync` when rules are missing
+- `/credo:session-init` command for workflow injection
+
+### v0.1
+
+#### Added
+
+- credo plugin with workflow templates and guidance
