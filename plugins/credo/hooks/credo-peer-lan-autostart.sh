@@ -12,11 +12,20 @@
 # daemon exits cleanly on EADDRINUSE. This hook additionally checks for an already
 # running daemon up front, so it does not even spawn a doomed second process.
 #
+# Under WSL (NAT mode) it ALSO best-effort triggers the Windows scheduled task that
+# refreshes the portproxy (Windows-LAN-IP:PORT -> current WSL-IP:PORT), so a LAN peer
+# can reach the daemon even though the WSL IP changed since last boot. See
+# scripts/credo-peer-lan-winproxy.ps1 (the user registers that task once per machine).
+# On native Linux there is no NAT and no portproxy is needed, so that trigger is skipped.
+#
 # SAFETY / fail-safe:
-#   - Always exits 0. A missing python3, a missing config, or any other error must
-#     never surface as a hook failure or abort the session.
-#   - Disable with CREDO_PEER_LAN set to 0/false/no/off (the same toggle the daemon
-#     honors).
+#   - Always exits 0. A missing python3, a missing config, a missing powershell.exe, an
+#     unregistered task, or any other error must never surface as a hook failure or
+#     abort the session.
+#   - Disable the whole relay (daemon + proxy trigger) with CREDO_PEER_LAN set to
+#     0/false/no/off (the same toggle the daemon honors).
+#   - Disable ONLY the Windows portproxy trigger (still start the daemon) with
+#     CREDO_PEER_LAN_WINPROXY set to 0/false/no/off.
 
 # Intentionally NO `set -e`: a SessionStart hook must never abort the session.
 
@@ -50,5 +59,32 @@ mkdir -p "$cfgdir/credo" 2>/dev/null || true
 # pgrep check above missed a racing start, the loser exits 0 without disturbing it.
 nohup "$script" daemon >>"$cfgdir/credo/peer-lan.log" 2>&1 &
 disown 2>/dev/null || true
+
+# WSL only: refresh the Windows portproxy so the just-started daemon is reachable from
+# the LAN despite a changed WSL IP. Best-effort, non-blocking, fail-safe - it only
+# triggers an already-registered scheduled task; it never changes the firewall or the
+# portproxy itself (that is the user's one-time elevated -Install step). On native Linux
+# this block is skipped (no NAT -> the daemon already listens on the LAN directly).
+case "${CREDO_PEER_LAN_WINPROXY:-1}" in
+  0|false|no|off) : ;;   # proxy-trigger opt-out: the daemon was still started above
+  *)
+    # CREDO_PEER_LAN_PROCVERSION overrides the proc-version path (defaults to the real
+    # /proc/version); it exists only so the test suite can simulate a non-WSL host on a
+    # WSL machine. In production it is unset and the real file is read.
+    procver="${CREDO_PEER_LAN_PROCVERSION:-/proc/version}"
+    if grep -qi microsoft "$procver" 2>/dev/null || [ -n "${WSL_DISTRO_NAME:-}" ]; then
+      if command -v powershell.exe >/dev/null 2>&1; then
+        task="${CREDO_PEER_LAN_WINPROXY_TASK:-credo-peer-lan-proxy}"
+        # Cap the call with timeout when available so a slow/hung powershell cannot
+        # linger; it is backgrounded and disowned either way, so the hook never blocks.
+        to=""
+        command -v timeout >/dev/null 2>&1 && to="timeout 15"
+        # shellcheck disable=SC2086  # $to is an intentional optional command prefix
+        ( $to powershell.exe -NoProfile -Command "schtasks /Run /TN $task" >/dev/null 2>&1 || true ) &
+        disown 2>/dev/null || true
+      fi
+    fi
+    ;;
+esac
 
 exit 0

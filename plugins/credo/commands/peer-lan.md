@@ -50,12 +50,63 @@ These steps touch the network and must be performed by Marcel himself:
    `CREDO_PEER_LAN_CONFIG`). See `scripts/peer-lan.example.json` or the README for the
    shape: `this_machine`, `listen_host`, `listen_port`, a shared `token` (identical on
    every machine), and `peers[]` of `{name, host, port}`.
-2. Open the chosen `listen_port` in the host firewall for the LAN only, and under WSL
-   set up any portproxy so the Windows host forwards the port to the WSL daemon.
+2. Make the daemon reachable from the LAN - see Cross-machine networking below. This
+   differs between WSL2 (needs a Windows portproxy) and native Linux (at most a firewall
+   allow rule).
 3. Use the SAME `token` on every machine; machines with a different token are rejected.
 
-Do NOT perform step 2 or 3 automatically - opening a port and editing a firewall are
-manual, user-owned actions.
+Do NOT perform step 2 or 3 automatically - opening a port, editing a firewall, and
+registering a scheduled task are manual, user-owned actions that need elevation.
+
+## Cross-machine networking
+
+The daemon listens on `listen_host:listen_port` (default `0.0.0.0:48610`). How a LAN peer
+reaches it depends on the platform. In every case `-Port` / the firewall port MUST match
+`listen_port` in `peer-lan.json`.
+
+### WSL2 (default NAT mode)
+
+In WSL2 NAT mode a LAN machine cannot reach the WSL daemon directly: the WSL instance is
+behind a NAT only the Windows host sees, and its IP changes on every WSL restart. The
+Windows host must forward its own LAN-IP:PORT to the current WSL IP:PORT (a `netsh`
+portproxy) and allow the port inbound. `scripts/credo-peer-lan-winproxy.ps1` makes this
+self-healing. Run it ONCE per machine in an ELEVATED Windows PowerShell:
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File "\\wsl$\<distro>\<plugin path>\scripts\credo-peer-lan-winproxy.ps1" -Install -Port 48610
+```
+
+(The script lives under the plugin at `plugins/credo/scripts/credo-peer-lan-winproxy.ps1`;
+use its real Windows-visible path, for example the `\\wsl$\...` UNC path or a copy on the
+Windows side. `-Port` must equal `listen_port`.)
+
+`-Install` creates a LAN-scoped inbound firewall rule, registers a scheduled task that
+re-applies the portproxy at Windows startup and runs this script with `-Refresh`, and
+applies the portproxy once immediately. After that it is automatic: the task refreshes at
+boot, and the `credo-peer-lan-autostart.sh` hook triggers the same task on demand each
+time the relay daemon starts - so the WSL-IP-change problem is handled with nothing manual
+afterward. Remove everything again with `-Uninstall`.
+
+This one-time elevated admin step is REQUIRED on EVERY machine, including remote ones; it
+cannot be performed remotely (it opens a port and registers a scheduled task on that
+host). Disable just the hook's proxy trigger with `CREDO_PEER_LAN_WINPROXY=0`.
+
+### Native Linux
+
+No NAT, no portproxy: the daemon already listens on the LAN at `0.0.0.0:listen_port`. If a
+firewall is active, allow the port once, scoped to the LAN; otherwise there is nothing to
+do. For `ufw`, from the LAN subnet (adjust to your subnet):
+
+```
+sudo ufw allow from 192.168.0.0/16 to any port 48610 proto tcp
+```
+
+### Security posture
+
+The firewall rule is LAN-scoped (`LocalSubnet` on Windows, a private subnet for `ufw`),
+not open to the internet. The relay itself still never forges a `from-mode`, so every
+receiving session keeps applying its own consent gate - the portproxy only changes
+reachability, not trust.
 
 ## Action from `$ARGUMENTS` (default: status)
 
