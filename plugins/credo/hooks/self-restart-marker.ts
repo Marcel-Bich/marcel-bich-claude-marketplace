@@ -65,3 +65,29 @@ export function restartNotice(marker: RestartMarker | null, sessionId: string, n
   const cancel = marker.status === 'pending' ? ' - cancel: credo-self-restart.py cancel' : ''
   return { text: `credo self-restart ${when}${reason}${cancel}` }
 }
+
+// how long the toast outlives the scheduled stop: covers the stop, the update and
+// the relaunch; the old TUI goes away with the restart anyway
+const TOAST_GRACE_MS = 2 * 60 * 1000
+
+export type RestartToast = { key: string; text: string; timeoutMs: number }
+
+// ONE static toast per pending restart (no countdown, so it never needs refreshing):
+// the band shows it once per key and lets it stand until the restart
+export function restartToast(marker: RestartMarker | null, sessionId: string, nowMs: number): RestartToast | null {
+  if (!isVisible(marker, sessionId) || marker === null) return null
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const at = marker.scheduledMs === null ? null : new Date(marker.scheduledMs)
+  const when =
+    marker.status === 'stopping' ? 'now'
+      : at === null ? 'pending'
+        : `at ${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`
+  const reason = marker.reason ? ` (reason: ${marker.reason})` : ''
+  const cancel = marker.status === 'pending' ? ' - cancel: credo-self-restart.py cancel' : ''
+  const left = marker.scheduledMs === null ? 0 : Math.max(0, marker.scheduledMs - nowMs)
+  return {
+    key: `${marker.sessionId}|${marker.scheduledMs ?? ''}|${marker.reason}`,
+    text: `credo self-restart ${when}${reason}${cancel}`,
+    timeoutMs: left + TOAST_GRACE_MS,
+  }
+}

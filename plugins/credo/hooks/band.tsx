@@ -7,14 +7,14 @@
 // the next ladder rung and the next wake. One pane shows items or the
 // shorthand cheatsheet; the prompt hint lists the shorthands the band hides.
 // While a self-restart of THIS session is pending (scripts/credo-self-restart.py
-// marker), a blinking notice with a countdown tops the band and a toast repeats it.
+// marker), a blinking notice with a countdown tops the band and one standing toast names the time.
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
 import type { CredoCounts, CredoItemList, CredoRestart, CredoSession, CredoShorthand } from '../types'
 import { parseLetters } from './letters'
-import { parseMarker, restartNotice } from './self-restart-marker'
+import { parseMarker, restartNotice, restartToast } from './self-restart-marker'
 import type { RestartMarker } from './self-restart-marker'
 
 const HIGHLIGHT = '#d946ef'
@@ -41,12 +41,12 @@ const restart = atom({ plugin: 'credo', key: 'restart' } as const, null)
 const restartBlink = atom({ plugin: 'credo', key: 'restartBlink' } as const, false)
 // yellow warning sign before the notice (dogma's block uses the no-entry sign)
 const RESTART_ICON = '⚠'
-// while a restart is pending: tick (blink phase + marker stat) every 500 ms and a
-// fresh toast every second tick, each living one second, so the toast counts down
-// and leaves within a second of a cancel; otherwise only a slow stat of the marker
+// while a restart is pending: tick (blink phase + marker stat) every 500 ms and show
+// ONE static toast per pending restart that stands until the restart (a new one only
+// when the schedule or reason changes); otherwise only a slow stat of the marker
 const RESTART_TICK_MS = 500
 const RESTART_IDLE_MS = 3000
-const RESTART_TOAST_MS = 1000
+const RESTART_CANCEL_TOAST_MS = 5000
 
 // e rotates these presets, each hiding a bit more. The dogma band reads this
 // value ({ plugin: 'credo', key: 'preset' }) and hides itself at 'open only'.
@@ -260,6 +260,7 @@ async function loadShorthands($: EngineInterface) {
 let restartMarker: RestartMarker | null = null
 let restartMtime = -1
 let restartTicks = 0
+let restartToastKey: string | null = null
 let restartTimer: (() => void) | null = null
 let restartFast = false
 
@@ -289,10 +290,19 @@ async function restartTick($: EngineInterface, path: string, sid: string) {
     if (notice) {
       restartTicks += 1
       await update($, restartBlink, v => !v)
-      if (restartTicks % 2 === 1) $.ui.toast(`${RESTART_ICON} ${notice.text}`, { timeoutMs: RESTART_TOAST_MS })
+      const toast = restartToast(restartMarker, sid, await $.clock.now())
+      if (toast && toast.key !== restartToastKey) {
+        restartToastKey = toast.key
+        $.ui.toast(`${RESTART_ICON} ${toast.text}`, { timeoutMs: toast.timeoutMs })
+      }
     } else if (restartTicks !== 0) {
       restartTicks = 0
       await update($, restartBlink, () => false)
+      // the standing toast cannot be withdrawn, so a cancel says so in a short one
+      if (restartToastKey !== null && restartMarker?.status === 'cancelled') {
+        $.ui.toast('credo: self-restart cancelled', { timeoutMs: RESTART_CANCEL_TOAST_MS })
+      }
+      restartToastKey = null
     }
   } catch (err) {
     $.ui.log(`credo band: self-restart notice failed: ${String(err)}`, { to: 'debug' })

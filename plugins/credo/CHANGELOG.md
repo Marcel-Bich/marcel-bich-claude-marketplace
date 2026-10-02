@@ -6,6 +6,12 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.72
 
+#### v0.72.7
+
+##### Fixed
+
+- credo band shows ONE standing self-restart toast with the restart time instead of a new toast every second; a cancel adds a short "cancelled" toast
+
 #### v0.72.6
 
 ##### Changed
