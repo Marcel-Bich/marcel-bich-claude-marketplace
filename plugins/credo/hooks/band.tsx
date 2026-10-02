@@ -255,8 +255,8 @@ async function openPanel($: EngineInterface, view: 'items' | 'help') {
 // "Open for testing: N, S" / "Open questions: Y"; a dash or nothing means none
 function parseLetters(answer: string): CredoLetters {
   const grab = (label: string) => {
-    const m = answer.match(new RegExp(`${label}:\\s*([A-Z0-9, ]+)`))
-    return m?.[1] ? m[1].split(',').map(x => x.trim()).filter(Boolean) : []
+    const m = answer.match(new RegExp(`${label}:\\s*([A-Za-z0-9, ]+)`))
+    return m?.[1] ? m[1].split(/[,\s]+/).map(x => x.trim()).filter(Boolean) : []
   }
   return { tests: grab('Open for testing'), questions: grab('Open questions') }
 }
