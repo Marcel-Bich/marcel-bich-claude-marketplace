@@ -15,8 +15,8 @@
 #   - PostToolUse (AUTONOMOUS): during a long autonomous keep-alive run no user
 #     prompt arrives, so the UserPromptSubmit counter stalls. To still resurface
 #     the nudge there, the PostToolUse path fires on a TIME throttle (default
-#     120s). It only runs when full autonomy is actually active (the
-#     credo-autonomy-active flag is set and not paused) - so attended sessions use
+#     120s). It only runs when full autonomy is actually active FOR THIS SESSION
+#     (credo/autonomy/<session_id>/active set, not paused) - so attended sessions use
 #     ONLY the turn-count path and there is no double-injection.
 #
 # Scope: fires only when credo is ACTIVE for this session (a mode is set, OR the
@@ -81,8 +81,11 @@ if [[ "$event" == "PostToolUse" ]]; then
     # AUTONOMOUS path: only while full autonomy is genuinely running (flag set,
     # not paused). Attended sessions never take this path -> no overlap with the
     # turn-count path below.
-    [[ -f "$CONFIG_DIR/credo-autonomy-active" ]] || exit 0
-    [[ -f "$CONFIG_DIR/credo-autonomy-paused" ]] && exit 0
+    # Per-session autonomy state (credo-autonomy-lib.sh): only THIS session's
+    # autonomous run counts; missing lib -> inert.
+    # shellcheck source=credo-autonomy-lib.sh
+    . "$(dirname "${BASH_SOURCE[0]}")/credo-autonomy-lib.sh" 2>/dev/null || exit 0
+    credo_autonomy_running "$session_id" || exit 0
 
     # Time throttle via per-session state (the nudge text is static, so no
     # delta-guard is needed - only the time gate).

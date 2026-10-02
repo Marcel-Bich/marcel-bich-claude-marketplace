@@ -16,7 +16,7 @@ description: >
   autonomous-mode specifics: steward not initiator, ScheduleWakeup keep-alive, the
   deferred-question flow, end-of-run hibernate with veto, and per-task ntfy. This is the
   umbrella skill of the credo building blocks - it references them, never duplicates them.
-  The keep-alive and hibernate RULES apply only while credo-autonomy-active is set, but the skill
+  The keep-alive and hibernate RULES apply only while this session's autonomy flag is set, but the skill
   should still LOAD on the grant intent so it can enter the mode. One mode is active at a time.
 ---
 
@@ -30,17 +30,20 @@ ntfy, and hibernate cleanly at the end. It is the dach / umbrella over the credo
 blocks - it wires them together and adds the unattended-run machinery, and it duplicates
 none of their content.
 
-Autonomous mode is only in force while the autonomy flag `credo-autonomy-active` is set -
-which is what the `/credo:session-autonomous` command sets (and it lifts the
-`credo-autonomy-paused` opt-out). If that flag is not set, do not run the keep-alive or
-hibernate behavior below.
+Autonomous mode is only in force while THIS session's autonomy flag is set - the file
+`credo/autonomy/<session_id>/active` under the Claude config dir
+(`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`), which is what the `/credo:session-autonomous` command
+sets (and it lifts the session's `paused` opt-out). All autonomy state (`active`, `paused`,
+`wake-scheduled`) is keyed by session_id: autonomy in one session never keeps another session
+alive, never throttles it, and an autonomy-off in another session never ends this run. If that
+flag is not set, do not run the keep-alive or hibernate behavior below.
 
 ## Bootstrap - enter the mode only on an unambiguous grant
 
 This skill may LOAD on a full-autonomy / AFK-handoff intent, but entering autonomous mode
 requires an unambiguous, explicit user grant. If this skill loaded because the user just handed
-off full-autonomy / unattended / AFK work and the mode is NOT yet set (no `credo-autonomy-active`
-flag), FIRST enter autonomous mode by running `/credo:session-autonomous`. That command runs
+off full-autonomy / unattended / AFK work and the mode is NOT yet set (no autonomy
+flag for this session), FIRST enter autonomous mode by running `/credo:session-autonomous`. That command runs
 `session-mode-set.sh autonomous`, sets the flag, and activates the rules below - which resolves the
 chicken-and-egg problem of needing the mode set before this skill's keep-alive can apply. Then
 follow the rules below. If the mode is already autonomous, skip this and continue.
@@ -203,7 +206,7 @@ until when (per the budget skill), and performs the mandatory budget-start read-
 understanding back before starting (full read-back on the first start, at least the short
 form on every start). Never exceed a cap to finish "just one more thing".
 
-### Keep-alive (hook-enforced, only while credo-autonomy-active is set)
+### Keep-alive (hook-enforced, only while this session's autonomy flag is set)
 
 Keep the session awake so an unattended run does not fall asleep while there is open work
 and budget. "Open work" means BUILDABLE work - at least one buildable item remaining - NOT
@@ -224,7 +227,11 @@ autonomous mode (no flag set) the hook is completely inert - a plain no-op stop.
   [60, 3600] seconds, so for a longer pause CHAIN several wake-ups rather than one long one.
 - Record each planned wake with `credo-autonomy-wake-mark.sh` (same delaySeconds as the
   ScheduleWakeup call). This is what the Stop hook checks to let the turn stop, so marking the
-  wake is what satisfies the enforcement.
+  wake is what satisfies the enforcement. The marker is per session
+  (`credo/autonomy/<session_id>/wake-scheduled`); like `credo-autonomy-on.sh` and
+  `credo-autonomy-off.sh`, the script resolves the session_id from an explicit argument, else
+  `$CREDO_SESSION_ID`, else `$CLAUDE_CODE_SESSION_ID`, and refuses (exit 1, nothing written)
+  when none is available. The Stop hook message prints the exact commands with this session's id.
 - On each wake, re-check the flag. If autonomy has been turned off (the user returned, or
   the run ended), do not keep building - end quietly.
 - Never end a turn without a scheduled wake-up while the flag is set and there is open work

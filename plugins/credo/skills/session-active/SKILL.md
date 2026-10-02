@@ -363,7 +363,8 @@ common core:
 
 Active mode does NOT keep the session awake. There is no ScheduleWakeup keep-alive loop
 and no autonomy flag here - the `/credo:session-active` command clears
-`credo-autonomy-active` and sets the `credo-autonomy-paused` opt-out. The only way to
+this session's autonomy flag (`credo/autonomy/<session_id>/active`) and sets its `paused`
+opt-out; other sessions are never affected. The only way to
 enable keep-alive is an explicit switch to autonomous mode (`/credo:session-autonomous`).
 
 ## Log progress via the compact trigger, not on your own

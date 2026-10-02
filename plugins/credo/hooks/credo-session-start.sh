@@ -169,11 +169,15 @@ fi
 # gates the whole hook).
 ask_enabled=true
 [[ "${CREDO_SESSION_START_ASK:-true}" == "true" ]] || ask_enabled=false
-# Autonomy guard: if a global full-autonomy run is active (the same flag the
-# keep-alive Stop hook uses), never inject the ASK - nobody is at the keyboard
-# to answer AskUserQuestion. This closes the gap where a fresh autonomous
-# session has no mode file yet at its first startup (state would be "open").
-[[ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo-autonomy-active" ]] && ask_enabled=false
+# Autonomy guard: if a full-autonomy run is active FOR THIS SESSION (the same
+# per-session state the keep-alive Stop hook uses, credo/autonomy/<session_id>/),
+# never inject the ASK - nobody is at the keyboard to answer AskUserQuestion.
+# Another session's autonomous run never affects this session. Missing lib ->
+# treated as "not autonomous".
+# shellcheck source=credo-autonomy-lib.sh
+if . "$(dirname "${BASH_SOURCE[0]}")/credo-autonomy-lib.sh" 2>/dev/null; then
+    credo_autonomy_running "$session_id" && ask_enabled=false
+fi
 
 # --- KNOWLEDGE block (credo active): full list, tagged by execution class ---
 read -r -d '' KNOWLEDGE <<'K'

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # session-mode-set.sh <active|passive|autonomous|clear> [session_id]
 #
-# Set the persistent, per-session credo mode and couple it to the autonomy
-# keep-alive flags:
+# Set the persistent, per-session credo mode and couple it to THIS session's
+# autonomy keep-alive state (credo/autonomy/<session_id>/, never another session's):
 #   - autonomous       -> credo-autonomy-on.sh  (keep-alive ON, paused opt-out lifted)
 #   - active | passive -> credo-autonomy-off.sh (keep-alive OFF, paused set)
+# The resolved session_id is passed on to both helpers explicitly.
 # Modes are exclusive: one state file per session, holding exactly one mode.
 #
 # State is written atomically (tmp + mv -f) to a file keyed by session_id under
@@ -51,7 +52,7 @@ if [ "$mode" = "clear" ]; then
     rm -f "$state_file"
     # --mode-switch: a legitimate user mode change must never be blocked by the
     # autonomy-off directive gate (Riegel).
-    [ -x "$SCRIPT_DIR/credo-autonomy-off.sh" ] && "$SCRIPT_DIR/credo-autonomy-off.sh" --mode-switch || true
+    [ -x "$SCRIPT_DIR/credo-autonomy-off.sh" ] && "$SCRIPT_DIR/credo-autonomy-off.sh" --mode-switch "$session_id" || true
     echo "session-mode cleared (session $session_id)"
     exit 0
 fi
@@ -62,10 +63,10 @@ mv -f "$tmp" "$state_file"
 
 # --- couple to the autonomy keep-alive flags -------------------------------
 if [ "$mode" = "autonomous" ]; then
-    [ -x "$SCRIPT_DIR/credo-autonomy-on.sh" ] && "$SCRIPT_DIR/credo-autonomy-on.sh" "session-mode: autonomous set for session $session_id" || true
+    [ -x "$SCRIPT_DIR/credo-autonomy-on.sh" ] && "$SCRIPT_DIR/credo-autonomy-on.sh" --session "$session_id" "session-mode: autonomous set for session $session_id" || true
 else
     # --mode-switch: legitimate user switch to active/passive; bypass the gate.
-    [ -x "$SCRIPT_DIR/credo-autonomy-off.sh" ] && "$SCRIPT_DIR/credo-autonomy-off.sh" --mode-switch || true
+    [ -x "$SCRIPT_DIR/credo-autonomy-off.sh" ] && "$SCRIPT_DIR/credo-autonomy-off.sh" --mode-switch "$session_id" || true
 fi
 
 echo "session-mode = $mode (session $session_id)"

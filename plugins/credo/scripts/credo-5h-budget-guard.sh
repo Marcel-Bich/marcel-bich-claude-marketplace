@@ -9,8 +9,9 @@
 # blocking; in the hard zone it BLOCKS the tool calls that are not allowed at
 # that stage, so a parallel burst can no longer overshoot the Anthropic 5h cap.
 #
-# Scope: ONLY autonomous runs (credo-autonomy-active flag set). active/passive/
-# normal sessions are completely unaffected (clean no-op / allow). Without the
+# Scope: ONLY autonomous runs (THIS session's credo/autonomy/<session_id>/active
+# flag set, not paused). active/passive/normal sessions - including other
+# sessions while one session runs autonomously - are completely unaffected (clean no-op / allow). Without the
 # limit plugin present, or without a fresh cache, it never disturbs a tool call.
 #
 # Data sources (display values only, NEVER credentials):
@@ -45,17 +46,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || exit 0
 
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
-# =============================================================================
-# GATE 1 - autonomous only. Without the autonomy flag this hook is a pure no-op.
-# =============================================================================
-[[ -f "$CONFIG_DIR/credo-autonomy-active" ]] || exit 0
-
-# Deliberate opt-out (credo-autonomy-off) -> stand down like the keep-alive hook.
-[[ -f "$CONFIG_DIR/credo-autonomy-paused" ]] && exit 0
-
 # --- read hook stdin ---------------------------------------------------------
 INPUT=$(cat 2>/dev/null) || exit 0
 [[ -n "$INPUT" ]] || exit 0
+
+# =============================================================================
+# GATE 1 - autonomous only, PER SESSION. The autonomy state is keyed by
+# session_id (credo/autonomy/<session_id>/, see hooks/credo-autonomy-lib.sh);
+# the id comes from the hook stdin JSON (subagent tool calls carry the parent
+# session's id), else $CREDO_SESSION_ID / $CLAUDE_CODE_SESSION_ID. Without this
+# session's active flag - or when it is paused (credo-autonomy-off), or the id is
+# unknown - this hook is a pure no-op. Another session's autonomous run never
+# throttles this session.
+# =============================================================================
+# shellcheck source=../hooks/credo-autonomy-lib.sh
+. "$SCRIPT_DIR/../hooks/credo-autonomy-lib.sh" 2>/dev/null || exit 0
+stdin_session_id=$(printf '%s' "$INPUT" | jq -r '.session_id // ""' 2>/dev/null) || stdin_session_id=""
+session_id=$(credo_autonomy_resolve_id "$stdin_session_id") || exit 0
+credo_autonomy_running "$session_id" || exit 0
 
 tool_name=$(printf '%s' "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null) || tool_name=""
 agent_id=$(printf '%s' "$INPUT" | jq -r '.agent_id // ""' 2>/dev/null) || agent_id=""

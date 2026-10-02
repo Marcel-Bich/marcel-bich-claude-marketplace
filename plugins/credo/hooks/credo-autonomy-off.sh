@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # credo-autonomy-off.sh [--after-suspend|--override|--mode-switch] [session_id]
 #
-# End the full-autonomy keep-alive mode. Removes the active flag plus the wake
-# marker and sets a hard paused opt-out so the Stop keep-alive hook stays inert
-# until credo-autonomy-on.sh is explicitly called again.
+# End the full-autonomy keep-alive mode FOR ONE SESSION. Removes this session's
+# active flag plus wake marker and sets its hard paused opt-out so the Stop
+# keep-alive hook stays inert for this session until credo-autonomy-on.sh is
+# explicitly called again. State is per session (see credo-autonomy-lib.sh):
+#   ${CREDO_AUTONOMY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/autonomy}/<session_id>/
+# so ending autonomy here never touches another session's autonomous run.
 #
 # This stays a PURE, fail-safe flag flip: no ntfy, no Ask, no presence check, and
 # it does NOT delete the durable suspend-on-idle directive
@@ -25,19 +28,23 @@
 #   --mode-switch   invoked by session-mode-set.sh on an active/passive/clear mode
 #                   switch (a legitimate user mode change) -> gate not applicable.
 #
-# session_id (needed only to read the directive) resolves like
+# session_id (keys the autonomy state AND the directive) resolves like
 # credo-suspend-directive.sh: the positional arg, else $CREDO_SESSION_ID, else
 # $CLAUDE_CODE_SESSION_ID (Claude Code sets the latter for tool bash calls, so a
-# normal invocation from the agent has it). FAIL-SAFE: if the session_id cannot be
-# determined, or the directive helper is missing / errors, we do NOT block (no
-# false lockout) - the flag flip proceeds as before. The gate only ever engages on
-# a POSITIVELY read "directive is set".
+# normal invocation from the agent has it). Without a valid session_id the state
+# cannot be keyed -> hard error (stderr, exit 1), nothing written. FAIL-SAFE for
+# the gate: if the directive helper is missing / errors, we do NOT block (no false
+# lockout) - the flag flip proceeds as before. The gate only ever engages on a
+# POSITIVELY read "directive is set".
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || SCRIPT_DIR=""
-CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-FLAG="$CONFIG_DIR/credo-autonomy-active"
-WAKE="$CONFIG_DIR/credo-wake-scheduled"
+if [ -z "$SCRIPT_DIR" ] || [ ! -f "$SCRIPT_DIR/credo-autonomy-lib.sh" ]; then
+    echo "credo-autonomy-off: credo-autonomy-lib.sh not found; nothing written" >&2
+    exit 1
+fi
+# shellcheck source=credo-autonomy-lib.sh
+. "$SCRIPT_DIR/credo-autonomy-lib.sh"
 
 # --- parse args: bypass flags in any order, first non-flag = session_id --------
 bypass=""
@@ -50,11 +57,20 @@ for a in "$@"; do
     esac
 done
 
+if ! session_id="$(credo_autonomy_resolve_id "$arg_session_id")"; then
+    echo "credo-autonomy-off: cannot determine a valid session_id (pass it as an argument or set CLAUDE_CODE_SESSION_ID); nothing written" >&2
+    exit 1
+fi
+STATE_DIR="$(credo_autonomy_dir "$session_id")"
+
 do_flag_flip() {
-    mkdir -p "$(dirname "$FLAG")" 2>/dev/null || true
-    rm -f "$FLAG" "$WAKE" 2>/dev/null || true
-    : > "$CONFIG_DIR/credo-autonomy-paused" 2>/dev/null || true
-    echo "credo-autonomy OFF (paused: Stop hook guaranteed inert until credo-autonomy-on)"
+    if ! mkdir -p "$STATE_DIR" 2>/dev/null; then
+        echo "credo-autonomy-off: cannot create state dir $STATE_DIR" >&2
+        exit 1
+    fi
+    rm -f "$STATE_DIR/active" "$STATE_DIR/wake-scheduled" 2>/dev/null || true
+    : > "$STATE_DIR/paused" 2>/dev/null || true
+    echo "credo-autonomy OFF for session $session_id (paused: Stop hook guaranteed inert for this session until credo-autonomy-on)"
 }
 
 # --- directive gate ------------------------------------------------------------
@@ -75,9 +91,7 @@ elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -x "${CLAUDE_PLUGIN_ROOT}/scripts/cre
     DIRECTIVE_SCRIPT="${CLAUDE_PLUGIN_ROOT}/scripts/credo-suspend-directive.sh"
 fi
 
-session_id="${arg_session_id:-${CREDO_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}}"
-
-if [ -n "$DIRECTIVE_SCRIPT" ] && [ -n "$session_id" ]; then
+if [ -n "$DIRECTIVE_SCRIPT" ]; then
     # get: prints "on" + exit 0 when set; exits 3 (no output) when not set.
     dval="$("$DIRECTIVE_SCRIPT" get "$session_id" 2>/dev/null || true)"
     dval="$(printf '%s' "$dval" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"

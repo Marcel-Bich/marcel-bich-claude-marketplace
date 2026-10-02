@@ -16,8 +16,10 @@ Use this ONLY when full autonomy plus AFK has been explicitly granted.
 
 1. Run: `${CLAUDE_PLUGIN_ROOT}/hooks/session-mode-set.sh autonomous`
    This writes the per-session state (keyed by the current session_id) and turns
-   keep-alive ON (sets `credo-autonomy-active`, lifts the
-   `credo-autonomy-paused` opt-out). Keep-alive is hook-enforced: a registered
+   keep-alive ON for THIS session only (sets `credo/autonomy/<session_id>/active`
+   under the Claude config dir, lifts this session's `paused` opt-out). Autonomy
+   in this session never keeps another session alive or ends another session's
+   run. Keep-alive is hook-enforced: a registered
    Stop hook blocks a stop that has no scheduled ScheduleWakeup and instructs the
    model to set one, and a registered UserPromptSubmit hook turns autonomy off on
    any real user message (see the loaded skill).

@@ -103,7 +103,8 @@ Keep it within the "less is more" rule: bring only genuinely reusable patterns.
 ### No keep-alive
 
 Passive mode does NOT keep the session awake. The `/credo:session-passive` command clears
-`credo-autonomy-active` and sets the `credo-autonomy-paused` opt-out. Keep-alive exists
+this session's autonomy flag (`credo/autonomy/<session_id>/active`) and sets its `paused`
+opt-out; other sessions are never affected. Keep-alive exists
 only in autonomous mode (`/credo:session-autonomous`).
 
 ### Commit and push immediately

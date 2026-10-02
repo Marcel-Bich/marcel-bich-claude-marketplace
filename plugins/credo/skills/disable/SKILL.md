@@ -48,8 +48,9 @@ an error, report it plainly and continue with the other.
 
 2. Clear the active session mode for THIS session and switch keep-alive autonomy off, in one
    step. `session-mode-set.sh clear` removes this session's mode file and runs the same keep-alive
-   teardown that active/passive use (clears `credo-autonomy-active`, sets the
-   `credo-autonomy-paused` opt-out):
+   teardown that active/passive use for THIS session only (removes
+   `credo/autonomy/<session_id>/active`, sets `credo/autonomy/<session_id>/paused`; other
+   sessions are untouched):
 
    ```bash
    "${CLAUDE_PLUGIN_ROOT}/hooks/session-mode-set.sh" clear

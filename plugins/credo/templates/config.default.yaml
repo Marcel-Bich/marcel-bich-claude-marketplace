@@ -123,7 +123,8 @@ budget:
     soft_percent: 92
     hard_percent: 95
   # Autonomous-run 5h pacing ladder (credo-5h-budget-guard.sh PreToolUse hook).
-  # Active ONLY when credo-autonomy-active is set. Two tracks read the live 5h
+  # Active ONLY for a session whose autonomy flag is set (per session:
+  # credo/autonomy/<session_id>/active). Two tracks read the live 5h
   # utilization before each relevant tool call and self-limit; the soft stages
   # inject a recommendation, the hard stages block disallowed tool calls (concept:
   # docs/TODO-credo-5h-budget-guard-concept.md, sections 5a/5b/6).
