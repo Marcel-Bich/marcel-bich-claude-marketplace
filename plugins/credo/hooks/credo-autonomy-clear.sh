@@ -19,7 +19,9 @@
 # [CREDO-AUTONOMY-WAKE] and must NOT clear the flag. Background subagent
 # completions (<task-notification>) and automated system events
 # ([SYSTEM NOTIFICATION - NOT USER INPUT]) are also exempt, otherwise every
-# subagent finish would end autonomy.
+# subagent finish would end autonomy. Peer messages from other Claude sessions
+# (<cross-session-message>) are exempt too: a peer is not the user, and
+# credo-peer-message.sh tells the receiver how to handle them inside the run.
 #
 # PER SESSION: the autonomy state lives under
 #   ${CREDO_AUTONOMY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/autonomy}/<session_id>/
@@ -56,7 +58,7 @@ if command -v jq >/dev/null 2>&1; then
 fi
 
 case "$prompt$input" in
-    *"[CREDO-AUTONOMY-WAKE]"* | *"<task-notification>"* | *"[SYSTEM NOTIFICATION - NOT USER INPUT]"*)
+    *"[CREDO-AUTONOMY-WAKE]"* | *"<task-notification>"* | *"[SYSTEM NOTIFICATION - NOT USER INPUT]"* | *"<cross-session-message"*)
         exit 0
         ;;
 esac

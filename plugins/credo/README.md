@@ -188,6 +188,15 @@ The `credo-peer-bridge.sh` hook (SessionStart, UserPromptSubmit, PostToolUse) au
 - **Disable** with `CREDO_PEER_BRIDGE=0`.
 - **Caveat:** the descriptor format is internal to Claude Code and undocumented, so a future version may change it. The bridge is fail-safe - if that happens, peers simply stop appearing; nothing is corrupted.
 
+## Peer message etiquette
+
+Peer sessions tend to over-communicate: every ack, status note or handoff lands as a new turn, and the receiver often reacts right away (a reply, an immediate commit and push). `credo-peer-message.sh` only informs, it never blocks:
+
+- **Receiver** (UserPromptSubmit): when the prompt is a `<cross-session-message>`, it injects the handling rule. `[urgent]` (or untagged but asking a question or needing a decision) is handled now; `[info]` and other untagged messages get no reply and no immediate action, and resulting `.credo`/item changes are batched into the next natural commit (idle time, next release, before a compact).
+- **Sender** (PreToolUse `SendMessage`): reminds the agent to start the message with `[info]` or `[urgent]`, bundle points, never send pure acks, and end with "No reply needed" when no answer is needed.
+- **Autonomy:** a peer message never pauses autonomy (`credo-autonomy-clear.sh` exempts it); only the user's own messages do.
+- **Disable** with `CREDO_PEER_ETIQUETTE=0`.
+
 ## Claude Code band (optional)
 
 When credo runs inside Claude Code with mods support, `hooks/band.tsx` (listed under `modules` in `hooks/hooks.json`) draws a small band above the prompt. It is optional: it only reads credo's state through the core scripts above and renders it. The core - hooks, scripts, skills, items - works exactly the same without it and in harnesses without mods.
