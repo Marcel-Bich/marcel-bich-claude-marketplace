@@ -6,6 +6,12 @@ Changelog of the dogma plugin. Newest first. Months group releases; no day dates
 
 ### v1.44
 
+#### v1.44.1
+
+##### Changed
+
+- Notice tests use an invented project name instead of a real one
+
 #### v1.44.0
 
 ##### Added

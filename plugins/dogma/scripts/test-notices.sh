@@ -520,9 +520,9 @@ run_test "non-git: mark src:n001 exit 0" "0" "$RC"
 run_test "non-git: seen keyed to the folder" "yes" "$([ -f "$SEEN/$(key_of "$WS_REAL")/.src/n001" ] && echo yes || echo no)"
 
 # credo pinned project without its own file: inherits the session folder's file
-PIN="$TEST_TMP_DIR/werkbank"
+PIN="$TEST_TMP_DIR/acme"
 make_repo "$PIN"
-PIN_NOGIT="$TEST_TMP_DIR/werkbank-nogit"
+PIN_NOGIT="$TEST_TMP_DIR/acme-nogit"
 mkdir -p "$PIN_NOGIT"
 for P in "$PIN" "$PIN_NOGIT"; do
     label="pinned git project"
@@ -550,7 +550,7 @@ FAKE_PIN="$PIN" DOGMA_CREDO_CONFIG="$FAKE_CREDO" DOGMA_SESSION_DIR="$WS2" captur
 run_test "pinned inherits a file with Test Commands: only source notices" "src:n001 src:n002 src:n003 src:n004" "$(ids_of "$OUT")"
 
 # pinned project with its own file: keyed to its git toplevel, not to the session folder
-PIN_OWN="$TEST_TMP_DIR/werkbank-own"
+PIN_OWN="$TEST_TMP_DIR/acme-own"
 make_repo "$PIN_OWN"
 printf '%s' "$PERMS_NO_SECTION" > "$PIN_OWN/DOGMA-PERMISSIONS.md"
 FAKE_PIN="$PIN_OWN" DOGMA_CREDO_CONFIG="$FAKE_CREDO" DOGMA_SESSION_DIR="$WS" capture "$NP" --json "$WS"
