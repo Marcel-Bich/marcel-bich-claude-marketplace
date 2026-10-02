@@ -65,12 +65,19 @@ function pack(pieces: Piece[], columns: number, gap: number): Piece[][] {
 
 // summary of the session's cwd; exit 4 (no DOGMA-PERMISSIONS.md) or any failure hides the band
 async function refresh($: EngineInterface) {
+  // exit 4 (no DOGMA-PERMISSIONS.md) hides the band; any other failure (a timeout
+  // under load) keeps the last known value and logs the reason to the debug log
   let next: DogmaSummary | null = null
   try {
     const r = await $.process.run([`${$.plugin.root}/scripts/permissions-summary.sh`, '--json'], { timeoutMs: 5000 })
+    if (r.exitCode !== 0 && r.exitCode !== 4) {
+      $.ui.log(`dogma band: permissions-summary.sh exit ${r.exitCode}: ${r.stderr.trim()}`, { to: 'debug' })
+      return
+    }
     next = r.exitCode === 0 ? JSON.parse(r.stdout) : null
-  } catch {
-    next = null
+  } catch (err) {
+    $.ui.log(`dogma band: permissions-summary.sh failed: ${String(err)}`, { to: 'debug' })
+    return
   }
   const prev = await read($, summary)
   await update($, summary, () => next)
