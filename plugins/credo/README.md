@@ -197,6 +197,10 @@ Peer sessions tend to over-communicate: every ack, status note or handoff lands 
 - **Autonomy:** a peer message never pauses autonomy (`credo-autonomy-clear.sh` exempts it); only the user's own messages do.
 - **Disable** with `CREDO_PEER_ETIQUETTE=0`.
 
+## Wait-loop hint
+
+`credo-wait-hint.sh` (PreToolUse Bash) adds a hint when a command loops on `pgrep -f` (`until ! pgrep -f "X"` matches the waiting shell's own command line and never ends): wait on a result file or one specific PID with a time limit, or rely on the harness completion notification. It never blocks; the rule itself is in the orchestration skill. Disable with `CREDO_WAIT_HINT=0`.
+
 ## Claude Code band (optional)
 
 When credo runs inside Claude Code with mods support, `hooks/band.tsx` (listed under `modules` in `hooks/hooks.json`) draws a small band above the prompt. It is optional: it only reads credo's state through the core scripts above and renders it. The core - hooks, scripts, skills, items - works exactly the same without it and in harnesses without mods.

@@ -54,6 +54,13 @@ large reads or long builds that a subagent can carry.
   subagent's final result (its returned message), plus short status checks. Pulling
   full transcripts is what floods and rots the main context.
 - Check status periodically rather than streaming everything continuously.
+- Waiting on background work: prefer the harness completion notification over any
+  polling. When you must poll, wait on a result file or one specific PID, always with a
+  time limit (`for i in $(seq 1 60); do [ -f done ] && break; sleep 10; done`). Never
+  loop on `pgrep -f "<pattern>"`: it matches the waiting shell's own command line, so
+  `until ! pgrep -f X` never ends (`credo-wait-hint.sh` flags such loops, it does not
+  block). On every wake, check for stuck agents: no new output for a long stretch ->
+  inspect and report instead of waiting on.
 - A subagent's report is NEVER grounds to claim or move an item status. Consuming only
   the final result keeps context lean, but it does not transfer the subagent's judgment
   to the main agent. Before the main agent asserts a status or moves an item, it must
