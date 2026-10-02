@@ -59,7 +59,10 @@
 
 .PARAMETER AllowFile
   Path of the allowlist data file (default %LOCALAPPDATA%\credo\peer-lan-allow.json of
-  the user running -Install; recorded in the task so it works for the S4U task too).
+  the user running -Install for the default port 48610, peer-lan-allow-<Port>.json for
+  any other port; recorded in the task so it works for the S4U task too). The firewall
+  rule ("credo-peer-lan <Port>") and the applied-state file are per port as well, so a
+  second instance with its own -Port and -TaskName never touches the first one.
 
 .PARAMETER TaskName
   Name of the scheduled task (default "credo-peer-lan-proxy").
@@ -90,15 +93,20 @@ $ErrorActionPreference = "Stop"
 # Version of THIS script. Bump it by hand whenever the script changes: the WSL relay
 # compares it with the copy installed in %ProgramData%\credo and tells the user to
 # re-run -Install once (one UAC prompt) when the installed copy is older.
-$ScriptVersion = 2
+$ScriptVersion = 3
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 $InstallDir = Join-Path $env:ProgramData "credo"
 $InstalledScript = Join-Path $InstallDir "credo-peer-lan-winproxy.ps1"
-$AppliedFile = Join-Path $InstallDir "peer-lan-applied.json"
+# Per-port names so a second relay instance (other -Port, own -TaskName) never
+# overwrites the first one's rule, data file or applied state. The default port keeps
+# the original names (backward compatible with an existing install). The WSL side
+# (win_port_suffix in credo-peer-lan.py) uses the same scheme.
+$PortSuffix = if ($Port -eq 48610) { "" } else { "-$Port" }
+$AppliedFile = Join-Path $InstallDir ("peer-lan-applied{0}.json" -f $PortSuffix)
 $RuleName = "credo-peer-lan $Port"
 if ([string]::IsNullOrWhiteSpace($AllowFile)) {
-    $AllowFile = Join-Path $env:LOCALAPPDATA "credo\peer-lan-allow.json"
+    $AllowFile = Join-Path $env:LOCALAPPDATA ("credo\peer-lan-allow{0}.json" -f $PortSuffix)
 }
 
 function Test-Admin {
@@ -432,7 +440,7 @@ function Invoke-Uninstall {
     param([int]$Port, [string]$TaskName)
 
     if ($DryRun) {
-        Write-Plan ("remove task '{0}', firewall rule '{1}', the portproxy for {2} and {3}" -f $TaskName, $RuleName, $Port, $InstallDir)
+        Write-Plan ("remove task '{0}', firewall rule '{1}', the portproxy for {2}, the applied state {3} and the installed copy in {4} unless another task still uses it" -f $TaskName, $RuleName, $Port, $AppliedFile, $InstallDir)
         return
     }
     if (-not (Test-Admin)) {
@@ -456,10 +464,19 @@ function Invoke-Uninstall {
     }
     & netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=$Port 2>$null | Out-Null
     Write-Host ("Portproxy entry for listenport {0} removed (if any)." -f $Port)
-    foreach ($f in @($InstalledScript, $AppliedFile)) {
-        if (Test-Path -LiteralPath $f -PathType Leaf) { Remove-Item -LiteralPath $f -Force }
+    if (Test-Path -LiteralPath $AppliedFile -PathType Leaf) { Remove-Item -LiteralPath $AppliedFile -Force }
+    # The installed script copy is shared by every instance (one copy, many tasks):
+    # keep it while any other scheduled task still runs it.
+    $others = @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
+        $_.TaskName -ne $TaskName -and (($_.Actions | ForEach-Object { $_.Arguments }) -join " ") -like ("*{0}*" -f $InstalledScript)
+    })
+    if ($others.Count -gt 0) {
+        Write-Host ("Installed copy kept in {0}: still used by task(s) {1}." -f $InstallDir, (($others | ForEach-Object { $_.TaskName }) -join ", "))
     }
-    Write-Host ("Installed copy removed from {0} (if any)." -f $InstallDir)
+    else {
+        if (Test-Path -LiteralPath $InstalledScript -PathType Leaf) { Remove-Item -LiteralPath $InstalledScript -Force }
+        Write-Host ("Installed copy removed from {0} (if any)." -f $InstallDir)
+    }
 }
 
 # -- dispatch ----------------------------------------------------------------
