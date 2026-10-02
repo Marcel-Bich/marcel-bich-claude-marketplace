@@ -1,5 +1,6 @@
 {
-  "_comment": "Example credo LAN peer relay config. Copy to ~/.claude/credo/peer-lan.json (or point CREDO_PEER_LAN_CONFIG at it) and edit. The relay is a no-op until this file exists. Use the SAME token on every machine; a machine with a different token is rejected.",
+  "_comment": "Example credo LAN peer relay config. Copy to ~/.claude/credo/peer-lan.json (or point CREDO_PEER_LAN_CONFIG at it) and edit. The relay is a no-op until this file exists; once it does, it starts automatically on session start (one daemon per machine) and can be disabled with CREDO_PEER_LAN set to 0/false/no/off. Use the SAME token on every machine; a machine with a different token is rejected.",
+  "_peers_comment": "IMPORTANT: each peers[].name MUST equal that remote machine's own this_machine value. A remote session only materializes (its holder + descriptor are created) when the sender machine's this_machine matches a configured peer name here. A mismatch means the remote peer silently never appears. Example: on pc-hub below, the laptop machine must set this_machine to 'laptop' and the workbench machine must set this_machine to 'workbench'.",
   "this_machine": "pc-hub",
   "listen_host": "0.0.0.0",
   "listen_port": 48610,

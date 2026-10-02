@@ -20,7 +20,27 @@ cloud. It extends the same-machine peer model: a small daemon on each machine pu
 its local sessions to its configured peers over TCP and mirrors every remote session
 into the local `sessions/` registry so it shows up as an ordinary peer.
 
-The relay is a no-op until a config file exists. It is OFF by default.
+The relay is a no-op until a config file exists. It is OFF by default. Once the config
+exists it starts automatically on session start (see Auto-start below), so start/stop
+here is mostly for manual control.
+
+## Peer name contract (common footgun)
+
+Each `peers[].name` MUST equal that remote machine's own `this_machine` value. A remote
+session only materializes (its holder and mirrored descriptor are created) when the
+sender machine's `this_machine` matches a configured peer name. A mismatch means the
+remote peer silently never appears. The daemon logs one warning per unknown machine
+when a roster arrives from a machine that is not among its configured peer names - check
+`peer-lan.log` if a peer you expect is missing.
+
+## Auto-start and single instance
+
+Once the config file exists, the `credo-peer-lan-autostart.sh` SessionStart hook brings
+the daemon up automatically, detached so it never blocks session start. Only one daemon
+runs per machine: the listen port is the single-instance lock, so a second daemon on the
+same `listen_host:listen_port` logs that another is already listening and exits 0 without
+disturbing the running one. Disable the auto-start (and the relay) with `CREDO_PEER_LAN`
+set to `0`/`false`/`no`/`off`.
 
 ## One-time setup (the user does this, not the agent)
 

@@ -461,6 +461,12 @@ def _forward(line, token, host, port, args, sess_dir):
 # ===========================================================================
 # DAEMON
 # ===========================================================================
+class AlreadyRunning(Exception):
+    """Raised when the listen port is already bound by another daemon instance.
+    The listen port itself is the single-instance lock, so a second start exits
+    cleanly (0) instead of crashing with a traceback."""
+
+
 class Daemon(object):
     def __init__(self, cfg):
         self.cfg = cfg
@@ -469,6 +475,11 @@ class Daemon(object):
         self.listen_host = cfg.get("listen_host", "127.0.0.1")
         self.listen_port = int(cfg.get("listen_port", DEFAULT_PORT))
         self.peers = [p for p in cfg.get("peers", []) if isinstance(p, dict)]
+        # names of configured peers; a roster from a machine NOT in here cannot be
+        # matched to a peer, so its holder would fail to start (see _on_roster warning)
+        self.peer_names = set(
+            p.get("name") for p in self.peers if p.get("name")
+        )
         self.roster_interval = float(
             cfg.get("roster_interval", DEFAULT_ROSTER_INTERVAL)
         )
@@ -491,6 +502,7 @@ class Daemon(object):
         # key (machine, sessionId) -> dict(holder=Popen, proxy, descriptor, pid)
         self.remotes = {}
         self.machine_seen = {}  # machine -> last roster monotonic time
+        self.unknown_warned = set()  # machines warned once (not a configured peer)
         self.stop = threading.Event()
         self.srv = None
 
@@ -500,11 +512,28 @@ class Daemon(object):
             os.makedirs(self.sock_dir, exist_ok=True)
         except OSError as exc:
             log("cannot create sock dir %s: %s" % (self.sock_dir, exc))
-        self._cleanup_stale_descriptors()
-        self._cleanup_stale_sockets()
+        # Bind the listen port FIRST - it is the single-instance lock. If another
+        # daemon already holds it the bind fails with EADDRINUSE; we exit cleanly (0)
+        # WITHOUT running any descriptor/socket cleanup, so a running daemon is never
+        # disturbed by a second accidental start.
         self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.srv.bind((self.listen_host, self.listen_port))
+        try:
+            self.srv.bind((self.listen_host, self.listen_port))
+        except OSError as exc:
+            if exc.errno == errno.EADDRINUSE:
+                log(
+                    "another daemon already listening on %s:%d, exiting"
+                    % (self.listen_host, self.listen_port)
+                )
+                try:
+                    self.srv.close()
+                except OSError:
+                    pass
+                raise AlreadyRunning()
+            raise
+        self._cleanup_stale_descriptors()
+        self._cleanup_stale_sockets()
         self.srv.listen(32)
         log(
             "listening on %s:%d as %r; peers=%s"
@@ -668,6 +697,20 @@ class Daemon(object):
         now = time.monotonic()
         with self.lock:
             self.machine_seen[machine] = now
+            # Misconfiguration signal: a roster from a machine that is not among our
+            # configured peer names means no peers[].name equals that machine's
+            # this_machine, so its holder cannot resolve the peer and the remote peer
+            # silently never appears. Warn once per unknown machine (no per-interval
+            # spam), at daemon level so it is visible in the main log, not only the
+            # holder-level "peer X not in config" line.
+            if machine not in self.peer_names and machine not in self.unknown_warned:
+                self.unknown_warned.add(machine)
+                log(
+                    "roster from %r which is not among this daemon's configured peer "
+                    "names %s; a remote session only materializes when a peers[].name "
+                    "equals that machine's this_machine - check the config"
+                    % (machine, sorted(self.peer_names))
+                )
             present = {}
             for s in sessions:
                 if not isinstance(s, dict):
@@ -1002,6 +1045,8 @@ def run_daemon(_args):
     signal.signal(signal.SIGINT, _sig)
     try:
         daemon.start()
+    except AlreadyRunning:
+        return 0
     except Exception as exc:
         log("failed to start: %s" % exc)
         return 1

@@ -11,7 +11,9 @@
 #     carries NO from-mode attribute (the most important assertion),
 #   - a wrong shared token is rejected (nothing is delivered),
 #   - a "credoPeerLan"-marked descriptor is created for a remote session and it is
-#     NOT a "credoPeerBridge" one.
+#     NOT a "credoPeerBridge" one,
+#   - single instance: a second daemon on the same listen port exits 0 cleanly
+#     (EADDRINUSE lock) and the first daemon keeps relaying undisturbed.
 #
 # Usage: bash test-credo-peer-lan.sh
 
@@ -451,6 +453,46 @@ for _ in $(seq 1 25); do
     sleep 0.2
 done
 ok "daemon stays responsive after a connection flood (valid deliver still succeeds)" "$([ -n "$delivered" ] && echo 0 || echo 1)"
+
+# --- SI: single instance - a second daemon on the same port exits 0 cleanly -----
+# Start a second daemon with machine A's EXACT config (same 127.0.0.1:$PA). The bind
+# must fail with EADDRINUSE, so it logs "another daemon already listening" and exits 0
+# without touching any descriptor or socket daemon A owns. Daemon A keeps working.
+before_desc="$(marked_desc "$TMP/A/cfg/sessions" || true)"
+SECOND_LOG="$TMP/A/daemon2.log"
+: > "$SECOND_LOG"
+CLAUDE_CONFIG_DIR="$TMP/A/cfg" CREDO_PEER_LAN_CONFIG="$TMP/A/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/A/sock" "$PY" "$DAEMON" daemon >"$SECOND_LOG" 2>&1 &
+SECOND_PID=$!; PIDS="$PIDS $SECOND_PID"
+second_rc=""
+for _ in $(seq 1 30); do   # it must exit well within a couple of seconds
+    if ! kill -0 "$SECOND_PID" 2>/dev/null; then
+        wait "$SECOND_PID"; second_rc=$?; break
+    fi
+    sleep 0.1
+done
+if [ -z "$second_rc" ]; then
+    kill -KILL "$SECOND_PID" 2>/dev/null || true
+    FAIL=$((FAIL + 1)); printf 'FAIL SI: second daemon did not exit promptly\n'
+else
+    check "second daemon on the same listen port exits 0" "0" "$second_rc"
+fi
+grep -q "already listening" "$SECOND_LOG"; ok "second daemon logs the single-instance notice" "$?"
+# daemon A is undisturbed: its credoPeerLan descriptor (and proxy socket) still exist,
+# and a fresh message through A's holder proxy still reaches B - proving the second
+# daemon neither clobbered A's descriptor/socket nor killed its holder.
+after_desc="$(marked_desc "$TMP/A/cfg/sessions" || true)"
+ok "first daemon still has its credoPeerLan descriptor after the second exits" \
+   "$([ -n "$after_desc" ] && echo 0 || echo 1)"
+si_ok=""
+if [ -n "${PROXY_A:-}" ] && [ -S "$PROXY_A" ]; then
+    "$PY" "$TMP/sendproxy.py" "$PROXY_A" "localA" "alive-after-second-start" "uds:$SENDER_A"
+    for _ in $(seq 1 30); do
+        if grep -q "alive-after-second-start" "$TMP/B/inbox.log" 2>/dev/null; then si_ok=1; break; fi
+        sleep 0.2
+    done
+fi
+ok "first daemon keeps relaying through its holder after the second one exits" "$([ -n "$si_ok" ] && echo 0 || echo 1)"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
