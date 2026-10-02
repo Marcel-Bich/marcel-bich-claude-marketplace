@@ -79,7 +79,16 @@ function Get-WslIp {
     # 0.0.0.0 inside WSL, so any WSL IP reaches it; we take the first IPv4 token of
     # `wsl hostname -I`. wsl.exe output can carry trailing CR / NUL bytes and several
     # space-separated addresses, so normalize and pick the first valid IPv4.
-    $raw = (& wsl.exe hostname -I) 2>$null
+    # wsl.exe may print warnings to stderr (e.g. "Processing /etc/fstab with mount -a
+    # failed" from a failing mount). Under $ErrorActionPreference='Stop' that stderr
+    # surfaces as a terminating NativeCommandError and would abort the refresh before
+    # netsh runs, so neutralize the preference locally and read stdout only.
+    $raw = $null
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $raw = (& wsl.exe hostname -I 2>$null) }
+    catch { $raw = $null }
+    finally { $ErrorActionPreference = $prev }
     if ($null -eq $raw) { return $null }
     $text = ($raw -join " ") -replace "`0", ""
     foreach ($tok in ($text -split "\s+")) {
