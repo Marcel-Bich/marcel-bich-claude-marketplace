@@ -7,6 +7,8 @@ allowed-tools:
   - Edit
   - AskUserQuestion
   - Glob
+  - Grep
+  - Bash(git branch:*)
 ---
 
 # /dogma:permissions - Create Permissions File
@@ -160,6 +162,31 @@ Options:
 
 Default: `[x] run relevant tests`, `[x] check build`, `[x] run ALL tests`
 
+### 3.10 Test Commands (optional)
+
+The checkboxes above say WHEN to test; this step records WHICH command runs at which stage. Every stage is optional - a stage left empty means Claude decides as before, and the user may leave all of them empty (then the whole `### Test Commands` subsection is omitted). dogma never runs these commands itself; Claude reads them via `scripts/test-commands.sh get <stage> [branch]` and runs them at the stage.
+
+Stages:
+- `commit` - fast static checks before every commit (lint, typecheck)
+- `push` - before `git push`
+- `relevant` - tests for the changed code when a builder/audit agent reports an item done (item-scoped, takes no branch filter)
+- `build` - build check
+- `all` - full suite at integration into a filtered branch and in Final Verification
+
+Before asking, detect suggestions from the repo's own files (read-only, nothing is written yet):
+- `package.json` scripts (`lint`, `typecheck`, `test`, `build`, ...) - use the repo's package manager (lockfile: `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`, else npm)
+- `pytest.ini`, `pyproject.toml` (`[tool.pytest]`, `[tool.ruff]`, ...), `tox.ini`, `setup.cfg`
+- `*.csproj` / `*.sln` (`dotnet build`, `dotnet test`)
+- `pubspec.yaml` (`flutter analyze`, `flutter test` or `dart test`)
+- `go.mod` (`go vet ./...`, `go build ./...`, `go test ./...`)
+- `Makefile` targets (`lint`, `test`, `build`, `check`)
+- existing git hooks (`.git/hooks/*` without `.sample`, `.husky/`, `.pre-commit-config.yaml`, `lefthook.yml`) - what they already run is a good `commit` / `push` candidate
+- CI config (`.github/workflows/*.yml`, `.gitlab-ci.yml`, `azure-pipelines.yml`, `Jenkinsfile`, ...) - the commands CI runs are good `build` / `all` candidates
+
+Also run `git branch -a` and offer the repo's long-lived branches (for example `main`, `develop`, `stage`) as optional branch filters for `commit`, `push`, `build` and `all`. Filter meaning: commit = the branch committed on; push = the push target; build/all = the branch the work is integrated into (local merge, push, or PR/MR into it). No filter = every branch.
+
+Ask per stage via AskUserQuestion: the detected suggestion (if any), "leave empty", and free text for a custom command. Ask for the branch filter only when the user set a command for that stage. Never invent a command that has no basis in the repo; nothing is written without the user's confirmation.
+
 ## Step 4: Generate DOGMA-PERMISSIONS.md
 
 Create the file with the user's choices:
@@ -235,6 +262,18 @@ After merge/review (order: relevant tests -> build -> ALL tests):
 - [x] run relevant tests
 - [x] check build
 - [x] run ALL tests
+
+### Test Commands
+
+Per-stage commands, all optional (missing line = Claude decides as before).
+Optional branch filter in brackets: the stage only applies when its branch is listed
+(commit: the branch committed on; push: the push target; build/all: the branch the work
+is integrated into - local merge, push, or PR/MR into it). No filter = every branch.
+- commit: `npm run lint`
+- push [main, develop, stage]: `npx vitest related --run`
+- relevant: `npx vitest related --run`
+- build: `npm run build`
+- all [main, stage]: `npm test`
 </permissions>
 
 ## Behavior
@@ -247,7 +286,7 @@ After merge/review (order: relevant tests -> build -> ALL tests):
 | delete files | Deletes files | Asks first | Logged to TO-DELETE.md |
 ```
 
-Replace markers based on user choices.
+Replace markers based on user choices. The `### Test Commands` lines above are examples: write only the stages the user confirmed (with their filters), and omit the whole subsection when every stage was left empty.
 
 ## Step 5: Confirm
 
@@ -266,6 +305,9 @@ No existing permissions file found. I'll help you create DOGMA-PERMISSIONS.md.
 
 **Workflow Permissions:**
 [Uses AskUserQuestion for each workflow category]
+
+**Test Commands (optional):**
+[Suggests commands detected from package.json, CI config, git hooks, ...; asks per stage, each may stay empty]
 
 Based on your answers:
 [Shows content]

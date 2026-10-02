@@ -58,6 +58,7 @@ fi
 # Check delegation settings from DOGMA-PERMISSIONS.md
 SKILL_DELEGATION="false"
 TASK_DELEGATION="false"
+TEST_COMMANDS="false"
 if [ -n "$PERMISSIONS_FILE" ]; then
     PERMS_CONTENT=$(cat "$PERMISSIONS_FILE" 2>/dev/null || true)
     if echo "$PERMS_CONTENT" | grep -qiE '^\s*-\s*\[x\].*Skill tool.*counts as delegation'; then
@@ -65,6 +66,9 @@ if [ -n "$PERMISSIONS_FILE" ]; then
     fi
     if echo "$PERMS_CONTENT" | grep -qiE '^\s*-\s*\[x\].*Task tool.*counts as delegation'; then
         TASK_DELEGATION="true"
+    fi
+    if echo "$PERMS_CONTENT" | grep -qiE '^\s*###\s+Test Commands\s*$'; then
+        TEST_COMMANDS="true"
     fi
 fi
 
@@ -142,6 +146,10 @@ echo ""
 echo "== STEP 5: FINALIZATION =="
 echo "  1. If Hydra: merge worktrees"
 echo "  2. Run ALL tests (final verification)"
+if [ "$TEST_COMMANDS" = "true" ]; then
+echo "     Test commands per stage (commit/push/relevant/build/all) are defined in DOGMA-PERMISSIONS.md:"
+echo "     use \"$(dirname "${BASH_SOURCE[0]}")/test-commands.sh get <stage> [branch]\" when it prints one (exit 4 = none, decide as before)"
+fi
 echo "  3. Inform user with summary"
 echo "  4. User accepts -> spawn checklist-manager"
 echo ""
