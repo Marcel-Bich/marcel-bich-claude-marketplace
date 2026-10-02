@@ -1,0 +1,16 @@
+[
+  { "key": "#N cf", "word": "clarify", "meaning": "clarify round for item N (structured questions until resolved)" },
+  { "key": "#N go", "word": "approve", "meaning": "GO approval: record it, check the GO gate, move to 2_go" },
+  { "key": "#N bk", "word": "block", "meaning": "block item N (needs a concrete blocker)" },
+  { "key": "#N dd", "word": "done", "meaning": "done: run the DoD gate, move to 2_done" },
+  { "key": "#N vf", "word": "verified", "meaning": "verified by you: move to 3_verified" },
+  { "key": "#N pk", "word": "park", "meaning": "park on hold (#N pk future = park for later)" },
+  { "key": "#N ar", "word": "archive", "meaning": "archive item N" },
+  { "key": "dd / vf", "word": "done/verified", "meaning": "alone: last thing done / verified (or: verify it for real)" },
+  { "key": "???", "word": "explain", "meaning": "explain the previous thing in depth (what, why, example, consequences)" },
+  { "key": "cm", "word": "commit", "meaning": "commit (repo rules, no push)" },
+  { "key": "ph", "word": "commit+push", "meaning": "commit + push (repo rules)" },
+  { "key": "cc-up", "word": "updated", "meaning": "Claude Code fully updated and restarted" },
+  { "key": "exclude", "word": "git-exclude", "meaning": "always .git/info/exclude, never .gitignore" },
+  { "key": "🧪 B / ❓ Y", "word": "letters", "meaning": "open test / question letters; answer \"B vf\", \"B2 vf\", \"Y: ...\"" }
+]

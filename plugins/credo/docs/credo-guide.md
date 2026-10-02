@@ -29,8 +29,9 @@ Design principles:
   - `credo-autonomy-keepalive.sh` (`Stop`) - in autonomous mode, blocks a stop that has no scheduled self-wake and instructs the agent to call ScheduleWakeup.
 
   The remaining autonomy scripts (`credo-autonomy-on.sh`, `credo-autonomy-off.sh`, `credo-autonomy-wake-mark.sh`), `session-mode-set.sh`, and `session-project-set.sh` are plain helper scripts invoked by the session commands and skills - they are NOT hooks. `credo-autonomy-lib.sh` is a sourced helper (not a hook) shared by all of them; it resolves the session_id and the per-session state dir. Because the `Stop` and second `UserPromptSubmit` hooks are now wired into `hooks.json`, autonomous keep-alive is hook-enforced at runtime (loop-safe, and inert outside autonomy - see section 4).
-- **scripts/** - `check-setup.sh`, `credo-init.sh`, `credo-id-next.sh`, `credo-config.sh`, `credo-budget-read.sh`, `credo-item-move.sh`, `credo-decision-set.sh` (records the per-session credo-workflow decision for the `SessionStart` hook).
-- **templates/** - `config.default.yaml` (builtin config defaults) and `item.template.md` (the work-item template).
+- **scripts/** - `check-setup.sh`, `credo-init.sh`, `credo-id-next.sh`, `credo-config.sh`, `credo-budget-read.sh`, `credo-item-move.sh`, `credo-decision-set.sh` (records the per-session credo-workflow decision for the `SessionStart` hook), and the read-only renderer helpers `credo-item-counts.sh` (item count per status), `credo-item-list.sh` (per status the total plus the newest N items as id + title) and `credo-session-status.sh` (one session's mode, role and autonomy state). The three helpers resolve the project and session exactly like the hooks (`CREDO_DIR` / `credo-config.sh resolve-project`; session id from the argument, `CREDO_SESSION_ID` or `CLAUDE_CODE_SESSION_ID`), print key=value lines or `--json`, and exit 4 when no credo project resolves (2 when no session id resolves for `credo-session-status.sh`).
+- **templates/** - `config.default.yaml` (builtin config defaults), `item.template.md` (the work-item template) and `shorthands.json` (the compact shorthand cheatsheet data the optional band renders: `key`, a one-`word` meaning and a one-line `meaning` per entry).
+- **hooks/band.tsx** (optional, Claude Code mods only) - listed under `modules` in `hooks/hooks.json`; see section 2.5. `types/index.d.ts` is its state contract, named as `types` in `plugin.json`.
 
 Skills and hooks are auto-discovered by Claude Code from their directories, matching the convention used by the sibling `limit` and `dogma` plugins. Only commands are declared in the manifest.
 
@@ -47,6 +48,17 @@ The `SubagentStart` hook injects a compact rule block into every subagent before
 ### 2.4 State on disk
 
 All credo state is per project under `.credo/` (see section 3) or per user under `~/.claude/credo/`. State files are written atomically. `.credo/**` is excluded from git on purpose; persistence across a compact is the files on disk plus your normal backups, not commits.
+
+### 2.5 Claude Code band (optional)
+
+In Claude Code builds with mods support, `hooks/band.tsx` draws a band above the prompt. It is strictly a renderer: it holds no business logic and no second source of truth, it only runs the read-only core scripts (`credo-item-counts.sh`, `credo-session-status.sh`, `credo-item-list.sh`, `credo-budget-read.sh`, `credo-config.sh get budget.autonomous_5h.main_ladder`) with this session's id (`CREDO_SESSION_ID`) and reads `templates/shorthands.json`. Everything else in credo works the same without it, and in other harnesses.
+
+- Line 1: `◆ credo` and the item count per status, short (`go: 12`) or long (`Go(go): 12`); colored per group (open yellow, blocked red when non-zero, finished green, parked gray), zero dimmed, 2 spaces inside a color group and 4 between groups, packed by hand to the band width. A count change flashes for 6 s (fuchsia for moves, white for pure creations) and raises a toast. Exit 4 from the counts script (no credo project) hides the band.
+- Line 2: the session mode/role (cyan), the open test/question letters (🧪 / ❓) parsed from the last main-loop answer (`Open for testing: ...` / `Open questions: ...`), and the buttons `☰ items` (`i`), `? help` (`h`), `⇆` (`l`, short/long form) and `◐ <preset>` (`e`, rotating `all` / `no parked` / `open + dogma` / `open only`).
+- Line 3, only while this session's autonomy runs: `⟳ auto 5h <now>%→<next rung>  wake HH:MM` (red once the 5h figure reaches the fourth ladder rung).
+- Items and help share one pane (`credo-panel`, also opened by `/credo-items`): per status the total and the newest 15 items, or the cheatsheet; one line per entry, truncated at the end.
+- The prompt hint gets `Shortcuts: <keys not visible in the band>`; with the long form on, each as `key(word)`.
+- Refresh: on session start, after Bash tool calls, on turn end and every 10 s. The preset is the state value `{ plugin: 'credo', key: 'preset' }`, which the dogma band reads to hide itself at `open only`.
 
 ## 3. The `.credo/` structure
 

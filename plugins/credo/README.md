@@ -140,6 +140,8 @@ Parked work lives under `items/parked/{hold,future}`; abandoned work under `item
 
 `scripts/credo-item-counts.sh [--json]` prints the item count per status folder of the resolved project (read-only, exit 4 when no credo project resolves), so any renderer can show live counts without knowing the folder layout.
 
+`scripts/credo-item-list.sh [--json] [--per N]` prints, per status folder, the total plus the newest N items (default 15) as id and title (frontmatter `title:`, else the slug); same project resolution and exit codes. `scripts/credo-session-status.sh [--json] [session_id]` prints one session's mode, role and autonomy state (running, next wake) from the per-session state files (read-only, exit 2 when no session id resolves).
+
 ### The Definition of Done gate
 
 An item may move to `2_done/` only when:
@@ -185,6 +187,16 @@ The `credo-peer-bridge.sh` hook (SessionStart, UserPromptSubmit, PostToolUse) au
 - **Safe by construction.** The hook only ever removes files that carry its own `credoPeerBridge` marker (plus leftover legacy symlinks and its own temp files). A real local descriptor is an unmarked regular file and is never touched or overwritten; it never removes directories and never touches anything outside the profile's `sessions/` dir, and it always exits 0 so it cannot surface as a hook error. Entries whose source session has ended are pruned on the next run.
 - **Disable** with `CREDO_PEER_BRIDGE=0`.
 - **Caveat:** the descriptor format is internal to Claude Code and undocumented, so a future version may change it. The bridge is fail-safe - if that happens, peers simply stop appearing; nothing is corrupted.
+
+## Claude Code band (optional)
+
+When credo runs inside Claude Code with mods support, `hooks/band.tsx` (listed under `modules` in `hooks/hooks.json`) draws a small band above the prompt. It is optional: it only reads credo's state through the core scripts above and renders it. The core - hooks, scripts, skills, items - works exactly the same without it and in harnesses without mods.
+
+- **Counts line** - `◆ credo` plus the item count per status (`cf go bk`, `dd vf`, `pk ar`), colored per group, zero counts dimmed. Changes flash for 6 s (fuchsia for moves, white for new items) with a toast. Hidden when no credo project resolves.
+- **Session line** - this session's mode/role, the open test/question letters (🧪 / ❓) from the last answer, and the controls: `i` items pane, `h` shorthand cheatsheet (both in one shared pane, from `credo-item-list.sh` and `templates/shorthands.json`), `l` short/long labels (`go: 12` vs `Go(go): 12`), `e` rotates the presets `all` / `no parked` / `open + dogma` / `open only` (`open only` also hides the dogma band).
+- **Autonomy line** - only while this session runs autonomously: `⟳ auto` with the 5h utilization, the next ladder rung and the next wake time.
+- **Prompt hint** - `Shortcuts: ...` lists the shorthands the band does not show (long form `key(word)` follows `l`).
+- `/credo-items` opens the items pane too. It refreshes on session start, after Bash calls, at turn end and every 10 s.
 
 ## Dependencies
 
