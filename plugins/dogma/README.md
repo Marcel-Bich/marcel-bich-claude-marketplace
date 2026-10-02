@@ -67,6 +67,10 @@ Run `/dogma:permissions` to configure interactively.
 
 `scripts/permissions-summary.sh [--json] [dir]` lists only the restricting entries (`[?]` ask, `[ ]`/`[0]` deny) of the nearest `DOGMA-PERMISSIONS.md` (read-only, exit 4 when none is found), so any renderer can show them without parsing the file.
 
+### Claude Code band (optional)
+
+When dogma runs inside Claude Code with mods support, `hooks/band.tsx` (listed under `modules` in `hooks/hooks.json`) draws a band above the prompt: `◆ dogma` with the restricting entries from `permissions-summary.sh`, one row block per kind (`deny` red, `ask` yellow; `all auto` when nothing restricts). Changed entries flash for 6 s (moved fuchsia, new white, removed struck through). When a dogma hook blocks a tool call, a `⛔ blocked` row with the tool and reason shows for 15 s, plus a toast. With the credo band installed it sits below credo's band and hides at credo's `open only` preset; without credo it always shows. The band only reads and renders - the enforcement hooks work exactly the same without it and in harnesses without mods.
+
 ### Enforcement Hooks
 
 - Git permissions, secrets detection

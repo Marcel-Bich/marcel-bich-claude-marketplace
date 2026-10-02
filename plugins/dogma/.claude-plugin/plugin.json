@@ -1,6 +1,6 @@
 {
   "name": "dogma",
-  "version": "1.35.0",
+  "version": "1.36.0",
   "description": "Intelligent sync of Claude instructions with enforcement hooks for security and consistency",
   "keywords": [
     "sync",
@@ -13,5 +13,6 @@
     "versioning",
     "security"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "types": "./types/index.d.ts"
 }
