@@ -4,6 +4,18 @@ Changelog of the dogma plugin. Newest first. Months group releases; no day dates
 
 ## v1
 
+### v1.44
+
+#### v1.44.0
+
+##### Added
+
+- Always-on delete guard: blocks deleting, moving or symlinking onto protected paths (/, first-level dirs, /home depth 0-2, the home and its children); targets are resolved first (~, $HOME, cwd and cd, symlinks, glob base), unresolvable targets are blocked, fails closed without python3
+
+##### Security
+
+- A symlink under /tmp pointing at a protected directory can no longer route a recursive delete past the /tmp allowance
+
 ### v1.43
 
 #### Added

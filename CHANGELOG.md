@@ -2,6 +2,84 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-10
 
+## dogma
+
+### v1
+
+#### v1.44
+
+##### v1.44.0
+
+###### Added
+
+- Always-on delete guard: blocks deleting, moving or symlinking onto protected paths (/, first-level dirs, /home depth 0-2, the home and its children); targets are resolved first (~, $HOME, cwd and cd, symlinks, glob base), unresolvable targets are blocked, fails closed without python3
+
+###### Security
+
+- A symlink under /tmp pointing at a protected directory can no longer route a recursive delete past the /tmp allowance
+
+#### v1.43
+
+##### Added
+
+- DOGMA-PERMISSIONS.md is picked by action target, pinned project, then session folder, with per-id inheritance (default on)
+- Notices also show in non-git folders and for pinned projects that inherit permissions
+
+#### v1.42
+
+##### Added
+
+- Source broadcasts via NOTICES.md
+- `CLAUDE_MB_DOGMA_SOURCE` for sync and recommended setup
+- Per-folder git identity for the source fetch
+
+#### v1.41
+
+##### Added
+
+- Stable setting ids (`§xxxx`) matched first with a text fallback, plus an id registry
+- changelog.d assembly in `/dogma:versioning`
+
+#### v1.40
+
+##### Added
+
+- Worktree files list (link or copy, `.credo/` included by default) and a cleanup-merged-worktrees checkbox
+
+##### Changed
+
+- Subagents may commit in their own worktree, never push or merge
+
+#### v1.39
+
+##### Added
+
+- One-time per-repo update notices for updates that need user action (Run/Later/Never), with an optional band toast
+
+#### v1.38
+
+##### Added
+
+- Final Verification option to run all tests only at release
+
+#### v1.37
+
+##### Added
+
+- Optional per-stage test commands (commit, push, relevant, build, all) with branch filters
+
+#### v1.36
+
+##### Added
+
+- Optional Claude Code band showing restricting permissions with change highlights
+
+#### v1.35
+
+##### Added
+
+- `permissions-summary.sh` listing only the restricting DOGMA-PERMISSIONS entries
+
 ## signal
 
 ### v1
@@ -376,72 +454,6 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 ##### Added
 
 - Budget read-back shows the active profile, config layers and the source of each cap
-
-## dogma
-
-### v1
-
-#### v1.43
-
-##### Added
-
-- DOGMA-PERMISSIONS.md is picked by action target, pinned project, then session folder, with per-id inheritance (default on)
-- Notices also show in non-git folders and for pinned projects that inherit permissions
-
-#### v1.42
-
-##### Added
-
-- Source broadcasts via NOTICES.md
-- `CLAUDE_MB_DOGMA_SOURCE` for sync and recommended setup
-- Per-folder git identity for the source fetch
-
-#### v1.41
-
-##### Added
-
-- Stable setting ids (`§xxxx`) matched first with a text fallback, plus an id registry
-- changelog.d assembly in `/dogma:versioning`
-
-#### v1.40
-
-##### Added
-
-- Worktree files list (link or copy, `.credo/` included by default) and a cleanup-merged-worktrees checkbox
-
-##### Changed
-
-- Subagents may commit in their own worktree, never push or merge
-
-#### v1.39
-
-##### Added
-
-- One-time per-repo update notices for updates that need user action (Run/Later/Never), with an optional band toast
-
-#### v1.38
-
-##### Added
-
-- Final Verification option to run all tests only at release
-
-#### v1.37
-
-##### Added
-
-- Optional per-stage test commands (commit, push, relevant, build, all) with branch filters
-
-#### v1.36
-
-##### Added
-
-- Optional Claude Code band showing restricting permissions with change highlights
-
-#### v1.35
-
-##### Added
-
-- `permissions-summary.sh` listing only the restricting DOGMA-PERMISSIONS entries
 
 ## hydra
 

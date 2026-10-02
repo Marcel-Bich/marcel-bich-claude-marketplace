@@ -142,6 +142,16 @@ When dogma runs inside Claude Code with mods support, `hooks/band.tsx` (listed u
 - **Safe dotenv variants:** `.env.example`, `.env.sample`, `.env.template` are excluded from secret detection and git-add protection
 - **Grep hook:** The Grep tool is blocked from searching in sensitive files (credential files, .env files, key files) - same rules as the Read hook
 
+### Delete Guard (always on)
+
+`scripts/delete-guard.sh` (core: `delete-guard.py`, python3) blocks Bash commands that would delete, move away or symlink onto protected paths: `/`, every first-level directory, `/home` down to depth 2, the home directory and its direct children, and every absolute path outside `/tmp/X+` and `/var/tmp/X+`. Unlike file protection it ignores DOGMA-PERMISSIONS.md, has no per-hook switch and no worktree exemption; only `CLAUDE_MB_DOGMA_ENABLED=false` turns it off.
+
+- **Targets are resolved before the check:** `~` and `$HOME` are expanded, relative paths are joined to the working directory (including a preceding `cd`), symlinks are followed, and for a glob the directory before the wildcard is checked. A symlink in `/tmp` pointing at the home therefore cannot smuggle `rm -rf /tmp/link/*` through.
+- **Strict when unsure:** a target that cannot be resolved for sure (command substitution, an unset or re-assigned variable, `eval`, `xargs rm`, `find -L ... -delete`) is blocked. Variables assigned from `mktemp` in the same command are known-safe.
+- **Symlink creation:** `ln -s`, `cp -s` and interpreter `symlink` calls onto protected paths are blocked as an extra hurdle.
+- **Fail closed:** without python3, or on an internal error, a destructive-looking command is denied.
+- Limits: the guard reads the command text before it runs. A script file that deletes on its own, or a symlink swapped between check and execution, is outside what a hook can see.
+
 ### Usage Warning
 
 The enforcement hooks increase token consumption significantly. Recommended for Claude Max 20x (or minimum Max 5x). For sync-only usage without hooks, any plan works.

@@ -122,6 +122,17 @@
         "hooks": [
           {
             "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/delete-guard.sh",
+            "timeout": 5,
+            "description": "Always-on guard: block deleting, moving or symlinking onto protected paths (targets resolved, symlinks followed)"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/file-protection.sh",
             "timeout": 5,
             "description": "Block destructive file operations (rm, del, git clean)"
