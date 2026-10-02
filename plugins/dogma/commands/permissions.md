@@ -159,8 +159,9 @@ Options:
 - run relevant tests
 - check build
 - run ALL tests - as final check before push
+- run ALL tests only at release - skip ALL tests on each merge; run them once in the release commit that bundles several items (version bump + assembled changelog; a normal commit, never a tag or a hosted release)
 
-Default: `[x] run relevant tests`, `[x] check build`, `[x] run ALL tests`
+Default: `[x] run relevant tests`, `[x] check build`, `[x] run ALL tests`, `[ ] run ALL tests only at release`
 
 ### 3.10 Test Commands (optional)
 
@@ -262,6 +263,7 @@ After merge/review (order: relevant tests -> build -> ALL tests):
 - [x] run relevant tests
 - [x] check build
 - [x] run ALL tests
+- [ ] run ALL tests only at release (release = the commit that bundles several items with the version bump; never a tag)
 
 ### Test Commands
 
