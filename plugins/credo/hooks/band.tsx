@@ -291,9 +291,9 @@ export const register: Register = on => {
   // under the prompt: only the shorthands the band does not already show
   // (statuses hidden by the preset, plus the general ones)
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+    // without an item system (no project, declined dir, no mode) the shorthands
+    // that need no items still apply, like credo's SessionStart legend
     const hasItems = (await read($, counts)) !== null
-    // no item system: only while credo runs in this session
-    if (!hasItems && (await read($, session)).mode === null) return next(e)
     const current = presetOf(await read($, preset))
     const hidden = GROUPS.filter((_, gi) => !current.groups.includes(gi))
       .flat()
