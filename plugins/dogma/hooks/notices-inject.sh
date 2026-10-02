@@ -1,10 +1,13 @@
 #!/bin/bash
 # Dogma: Update Notices (SessionStart Hook)
 #
-# After a plugin update that adds something the user should act on, tell Claude
-# ONCE per repo via hookSpecificOutput.additionalContext; Claude then asks the
-# user (Run / Later / Never). The notice list and the per-repo relevance check
-# live in scripts/notices-pending.sh. Nothing in the repo is ever changed here.
+# After a plugin update that adds something the user should act on, or when the
+# user's dogma source (CLAUDE_MB_DOGMA_SOURCE) broadcasts an entry in its
+# NOTICES.md, tell Claude ONCE per repo via hookSpecificOutput.additionalContext;
+# Claude then asks the user (Run / Later / Never). The notice list, the per-repo
+# relevance check and the seen state live in scripts/notices-pending.sh (source
+# broadcasts via scripts/source-cache.sh, whose fetch runs in the background and
+# never delays the session). Nothing in the repo is ever changed here.
 #
 # Silent (no output) when nothing is pending; always exits 0.
 #
@@ -37,7 +40,7 @@ except Exception:
 ' 2>/dev/null)"
 [ -n "$CWD" ] && [ -d "$CWD" ] || CWD="$PWD"
 
-PENDING="$("$SCRIPT" --json "$CWD" 2>/dev/null)" || exit 0
+PENDING="$("$SCRIPT" --json --hint "$CWD" 2>/dev/null)" || exit 0
 [ -n "$PENDING" ] || exit 0
 
 printf '%s' "$PENDING" | SCRIPT="$SCRIPT" CWD="$CWD" python3 -c '
@@ -45,26 +48,36 @@ import json, os, shlex, sys
 
 data = json.load(sys.stdin)
 notices = data.get("notices") or []
-if not notices:
+hint = data.get("hint") or ""
+if not notices and not hint:
     sys.exit(0)
 mark = shlex.quote(os.environ["SCRIPT"]) + " mark"
 repo = shlex.quote(data.get("repo") or os.environ["CWD"])
 
-lines = [
-    "[dogma] Update notice(s) for this repo ({} pending). A dogma update added something the user may want to act on:".format(len(notices)),
-]
-for n in notices:
-    lines.append("- {id}: {text} Action: {action}".format(**n))
-lines += [
-    "",
-    "How to handle them (do not change anything in the repo on your own):",
-    "- Do not interrupt urgent work; raise this at the first natural pause.",
-    "- If a human is present: ask via your Ask tool (AskUserQuestion), one question per notice, options \"Run <action>\", \"Later\", \"Never\". Without an Ask tool, ask the same in plain text.",
-    "- Run: run the action; only after it completed, mark the notice seen: {} <id> {}".format(mark, repo),
-    "- Never: mark the notice seen with the same command (it will not come back for this repo).",
-    "- Later: do nothing; it is shown again next session.",
-    "- If running unattended/autonomously (no human present): do NOT ask and do not run the action; leave the notice pending.",
-]
+lines = []
+if notices:
+    lines.append("[dogma] Update notice(s) for this repo ({} pending). A dogma plugin update or the user\x27s dogma source announced something the user may want to act on:".format(len(notices)))
+    for n in notices:
+        origin = "from the user\x27s dogma source (NOTICES.md)" if n.get("kind") == "source" else "from the dogma plugin"
+        action = n.get("action") or "none (information only)"
+        lines.append("- {} [{}]: {} Action: {}".format(n.get("id", ""), origin, n.get("text", ""), action))
+    lines += [
+        "",
+        "How to handle them (do not change anything in the repo on your own):",
+        "- Do not interrupt urgent work; raise this at the first natural pause.",
+        "- If a human is present: ask via your Ask tool (AskUserQuestion), one question per notice, options \"Run <action>\", \"Later\", \"Never\" (a notice without an action: \"Got it\" = mark seen, \"Later\"). Without an Ask tool, ask the same in plain text.",
+        "- Run: run the action; only after it completed, mark the notice seen: {} <id> {}".format(mark, repo),
+        "- Never / Got it: mark the notice seen with the same command (it will not come back for this repo).",
+        "- Later: do nothing; it is shown again next session.",
+        "- If running unattended/autonomously (no human present): do NOT ask and do not run the action; leave the notice pending.",
+    ]
+if hint:
+    if lines:
+        lines.append("")
+    lines += [
+        "[dogma] Source not reachable: " + hint,
+        "Mention this once, briefly, at a natural pause (not in autonomous mode); nothing else to do now.",
+    ]
 print(json.dumps({
     "hookSpecificOutput": {
         "hookEventName": "SessionStart",

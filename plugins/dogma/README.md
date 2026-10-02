@@ -81,9 +81,31 @@ When a dogma update adds something you should act on (for example a new section 
 
 At session start the `notices-inject.sh` hook tells Claude about pending notices. Claude asks you at the first natural pause (Ask tool, or plain text without one): **Run** the action (e.g. `/dogma:permissions`; marked seen after it completed), **Later** (asked again next session) or **Never** (marked seen). Running unattended/autonomously, Claude does not ask and leaves the notice pending. Seen state is per repo and per profile under `${CLAUDE_CONFIG_DIR:-~/.claude}/dogma/notices-seen/`. The notice mechanism never changes anything in the repo itself. With the band (below) a toast hints at pending notices at session start (visible for 12 s). `scripts/notices-pending.sh [--json] [dir]` lists them, `scripts/notices-pending.sh mark <id> [dir]` marks one seen.
 
+### Source broadcasts
+
+The owner of a dogma source (the template repo `/dogma:sync` pulls from) can tell every repo that syncs from it something important once - for example "run `/dogma:sync` to get the new setting ids" - without anyone having to remember. Only hand-written entries in a `NOTICES.md` at the source root are announced; there are no generic "files changed" notices.
+
+```markdown
+# Notices
+
+## 2026-10-02 (§n001) Stable setting ids
+Action: /dogma:sync
+Every setting now carries a fixed id. Run a sync once so this repo gets them.
+```
+
+One `## ` heading per entry with a date `YYYY-MM-DD` and an id `(§...)` (letters, digits, `.`, `_`, `-`; never reuse one); the rest of the heading is the title. An optional `Action:` line names the command to offer (usually `/dogma:sync`); the other lines are the text. Entries are parsed id-first: a heading without an id or without a date is ignored, and so is text before the first entry. `NOTICES.md` itself is never synced into projects.
+
+They are delivered exactly like the plugin's update notices (ids prefixed `src:`, e.g. `src:n001`; same Run / Later / Never question, same seen state per repo and profile, the band toast counts both kinds), with these rules:
+
+- The source is `CLAUDE_MB_DOGMA_SOURCE` (an https or ssh URL including SSH host aliases like `git@github-work:owner/repo.git`, a `file://` URL, or an absolute local path). Unset means no broadcasts. `/dogma:sync` asks once for it when it is unset and stores it (global settings by default).
+- URL sources are read through a shallow clone in `${CLAUDE_CONFIG_DIR:-~/.claude}/dogma/source-cache/<hash>/`, refreshed with `git fetch` at most once a day per source, in the background (a session never waits for it; a new entry shows up the session after the fetch). Local paths are read directly. Fetches never prompt and never hang (15 s timeout, no terminal or askpass prompt, ssh `BatchMode=yes`); your normal git configuration is used as is. With several git accounts routed per folder, the fetch uses the identity routing of the repo the session runs in (its `url.*.insteadOf` rewrites and `core.sshCommand`, nothing credential-related), and each identity gets its own cache, daily check and hint.
+- An unreachable source stays silent; at most once a day Claude mentions that the source is not reachable with the current git access (use a URL your git reaches without prompts, e.g. an SSH host alias, or a local path).
+- Only repos that use dogma (`DOGMA-PERMISSIONS.md` or a `CLAUDE/` dir at the git root) get them, never the source repo itself. Entries older than 90 days (`CLAUDE_MB_DOGMA_NOTICES_MAX_AGE_DAYS`) are skipped so a fresh repo is not flooded.
+- A completed `/dogma:sync` marks pending source broadcasts whose action is `/dogma:sync` as seen.
+
 ### Claude Code band (optional)
 
-When dogma runs inside Claude Code with mods support, `hooks/band.tsx` (listed under `modules` in `hooks/hooks.json`) draws a band above the prompt: `◆ dogma` with the restricting entries from `permissions-summary.sh`, one row block per kind (`deny` red, `ask` yellow; `all auto` when nothing restricts). Changed entries flash for 6 s (moved fuchsia, new white, removed struck through). When a dogma hook blocks a tool call, a `⛔ blocked` row with the tool and reason shows for 15 s, plus a toast. At session start a toast hints at pending update notices (12 s). With the credo band installed it sits below credo's band and hides at credo's `open only` preset; without credo it always shows. The band only reads and renders - the enforcement hooks work exactly the same without it and in harnesses without mods.
+When dogma runs inside Claude Code with mods support, `hooks/band.tsx` (listed under `modules` in `hooks/hooks.json`) draws a band above the prompt: `◆ dogma` with the restricting entries from `permissions-summary.sh`, one row block per kind (`deny` red, `ask` yellow; `all auto` when nothing restricts). Changed entries flash for 6 s (moved fuchsia, new white, removed struck through). When a dogma hook blocks a tool call, a `⛔ blocked` row with the tool and reason shows for 15 s, plus a toast (6 s). At session start a toast hints at pending update notices and source broadcasts (12 s). With the credo band installed it sits below credo's band and hides at credo's `open only` preset; without credo it always shows. The band only reads and renders - the enforcement hooks work exactly the same without it and in harnesses without mods.
 
 ### Enforcement Hooks
 
@@ -107,7 +129,10 @@ When dogma runs inside Claude Code with mods support, `hooks/band.tsx` (listed u
 | `CLAUDE_MB_DOGMA_BUILTIN_INHERIT_MODEL` | `true` | Force built-in agents to inherit parent model |
 | `CLAUDE_MB_DOGMA_ALLOW_MODEL_DOWNGRADE` | `false` | Allow explicit model downgrades below parent |
 | `CLAUDE_MB_DOGMA_RESET_INTERVAL` | `2` | Reset interval for subagent enforcement state (number of prompts between resets). Set to 0 to disable enforcement entirely. |
-| `CLAUDE_MB_DOGMA_NOTICES` | `true` | Tell Claude once per repo about pending update notices at session start |
+| `CLAUDE_MB_DOGMA_NOTICES` | `true` | Tell Claude once per repo about pending update notices and source broadcasts at session start |
+| `CLAUDE_MB_DOGMA_SOURCE` | - | Your dogma source: https/ssh git URL (SSH host aliases work), `file://` URL or absolute path. Used by `/dogma:sync` instead of the built-in default and read for source broadcasts (`NOTICES.md`); `/dogma:sync` asks once and stores it when unset |
+| `CLAUDE_MB_DOGMA_NOTICES_MAX_AGE_DAYS` | `90` | Skip source broadcasts older than this many days (`0` = no limit) |
+| `CLAUDE_MB_DOGMA_SOURCE_FETCH` | `background` | How a stale source cache is refreshed: `background` (never delays a session), `sync` (wait, max 15 s), `off` (never fetch) |
 | `CLAUDE_MB_DOGMA_TOKEN_ALLOW_DIRS` | - | Comma-separated list of directories whose files skip path-based name checks (content scanning still applies). `CLAUDE_PLUGIN_ROOT` is always allowed automatically. |
 
 ### Token and File Protection

@@ -22,6 +22,14 @@ You are executing the `/claude-dogma` command. Your task is to **intelligently m
 DEFAULT_SOURCE="https://github.com/Marcel-Bich/marcel-bich-claude-dogma"
 ```
 
+**Source precedence** (first match wins):
+1. A source given as argument (`/dogma:sync ~/source`)
+2. The environment variable `CLAUDE_MB_DOGMA_SOURCE` (git URL incl. SSH host aliases, or a local path)
+3. When `CLAUDE_MB_DOGMA_SOURCE` is unset: ask once and offer to store it (Step 1.1)
+4. `DEFAULT_SOURCE` (last fallback)
+
+`CLAUDE_MB_DOGMA_SOURCE` is also what the source broadcasts read (the source owner's `NOTICES.md`, see the README section "Source broadcasts").
+
 ## Step 1: Parse Arguments
 
 The user provided: `$ARGUMENTS`
@@ -29,7 +37,8 @@ The user provided: `$ARGUMENTS`
 **Parse into SOURCE and INSTRUCTIONS (order does not matter, quotes optional):**
 
 **Source detection (recognizable patterns):**
-- Starts with `http://` or `https://` = Remote Git repo
+- Starts with `http://`, `https://`, `ssh://`, `git://` or `file://` = Remote Git repo
+- scp-like `[user@]host:path` (e.g. `git@github.com:owner/repo.git`, or an SSH host alias like `git@github-work:owner/repo.git`) = Remote Git repo
 - Starts with `~/`, `./`, `../`, `/` = Local path
 
 **Instructions detection:**
@@ -38,10 +47,10 @@ The user provided: `$ARGUMENTS`
 
 **Valid combinations:**
 ```
-/dogma:sync                                         -> DEFAULT_SOURCE, no instructions
+/dogma:sync                                         -> configured source (Step 1.1), no instructions
 /dogma:sync ~/source                                -> ~/source, no instructions
-/dogma:sync focus on git rules                      -> DEFAULT_SOURCE, instructions
-/dogma:sync "focus on git rules"                    -> DEFAULT_SOURCE, instructions
+/dogma:sync focus on git rules                      -> configured source (Step 1.1), instructions
+/dogma:sync "focus on git rules"                    -> configured source (Step 1.1), instructions
 /dogma:sync ~/source focus on git rules             -> ~/source, instructions
 /dogma:sync ~/source "focus on git rules"           -> ~/source, instructions
 /dogma:sync "focus on git rules" ~/source           -> ~/source, instructions
@@ -56,6 +65,59 @@ Will follow these throughout the sync process.
 
 **If DEFAULT_SOURCE is "TODO_CONFIGURE_DEFAULT_SOURCE" and no source provided:**
 Stop and tell the user: "Default source not configured. Please provide a source URL or path."
+
+### Step 1.1: Resolve the configured source (CLAUDE_MB_DOGMA_SOURCE)
+
+```bash
+echo "CLAUDE_MB_DOGMA_SOURCE=${CLAUDE_MB_DOGMA_SOURCE:-<unset>}"
+```
+
+- **Argument given:** use it as SOURCE. If `CLAUDE_MB_DOGMA_SOURCE` is unset, still ask the storage question below (with the argument as the value to store), so later syncs and the source broadcasts know it.
+- **No argument, `CLAUDE_MB_DOGMA_SOURCE` set:** use it as SOURCE. Do not ask.
+- **No argument, `CLAUDE_MB_DOGMA_SOURCE` unset:** ask ONCE via the Ask tool (AskUserQuestion), both questions in one round:
+  1. "Which dogma source should /dogma:sync use?" - options: `DEFAULT_SOURCE` (show the URL), "Other (enter URL or path)". Accept https, ssh (incl. SSH host aliases such as `git@github-work:owner/repo.git`) or an absolute local path.
+  2. "Where should it be stored?" - options:
+     - "Global (Recommended)" - `env.CLAUDE_MB_DOGMA_SOURCE` in `${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json` (all repos of this profile)
+     - "This project only" - `env.CLAUDE_MB_DOGMA_SOURCE` in `<git toplevel>/.claude/settings.local.json` (local, not versioned)
+     - "Don't store" - use it for this sync only (the question comes again next time)
+
+  Without an Ask tool, ask the same in plain text. In unattended/autonomous runs do not ask: use `DEFAULT_SOURCE` and store nothing.
+
+**Storing safely** (only the `env` key is touched, every other key is preserved; invalid JSON is never overwritten):
+
+```bash
+# TARGET: global -> "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+#         project -> "$(git rev-parse --show-toplevel)/.claude/settings.local.json"
+python3 - "$TARGET" "$CHOSEN_SOURCE" <<'PY'
+import json, os, sys, tempfile
+path, value = sys.argv[1], sys.argv[2]
+data = {}
+if os.path.exists(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except ValueError:
+        sys.exit("settings file is not valid JSON - not changed: " + path)
+if not isinstance(data, dict):
+    sys.exit("settings file is not a JSON object - not changed: " + path)
+env = data.get("env")
+if not isinstance(env, dict):
+    env = {}
+env["CLAUDE_MB_DOGMA_SOURCE"] = value
+data["env"] = env
+os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".settings-")
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+```
+
+- On an error (invalid JSON) report it and continue the sync with the chosen source, unstored.
+- For the project option make sure `.claude/settings.local.json` is in `.git/info/exclude` (Step 4.5 covers it).
+- Tell the user: the stored value takes effect in new sessions; this sync uses it right away.
+- Never print or store credentials: if the chosen URL contains `user:password@`, refuse to store it and suggest an SSH host alias or a credential helper instead.
 
 ## Step 2: Fetch Source to Temporary Directory
 
@@ -110,6 +172,9 @@ Look for files that contain **Claude/AI instructions, guidelines, or configurati
 - `CLAUDE.md`, `CLAUDE.*.md` - Direct Claude instructions
 - `.claude/` directory - Claude Code configuration
 - Files referenced via `@filename` syntax in any CLAUDE file
+
+**Source broadcasts (never synced):**
+- `NOTICES.md` at the source root - the source owner's broadcast notices, read by dogma's notice mechanism (see README "Source broadcasts"). Never copy it into the project and never propose it as a file to sync.
 
 **Recommendations (check & install, don't sync as files):**
 - `RECOMMENDATIONS.md` - Plugins and MCPs to check and optionally install (see 4.4)
@@ -1413,6 +1478,25 @@ Would you like to set it up?
 **If Prettier IS configured:** Skip silently (no message).
 
 **Key principle:** Only suggest if truly missing. Don't nag users who already have Prettier.
+
+### 8.3 Mark source broadcasts asking for a sync as seen
+
+A completed sync answers every pending source broadcast whose action is `/dogma:sync`, so mark those seen for this repo (no fetch, nothing in the repo changes):
+
+```bash
+NP="${CLAUDE_PLUGIN_ROOT}/scripts/notices-pending.sh"
+CLAUDE_MB_DOGMA_SOURCE_FETCH=off "$NP" --json . 2>/dev/null | python3 -c '
+import json, sys
+try:
+    for n in json.load(sys.stdin).get("notices", []):
+        if n.get("kind") == "source" and n.get("action", "").split()[:1] == ["/dogma:sync"]:
+            print(n["id"])
+except ValueError:
+    pass
+' | while read -r id; do CLAUDE_MB_DOGMA_SOURCE_FETCH=off "$NP" mark "$id" .; done
+```
+
+Skip this step when the sync was cancelled. Other source broadcasts (other actions, information only) stay pending; Claude asks about them as usual.
 
 ## Step 9: Summary Report
 

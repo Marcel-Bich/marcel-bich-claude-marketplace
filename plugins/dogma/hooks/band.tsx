@@ -42,6 +42,8 @@ const BLOCK_MS = 15000
 const BLOCK_BLINK_MS = 6000
 const REFRESH_MS = 10000
 const NOTICE_TOAST_MS = 12000
+// no dogma toast is shorter than this (the toast default is 4 s)
+const TOAST_MIN_MS = 6000
 
 type Piece = { width: number; node: RenderChildren; gap?: number }
 
@@ -109,8 +111,9 @@ async function refresh($: EngineInterface) {
   await update($, gone, () => [])
 }
 
-// one toast at session start when update notices are pending for this repo;
-// Claude asks about them (SessionStart hook notices-inject.sh), this only hints.
+// one toast at session start when update notices are pending for this repo, plugin
+// notices and dogma source broadcasts together; Claude asks about them (SessionStart
+// hook notices-inject.sh), this only hints.
 // exit 4 = none pending; any other failure only goes to the debug log
 async function noticeToast($: EngineInterface) {
   try {
@@ -121,7 +124,7 @@ async function noticeToast($: EngineInterface) {
       return
     }
     const n = (JSON.parse(r.stdout) as { notices?: unknown[] }).notices?.length ?? 0
-    if (n > 0) $.ui.toast(`dogma: ${n} new setting${n === 1 ? '' : 's'} - Claude will ask you`, { timeoutMs: NOTICE_TOAST_MS })
+    if (n > 0) $.ui.toast(`dogma: ${n} update notice${n === 1 ? '' : 's'} - Claude will ask you`, { timeoutMs: NOTICE_TOAST_MS })
   } catch (err) {
     $.ui.log(`dogma band: notices-pending.sh failed: ${String(err)}`, { to: 'debug' })
   }
@@ -129,7 +132,7 @@ async function noticeToast($: EngineInterface) {
 
 // show the last dogma block for a few seconds, blinking, plus a toast
 async function showBlock($: EngineInterface, b: DogmaBlock) {
-  $.ui.toast(`dogma blocked ${b.tool}: ${b.reason}`)
+  $.ui.toast(`dogma blocked ${b.tool}: ${b.reason}`, { timeoutMs: TOAST_MIN_MS })
   await update($, block, () => b)
   // blink for the first BLOCK_BLINK_MS, then stay steady red until BLOCK_MS
   for (let t = 0; t < BLOCK_BLINK_MS; t += BLINK_MS) {

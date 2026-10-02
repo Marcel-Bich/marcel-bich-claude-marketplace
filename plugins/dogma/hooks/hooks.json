@@ -8,7 +8,7 @@
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/notices-inject.sh\"",
             "timeout": 10,
-            "description": "Tell Claude about pending dogma update notices for this repo once (ENV: CLAUDE_MB_DOGMA_NOTICES=true)"
+            "description": "Tell Claude about pending dogma update notices and source broadcasts (NOTICES.md) for this repo once (ENV: CLAUDE_MB_DOGMA_NOTICES=true, CLAUDE_MB_DOGMA_SOURCE)"
           }
         ]
       }
