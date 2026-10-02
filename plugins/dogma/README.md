@@ -65,6 +65,8 @@ Control Claude's autonomy with `DOGMA-PERMISSIONS.md` in your project root:
 
 Run `/dogma:permissions` to configure interactively.
 
+`scripts/permissions-summary.sh [--json] [dir]` lists only the restricting entries (`[?]` ask, `[ ]`/`[0]` deny) of the nearest `DOGMA-PERMISSIONS.md` (read-only, exit 4 when none is found), so any renderer can show them without parsing the file.
+
 ### Enforcement Hooks
 
 - Git permissions, secrets detection
