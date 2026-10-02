@@ -69,7 +69,7 @@ How one piece of work flows through credo, tying the topics below into one path:
 
 1. Set up once: `/credo:setup` - framework, optional companions, autonomy and compact preferences.
 2. Pick a session mode for how present you are: active / passive / autonomous (see Session Modes).
-3. Capture the work as an item: requirement verbatim, plus observable success criteria (the Definition of Done). Clarify first; nothing is built before an explicit GO (see Item Lifecycle).
+3. Capture the work as an item: requirement verbatim, plus observable success criteria (the Definition of Done). Clarify first; nothing is built before an explicit GO - the user's GO for human-owned items, while agent-owned items (`clarify_owner: agent`) can get an agent GO under the agent decision rule (see Item Lifecycle).
 4. On GO, build - delegation-first via subagents (load `/credo:session-init` for the main-agent workflow), wiring new code so a caller actually reaches it.
 5. Pass the hard Definition of Done gate: an independent audit subagent (not the builder), visual verify for any runtime surface, docs updated in the same change. Findings are dispositioned, not dropped.
 6. Only the user files the item as verified.
@@ -102,13 +102,13 @@ The path of an item:
 
 1. Get an id (`scripts/credo-id-next.sh`), copy the item template into `1_clarify/`.
 2. Capture the requirement verbatim and draft observable success criteria (the Definition of Done).
-3. On an explicit GO, move to `2_go/` and build - wiring the new code so a caller actually reaches it.
+3. On an explicit GO, move to `2_go/` and build (a human-owned item needs the user's GO; an agent-owned item can get an agent GO under the agent decision rule in the `items` skill) - wiring the new code so a caller actually reaches it.
 4. Run the Definition of Done gate. Only on a pass does it move to `2_done/`.
 5. Only the user files an item under `3_verified/`.
 
 To onboard an existing repository into this structure, run `/credo:migrate` - it sets up `.credo/` and walks the repo through the migration procedure once.
 
-For a check-up of how the repo is organised, run `/credo:optimize`: after a freshness check (default branch, up to date with the remote) a read-only scan looks for conflict hotspots, changelog fragments, the test-stage convention, dogma settings and parallelism readiness, and offers each finding as Implement / Later / Never. It is opt-in per repo (asked once at onboarding or setup); with Yes it is offered again only when you return after a longer break (default 7 days idle), never while you are actively working.
+For a check-up of how the repo is organised, run `/credo:optimize`: after a freshness check (default branch, up to date with the remote) a read-only scan looks for conflict hotspots, changelog fragments, the test-stage convention, dogma settings and parallelism readiness (plus, after a separate yes, instruction consistency: contradictions between instruction files and credo), and offers each finding as Implement / Later / Never. It is opt-in per repo (asked once at onboarding or setup); with Yes it is offered again only when you return after a longer break (default 7 days idle), never while you are actively working.
 
 credo targets the repo you point it at (hub-aware): when your shell cwd is a launch hub rather than the repo you are working on, pin the real target with `/credo:project <path>` so the item tree and config resolve to the right place. A directory marked `hub: true` is never auto-targeted.
 

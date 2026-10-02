@@ -7,8 +7,12 @@ Subcommands
 -----------
   check  (default) dry run: gather and validate everything, print the plan, change
          nothing. Exit 1 with a clear reason when a precondition fails.
-  run [--user-confirmed] [--announce SECONDS] [--update] [--reason TEXT]
-      [--delay SECONDS] [--method M]
+  run --no-background-work [--user-confirmed] [--announce SECONDS] [--update]
+      [--reason TEXT] [--delay SECONDS] [--method M]
+         BACKGROUND GUARD (exit 3, nothing started): --no-background-work is required;
+         the agent passes it only after it checked itself that none of its own
+         background subagents, background shells / monitors or pending task
+         notifications are still running (a restart would kill them).
          OWNER RULE GUARD first: run refuses (exit 3, nothing started) unless
            a) --user-confirmed: the user said yes via the Ask tool in this
               interactive session (never pass it without that answer), or
@@ -21,7 +25,11 @@ Subcommands
          spawned and this call returns at once. With an announce period it first
          prints the announcement and sends an ntfy push (reason + cancel command).
          The worker waits --announce + --delay (re-checking the marker for a
-         cancel), stops the target Claude (tmux C-c twice, else SIGINT twice then
+         cancel), in tmux then waits until the pane is idle with an EMPTY input field,
+         no dialog and no background work in the footer (credo_pane_guard on the
+         session's own tmux socket, pane ownership re-checked on every probe; timeout
+         CREDO_SELF_RESTART_IDLE_TIMEOUT, default 1800 s, then it gives up without
+         stopping; the target exiting meanwhile aborts without relaunch), stops the target Claude (tmux C-c twice, else SIGINT twice then
          SIGTERM, NEVER SIGKILL), waits until it is gone, optionally runs the plugin
          update step, relaunches the same session with a wake prompt and writes a
          marker file.
@@ -88,11 +96,21 @@ import urllib.request
 
 SCRIPT_PATH = os.path.abspath(__file__)
 SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
+sys.path.insert(0, SCRIPT_DIR)
+import credo_pane_guard as pane_guard  # noqa: E402
 DEFAULT_MARKETPLACE = "marcel-bich-claude-marketplace"
 PROMPT_TAG = "[credo-self-restart]"
 # Owner rule: an autonomous self-restart is announced at least this long ahead.
 MIN_ANNOUNCE = 300.0
 EXIT_GUARD = 3
+# Background rule: the agent's own knowledge is the primary gate (a restart kills its
+# background subagents and shells); the pane footer check is only an extra guard.
+BACKGROUND_REFUSAL = (
+    "refused by the background rule: pass --no-background-work, and only after you "
+    "checked yourself that none of your own background subagents, background shells / "
+    "monitors or pending task notifications are still running (e.g. ListAgents shows no "
+    "running subagent of this session, no own background Bash is still running). If some "
+    "are, wait for them to finish (never stop them) and run again.")
 ENV_KEYS = ("CLAUDE_CONFIG_DIR", "TMUX", "TMUX_PANE", "WSL_DISTRO_NAME",
             "DISPLAY", "WAYLAND_DISPLAY")
 INTERPRETERS = ("node", "nodejs", "bun", "deno")
@@ -243,6 +261,42 @@ def claude_exe_end(argv, exe=""):
         if (os.path.basename(a1) == "claude" or "claude-code" in a1
                 or "@anthropic-ai" in a1):
             return 1
+    return None
+
+
+def is_claude(pid):
+    return claude_exe_end(read_cmdline(pid), read_exe(pid)) is not None
+
+
+def ancestors(pid, limit=64):
+    out, seen = [], set()
+    while pid > 1 and pid not in seen and len(out) < limit:
+        seen.add(pid)
+        out.append(pid)
+        pid = read_ppid(pid)
+    return out
+
+
+def pane_owner_error(pane, socket, target, start):
+    """None when tmux `pane` (on the server `socket`) belongs to the target Claude:
+    the pane's process is the target or an ancestor of it (the shell the pane
+    started) AND no other Claude process runs between the two - a nested claude
+    started from inside another session's pane must never type into (or stop) the
+    outer session shown in that pane. Else the reason."""
+    if not alive(target, start):
+        return "the Claude process %d is gone" % target
+    info = pane_guard.pane_info(pane, socket)
+    if info is None:
+        return "tmux pane %s not found on the server of this session" % pane
+    chain = ancestors(target)
+    if info["pid"] not in chain:
+        return ("tmux pane %s belongs to pid %d, which is not this Claude process (pid %d) "
+                "nor one of its ancestors - refusing to use it" % (pane, info["pid"], target))
+    for pid in chain[1:chain.index(info["pid"]) + 1]:
+        if is_claude(pid):
+            return ("another Claude process (pid %d) runs between tmux pane %s and this "
+                    "Claude process (pid %d); the pane shows that other session - refusing "
+                    "to use it" % (pid, pane, target))
     return None
 
 
@@ -558,7 +612,11 @@ def choose_method(tenv, forced=None, guard_name="credo"):
     for m in order:
         if m == "tmux":
             if tenv.get("TMUX") and tenv.get("TMUX_PANE") and have_tmux:
-                return m, {"pane": tenv["TMUX_PANE"]}, None
+                det = {"pane": tenv["TMUX_PANE"]}
+                sock = pane_guard.socket_from_tmux_env(tenv.get("TMUX"))
+                if sock:
+                    det["socket"] = sock  # the server of THIS session, not the default
+                return m, det, None
             reasons.append("tmux: target has no TMUX/TMUX_PANE or tmux not on PATH")
         elif m == "wt":
             distro = tenv.get("WSL_DISTRO_NAME") or os.environ.get("WSL_DISTRO_NAME", "")
@@ -587,26 +645,26 @@ def guard_kind(details):
     return "pty passthrough (relaunch-pty)"
 
 
-def capture_pane(target):
+def capture_pane(target, socket=None):
     try:
-        r = subprocess.run(["tmux", "capture-pane", "-p", "-t", target],
+        r = subprocess.run(pane_guard.tmux_base(socket) + ["capture-pane", "-p", "-t", target],
                            capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout if r.returncode == 0 else None
 
 
-def dialog_guard_tmux(target):
+def dialog_guard_tmux(target, socket=None):
     """Poll the pane for the resume-from-summary dialog and answer it once.
     Returns "answered", "not seen" or "pane unavailable"."""
     end = time.time() + env_float("CREDO_SELF_RESTART_DIALOG_WATCH", DIALOG_WATCH)
     seen_pane = False
     while time.time() < end:
-        text = capture_pane(target)
+        text = capture_pane(target, socket)
         if text is not None:
             seen_pane = True
             if any(DIALOG_RE.search(line) for line in text.splitlines()):
-                subprocess.run(["tmux", "send-keys", "-t", target]
+                subprocess.run(pane_guard.tmux_base(socket) + ["send-keys", "-t", target]
                                + DIALOG_ANSWER_TMUX_KEYS, capture_output=True, timeout=10)
                 log("resume-from-summary dialog detected in %s; answered %s"
                     % (target, DIALOG_ANSWER_TMUX_KEYS))
@@ -715,7 +773,7 @@ def invocation(method, details, launcher, cwd):
     if method == "tmux":
         # "clear;" works in fish and bash and empties the pane, so the dialog watch
         # does not match text left over from the old session
-        return ["tmux", "send-keys", "-t", details["pane"],
+        return pane_guard.tmux_base(details.get("socket")) + ["send-keys", "-t", details["pane"],
                 "clear; bash '%s'" % launcher, "Enter"]
     inner = ["bash", launcher]
     if details.get("tmux_session"):
@@ -980,6 +1038,13 @@ def gather(args):
         errors.append(merr)
     plan["method"] = method
     plan["method_details"] = details
+    if method == "tmux":
+        # the same ownership check as self-compact: never probe, stop or retype into a
+        # pane that does not show THIS Claude process
+        oerr = pane_owner_error(details["pane"], details.get("socket"), pid,
+                                plan["target_start"])
+        if oerr:
+            errors.append(oerr)
     if sid and not errors_for_sid(errors):
         plan["recorded_mode"] = read_recorded_mode(config_dir, sid)
         tmpl, note = rebuild_argv_note(argv, exe_end, sid, "<wake prompt>",
@@ -1137,7 +1202,8 @@ def stop_target(plan):
         for _ in range(2):
             if not alive(pid, start):
                 break
-            subprocess.run(["tmux", "send-keys", "-t", pane, "C-c"], timeout=10,
+            subprocess.run(pane_guard.tmux_base(plan["method_details"].get("socket"))
+                           + ["send-keys", "-t", pane, "C-c"], timeout=10,
                            capture_output=True)
             log("sent C-c to tmux pane %s" % pane)
             time.sleep(key_pause)
@@ -1187,6 +1253,44 @@ def relaunch(plan, prompt):
         return True, "still running (terminal window)"
 
 
+def wait_idle(plan):
+    """tmux method only: wait until the pane is idle with an EMPTY input field and no
+    dialog (credo_pane_guard, two probes), so stopping never discards a prompt the
+    user is typing or an open question. None when safe (or no pane to check),
+    "cancelled", "target gone" (the Claude process exited meanwhile - stop waiting),
+    "pane ownership lost: ..." or the timeout reason. Every probe uses the session's
+    own tmux server socket and re-checks the pane ownership. Other methods have no
+    pane to inspect."""
+    if plan.get("method") != "tmux":
+        return None
+    pane = plan["method_details"]["pane"]
+    sock = plan["method_details"].get("socket")
+    owner_fail = []
+
+    def probe():
+        oerr = pane_owner_error(pane, sock, plan["target_pid"], plan["target_start"])
+        if oerr:
+            owner_fail.append(oerr)
+            return False, "pane ownership lost: " + oerr
+        return pane_guard.probe_pane(pane, sock)
+
+    ok, reason = pane_guard.wait_until_safe(
+        probe,
+        env_float("CREDO_SELF_RESTART_IDLE_TIMEOUT", 1800),
+        poll=env_float("CREDO_SELF_RESTART_IDLE_POLL", 2.0),
+        recheck=env_float("CREDO_SELF_RESTART_IDLE_RECHECK", 1.5),
+        should_stop=lambda: bool(owner_fail) or marker_cancelled(plan),
+        on_state=lambda r: log("pane %s: %s" % (pane, r)))
+    if owner_fail:
+        if not alive(plan["target_pid"], plan["target_start"]):
+            return "target gone"
+        return "pane ownership lost: " + owner_fail[0]
+    if ok:
+        log("pane %s idle with an empty input: %s" % (pane, reason))
+        return None
+    return reason
+
+
 def worker(plan_file):
     with open(plan_file) as fh:
         plan = json.load(fh)
@@ -1211,6 +1315,30 @@ def worker(plan_file):
             if left <= 0:
                 break
             time.sleep(min(1.0, left))
+        idle_err = wait_idle(plan)
+        if idle_err == "cancelled":
+            raise Cancelled()
+        if idle_err == "target gone" or (idle_err or "").startswith("pane ownership lost"):
+            # the session exited by itself (or the pane now shows something else) while
+            # we waited: stop waiting, never type a relaunch into that pane
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            status = "failed: target gone" if idle_err == "target gone" \
+                else "failed: pane ownership"
+            log("%s while waiting for idle; nothing stopped, nothing relaunched" % idle_err)
+            write_marker(plan, status, {"detail": idle_err})
+            ntfy("credo self-restart aborted",
+                 "Session %s: %s while waiting for an idle pane; nothing was relaunched. "
+                 "Resume it by hand if needed: claude --resume %s"
+                 % (plan["session_id"], idle_err, plan["session_id"]), cfg, explicit)
+            return 1
+        if idle_err:
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            log("session never became idle with an empty input; not stopping (%s)" % idle_err)
+            write_marker(plan, "failed: session not idle", {"detail": idle_err})
+            ntfy("credo self-restart gave up",
+                 "Session %s was not stopped: it never became idle with an empty input "
+                 "field (%s)." % (plan["session_id"], idle_err), cfg, explicit)
+            return 1
         # past this point a cancel is too late: SIGTERM is ignored and the marker
         # leaves "pending" under the lock, so `cancel` refuses from now on
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -1249,7 +1377,10 @@ def worker(plan_file):
         details = plan["method_details"]
         target = details.get("pane") or details.get("tmux_session")
         if target:
-            extra["dialog_guard"] = dialog_guard_tmux(target)
+            # the own pane lives on the session's server; a new tmux_session window
+            # runs on the default server
+            sock = details.get("socket") if details.get("pane") else None
+            extra["dialog_guard"] = dialog_guard_tmux(target, sock)
             log("dialog guard: %s" % extra["dialog_guard"])
             write_marker(plan, "relaunched", extra)
         return 0
@@ -1303,6 +1434,10 @@ def cmd_run(args):
     announce, gerr = owner_guard(plan, args.user_confirmed, args.announce)
     if gerr:
         print("REFUSED: %s" % gerr)
+        print("Nothing was started.")
+        return EXIT_GUARD
+    if not args.no_background_work:
+        print("REFUSED: %s" % BACKGROUND_REFUSAL)
         print("Nothing was started.")
         return EXIT_GUARD
     if errors:
@@ -1433,6 +1568,10 @@ def main(argv=None):
     ap.add_argument("--announce", type=float, default=None,
                     help="seconds to announce before stopping (autonomous: >= 300, "
                          "default 300; with --user-confirmed default 0)")
+    ap.add_argument("--no-background-work", action="store_true",
+                    help="required for run: pass it only after you checked yourself that "
+                         "none of your own background subagents, background shells / "
+                         "monitors or pending task notifications are still running")
     ap.add_argument("--update", action="store_true")
     ap.add_argument("--reason", default="cc-up")
     ap.add_argument("--delay", type=float, default=5.0)

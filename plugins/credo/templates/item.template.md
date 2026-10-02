@@ -18,6 +18,12 @@ Optional: clarify_depth: waived  (only the USER sets it, with a short reason) ma
   item skips the deep over-clarify standard + pre-GO self-check. Unset = full clarify applies.
 Optional: audit: full  forces the full audit tier (credo audit skill, risk tiers). Absent by
   default = tier picked by risk. There is no lean override.
+Optional: clarify_owner: human | agent  (missing = human, fail-safe). Items from the user's own
+  words: human (or leave it out). Items created by a builder, plan or task agent (slice,
+  follow-up, build question, audit finding): agent, plus parent: <id> of the item it came from,
+  and their first History line reads "- created by agent (clarify) YYYY-MM-DD".
+  Human-owned items get their GO only from the user; agent-owned ones follow the agent decision
+  rule (credo items skill). The move helper sets agent on entry into 2_go.
 Optional: touches: [paths or globs]  files the item will likely edit (parallel planning,
   credo orchestration skill); heavy: true  for model/benchmark tests or large downloads.
 Blocker relations are structured (not free-form) and REQUIRED only while the item sits in
@@ -37,6 +43,8 @@ History is MANDATORY: every move appends a line  -> <target> <date> (<reason>) .
 ## Success Criteria (= DoD)
 
 Observable, checkable "the user can X" statements. These are the Definition of Done.
+For an algorithm, a detection, or a quality / numeric result, add the acceptance measurement
+here BEFORE the build: data set + target value. The builder measures against it before done.
 
 - [ ] The user can ...
 - [ ] The user can ...
@@ -100,7 +108,8 @@ Proposal (assistant): push updates over the existing websocket and patch the DOM
 ## History
 
 - created (clarify) 2026-07-04
-- -> go 2026-07-04 (GO: the user, chat 2026-07-04)
+- -> go 2026-07-04 (GO: "yes, go", the user, chat 2026-07-04)
+- -> go 2026-07-04 (origin: created by user; clarify_owner human -> agent)
 - -> done 2026-07-05 (DoD met; audit passed by a dedicated subagent, not the builder; docs + version bumped)
 ================================================================================
 -->

@@ -2,8 +2,8 @@
 // Canonical form is language-neutral, so the band works in any conversation language:
 // "**<T>: C, D** · **<Q>: Y, #177**" with <T> = U+1F9EA and <Q> = U+2753 or U+2754
 // (bold optional, U+FE0F optional, space before the colon allowed). Legacy word labels are still read for older answers: English
-// "Open for testing:" / "Open questions:" and German "Offen zum Testen:" /
-// "Offene Fragen:". No engine imports, so it can be checked on its own
+// "Open for testing:" / "Open tests:" / "Open questions:" and German "Offen zum Testen:" /
+// "Offene Tests:" / "Offene Fragen:". No engine imports, so it can be checked on its own
 // (scripts/test-credo-band-letters.sh).
 //
 // Defensive: a footer is often not the clean letter list the convention asks for.
@@ -14,7 +14,7 @@
 import type { CredoLetters } from '../types'
 
 // emoji label first (canonical), then the legacy word labels
-const TEST_LABELS = '\\u{1F9EA}\\uFE0F?|Open for testing|Offen zum Testen|Offene Tests'
+const TEST_LABELS = '\\u{1F9EA}\\uFE0F?|Open for testing|Open tests|Offen zum Testen|Offene Tests'
 const QUESTION_LABELS = '[\\u{2753}\\u{2754}]\\uFE0F?|Open questions|Offene Fragen'
 
 // a code in a pure list: #N, §cct_N, short letter codes (B, h2, IJ3) or hyphen codes (Task-I, Qb-2)

@@ -26,9 +26,9 @@ Use this ONLY when full autonomy plus AFK has been explicitly granted.
 2. Remember this directory as opted-in (persistent, per-directory), so a future session here
    skips the onboarding ASK - the same effect as accepting the ASK: `${CLAUDE_PLUGIN_ROOT}/scripts/credo-dir-decision.sh set accepted`
 3. **Suspend-on-idle directive (durable, per session).** If this invocation's argument (or a
-   natural-language user statement) contains an explicit suspend-on-idle order - "suspend when
-   done", "power down at the end", "hibernate afterwards", German "am Ende suspend", "danach
-   runterfahren" - record it durably:
+   natural-language user statement, in any language) contains an explicit suspend-on-idle
+   order - "suspend when done", "power down at the end", "hibernate afterwards", German "am
+   Ende suspend", "danach runterfahren" - record it durably:
    `${CLAUDE_PLUGIN_ROOT}/scripts/credo-suspend-directive.sh set`
    If it instead REVOKES a standing order - "no suspend", "leave it on", German "kein suspend",
    "lass an" - clear it:

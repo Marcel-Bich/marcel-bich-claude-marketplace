@@ -248,7 +248,10 @@ agent can check is `exercised`. A genuinely human-only check never holds an item
 `items`, "Human-only checks do not block done"). For items marked `ui: true`, a passing
 visual verification at every configured viewport - measured layout, real interaction,
 live update where required, hard reload after rebuild, and saved screenshots - is
-mandatory before the item may move to done. If verification
+mandatory before the item may move to done. Where the item carries an acceptance
+measurement (data set + target value, credo `items`), the measured value is part of this
+proof, and the builder's adversarial self-check covers the unhappy paths of the surface too
+(bad input, empty and error states, a reload mid-action). If verification
 surfaces a defect, the item is not done: it goes back to clarification with a note on
 what was missed, per the credo item model. Never downgrade or self-approve this gate.
 

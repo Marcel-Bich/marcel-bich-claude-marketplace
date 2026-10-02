@@ -76,6 +76,48 @@ if printf '%s' "$out" | grep -q '"decision": *"block"'; then pass=$((pass + 1));
 out="$(out_of "a normal user message")"
 if printf '%s' "$out" | grep -q '"block"'; then fail=$((fail + 1)); echo "FAIL: user message must never be blocked"; else pass=$((pass + 1)); fi
 
+# --- wake marker across pause + re-arm --------------------------------------
+# A user message pauses autonomy; the agent re-arms it with credo-autonomy-on.sh.
+# A ScheduleWakeup marked before the pause is still pending in the harness, so its
+# still-future marker must survive both steps and keep satisfying the Stop hook.
+HOOKS="$HERE/../hooks"
+WAKE_FILE="$CREDO_AUTONOMY_DIR/$SID/wake-scheduled"
+keepalive_rc() {
+    jq -n --arg s "$SID" '{session_id: $s, stop_hook_active: false}' \
+        | bash "$HOOKS/credo-autonomy-keepalive.sh" >/dev/null 2>&1
+    echo $?
+}
+check() {
+    local name="$1" want="$2" got="$3"
+    if [ "$got" = "$want" ]; then
+        pass=$((pass + 1))
+    else
+        fail=$((fail + 1))
+        echo "FAIL: $name (want $want, got $got)"
+    fi
+}
+
+arm; bash "$HOOKS/credo-autonomy-wake-mark.sh" 1800 "$SID" >/dev/null
+run_prompt "just some context for the run"
+if [ -f "$WAKE_FILE" ]; then got=kept; else got=deleted; fi
+check "pause keeps a future wake marker" kept "$got"
+bash "$HOOKS/credo-autonomy-on.sh" --session "$SID" >/dev/null
+if [ -f "$WAKE_FILE" ]; then got=kept; else got=deleted; fi
+check "re-arm keeps a future wake marker" kept "$got"
+check "keepalive after re-arm honors the earlier wake" 0 "$(keepalive_rc)"
+
+# a marker already in the past is useless: after pause + re-arm the Stop hook blocks
+arm; echo "$(( $(date +%s) - 60 ))" > "$WAKE_FILE"
+run_prompt "another context note"
+bash "$HOOKS/credo-autonomy-on.sh" --session "$SID" >/dev/null
+check "keepalive blocks on a past wake after re-arm" 2 "$(keepalive_rc)"
+
+# an explicit autonomy-off (also used by a switch to active/passive) clears wake state
+arm; bash "$HOOKS/credo-autonomy-wake-mark.sh" 1800 "$SID" >/dev/null
+bash "$HOOKS/credo-autonomy-off.sh" --mode-switch "$SID" >/dev/null 2>&1
+if [ -f "$WAKE_FILE" ]; then got=kept; else got=deleted; fi
+check "autonomy-off clears the wake marker" deleted "$got"
+
 rm -rf "$TMP"
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]

@@ -15,7 +15,9 @@ allowed-tools:
 
 Run the credo optimisation audit for the current repo: a freshness check, then a
 read-only scan (conflict hotspots, changelog fragments, test-stage convention, dogma
-settings, parallelism readiness), a report under `.credo/process/reports/`, and every
+settings, parallelism readiness, and - only if the user says Yes when asked before the
+scan - instruction consistency across the global and repo instruction files and hook
+texts), a report under `.credo/process/reports/`, and every
 finding offered as Implement / Later / Never.
 
 **Invoke the `optimize` skill via the Skill tool** and follow it end to end. It holds the

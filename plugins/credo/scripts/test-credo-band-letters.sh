@@ -43,6 +43,7 @@ eq('cct refs', t('Open for testing: §cct_2, D'), ['§cct_2', 'D'])
 eq('last footer wins', t('Open for testing: A\n\nlater...\n\n**Open for testing: E**'), ['E'])
 eq('dedupe', q('Open questions: #5, #5, Y'), ['#5', 'Y'])
 eq('open tests label variant', t('**Offene Tests: #218, B**'), ['#218', 'B'])
+eq('open tests label variant (english)', t('**Open tests: #218, B**'), ['#218', 'B'])
 // language-neutral emoji footer (canonical)
 eq('emoji footer', parseLetters('done.\n\n**🧪: C, D** · **❓: Y, #177**'),
   { tests: ['C', 'D'], questions: ['Y', '#177'] })

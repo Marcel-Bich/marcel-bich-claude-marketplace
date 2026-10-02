@@ -3,10 +3,11 @@ name: role-plan
 description: >
   Assign this session the credo plan/clarify role - the default owner of clarifying items in
   1_clarify/, WITHOUT commits or push (the task/build role owns commits and push). Use ONLY when
-  the user actually assigns this role to you, for example "you are (now) the plan/clarify agent",
-  "you clarify the items", "take over the clarifying / the clarify items", "act as the plan
-  agent", "switch into the plan/clarify role", "du bist (jetzt) der plan/clarify agent",
-  "übernimm das Klären / die clarify-items", "wechsel in die plan/clarify rolle" - or when the
+  the user actually assigns this role to you, in any language, for example "you are (now) the
+  plan/clarify agent", "you clarify the items", "take over the clarifying / the clarify items",
+  "act as the plan agent", "switch into the plan/clarify role", or German "du bist (jetzt) der
+  plan/clarify agent", "übernimm das Klären / die clarify-items", "wechsel in die plan/clarify
+  rolle" - or when the
   /credo:role-plan command is run. Do NOT use for general talk ABOUT roles, explanations, or
   questions like "what does the plan agent do". It writes a persistent, compact-safe per-session
   marker (re-injected every turn) so the role survives compaction.
@@ -25,9 +26,10 @@ mixed work, and an explicit user instruction always overrides the role.
 ## When to use
 
 - The user runs `/credo:role-plan` (the explicit, deterministic, guaranteed path).
-- The user assigns you this role in passing (best-effort, casual path) - for example "you are
-  now the plan/clarify agent", "you clarify the items", "take over the clarifying", "act as the
-  plan agent", "uebernimm das Klaeren", "du bist der plan/clarify agent".
+- The user assigns you this role in passing (best-effort, casual path), in any language - for
+  example "you are now the plan/clarify agent", "you clarify the items", "take over the
+  clarifying", "act as the plan agent", or the same in another language such as German "übernimm das Klären", "du bist
+  der plan/clarify agent".
 
 Do NOT trigger on general discussion about roles, on explanations, or on questions such as
 "what does the plan agent do" - those are not an assignment.
@@ -41,6 +43,15 @@ compaction, new sessions and subagents (stored on disk, not in context):
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/hooks/role-set.sh" plan
 ```
+
+## Agent-owned clarify items
+
+The plan role owns deciding agent-owned clarify items (`clarify_owner: agent`) per the agent
+decision rule in the `items` skill ("Clarify owner and the agent decision rule"): uncritical
+questions are decided SOTA, else best effort, else noted for the user; a feasible item moves to
+`2_go` with `(GO: agent per SOTA rule, <reason>)` in its History. Human-owned items still need
+the user's GO, and the escalation list there (infeasible, taste, deleting user data, installs,
+money, safety, anything changing the verbatim requirement) always goes to the user.
 
 ## Sandbox pre-work
 

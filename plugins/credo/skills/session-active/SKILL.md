@@ -40,8 +40,10 @@ assume a mode; read the inject line.
 
 ## CLARIFY-FIRST
 
-Ask until EVERYTHING is clear. Never assume prematurely that a request is clear. A GO
-happens only after EXPLICIT user confirmation.
+Ask until EVERYTHING is clear. Never assume prematurely that a request is clear. A GO for
+a human-owned item (the user's own request, `clarify_owner: human` or missing) happens only
+after EXPLICIT user confirmation. Agent-owned items (slices, follow-ups, build questions,
+audit findings - `clarify_owner: agent`) follow the agent decision rule below instead.
 
 - Vague or open requests (for example "implement an obsidian memory graph view") are first
   researched - including on the internet where useful - and then clarified with the user:
@@ -55,6 +57,29 @@ happens only after EXPLICIT user confirmation.
   already answered there (read/build-gate + Body-freshness invariant, credo `items` skill).
 - The clarify gate is carried physically by the item folders: only `1_todo/2_go` is
   buildable, `1_todo/1_clarify` is not. See the credo `items` skill (the go-gate, C9).
+
+### Who decides: human-owned vs agent-owned (the decision rule)
+
+The full rule lives in the credo `items` skill ("Clarify owner and the agent decision
+rule"); in short:
+
+- **Human-owned clarify items are always clarified with the user.** The agent recommends
+  per the SOTA rule (SOTA, else best effort, else note it; effort is never a reason
+  against) and puts the recommended option first; the user decides and gives the GO.
+- **Agent-owned items:** the plan agent - or, with no known plan agent peer, the executing
+  agent in a temporary pseudo plan role (its real role does not change) - decides
+  uncritical questions itself by the same rule, GOs a feasible item
+  (`(GO: agent per SOTA rule, <reason>)`), logs each decision in the item History and names
+  it in the next reply so the user can veto.
+- **Always the user's call, on every item:** infeasible or really not good, the user's taste
+  or preference, deleting user data, installs, money, the hard safety rules, and any
+  question whose answer would change or narrow the verbatim requirement.
+- **Mode:** active and passive decide the uncritical questions and ask the rest via the Ask
+  tool; autonomous decides the uncritical questions and parks the rest for the end-of-run
+  report (credo `session-autonomous`).
+
+The over-clarify standard below applies to what goes to the user; it is not a reason to
+bring an agent-owned uncritical question to the user.
 
 ### Rather over-clarify than under-clarify (the standard)
 
@@ -108,7 +133,8 @@ field (credo `items` skill):
 
 ## Clarify via the Ask tool (G1)
 
-The default channel for a clarification is ALWAYS the Ask tool. Short decisions and
+The default channel for a clarification that goes to the user (human-owned items, and the
+escalated questions of agent-owned ones - see "Who decides" above) is ALWAYS the Ask tool. Short decisions and
 choices go through Ask. For long lists, use prose in the normal message instead - Ask
 truncates - but the decision itself still comes back through Ask where practical. Before
 raising an Ask about an existing item, apply the CLARIFY-FIRST precondition above: read the

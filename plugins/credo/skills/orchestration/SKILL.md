@@ -45,8 +45,14 @@ clearly calls for it, and say why.
    shared foundations, then features. Cut batches by SHARED SURFACES, not only by files:
    two items that each added an element to the same UI bar conflicted although they
    touched different modules. Central registry files (command, route, menu or plugin
-   registries, shared indexes) are shared surfaces: items touching the same one run
-   sequentially or in one bundle.
+   registries, shared indexes, a single CHANGELOG) are shared surfaces: items touching the
+   same one run sequentially or in one bundle. Better still, avoid the shared surface: prefer
+   fragment files (one `changelog.d/` fragment per item, assembled at release) and
+   self-registration (auto-discovery instead of a central list), so parallel items never
+   edit the same registry file.
+   Tricky items (algorithms, detection, quality or numeric results) get their acceptance
+   measurement (data set + target value) into the DoD at this step, BEFORE any build
+   (credo `items`, Success Criteria).
 2. **Build in parallel: 3-4 single-item builders plus 1 bundle builder**, each in its own
    worktree (below). A bundle is 2-3 small, related, low-risk items in one worktree with
    one audit. Measured: 3-5 parallel builders cut wall time from about 120 min to 15-22
@@ -54,7 +60,10 @@ clearly calls for it, and say why.
    automation, one test runtime, the 5h budget). The overlap check and the resource gate
    below still apply.
 3. **Audit every item** with a fresh subagent that reads the source, runs the tests and
-   fixes small findings itself ("Delegating audit subagents" below). Not optional: a MAJOR
+   fixes small findings itself ("Delegating audit subagents" below). After a MAJOR or FAIL
+   that the auditor does not fix itself, a FRESH fix agent takes over (never a resumed
+   builder), and after 2 FAIL audits of the same item the emergency brake stops it
+   ("Fix rounds after a failing audit" below). Not optional: a MAJOR
    defect was found in 14 of 18 single items (run 1) and 7 of 12 (run 2); in run 2 no
    single item passed its first audit.
 4. **Merge as audits pass**, one branch at a time. **One release per batch**, with ONE
@@ -75,16 +84,46 @@ the security block):
 - Every new CLI command or flag gets its GUI counterpart in the same item, and vice versa,
   where the project has both.
 - Tick only fully met DoD points, never with a caveat.
+- Before reporting done, the builder runs an adversarial self-check ("try to break it":
+  edge cases, bad input, failure paths, a second run) and lists in its report what it
+  tried; for a tricky item it also measures against the acceptance measurement in the DoD
+  and reports the value (credo `items`, Build-completion gate).
+- Questions that come up during the build follow the agent decision rule (credo `items`,
+  "Clarify owner and the agent decision rule"): the builder decides uncritical ones itself
+  (SOTA, else best effort; effort never counts against it) and logs them in the item
+  History; it returns `{status: needs_decision, question}` only for the escalated ones
+  (infeasible or really not good, the user's taste or preference, deleting user data,
+  installs, money, safety, a change to the verbatim requirement). Items it creates (slices,
+  follow-ups, build questions) get `clarify_owner: agent`, `parent: <id>` and a
+  `created by agent` first History line; while the parent is not GO'd they stay
+  human-owned, so a not yet GO'd user item is never sliced into agent-GO'able children.
 - Builders run the fast check (dogma `relevant` stage, else the changed tests), not the
   full suite. An audit of a branch touching shared core files runs the whole core test
   folder.
 
+### Fix rounds after a failing audit (default)
+
+- **Fresh fix agent.** After an audit with a MAJOR or FAIL verdict that the auditor did not
+  fix itself, spawn a FRESH fix agent. Its brief holds only the audit findings (report
+  path), the branch / worktree state and the test commands - plus the item path and the
+  security block as in every brief. Never resume the builder's context for a fix round:
+  one item needed about 1.45M builder tokens over 3 resumed rounds.
+- **Emergency brake.** After 2 FAIL audits of the same item there is no third fix round by
+  default: stop the item, then re-cut it smaller (new agent-owned items with `parent:`) or
+  send it back to `1_clarify` with the two audit reports named in the History
+  (`credo-item-move.sh <id> clarify` sets `clarify_owner: human` and logs it, so the user
+  decides; `--keep-owner` only for an agent-internal re-clarify). The user may
+  raise this limit for a specific item explicitly; record that in the item History. Each
+  new audit with new findings still counts toward the limit; when the brake fires, say so
+  in the next reply or report.
+- This is not return-and-resume (below): that keeps a subagent's context for a mid-task
+  decision; a post-audit fix round always starts fresh.
+
 ### Being measured (not default yet)
 
-- Fix rounds that resume the builder's context are very expensive: one item needed about
-  1.45M builder tokens over 3 rounds.
 - Merge conflicts on central registry files: one run needed 5 resolver agents and about
-  400k tokens. Cutting batches by shared surfaces (step 1) is the current mitigation.
+  400k tokens. Cutting batches by shared surfaces and moving to fragment files (step 1)
+  is the current mitigation.
 
 ## Parallel code tracks: touches and resource gate
 
@@ -337,14 +376,20 @@ Proven pattern for a subagent that hits a question it cannot answer:
 
 1. The subagent returns `{status: needs_decision, question: <the question>}` instead of
    guessing or finishing with a wrong assumption.
-2. The main agent obtains the answer (from the user, from the verbatim requirements
-   log, or from a documented default when the user is away).
+2. The main agent obtains the answer: for an uncritical question on an agent-owned item it
+   decides itself by the agent decision rule (as the plan agent, or in the pseudo plan role
+   when no plan agent peer is known - credo `items`) and logs the decision; otherwise from
+   the user, from the verbatim requirements log, or, when the user is away, from a
+   documented default (escalated questions are parked, never defaulted - credo
+   `session-autonomous`).
 3. The main agent passes the answer back to the SAME subagent via SendMessage to its
    agentId.
 4. The subagent resumes with its FULL prior context intact - no throwaway, no rebuild.
 
 Use this instead of killing and re-spawning a subagent when a mid-task decision is
-needed. It preserves the subagent's accumulated context and avoids redoing work.
+needed. It preserves the subagent's accumulated context and avoids redoing work. It does
+NOT apply to fix rounds after a failing audit - those go to a fresh fix agent ("Fix rounds
+after a failing audit" above).
 
 ## Config
 

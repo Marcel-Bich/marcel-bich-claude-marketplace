@@ -122,6 +122,14 @@ For the item under review, gather the ground truth first (read, do not guess):
   records it in `## Verify` as `human-only: pending` with what to check. Flag it only when
   that record is missing, or when the agent could have run the check itself.
 - Ticks: a DoD point ticked with a caveat ("done, but ...") is not met - flag it.
+- Acceptance measurement (credo `items`, Success Criteria): an item whose result is an
+  algorithm, a detection, or a quality or numeric outcome must name a data set and a target
+  value in its DoD and record the measured value. Target missed: **BLOCKER**. Not measured,
+  or no measurement defined for such an item: **MAJOR**. Re-run the measurement yourself
+  where it is cheap; do not take the builder's number on trust.
+- The builder's adversarial self-check (credo `items`, Build-completion gate): its report
+  lists what it tried to break. A missing list is a **MINOR** finding; a case you break that
+  the list claims held is judged by its own severity.
 - Any living conventions under `.credo/docs/` and relevant project `docs/**`.
 
 Then compare the actual built result (files, wiring, tests, verify evidence) against
@@ -187,11 +195,25 @@ No evidence -> not a finding. A verdict without evidence is not acceptable.
 
 - **Core deviation:** if a finding shows the item misses its core requirement, the
   WHOLE item plus the finding goes back out of done. Move it back to `1_todo/2_go` if
-  the fix is clear and approved, or to `1_todo/1_clarify` if it needs a user decision.
+  the fix is clear and approved, or to `1_todo/1_clarify` if it needs a user decision (a
+  question the agent decision rule cannot settle - credo `items`).
   Record in the item's `Historie` why it came back.
 - **New independent item:** create a separate item ONLY if a finding is genuinely
   independent of the core of the audited item. If the finding is something the core
-  completion needs, it is part of this item, not a new one.
+  completion needs, it is part of this item, not a new one. An item created from an audit
+  finding is agent-owned: `clarify_owner: agent`, `parent: <audited id>` and a
+  `created by agent` first History line (credo `items`, "Clarify owner and the agent
+  decision rule").
+- **Fix rounds start fresh.** A MAJOR or FAIL the auditor does not fix itself ("Fixing small
+  findings" below) goes to a FRESH fix agent whose brief holds only this report's findings,
+  the branch state and the test commands - never a resumed builder context. The fix is
+  re-audited by another fresh audit subagent.
+- **Emergency brake.** After 2 FAIL audits of the same item, recommend no third fix round:
+  stop the item and re-cut it smaller or send it back to `1_clarify` (both audit reports
+  named in the History; the move into `1_clarify` sets `clarify_owner: human` and logs it,
+  so the user decides). Only an explicit per-item user decision raises this limit. Count
+  the earlier FAIL reports under `.credo/process/reports/` for the item and state the count
+  in the verdict.
 - The auditor never silently downgrades or repairs; it proposes, the move follows the
   verdict.
 

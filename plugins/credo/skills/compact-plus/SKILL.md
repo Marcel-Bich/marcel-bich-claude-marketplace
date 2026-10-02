@@ -184,3 +184,29 @@ then go straight to the report (step 8) and skip steps 4-7.
 
 Only after that green report is a /compact safe. This skill never issues the /compact
 itself.
+
+## After a green report: the real /compact via /credo:self-compact
+
+The separate command `/credo:self-compact` (`scripts/credo-self-compact.py`) runs the real
+Claude Code `/compact` on this session to save tokens. compact-plus still never calls
+`/compact` itself; the command's detached worker types it into this session's OWN tmux
+pane, and only once the session is idle, the input field is empty and no dialog, Ask
+question, permission prompt or menu is open. It refuses without the rehydrate breadcrumb
+from step 3, so it only works after compact-plus.
+
+- Only after a green report ("safe to /compact"). The breadcrumb must be fresh (default
+  at most 2 h old); an older one is refused - run compact-plus again.
+- Running background work does NOT block it: background subagents, background Bash
+  shells and monitors survive `/compact` and keep working (it can even be good that they
+  run during the compact). No background check and no `--no-background-work` flag are
+  needed; the worker ignores background rows in the pane footer. Only
+  `/credo:self-restart` keeps the background gate (a restart kills that work).
+- credo autonomous mode - no question. Set the `ScheduleWakeup` plus wake mark the
+  keep-alive demands, then run `credo-self-compact.py run --auto` and END THE TURN.
+- Interactive modes - ask ONCE via the Ask tool whether to run the real /compact now. Only
+  after an explicit yes run `credo-self-compact.py run --user-confirmed` and END THE
+  TURN.
+  No answer or no -> leave it; the user compacts when they want.
+- tmux only; outside tmux `check` says so and the user compacts by hand.
+
+Details and the owner rule: `commands/self-compact.md`.

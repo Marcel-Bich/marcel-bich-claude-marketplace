@@ -114,16 +114,26 @@ if ! session_id="$(credo_autonomy_resolve_id "$stdin_session_id")"; then
 fi
 STATE_DIR="$(credo_autonomy_dir "$session_id")"
 
-# Real user message -> pause THIS session's autonomy (fail-safe): drop its flag +
-# wake marker and set its hard paused opt-out. Capture whether autonomy was
-# actually active so the judgment nudge below only fires when a real autonomy
-# run was just paused.
+# Real user message -> pause THIS session's autonomy (fail-safe): drop its flag
+# and set its hard paused opt-out. Capture whether autonomy was actually active
+# so the judgment nudge below only fires when a real autonomy run was just paused.
+# The wake marker is KEPT while it lies in the future: the ScheduleWakeup it
+# records is still pending in the harness (it survives the pause, see the stale
+# wake rule above), so after a re-arm (credo-autonomy-on.sh) the Stop hook must
+# still see it. Only a past or unreadable marker is dropped here; explicit
+# autonomy-off (incl. a switch to active/passive) clears wake state.
 # A session that never had autonomy state (no dir) has nothing to pause - the
 # Stop hook is inert without an active flag - so no dir is created for it.
 had_flag=false
 [ -f "$STATE_DIR/active" ] && had_flag=true
 if [ -d "$STATE_DIR" ]; then
-    rm -f "$STATE_DIR/active" "$STATE_DIR/wake-scheduled" 2>/dev/null || true
+    rm -f "$STATE_DIR/active" 2>/dev/null || true
+    if [ -f "$STATE_DIR/wake-scheduled" ]; then
+        wake_ts="$(tr -dc '0-9' < "$STATE_DIR/wake-scheduled" 2>/dev/null || true)"
+        if [ -z "$wake_ts" ] || ! [ "$wake_ts" -gt "$(date +%s)" ] 2>/dev/null; then
+            rm -f "$STATE_DIR/wake-scheduled" 2>/dev/null || true
+        fi
+    fi
     : > "$STATE_DIR/paused" 2>/dev/null || true
 fi
 

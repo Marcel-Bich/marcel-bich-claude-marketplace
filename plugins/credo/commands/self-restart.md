@@ -2,7 +2,7 @@
 description: credo - Restart this Claude Code session and resume exactly the same session in the same profile (e.g. to apply plugin updates)
 arguments:
   - name: action
-    description: check | run (--user-confirmed | --announce SECONDS) [--update] [--reason TEXT] [--delay SECONDS] | cancel | status (default check)
+    description: check | run --no-background-work (--user-confirmed | --announce SECONDS) [--update] [--reason TEXT] [--delay SECONDS] | cancel | status (default check)
     required: false
 allowed-tools:
   - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-restart.py:*)
@@ -20,7 +20,7 @@ Helper: `${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-restart.py`
 | Action | What it does |
 |--------|--------------|
 | `check` (default) | Dry run. Gathers and validates everything and prints the plan (target pid, config dir, cwd, session id, transcript, relaunch method, dialog guard, restored permission mode, relaunch command, update allowlist). Changes nothing. Exit 1 with a clear reason if any precondition fails. |
-| `run (--user-confirmed \| --announce S) [--update] [--reason TEXT] [--delay S]` | First the owner-rule guard (below): refused -> exit 3, nothing started. Then validates exactly like `check`. On any failure nothing is stopped, an ntfy push goes out (if configured) and it exits 1. Otherwise it spawns a fully detached worker and returns at once. With an announce period it prints the announcement and sends an ntfy push first. Refuses (exit 1) while another restart is still pending. |
+| `run --no-background-work (--user-confirmed \| --announce S) [--update] [--reason TEXT] [--delay S]` | First the owner-rule guard (below), then the background guard (`--no-background-work` is required, see below): refused -> exit 3, nothing started. Then validates exactly like `check`. On any failure nothing is stopped, an ntfy push goes out (if configured) and it exits 1. Otherwise it spawns a fully detached worker and returns at once. With an announce period it prints the announcement and sends an ntfy push first. Refuses (exit 1) while another restart is still pending. |
 | `cancel` | Marks the pending restart as cancelled and terminates its waiting worker; the session keeps running. Exit 1 with "nothing to cancel" when nothing is pending (also once the worker has started stopping the session - then it is too late). |
 | `status` | Prints the state line (`pending` / `cancelled` / `stopping` / `relaunched` / `failed: ...`) with the scheduled stop time, the last marker (`<configdir>/credo/self-restart.json`) and the log tail. |
 
@@ -57,8 +57,15 @@ Further rules:
 
 - Use it after pushing or receiving plugin updates the session itself needs, or when the
   user asks for it (interactive: still via the Ask tool first).
-- NEVER while background subagents are still running - their work would be lost with the
-  old process.
+- **Mandatory background check before `run`.** NEVER while your own background work is
+  still running - it would be lost with the old process. Check it yourself first: no
+  running subagent of this session (`ListAgents`), no own background Bash shell or
+  monitor still running, no task notification still pending. If any is running, WAIT for
+  it to finish (never stop or kill it to get the restart through), then check again. Only
+  then pass `--no-background-work`; `run` refuses (exit 3, nothing started) without it.
+  The worker additionally treats background shells / agents visible in the pane footer
+  as not idle, but that is only an extra guard: the footer does not always show them
+  (e.g. while the task list is open), so your own check is the primary gate.
 - Always run `check` first and read its output (its `owner rule:` line shows which path
   applies).
 - `CREDO_SELF_RESTART_MIN_ANNOUNCE` scales the 300 s minimum down and is TEST-ONLY; never set
@@ -71,17 +78,44 @@ The detached worker (own session, stdio to `<configdir>/credo/self-restart.log`)
 1. waits `--announce` + `--delay` seconds (announce: 300 in autonomous mode, 0 with
    `--user-confirmed`; delay default 5) so the current turn can end, re-checking the marker
    for a cancel; a cancel aborts here with nothing stopped,
-2. stops the target Claude: inside tmux it sends `C-c` twice to the pane; otherwise (or if
+2. inside tmux: waits until the pane is idle with an EMPTY input field and no dialog,
+   Ask question, permission prompt, menu, copy mode or background shells / agents in the
+   footer (`scripts/credo_pane_guard.py`, the same detection `/credo:self-compact` uses,
+   confirmed by two probes ~1.5 s apart), so a prompt the user is typing is never
+   discarded. Every tmux call (probe, `C-c`, relaunch, dialog watch) goes to the tmux
+   server of THIS session (the socket from the target's `TMUX`), never the default
+   server. `check`, `run` and every probe also verify that the pane belongs to this Claude
+   process: the pane's process is the target or an ancestor of it, with no other Claude
+   process in between (a nested claude must never stop the outer session). A cancel
+   still works while it waits. If the target exits by itself (or the pane stops belonging
+   to it) while it waits, the worker stops waiting and aborts: marker `failed: target
+   gone` / `failed: pane ownership`, ntfy, nothing stopped and nothing relaunched.
+   Timeout `CREDO_SELF_RESTART_IDLE_TIMEOUT` (default 1800 s): it gives up without
+   stopping anything (marker `failed: session not idle`, ntfy). Outside tmux there is no
+   pane to inspect, so this step is skipped,
+3. stops the target Claude: inside tmux it sends `C-c` twice to the pane; otherwise (or if
    that did not work) SIGINT twice, then SIGTERM after a timeout. It NEVER uses SIGKILL. It
    waits (bounded, ~30 s) until the process is gone; if it does not exit, it aborts with
    no update and no relaunch and sends an ntfy push,
-3. with `--update`: runs the plugin update (below); failures are logged and reported in
+4. with `--update`: runs the plugin update (below); failures are logged and reported in
    the wake prompt but never block the relaunch,
-4. relaunches the same session with a wake prompt: `[credo-self-restart] Resumed after a
+5. relaunches the same session with a wake prompt: `[credo-self-restart] Resumed after a
    self-restart (reason: ...; plugin update: ...). Continue where you left off.`,
-5. writes the marker `<configdir>/credo/self-restart.json` (session id, started, reason,
+6. writes the marker `<configdir>/credo/self-restart.json` (session id, started, reason,
    status, scheduled stop time, announce, user_confirmed, worker pid, update summary,
    per-plugin versions, dialog guard result).
+
+### Known limit: the probe-to-stop window
+
+The idle check is a snapshot. Between the second (confirming) idle probe and the first
+`C-c` lie a few milliseconds plus the marker write. A key the user presses exactly in that
+window, a dialog that opens or background work that starts then is not seen: the `C-c`
+clears what was just typed (the first `C-c` empties the input field, the second exits) and
+the session restarts anyway. The window is short but not zero; the announcement (autonomous
+mode) or the Ask question (interactive) is what tells the user not to type now. Background
+work that only exists outside the visible pane (e.g. while the task list hides the agent
+rows) is never visible to the probe at all - that is why the agent's own
+`--no-background-work` check is the primary gate.
 
 ## Profile safety guarantees
 
@@ -130,7 +164,9 @@ helper restores it:
 
 1. **tmux** - the target runs in tmux (`TMUX` + `TMUX_PANE` in its environment) and `tmux`
    is on PATH: after the old process exited, `clear; bash '<launcher>'` is typed into the
-   SAME pane (works in fish and bash).
+   SAME pane (works in fish and bash), on the session's own tmux server (`tmux -S
+   <socket from TMUX>`). `check` refuses when that pane does not belong to this Claude
+   process.
 2. **wt** - WSL with `wt.exe` reachable: a new Windows Terminal tab
    (`wt.exe -w 0 new-tab wsl.exe -d <distro> --cd <cwd> -- ...`).
 3. **x11** - native Linux GUI (`DISPLAY`/`WAYLAND_DISPLAY`) with `x-terminal-emulator`,
@@ -211,12 +247,13 @@ sent immediately would land before the restart and be lost.
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-restart.py check --update
 # read the plan; send the peer message if a peer is reachable
+# check yourself: no own background subagent / shell / monitor still running (wait if so)
 # interactive: ask via the Ask tool first; only after the user's explicit yes:
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-restart.py run --user-confirmed --update --reason "cc-up"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-restart.py run --no-background-work --user-confirmed --update --reason "cc-up"
 # end the turn immediately
 
 # autonomous mode: no Ask, announced 5 minutes ahead (ntfy + transcript line)
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-restart.py run --announce 300 --update --reason "cc-up"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-restart.py run --no-background-work --announce 300 --update --reason "cc-up"
 # wrap up and end the turn before the scheduled time
 
 # cancel during the announce period

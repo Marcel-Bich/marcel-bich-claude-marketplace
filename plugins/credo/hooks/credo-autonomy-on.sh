@@ -13,6 +13,11 @@
 # from --session <id> (or --session=<id>), else $CREDO_SESSION_ID, else
 # $CLAUDE_CODE_SESSION_ID. Without a valid session_id -> hard error, no write.
 # Optional remaining arguments: a short reason / repo hint recorded in the flag.
+#
+# The wake marker (wake-scheduled) is deliberately left untouched: on a re-arm
+# after a user-message pause, a still-future marker records a ScheduleWakeup that
+# is still pending, and the Stop hook must keep honoring it. Wake state is
+# cleared only by credo-autonomy-off.sh (incl. a switch to active/passive).
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

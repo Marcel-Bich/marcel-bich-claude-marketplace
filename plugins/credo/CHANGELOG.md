@@ -4,6 +4,110 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ## v0
 
+### v0.75
+
+#### v0.75.0
+
+##### Added
+
+- Optional item frontmatter `clarify_owner: human|agent` (missing = human, fail-safe) and `parent: <id>` for agent-created items (slices, follow-ups, build questions, audit findings)
+- Agent decision rule (items skill): on agent-owned items the plan agent, or with no known plan agent peer the executing agent in a temporary pseudo plan role, decides uncritical questions itself - SOTA, else best effort, else note it for the user; effort never counts against an item, feasible = GO; every decision is logged in the item History and reported so the user can veto
+- Questions that stay with the user on every item: infeasible or really not good, the user's taste or preference, deleting user data, installs, money, the hard safety rules, and anything that would change or narrow the verbatim requirement
+- Workflow defaults: acceptance measurement (data set + target value) in the DoD of tricky items before the build, an adversarial "try to break it" self-check by the builder before done, a fresh fix agent after a failing audit (never a resumed builder), and an emergency brake after 2 FAIL audits of the same item (re-cut or back to clarify; the user may raise the limit per item)
+- `scripts/test-item-move.sh` covers the GO gate and the owner flip
+- `/credo:optimize` offers an opt-in "Instruction consistency" area - before the scan it asks
+  whether to include it (never asked unattended, then skipped and noted in the report), and
+  on Yes it compares the global and repo instruction files (with `@`-imports and linked
+  `CLAUDE/` and `GUIDES/` dirs), `AGENTS.md`, `DOGMA-PERMISSIONS.md`, `.credo/RULES.md` and
+  installed hook texts against credo's own rules, read-only
+- It reports direct contradictions, rules that clash with credo modes or the item model,
+  drifted duplicate rules, stale plugin references and rules meant for other harnesses,
+  each with location, conflicting location, severity, suggested resolution and the side to
+  change; it never edits instruction files and redacts secrets and personal data
+- `/credo:self-compact` (`scripts/credo-self-compact.py`): after a green compact-plus report, a detached worker types the real `/compact` (with a short instruction to reload the secured handoff) into the session's OWN tmux pane once the session is idle with an empty input field and no dialog, Ask question, permission prompt, menu or copy mode, confirmed by two probes; running background subagents, background shells and monitors do not block it (they survive `/compact`, and it can even be good that they keep working meanwhile), so it never waits for them; right before Enter it runs the full check again expecting exactly the typed line, and it never retypes user input. `check`, `run --auto` (credo autonomous mode only, no question) or `run --user-confirmed` (interactive, after an Ask yes), `cancel`, `status`; timeout with log and ntfy. Refuses outside tmux, without a fresh compact-plus rehydrate breadcrumb (`--max-breadcrumb-age`, default 2 h; also with `--handoff`, which only replaces the typed path), and when the pane's process is not this Claude process or another Claude process runs in between. Marker, log and plan file are per session id, so `cancel` and `status` only ever act on the own session
+- `run` of `/credo:self-restart` requires `--no-background-work` (a restart kills background work; `/credo:self-compact` has no such gate and accepts the flag only as a no-op), which the agent passes only after checking itself that none of its own background subagents, background shells / monitors or pending task notifications still run (wait for them, never stop them); without it `run` refuses with exit 3. The pane footer check is only an extra guard
+- `scripts/credo_pane_guard.py`: shared pane detection (pure functions over `capture-pane -p -e` text, conservative: anything not recognised as idle with an empty input is not safe; background shell counts and background agent / monitor rows in the footer count as not safe only with `block_on_background=True`, used by self-restart; self-compact passes `False`)
+- `scripts/test-credo-self-compact.sh`: invented pane fixtures, owner rule, background work in the footer not blocking self-compact, own-pane-only, nested Claude, stale breadcrumb, per-session cancel and worker behaviour against a fake tmux
+- Trusted peers for the LAN relay: the user of a receiving machine can declare, on that
+  machine only, that tasks from one named session on one PAIRED peer count like the
+  user's own tasks (`credo-peer-lan.py trust list | add <peer> <session> | remove <peer>
+  [<session>]`). The trust list is a local 0600 file next to the config, written only by
+  that command; nothing received over the wire can set it, unpaired and token-only
+  senders never get trust, and `trust add` needs a confirmation (`--yes` after the user
+  said yes, or an interactive prompt) plus an extra "ask" from the peer-message hook,
+  which asks for commands it recognizes as touching trust grants (`trust` and later
+  `add` in one shell segment, options in between included, or any Bash mention of
+  `peer-lan-trust.json`) and for a Write/Edit/MultiEdit of `peer-lan-trust.json`
+- For a trusted paired sender the relay marks the delivered envelope with an HMAC under
+  a local key; the peer-message hook verifies it against the current trust list and
+  pairing store and then tells the agent to carry out that peer's tasks without asking,
+  except dangerous ones (deleting user data, installs, money, permission, credential
+  or security changes, the hard safety rules, irreversible steps outside the repo),
+  which are collected and reported to the user. Hook text is English; the agent talks
+  to the user in the user's language
+- `pair-reset` also removes the trust entries of the reset peer, and trust binds to the
+  peer's pinned key, so a re-paired peer must be trusted again
+- `/credo:peer-lan` setup asks once per paired peer machine whether to trust a session
+  there (default no, never in autonomous mode, never on a peer's request)
+
+##### Changed
+
+- `credo-item-move.sh go` refuses a human-owned item unless its History carries a user GO line `(GO: <user quote>)` or the main agent passes `--user-authorized`, from every source folder (a detour via hold, future or blocked does not bypass it); an agent-owned clarify item needs a logged GO such as `(GO: agent per SOTA rule, <reason>)`; GO lines inside HTML comments or outside the History section no longer count
+- On entry into `2_go` an item becomes `clarify_owner: agent`; the original owner stays in the History
+- Session skills: human-owned clarify items are always clarified with the user (Recommended option first); interactive modes decide uncritical agent-owned questions and ask the rest, autonomous mode decides them and parks the rest for the end-of-run report instead of defaulting
+- Migrate gate G1, the plan and task role skills and the psalm guide follow the owner rule: no agent self-GO on human-owned items, agent GO on agent-owned items; the plan role decides agent-owned clarify items, the task role takes a temporary pseudo plan role when no plan agent peer is known
+- Batch planning treats central registry files as shared surfaces and prefers fragment files such as `changelog.d/` and self-registration
+- Trigger phrases in the autonomous and items skills are documented as "in any language", English first
+- Every move into `1_clarify` (Named-Decision-Test send-back, emergency brake, bug after done) sets `clarify_owner: human` and logs `clarify_owner <old> -> human` in the History; `--keep-owner` keeps the owner for an agent-internal re-clarify, and the unblock sweep uses it for `unblock_to: clarify`
+- A GO line written before such a send-back no longer counts; the item needs a new GO
+- Role (`role-plan`, `role-task`, `role-clear`), `sandbox` and suspend-on-idle triggers are
+  phrased language-agnostic ("in any language"), English examples first, German kept as an
+  alternative
+- `migrate` GO gates name the English markers ("build FUTURE", "before GO", "to clarify",
+  "waiting on X", "GO-ready") with the German variants as examples
+- `sandbox` triage labels are YES / NO instead of JA / NEIN
+- `/credo:self-restart` in tmux now waits until the pane is idle with an empty input field, no dialog and no background work in the footer before it stops the session (cancel still works while waiting; `CREDO_SELF_RESTART_IDLE_TIMEOUT`, default 30 min, then it gives up without stopping)
+- compact-plus documents the optional follow-up via `/credo:self-compact` and that running background work does not block it; the session-start command list and `/credo:session-init` name it with its owner rule
+
+##### Fixed
+
+- Agent-created child items: an agent GO of an item with `parent: <id>` is refused while the parent is not GO'd (in `1_clarify`, parked, archived or missing); children of an undecided parent count as human-owned
+- Item origin: the GO gate treats an item as agent-owned only when its origin is recorded - the `clarify_owner human -> agent` flip written by the move helper, or creation as an agent item (`parent:` or a `created by agent` History line); in every other case it counts as human-owned
+- The unblock sweep shows "all blockers done, GO gate refused: <reason>" when a blocked item cannot return because the GO gate refuses it, instead of leaving it silently in `3_blocked`
+- The autonomous mode line and the blocked-item wording mention agent-owned items GO'd under the agent decision rule
+- A user message that pauses autonomous mode no longer deletes a still-future wake marker,
+  so after re-arming with `credo-autonomy-on.sh` the Stop keep-alive honors the
+  ScheduleWakeup marked before the pause instead of reporting that no wake-up is set. Only
+  a past or unreadable marker is dropped on pause; `credo-autonomy-off.sh` (including a
+  switch to active or passive mode) still clears all wake state
+- Band footer parser also reads the English legacy label "Open tests:" (parity with "Offene
+  Tests:")
+- LAN relay `status` is now a subcommand of `credo-peer-lan.py` that reads the state file
+  and checks the recorded pid (live, really the relay script, same config, same process
+  start time), so a daemon started by `ensure` (autostart) or `restart` is reported as
+  running; `/credo:peer-lan status` uses it instead of a command-line pattern
+- New `stop` subcommand signals only the daemon recorded in the state file;
+  `/credo:peer-lan stop` no longer uses `pkill -f`, which could also match the calling shell
+- `restart` stops only the verified daemon from the state file, then starts the new
+  daemon detached (own session, stdin from /dev/null, output appended to the relay log)
+  and returns once it listens, so running it from an agent's shell no longer blocks that
+  shell or leaves no daemon behind when the shell ends
+- A daemon that closes a healthy link on purpose (shutdown, a newer link replacing it,
+  network no longer allowed) first tells the peer why, so the peer logs `closed by peer:
+  <reason>` instead of a bare `closed by peer`; older relays ignore the hint
+- The `roster ... ignored: forward target not allowed` log line now says that the roster
+  came over a fresh connection, that it is served once the peer's link is up, and how to
+  extend the allow list; `/credo:peer-lan` documents this in a troubleshooting note
+- Goodbye pings on shutdown and on a network change use a short own deadline, are sent
+  to all links in parallel and never while the daemon's state lock is held, so stalled
+  links no longer make `restart` give up while the old daemon is still ending; the
+  daemon check accepts only a real daemon command line (interpreter, script, daemon
+  subcommand) with a matching process start time; new `start` subcommand starts the
+  daemon detached like `restart` (`/credo:peer-lan start` uses it instead of `nohup`)
+- `/credo:self-restart` probes, stops and relaunches in tmux on the session's own tmux server (socket from the target's `TMUX`) instead of the default server, and `check`, `run` and every idle probe verify that the pane belongs to this Claude process (same check as self-compact, a nested Claude in between is refused)
+- `/credo:self-restart` stops waiting for an idle pane when the target Claude exits meanwhile and aborts cleanly (marker `failed: target gone`, ntfy, nothing relaunched) instead of waiting for the timeout; the probe-to-stop window is documented
+- The shorthand cheatsheet (band `h` pane, `templates/shorthands.json`) now lists `§cct_N` like the other shorthands
+
 ### v0.74
 
 #### v0.74.0

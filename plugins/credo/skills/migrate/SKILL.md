@@ -180,20 +180,25 @@ These two interleave; run them together.
   `1_todo/2_go`. This is an ENTRY gate, enforced at MOVE time (this migration step, any GO
   sweep, or `credo-item-move.sh`), not discovered later at build time - so a non-buildable
   item never sits in `2_go`. An item may move into `2_go` ONLY if ALL of these hold:
-  - **G1 - provable GO.** An explicit, item-scoped user GO exists (date + the user as
-    source). Agents never self-GO. The `-> go` History line must cite the GO source, e.g.
-    `-> go 2026-08-04 (GO: user, <short context>)`.
-  - **G2 - not deferred.** No "Bau FUTURE" (build FUTURE / deferred) marker in the item -> otherwise
-    `parked/future`.
+  - **G1 - provable GO.** A human-owned item (`clarify_owner: human` or missing) needs an
+    explicit, item-scoped user GO (date + the user as source); agents never self-GO a
+    human-owned item. An agent-owned item (`clarify_owner: agent`) may get an agent GO under
+    the agent decision rule (`items` skill, "Clarify owner and the agent decision rule"). The
+    `-> go` History line must cite the GO source, e.g.
+    `-> go 2026-08-04 (GO: user, <short context>)` or
+    `-> go 2026-08-04 (GO: agent per SOTA rule, <reason>)`.
+  - **G2 - not deferred.** No "build FUTURE" / deferred marker in the item, in any language
+    (e.g. German "Bau FUTURE") -> otherwise `parked/future`.
   - **G3 - no hard block on unbuilt work.** No hard dependency on an unbuilt item ->
     otherwise `1_todo/3_blocked` (if GO'd, see the `items` skill) or `parked/hold` (external
     / not GO'd).
-  - **G4 - nothing pending.** No open "CLARIFY / vor GO / noch zu klären" (before GO / to
-    clarify) section and no "wartet auf X" (waiting on X).
+  - **G4 - nothing pending.** No open "CLARIFY / before GO / to clarify" section and no
+    "waiting on X" marker - in any language (e.g. German "vor GO / noch zu klären", "wartet auf
+    X").
   - **G5 - no open build-details.** No open build-details or design decisions. The
-    intermediate status "GO-reif" (GO-ready) does NOT exist: an item with unresolved build-details is
-    `1_clarify` (to be clarified WITH the user), never handed to the building agent to
-    decide.
+    intermediate status "GO-ready" (German "GO-reif") does NOT exist: an item with unresolved
+    build-details is `1_clarify` (to be clarified WITH the user), never handed to the building
+    agent to decide.
     - **G5a - measure-then-user-decide is split, never a single blocking point.** A Success
       Criterion phrased as "measure first, then the USER decides" - a user-only decision that
       only arises AFTER a measurement the build itself produces - must NOT enter `2_go` as one

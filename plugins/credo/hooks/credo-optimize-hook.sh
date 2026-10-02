@@ -88,7 +88,7 @@ if [[ -z "$optin" ]]; then
     if [[ "$active" == true && "$autonomous" == false ]]; then
         case "$source" in
             startup|clear)
-                OUT="[credo-optimize] credo can offer an optimisation audit for this repo: a read-only scan (conflict hotspots, changelog fragments, test-stage convention, dogma settings, parallelism readiness) whose findings you then accept or decline one by one. Nothing is scanned or changed without the user's consent, and the user has not answered this yet. Ask once via the AskUserQuestion tool, at a natural point that does not interrupt urgent work: \"Optimisation audit wanted for this repo?\" with the options:
+                OUT="[credo-optimize] credo can offer an optimisation audit for this repo: a read-only scan (conflict hotspots, changelog fragments, test-stage convention, dogma settings, parallelism readiness, plus an opt-in instruction-consistency check that is asked separately) whose findings you then accept or decline one by one. Nothing is scanned or changed without the user's consent, and the user has not answered this yet. Ask once via the AskUserQuestion tool, at a natural point that does not interrupt urgent work: \"Optimisation audit wanted for this repo?\" with the options:
 - Yes, run it now -> run \`\"${STATE}\" optin yes\`, then run /credo:optimize (later it is offered again only when you return after a longer break)
 - No -> run \`\"${STATE}\" optin no\` (never offered automatically again; /credo:optimize stays available manually)
 If the user skips the question, record nothing (it may be asked again on a later start)."

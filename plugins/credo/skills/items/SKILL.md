@@ -33,7 +33,7 @@ The folder tree (created by `credo-init`) and what each folder means:
 ```
 .credo/items/
   1_todo/
-    1_clarify/     open questions - needs the user, NOT buildable yet
+    1_clarify/     open questions - NOT buildable yet (human-owned: needs the user; agent-owned: decision rule below)
     2_go/          clarified and approved - buildable (go-gate: only 2_go is buildable)
     3_blocked/     GO'd but hard-blocked by another (unbuilt) credo item; auto-returns to its origin (unblock_to: go|clarify) when every blocker is delivered
   2_done/          Definition of Done met (agent and/or user), gate passed
@@ -183,6 +183,16 @@ uncertain whether verifiable", UI, an unproven root-cause *hypothesis that has a
 approach*, or anything resolvable by a defensible engineering default. The test must be
 well-founded and must NOT be used as an argument against building the item itself.
 
+Every item in `2_go` is agent-owned (`clarify_owner: agent`, set by the move helper on
+entry), so a question surfacing mid-build first goes through the agent decision rule
+("Clarify owner and the agent decision rule" below): the agent decides it itself per SOTA /
+best effort and builds on. Only a question on that rule's escalation list (user taste or
+preference, a change to the verbatim requirement, infeasible or really not good, the hard
+safety rules) can pass condition 1 here. An item sent back by this test gets
+`clarify_owner: human` again, because its open question is the user's by definition:
+`credo-item-move.sh <id> clarify` sets it and logs `clarify_owner <old> -> human` in the
+History. A GO line from before the send-back no longer counts; the item needs a new GO.
+
 Typically this surfaces DURING the build, not at read time: an item is normally fully
 clarified when it reaches `2_go`, but something critical can still come up mid-build where
 building on naively would be wrong instead of clarifying. When the test passes, the agent
@@ -199,6 +209,59 @@ before things run clean again. Mark it in the item body with a short
 section, rather than adding a priority field or a new folder - "folder = status" and the
 lean frontmatter stay intact. The rule that rides on the marker: when the user is available,
 an agent surfaces these URGENT clarify items FIRST, before any other clarify or build work.
+
+## Clarify owner and the agent decision rule
+
+The default intention is to build everything as well as at all possible (state of the
+art); where that is not possible, best effort; only where even that does not work or would
+really not be good, the point is noted and presented to the user. How much work it is never
+counts against an item: feasible = GO.
+
+**Who decides depends on the owner** (frontmatter `clarify_owner`, missing = `human`):
+
+- **Human-owned clarify items** (`clarify_owner: human` or missing) are ALWAYS clarified
+  with the user, never decided autonomously. In a clarify round the agent recommends per
+  the rule below (the recommended option first) and the user decides. Only the user gives
+  the GO: `credo-item-move.sh` refuses `-> go` for a human-owned item unless the History
+  carries a `(GO: <user quote>)` line or the main agent passes `--user-authorized` on the
+  user's explicit GO. A detour via `parked/*` or `3_blocked` does not get around it.
+- **Agent-owned items** (`clarify_owner: agent`, plus everything in `2_go`): uncritical
+  questions are decided by the plan agent. If no plan agent peer is known (none was
+  announced as owning this responsibility), the EXECUTING agent takes this pseudo plan role
+  for the moment, without changing its real role, and decides by the same rule:
+  1. SOTA - the best solution known today;
+  2. else best effort;
+  3. else note it and present it to the user later.
+  Size or effort is never a reason against a solution. Feasible = GO: an agent-owned clarify
+  item may move to `2_go` with the History line
+  `-> go <date> (GO: agent per SOTA rule, <reason>)`.
+  **No slicing around the user:** an item with `parent: <id>` may only be agent-GO'd while
+  its parent is GO'd (in `2_go`, `2_done`, `3_verified`, or `3_blocked` with a GO). Children
+  of a human-owned parent that is still in `1_clarify` (or parked, archived, missing) are
+  human-owned until the user decides the parent; the move helper refuses the agent GO.
+  **Provable owner:** `clarify_owner: agent` counts only when the move helper wrote the flip
+  (`clarify_owner human -> agent` in the History) or the item was created as an agent item
+  (`parent:` or a `created by agent` History line). A hand-edited `clarify_owner: agent` on a
+  user item is treated as human.
+  Log EVERY such decision in the item History (what was decided, why) and name it in the
+  next reply or report, so the user can veto it.
+
+**Still escalated to the user, also on agent-owned items:**
+
+- anything infeasible or really not good (step 3 above);
+- the user's taste or preference (look, wording, product direction);
+- deleting user data, installs, money, and the hard safety rules (credo `safety`);
+- **verbatim guard:** a question whose answer would change or narrow the user's verbatim
+  requirement (the `Requirement (verbatim)` section of the item or of its `parent`) always
+  goes to the user (credo `requirements-verbatim`).
+
+**By mode:** interactive (active, passive) - decide the uncritical questions, ask the rest
+via the Ask tool (one item per round, Recommended option first). Autonomous - decide the
+uncritical questions, park the rest for the end-of-run report (deferred-question flow,
+credo `session-autonomous`); never adopt a default for an escalated question.
+
+A user GO in the user's own words is always a valid GO for any item; this rule only adds
+that agent-owned items do not wait for one.
 
 ## Mandatory frontmatter (lean)
 
@@ -259,6 +322,33 @@ fields above, add no second status source:
   heavy item never runs in parallel to another heavy item and starts only when
   `credo-resource-check.sh --heavy` says `ok`.
 
+Two optional fields record who owns an item's open questions (the full rule is in
+"Clarify owner and the agent decision rule" below). Like the fields above they add no
+second status source:
+
+- `clarify_owner` (optional): `human` or `agent`. **Missing = `human`** (fail-safe); any
+  other value is also treated as `human`. `human` = the item comes from the user's own
+  words, so its open questions are clarified with the user and only the user gives its GO.
+  `agent` = a builder, plan or task agent created it (a slice, a follow-up, a build
+  question, an audit finding), so the agent decision rule applies. `credo-item-move.sh`
+  sets `clarify_owner: agent` on every move into `2_go` and keeps the origin in the History
+  (`(origin: created by user; clarify_owner human -> agent)`): once an item is GO'd, a later
+  question about it very likely had no human in the loop. The helper is the only writer of
+  the human -> agent flip; never edit `clarify_owner: human` to `agent` by hand (the GO gate
+  then treats the item as human). On every move into `1_clarify` the helper sets
+  `clarify_owner: human` and logs `clarify_owner <old> -> human`; only an agent-internal
+  re-clarify passes `--keep-owner` (the unblock sweep does so for `unblock_to: clarify`).
+- `parent` (optional): `parent: <id>` on an agent-created item names the item it came from
+  (the sliced, audited or built item). Set it together with `clarify_owner: agent`. While
+  the parent is not GO'd, the child counts as human-owned (no agent GO, see the rule below).
+
+When creating an item: from the user's own words (a request, a bug report, an idea the
+user stated) -> `clarify_owner: human` (or leave it out); created by a builder, plan or task
+agent -> `clarify_owner: agent` plus `parent: <id>`, and the first History line says so:
+`- created by agent (clarify) <date> (<why: slice / follow-up / build question / audit
+finding of #<id>>)`. Without `parent:` or that line the GO gate treats a `clarify_owner:
+agent` item as human. When in doubt, human.
+
 ## Filenames and ids
 
 - File name: `<id>-<slug>.md`, e.g. `124-live-reload-panel.md`. The slug is a short,
@@ -305,6 +395,13 @@ Use these English headings in this order. A blank template ships at
      the user decide. The parent then stays a clean all-or-nothing item over its buildable
      criteria (the measurement included); it does not sit stuck half-done and is not bounced
      whole back to `1_clarify` over a decision that is not yet open.
+   - **Tricky items carry their acceptance measurement BEFORE the build.** An item whose
+     result is an algorithm, a detection, or a quality or numeric outcome names in its
+     Success Criteria, before the build starts, the data set to measure on and the target
+     value (e.g. "on `fixtures/set-a` (120 cases) at least 95 % detected, 0 false
+     positives"). The builder measures against it before reporting done and records the
+     measured value in `## Verify`. This is different from the measure-then-user-decide
+     split above: here the target is fixed up front.
 3. **Implemented** - what was actually built, with concrete `file:line` references. This
    is where the wiring is recorded (which caller reaches the new code).
 4. **Verify** - the honest 4-valued verification state, per layer. See below.
@@ -400,10 +497,10 @@ between the two (`blocked_by` / `blocks`).
 - A server-side item MAY reach `2_done` while its UI-wiring item exists but is still in
   `1_clarify` - the existence of the wiring item is what makes the server work meaningful;
   it does not have to be built first.
-- Narrowly scoped exception to clarify-first: an agent MAY autonomously create and GO
-  EXACTLY this one wiring-item type and build it best-effort. This carve-out is limited to
-  the cross-boundary wiring item and nothing else - everything else still follows
-  clarify-first (only the user sets GO).
+- An agent MAY autonomously create and GO this wiring item and build it best-effort. It
+  is an agent-created item (`clarify_owner: agent`, `parent:` the server-side item), so
+  this is the agent decision rule applied ("Clarify owner and the agent decision rule");
+  human-owned items still follow clarify-first (only the user sets their GO).
 
 Before you record `failed` or "not started" for a capability, you MUST first run a wiring
 check against the real code: search the source for the endpoint, class, function, or
@@ -416,7 +513,8 @@ has not been observed, record `wired-but-behavior-unverified`, not `failed`. Res
 ## Build-completion gate (record what you built, in the same move)
 
 The moment build code is committed - an item has actually been built, not just planned -
-the building agent MUST, in the SAME turn, bring the item file into line with that reality:
+the building agent MUST, in the SAME turn, bring the item file into line with that reality
+(steps 1-3) and check its own work (step 4):
 
 1. Fill `## Implemented` with concrete `file:line` evidence for what was built (which
    caller reaches the new code).
@@ -426,8 +524,14 @@ the building agent MUST, in the SAME turn, bring the item file into line with th
    `wired-but-behavior-unverified` when the code is reachable and called. (`not-started`
    means "work has not begun"; a build commit proves it has.)
 
+4. Before reporting done, run an adversarial self-check: try to break what you built
+   (edge cases, bad input, the failure path, a second run, the unhappy UI path) and list in
+   the report what you tried and what held or was fixed. For a tricky item, also measure
+   against its acceptance measurement (Success Criteria above). This list is input for the
+   audit, not a replacement for it.
+
 This is a mandatory step of the build routine, not a new script. An item with a build
-commit that still says "not started" (or "noch nicht begonnen") is a CONTRADICTION between
+commit that still says "not started" (in any language, e.g. German "noch nicht begonnen") is a CONTRADICTION between
 the committed code and the item text - flag it and resolve it, exactly as with the
 Folder<->History invariant. Leaving the item stale after committing build code is a
 detected mis-state, never an acceptable end.
@@ -559,6 +663,11 @@ missed. It needs clarification before it is buildable again. **Agents never self
 moves it back to clarify per this rule (or, for a clear and approved fix, the audit skill
 governs whether it returns to `2_go`).
 
+Fix rounds after a failing audit follow the credo `audit` skill: a FRESH fix agent gets
+only the findings, the branch state and the test commands (never the builder's resumed
+context), and after 2 FAIL audits of the same item there is no third fix round by default -
+the item is stopped and re-cut smaller or sent back to `1_clarify` ("Emergency brake").
+
 This is the DONE-work case. A different case is a critical open user-only decision that
 surfaces while building a `2_go` item (not yet done): that is governed by the
 Named-Decision-Test above, which sends the item `2_go -> 1_clarify` (URGENT), not by this
@@ -566,7 +675,8 @@ done-work rule.
 
 ## GO-but-blocked (1_todo/3_blocked)
 
-`3_blocked` holds an item that is fully clarified and the user has GO'd, but which is
+`3_blocked` holds an item that is fully clarified and GO'd (by the user, or for an
+agent-owned item by the agent decision rule), but which is
 hard-blocked by ANOTHER, still-unbuilt credo item. It is NOT a demotion of the GO - the GO
 stands; the block only pauses it. When every blocking item is delivered, the item
 auto-returns to its origin folder (its `unblock_to` target, `go` or `clarify`).
@@ -617,8 +727,10 @@ What the sweep does, for each item in `3_blocked`:
    does NOT count as delivered** - an archived blocker means the dependency was abandoned, so
    the item stays blocked and is surfaced (below).
 
-This is NOT a new GO - the GO was the user's originally and still stands; the block merely
-paused it, so the automatic return respects "only the user sets GO". The sweep is idempotent
+This is NOT a new GO - the original GO (the user's, or for an agent-owned item the logged
+agent decision) still stands; the block merely paused it. The move helper still applies its
+owner gate on this return, so a human-owned item that never had a user GO stays blocked
+instead of slipping into `2_go`. The sweep is idempotent
 (an unblocked item leaves `3_blocked`, so a re-run does not touch it) and never deletes
 anything (it moves via `credo-item-move.sh`).
 
@@ -656,6 +768,8 @@ Prefer the move helper - it is atomic, never deletes, and gates the human-author
 # target: clarify | go | blocked | done | verified | archived | hold | future
 # verified needs the --user-authorized opt-in and only on explicit user instruction:
 #   credo-item-move.sh <id> verified --user-authorized
+# go for a human-owned item needs a "(GO: <user quote>)" History line, or the main agent's
+#   --user-authorized on the user's explicit GO (see "Clarify owner and the agent decision rule")
 ```
 
 A raw `mv` / `git mv` of an item file inside the status tree is blocked by the
@@ -693,7 +807,10 @@ repository, so the first run also sweeps the backlog. A cleanup error never fail
 Valid transitions (folder = status):
 
 - `1_clarify -> 2_go` once the user gives an explicit GO (go-gate: only `2_go` is
-  buildable; `1_clarify` is not). In a presence session, clarify and propose that GO one
+  buildable; `1_clarify` is not). For an agent-owned item (`clarify_owner: agent`) the agent
+  decision rule may give the GO instead (`(GO: agent per SOTA rule, <reason>)`, see "Clarify
+  owner and the agent decision rule"); a human-owned item always needs the user's GO, and
+  the move helper refuses it otherwise. In a presence session, clarify and propose that GO one
   item at a time, each item in its own Ask round - see "One item per Ask round" in the
   common core (session-active skill). Before proposing that GO, discharge the over-clarify
   standard and its pre-GO self-check unless `clarify_depth: waived` (credo `session-active`
@@ -704,14 +821,17 @@ Valid transitions (folder = status):
   above; requires `blocked_by`). NOT for "too big / too hard".
 - `2_go -> 1_clarify` when a genuine user-only decision surfaces (the Named-Decision-Test
   passes), typically mid-build. Agent-permitted - the one carve-out from "never self-demote";
-  NOT for "too big / too hard". Mark the returned item URGENT (see above) and record why.
+  NOT for "too big / too hard". Mark the returned item URGENT (see above) and record why;
+  the move helper sets `clarify_owner: human` (the open decision is the user's) and logs it.
 - `3_blocked -> <unblock_to>` (`go` or `clarify`; legacy item without the field -> `go`) on
   auto-unblock when EVERY blocker is in `2_done`/`3_verified` (not a new GO), enforced
   deterministically by `credo-unblock-sweep.sh` on done/verified moves and at SessionStart.
   `4_archived` does NOT count as delivered.
 - `2_go -> 2_done` only after the full Definition of Done gate above passes (pending
   human-only tests do not hold it in `2_go`).
-- `2_done -> 1_clarify` when a bug is found (see above).
+- `2_done -> 1_clarify` when a bug is found (see above). The move helper sets
+  `clarify_owner: human` on entry into `1_clarify`; for a bug found by an audit or an agent
+  that the agent decision rule may settle, pass `--keep-owner` to keep `agent`.
 - any -> `parked/hold` (external block) or `parked/future` (deferred), or `4_archived`
   (abandoned/rejected); `3_blocked -> parked/*` or `4_archived` as usual.
 - `2_done -> 3_verified` is **human-authorized**: an agent never does it on its own

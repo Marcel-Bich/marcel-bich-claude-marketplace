@@ -7,8 +7,8 @@ description: >
   mode is set - so this skill can bootstrap autonomous mode itself. Trigger on a semantic
   full-autonomy / AFK-handoff grant (match the intent, not a rigid phrase list); the skill itself
   then only ENTERS autonomous mode on an unambiguous, explicit grant and confirms first when unsure.
-  Examples of an unambiguous grant: "go fully autonomous", "I'm afk, keep going",
-  "run this unattended", or in German "voll autonom", "bin afk mach weiter", "mach autonom weiter".
+  Examples of an unambiguous grant, in any language: "go fully autonomous", "I'm afk, keep going",
+  "run this unattended" (German e.g. "voll autonom", "bin afk mach weiter", "mach autonom weiter").
   A vague or casual "keep going / carry on" is NOT such a grant. Also load it when the session-mode
   inject line says "Load skill session-autonomous", right after the /credo:session-autonomous
   command, or whenever you are working autonomously and unattended.
@@ -57,14 +57,15 @@ autonomous mode.
 
 **Capture and persist a suspend-on-idle directive on entry.** If the grant (the
 `/credo:session-autonomous` argument or the user's natural-language handoff) includes an
-explicit suspend-on-idle order ("suspend when done", "power down at the end", "hibernate
-afterwards", German "am Ende suspend", "danach runterfahren"), record it durably right now:
+explicit suspend-on-idle order, in any language ("suspend when done", "power down at the end",
+"hibernate afterwards"; German e.g. "am Ende suspend", "danach runterfahren"), record it durably right now:
 
 ```
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-suspend-directive.sh" set
 ```
 
-An explicit revocation ("no suspend", "leave it on", German "kein suspend", "lass an") clears
+An explicit revocation, in any language ("no suspend", "leave it on"; German e.g. "kein
+suspend", "lass an") clears
 it (`... clear`). A directive already set in THIS session stays in force across a re-invoke of
 `/credo:session-autonomous` and across context compaction - do NOT drop it just because the
 latest invocation carried no argument (that persistence is the whole point; it fixes the bug
@@ -98,11 +99,24 @@ never bold or plain. This improves scannability of item numbers.
 
 ### Steward, not initiator
 
-In autonomous mode you are a steward of already-approved work, not an initiator. Work ONLY
+In autonomous mode you are a steward of already-approved work, not an initiator. Build ONLY
 items in `1_todo/2_go` - approved, buildable GO items (credo `items` go-gate). Do NOT start
-new features, invent scope, or make product decisions on the user's behalf. Anything not
-already GO waits (or becomes a deferred question, below); it does not get built
-autonomously.
+new features, invent scope, or make product decisions on the user's behalf. A human-owned
+clarify item (`clarify_owner: human` or missing - the user's own request) is never GO'd
+autonomously: it waits for the user (or its open question becomes a deferred question,
+below).
+
+Agent-owned clarify items (`clarify_owner: agent` - slices, follow-ups, build questions,
+audit findings of approved work, with `parent:`) are part of the approved work: apply the
+agent decision rule (credo `items`, "Clarify owner and the agent decision rule"). With no
+plan agent peer known, you take the pseudo plan role for the moment (your real role does
+not change): decide the uncritical questions per SOTA, else best effort, effort never
+counting against it; GO a feasible item with `(GO: agent per SOTA rule, <reason>)` and
+build it; log every decision in the item History and list it in the end-of-run report so
+the user can veto. Park the escalated questions (infeasible or really not good, the user's
+taste or preference, deleting user data, installs, money, the hard safety rules, anything
+that would change or narrow the verbatim requirement) for the end-of-run report - never
+adopt a default for them.
 
 go=go: a `2_go` item IS buildable by the folder - build it (best effort), never self-skip or
 self-demote it for size, UI, or "not sure it is verifiable". See the go=go build-side anchor
@@ -188,10 +202,10 @@ visual verify as human-only. See the credo `verify` skill for the full rule and 
 ### Self-restart: announced, never asked (owner rule)
 
 In autonomous mode `/credo:self-restart` runs WITHOUT the Ask tool, but always announced at
-least 5 minutes ahead: `run --announce 300` (the default; less is refused) sends an ntfy push
+least 5 minutes ahead: `run --announce 300 --no-background-work` (the default; less is refused) sends an ntfy push
 and prints the reason plus the cancel command, so the user can still react. Outside
 autonomous mode it is never run on the agent's own initiative - only after the user's
-explicit yes via the Ask tool (`run --user-confirmed`), because an unannounced restart could
+explicit yes via the Ask tool (`run --user-confirmed --no-background-work`), because an unannounced restart could
 discard a prompt the user is typing. Never with running background subagents.
 
 ### Never interrupt an autonomous run for a mode change (hard rule)
@@ -393,9 +407,14 @@ re-raised. Only if it is truly unanswered:
 
 3. If the answer arrives within the window: incorporate it and continue. Log it verbatim
    (credo `requirements-verbatim`).
-4. If no answer arrives: adopt a documented default - record the decision and its rationale
-   in the item / handoff so it is auditable - and continue fully autonomously. Do not block
-   the run on an absent user.
+4. If no answer arrives: for an uncritical question, decide it by the agent decision rule
+   (credo `items`: SOTA, else best effort) as the documented default - record the decision
+   and its rationale in the item History / handoff so it is auditable - and continue fully
+   autonomously. A question on the escalation list (infeasible or really not good, the
+   user's taste or preference, deleting user data, installs, money, the hard safety rules,
+   a change to the verbatim requirement) or the GO of a human-owned item is NEVER defaulted:
+   park it (the item stays where it is), continue with other work, and put it into the
+   end-of-run report. Do not block the run on an absent user.
 
 This replaces blocking on the user with a bounded wait plus a safe, documented fallback. If
 a subagent is the one that hit the question, use return-and-resume (credo `orchestration`):
@@ -431,6 +450,9 @@ ls -1 .credo/items/1_todo/2_go/
 
 Judge the actual current contents:
 
+- Also list `1_todo/1_clarify/` for agent-owned items (`clarify_owner: agent`) whose
+  questions the agent decision rule can settle - they are autonomous-eligible work (Steward
+  section above), not leftovers.
 - If buildable, open, autonomous-eligible items are there, the run may NOT stop without a
   reason. Either build them, or - for every remaining item - name the concrete non-build
   reason explicitly (a user-only decision, a hard block, or a placement / hygiene flag; see
@@ -628,7 +650,8 @@ suspended even though it had announced it would).
   suspend after all". Presence is not a silent cancellation. When the directive is set and the
   veto window passes with no cancellation, you power down - full stop.
 - **Explicit revocation** = a natural-language user statement that clearly cancels the order
-  ("no suspend", "do not power down", "leave it on", German "kein suspend", "lass an"). On such
+  in any language ("no suspend", "do not power down", "leave it on"; German e.g. "kein
+  suspend", "lass an"). On such
   a statement run `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-suspend-directive.sh" clear`. Nothing
   else clears it.
 
@@ -656,7 +679,9 @@ suspended even though it had announced it would).
 The common-core authority order (E5) applies, with the away-user branch active: self-
 resolve up to level 3 (the verbatim log and committed docs); if that is not enough, either
 raise a deferred question (above) when it truly needs the user, or fall back to a
-documented default (levels 4-5) and continue. Do not silently invent a requirement.
+documented default (levels 4-5, for agent-owned questions the agent decision rule in credo
+`items`) and continue. Do not silently invent a requirement; a question that would change
+or narrow the verbatim requirement is parked, never defaulted.
 
 ### Git-push: atomic per slice
 

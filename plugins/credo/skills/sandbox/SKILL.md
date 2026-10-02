@@ -6,10 +6,10 @@ description: >
   and without disturbing the task / build agent. Use when a 1_clarify item cannot be answered by
   a product decision alone but needs something built or measured first; when working in the
   plan / clarify role and a clarify question needs evidence; and for isolated read-and-write
-  pre-work in autonomous / AFK runs. Triggers on clarify pre-work such as "measure this before we
-  decide", "build a quick mockup to clarify", "prove this is feasible", "sandbox this",
-  "Messung / Mockup / Machbarkeit vor der Klaerung", "bau eine Sandbox dafuer". Do NOT use for a
-  pure product decision (nothing to measure - that is answered by asking the user), and never for
+  pre-work in autonomous / AFK runs. Triggers on clarify pre-work requested in any language, such
+  as "measure this before we decide", "build a quick mockup to clarify", "prove this is
+  feasible", "sandbox this", or German "Messung / Mockup / Machbarkeit vor der Klärung", "bau
+  eine Sandbox dafür". Do NOT use for a pure product decision (nothing to measure - that is answered by asking the user), and never for
   production code or commits.
 ---
 
@@ -76,11 +76,11 @@ is that fixed pointer name.)
 
 ## Lifecycle
 
-1. **Triage** all `1_clarify` items into JA (has a buildable deliverable) / NEIN (nothing to
-   measure), naming the concrete deliverable for each JA item. This triage is delegatable to a
-   subagent. A NEIN item is justified explicitly (a pure product decision - answer it by asking
+1. **Triage** all `1_clarify` items into YES (has a buildable deliverable) / NO (nothing to
+   measure), naming the concrete deliverable for each YES item. This triage is delegatable to a
+   subagent. A NO item is justified explicitly (a pure product decision - answer it by asking
    the user, do not build anything).
-2. **Build** each JA item in `.credo/sandbox-tmp/<id>-<slug>/` via the helper
+2. **Build** each YES item in `.credo/sandbox-tmp/<id>-<slug>/` via the helper
    `scripts/credo-sandbox-init.sh <id>-<slug>` (it creates the folder, a README template, and
    the WIP INDEX). One subagent per folder, parallelizable on disjoint folders (credo
    `orchestration`).

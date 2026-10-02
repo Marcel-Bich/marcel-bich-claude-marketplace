@@ -70,14 +70,25 @@ done
 FT="$TMP/ftmux"; FW="$TMP/fwt"; FX="$TMP/fx"; FC="$TMP/fclaude"
 mkdir -p "$FT" "$FW" "$FX" "$FC"
 
-# fake tmux: records argv; C-c -> SIGINT the fake target; capture-pane -> pane file
+# fake tmux: records argv; C-c -> SIGINT the fake target; display-message -> pane info;
+# capture-pane -> before the first C-c to the current fake target the pre-stop pane
+# ($FAKE_IDLE_PANE, the idle-guard fixture), afterwards the pane file (dialog watch)
 cat > "$FT/tmux" <<'EOF'
 #!/bin/bash
 printf '%s\n' "$*" >> "$FAKE_TMUX_LOG"
-if [ "$1" = "send-keys" ] && [ "${4:-}" = "C-c" ] && [ -f "${FAKE_TARGET_PIDFILE:-/nonexistent}" ]; then
-    kill -INT "$(cat "$FAKE_TARGET_PIDFILE")" 2>/dev/null
+[ "$1" = "-S" ] && shift 2
+tp="$(cat "${FAKE_TARGET_PIDFILE:-/nonexistent}" 2>/dev/null)"
+if [ "$1" = "send-keys" ] && [ "${4:-}" = "C-c" ] && [ -n "$tp" ]; then
+    : > "$FAKE_TMUX_LOG.cc.$tp"
+    kill -INT "$tp" 2>/dev/null
+fi
+if [ "$1" = "display-message" ]; then
+    printf '%s\t%s\t0\t0\n' "$4" "${FAKE_PANE_PID:-${tp:-1}}"
 fi
 if [ "$1" = "capture-pane" ]; then
+    if [ -n "${FAKE_IDLE_PANE:-}" ] && [ -n "$tp" ] && [ ! -e "$FAKE_TMUX_LOG.cc.$tp" ]; then
+        cat "$FAKE_IDLE_PANE"; exit 0
+    fi
     [ -f "${FAKE_PANE_FILE:-/nonexistent}" ] || exit 1
     cat "$FAKE_PANE_FILE"
 fi
@@ -115,6 +126,16 @@ EOF
 chmod +x "$FT/tmux" "$FW/wt.exe" "$FX/x-terminal-emulator" "$FC/claude"
 export FAKE_TMUX_LOG="$TMP/tmux.log" FAKE_WT_LOG="$TMP/wt.log" FAKE_X_LOG="$TMP/x.log" FAKE_CLAUDE_LOG="$TMP/claude.log"
 export CREDO_SELF_RESTART_NTFY_URL=off CREDO_SKIP_ENSURE=1
+# idle-guard fixtures (invented text): idle with an empty input, and busy
+RULE="────────────────────────────────────────────────────────────"
+ELL="$(printf '\xe2\x80\xa6')"  # the TUI ellipsis character, kept out of the source
+printf '%s\n' "● Done, the fixture task is finished." "" "✻ Worked for 1m 5s" "" "$RULE" "❯ " "$RULE" \
+    "  ⏵⏵ accept edits on (shift+tab to cycle)" > "$TMP/pane-idle.txt"
+printf '%s\n' "● Working on the fixture task." "" "✻ Brewing$ELL (12s · ↓ 300 tokens)" "" "$RULE" "❯ " "$RULE" \
+    > "$TMP/pane-busy.txt"
+printf '%s\n' "● Done." "" "$RULE" "❯ half typed user prompt" "$RULE" > "$TMP/pane-typed.txt"
+export FAKE_IDLE_PANE="$TMP/pane-idle.txt" CREDO_SELF_RESTART_IDLE_TIMEOUT=20 \
+    CREDO_SELF_RESTART_IDLE_POLL=0.2 CREDO_SELF_RESTART_IDLE_RECHECK=0.2
 unset CREDO_SESSION_MODES_DIR CREDO_SELF_RESTART_MIN_ANNOUNCE
 export CREDO_GLOBAL="$TMP/global.yaml" CREDO_PROFILE="$TMP/none-profile" CREDO_PROJECT="$TMP/none-project"
 : > "$CREDO_GLOBAL"
@@ -291,7 +312,7 @@ else:
 PYEOF
 TENV_ALL='{"TMUX":"/tmp/t,1,2","TMUX_PANE":"%7","WSL_DISTRO_NAME":"Ubuntu","DISPLAY":":0"}'
 out="$(PATH="$FT:$FW:$FX:$BASE" "$PY" "$TMP/method.py" "$HELPER" "$TENV_ALL")"
-check "method tmux first" 'tmux|{"pane": "%7"}|["tmux", "send-keys", "-t", "%7", "clear; bash '"'"'/c/l.sh'"'"'", "Enter"]' "$out"
+check "method tmux first (session socket)" 'tmux|{"pane": "%7", "socket": "/tmp/t"}|["tmux", "-S", "/tmp/t", "send-keys", "-t", "%7", "clear; bash '"'"'/c/l.sh'"'"'", "Enter"]' "$out"
 out="$(PATH="$FT:$FW:$FX:$BASE" "$PY" "$TMP/method.py" "$HELPER" '{"WSL_DISTRO_NAME":"Ubuntu","DISPLAY":":0"}')"
 check "method wt with tmux guard" 'wt|{"distro": "Ubuntu", "tmux_session": "credo-test"}|["wt.exe", "-w", "0", "new-tab", "wsl.exe", "-d", "Ubuntu", "--cd", "/w/p", "--", "tmux", "new-session", "-s", "credo-test", "bash", "/c/l.sh"]' "$out"
 out="$(PATH="$FW:$FX:$BASE" "$PY" "$TMP/method.py" "$HELPER" '{"WSL_DISTRO_NAME":"Ubuntu"}')"
@@ -391,7 +412,7 @@ out="$(env -u WSL_DISTRO_NAME CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_REST
 check "check no relaunch method -> rc 1" "1" "$rc"
 case "$out" in *"FAIL: no way to bring the session back; not restarting"*) ok "check no method message" 0 ;; *) ok "check no method message" 1 ;; esac
 # run refuses too, and the fake target is untouched
-out="$(env -u WSL_DISTRO_NAME CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T2 PATH="$FC:$BASE" "$PY" "$HELPER" run --user-confirmed 2>&1)"; rc=$?
+out="$(env -u WSL_DISTRO_NAME CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T2 PATH="$FC:$BASE" "$PY" "$HELPER" run --no-background-work --user-confirmed 2>&1)"; rc=$?
 check "run refuses on failed validation" "1" "$rc"
 sleep 0.5
 ok "refused run leaves target alive" "$(kill -0 "$T2" 2>/dev/null && echo 0 || echo 1)"
@@ -401,7 +422,7 @@ kill -TERM "$T2" 2>/dev/null
 mkdir -p "$CFGA/credo/session-mode"; echo plan > "$CFGA/credo/session-mode/$SID"
 start_target "$TMP/t3.pid" "$CFGA" TMUX=/tmp/t,1,2 TMUX_PANE=%9 -- --model opus
 T3="$(cat "$TMP/t3.pid")"
-out="$(CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T3 PATH="$FT:$FC:$BASE" "$PY" "$HELPER" check 2>&1)"; rc=$?
+out="$(CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T3 FAKE_TARGET_PIDFILE="$TMP/t3.pid" PATH="$FT:$FC:$BASE" "$PY" "$HELPER" check 2>&1)"; rc=$?
 check "check ok rc 0" "0" "$rc"
 rl="$(printf '%s\n' "$out" | grep '^  relaunch:')"
 case "$rl" in *dangerously*|*bypassPermissions*) ok "no bypass gained without it in cmdline" 1 ;; *) ok "no bypass gained without it in cmdline" 0 ;; esac
@@ -413,10 +434,20 @@ case "$out" in *"dialog guard: tmux pane %9"*) ok "check shows dialog guard" 0 ;
 # another live process holding the same session -> fail
 mkdir -p "$CFGA/sessions"
 printf '{"pid": %d, "sessionId": "%s"}' "$SLP" "$SID" > "$CFGA/sessions/$SLP.json"
-out="$(CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T3 PATH="$FT:$FC:$BASE" "$PY" "$HELPER" check 2>&1)"; rc=$?
+out="$(CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T3 FAKE_TARGET_PIDFILE="$TMP/t3.pid" PATH="$FT:$FC:$BASE" "$PY" "$HELPER" check 2>&1)"; rc=$?
 check "check second holder -> rc 1" "1" "$rc"
 case "$out" in *"also appears held by pid(s) $SLP"*) ok "check second holder message" 0 ;; *) ok "check second holder message" 1 ;; esac
 rm -f "$CFGA/sessions/$SLP.json"
+# pane ownership (same check as self-compact): the pane's process is a foreign process
+out="$(CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T3 FAKE_PANE_PID=$SLP PATH="$FT:$FC:$BASE" "$PY" "$HELPER" check 2>&1)"; rc=$?
+check "check foreign pane -> rc 1" "1" "$rc"
+case "$out" in *"tmux pane %9 belongs to pid $SLP, which is not this Claude process"*) ok "check foreign pane message" 0 ;; *) ok "check foreign pane message ($out)" 1 ;; esac
+grep -q -- "-S /tmp/t display-message -p -t %9" "$FAKE_TMUX_LOG"; ok "ownership check uses the session socket" "$?"
+: > "$FAKE_TMUX_LOG"
+out="$(CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T3 FAKE_TARGET_PIDFILE="$TMP/t3.pid" FAKE_PANE_PID=$SLP PATH="$FT:$FC:$BASE" "$PY" "$HELPER" run --no-background-work --user-confirmed --delay 0.2 2>&1)"; rc=$?
+check "run foreign pane -> rc 1" "1" "$rc"
+check "run foreign pane sends no keys" "0" "$(grep -c 'send-keys' "$FAKE_TMUX_LOG")"
+ok "run foreign pane leaves the target alive" "$(kill -0 "$T3" 2>/dev/null && echo 0 || echo 1)"
 kill -TERM "$T3" 2>/dev/null
 rm -f "$CFGA/credo/session-mode/$SID"
 
@@ -450,17 +481,17 @@ T5="$(cat "$TMP/t5.pid")"
 out="$(CLAUDECODE=1 CLAUDE_CODE_FOO=bar CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T5 \
     FAKE_TARGET_PIDFILE="$TMP/t5.pid" FAKE_PANE_FILE="$TMP/pane.txt" CREDO_SELF_RESTART_SIGNAL_PAUSE=0.3 \
     CREDO_SELF_RESTART_STOP_TIMEOUT=10 CREDO_SELF_RESTART_DIALOG_WATCH=3 PATH="$FT:$FC:$BASE" \
-    "$PY" "$HELPER" run --user-confirmed --update --reason "test run" --delay 0.2 2>&1)"; rc=$?
+    "$PY" "$HELPER" run --no-background-work --user-confirmed --update --reason "test run" --delay 0.2 2>&1)"; rc=$?
 check "run returns 0 immediately" "0" "$rc"
 MARK="$CFGA/credo/self-restart.json"
 for _ in $(seq 1 100); do grep -q '"dialog_guard"' "$MARK" 2>/dev/null && break; sleep 0.2; done
 gone() { local st; st="$(cat /proc/"$1"/stat 2>/dev/null)" || return 0; st="${st##*) }"; [ "${st%% *}" = "Z" ]; }
 gone "$T5"; ok "fake target stopped" "$?"
-check "tmux C-c sent twice" "2" "$(grep -c '^send-keys -t %9 C-c$' "$FAKE_TMUX_LOG")"
+check "tmux C-c sent twice" "2" "$(grep -c '^-S /tmp/t send-keys -t %9 C-c$' "$FAKE_TMUX_LOG")"
 LAUNCHER="$CFGA/credo/self-restart-launch.sh"
-grep -qxF "send-keys -t %9 clear; bash '$LAUNCHER' Enter" "$FAKE_TMUX_LOG"; ok "relaunch typed into the same pane" "$?"
-grep -qxF "send-keys -t %9 Escape" "$FAKE_TMUX_LOG"; ok "dialog answered with Escape" "$?"
-ok "dialog never answered with Enter" "$(grep -qxF 'send-keys -t %9 Enter' "$FAKE_TMUX_LOG" && echo 1 || echo 0)"
+grep -qxF -- "-S /tmp/t send-keys -t %9 clear; bash '$LAUNCHER' Enter" "$FAKE_TMUX_LOG"; ok "relaunch typed into the same pane" "$?"
+grep -qxF -- "-S /tmp/t send-keys -t %9 Escape" "$FAKE_TMUX_LOG"; ok "dialog answered with Escape" "$?"
+ok "dialog never answered with Enter" "$(grep -qxF -- '-S /tmp/t send-keys -t %9 Enter' "$FAKE_TMUX_LOG" && echo 1 || echo 0)"
 "$PY" - "$MARK" "$SID" <<'PYEOF'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -509,7 +540,7 @@ T6="$(cat "$TMP/t6.pid")"
 rm -f "$MARK"
 CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T6 FAKE_TARGET_PIDFILE="$TMP/t6.pid" \
     CREDO_SELF_RESTART_SIGNAL_PAUSE=0.3 CREDO_SELF_RESTART_STOP_TIMEOUT=10 CREDO_SELF_RESTART_DIALOG_WATCH=1 \
-    PATH="$FT:$FC:$BASE" "$PY" "$HELPER" run --user-confirmed --update --delay 0.2 >/dev/null 2>&1
+    PATH="$FT:$FC:$BASE" "$PY" "$HELPER" run --no-background-work --user-confirmed --update --delay 0.2 >/dev/null 2>&1
 for _ in $(seq 1 100); do grep -q '"dialog_guard"' "$MARK" 2>/dev/null && break; sleep 0.2; done
 grep -q '"update": "no plugin updates"' "$MARK"; ok "no changes -> 'no plugin updates'" "$?"
 grep -q "plugin update: no plugin updates" "$LAUNCHER"; ok "wake prompt says no plugin updates" "$?"
@@ -570,6 +601,14 @@ mkdir -p "$TMP/modes-alt"; echo autonomous > "$TMP/modes-alt/$SID"; rm -f "$MODE
 out="$("${G[@]}" CREDO_SESSION_MODES_DIR="$TMP/modes-alt" "$PY" "$HELPER" check 2>&1)"
 case "$out" in *"owner rule:   credo mode autonomous"*) ok "check shows owner rule (modes dir override)" 0 ;; *) ok "check shows owner rule ($out)" 1 ;; esac
 sleep 0.5
+# background rule: without --no-background-work every run is refused, even confirmed
+out="$("${G[@]}" "$PY" "$HELPER" run --user-confirmed --delay 0.2 2>&1)"; rc=$?
+check "guard: no --no-background-work -> rc 3" "3" "$rc"
+case "$out" in *"refused by the background rule: pass --no-background-work"*"never stop them"*"Nothing was started."*) ok "guard: background refusal message" 0 ;; *) ok "guard: background refusal message ($out)" 1 ;; esac
+echo autonomous > "$MODES/$SID"
+out="$("${G[@]}" CREDO_SELF_RESTART_MIN_ANNOUNCE=1 "$PY" "$HELPER" run --announce 1 --delay 0.2 2>&1)"; rc=$?
+check "guard: autonomous without --no-background-work -> rc 3" "3" "$rc"
+rm -f "$MODES/$SID"
 ok "guard refusals leave the target alive" "$(kill -0 "$T7" 2>/dev/null && echo 0 || echo 1)"
 ok "guard refusals start no worker / write no marker" "$([ ! -e "$MARK" ] && echo 0 || echo 1)"
 check "guard refusals send no C-c" "0" "$(grep -c 'C-c' "$FAKE_TMUX_LOG")"
@@ -577,7 +616,7 @@ check "guard refusals send no ntfy" "0" "$(wc -l < "$NTFY_OUT" | tr -d ' ')"
 
 # cancel during the announce period (kill path): target is NOT stopped
 echo autonomous > "$MODES/$SID"
-out="$("${G[@]}" CREDO_SELF_RESTART_MIN_ANNOUNCE=3 "$PY" "$HELPER" run --reason "cc-up test" --delay 0.2 2>&1)"; rc=$?
+out="$("${G[@]}" CREDO_SELF_RESTART_MIN_ANNOUNCE=3 "$PY" "$HELPER" run --no-background-work --reason "cc-up test" --delay 0.2 2>&1)"; rc=$?
 check "autonomous run with default (scaled) announce -> rc 0" "0" "$rc"
 case "$out" in *"Self-restart scheduled in 3 seconds (reason: cc-up test). Cancel: python3 "*"credo-self-restart.py cancel"*) ok "announce message in transcript" 0 ;; *) ok "announce message in transcript ($out)" 1 ;; esac
 "$PY" - "$NTFY_OUT" "$SID" <<'PYEOF'
@@ -591,7 +630,7 @@ ok "announce ntfy: title, reason, cancel command" "$?"
 out="$(CREDO_SELF_RESTART_TARGET_PID=$$ CLAUDE_CONFIG_DIR="$CFGA" PATH="$FT:$BASE" "$PY" "$HELPER" status 2>&1)"
 case "$out" in "state: pending; scheduled: 20"*"reason: cc-up test"*) ok "status shows pending with scheduled time" 0 ;; *) ok "status shows pending ($out)" 1 ;; esac
 WPID="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["worker_pid"])' "$MARK")"
-out="$("${G[@]}" CREDO_SELF_RESTART_MIN_ANNOUNCE=3 "$PY" "$HELPER" run --delay 0.2 2>&1)"; rc=$?
+out="$("${G[@]}" CREDO_SELF_RESTART_MIN_ANNOUNCE=3 "$PY" "$HELPER" run --no-background-work --delay 0.2 2>&1)"; rc=$?
 check "second run while pending -> rc 1" "1" "$rc"
 case "$out" in *"already pending (worker $WPID)"*) ok "second run names the pending worker" 0 ;; *) ok "second run names the pending worker ($out)" 1 ;; esac
 out="$(CREDO_SELF_RESTART_TARGET_PID=$$ CLAUDE_CONFIG_DIR="$CFGA" CREDO_SELF_RESTART_NTFY_URL="$NTFY_URL" PATH="$FT:$BASE" "$PY" "$HELPER" cancel 2>&1)"; rc=$?
@@ -611,7 +650,7 @@ check "cancel with nothing pending -> rc 1" "1" "$rc"
 case "$out" in *"nothing to cancel (self-restart status: cancelled)"*) ok "cancel nothing-pending message" 0 ;; *) ok "cancel nothing-pending message ($out)" 1 ;; esac
 
 # marker-only cancel (worker not signalled): the final re-check before stopping aborts
-out="$("${G[@]}" CREDO_SELF_RESTART_MIN_ANNOUNCE=2 "$PY" "$HELPER" run --delay 0.2 2>&1)"; rc=$?
+out="$("${G[@]}" CREDO_SELF_RESTART_MIN_ANNOUNCE=2 "$PY" "$HELPER" run --no-background-work --delay 0.2 2>&1)"; rc=$?
 check "autonomous run (marker-cancel case) -> rc 0" "0" "$rc"
 "$PY" - "$MARK" <<'PYEOF'
 import json, sys
@@ -625,13 +664,13 @@ check "marker-cancel: worker logged the abort" "2" "$(grep -c 'self-restart canc
 
 # autonomous + announce >= minimum: the restart goes through after the announcement
 : > "$NTFY_OUT"
-out="$("${G[@]}" CREDO_SELF_RESTART_MIN_ANNOUNCE=1 "$PY" "$HELPER" run --announce 1 --reason "auto" --delay 0.2 2>&1)"; rc=$?
+out="$("${G[@]}" CREDO_SELF_RESTART_MIN_ANNOUNCE=1 "$PY" "$HELPER" run --no-background-work --announce 1 --reason "auto" --delay 0.2 2>&1)"; rc=$?
 check "autonomous + announce >= minimum -> rc 0" "0" "$rc"
 for _ in $(seq 1 100); do grep -q '"dialog_guard"' "$MARK" 2>/dev/null && break; sleep 0.2; done
 gone "$T7"; ok "autonomous: fake target stopped after the announcement" "$?"
 grep -q '"status": "relaunched"' "$MARK"; ok "autonomous: marker relaunched" "$?"
 grep -q '"title": "credo self-restart in 1 second"' "$NTFY_OUT"; ok "autonomous: announce ntfy sent" "$?"
-grep -qxF "send-keys -t %21 clear; bash '$LAUNCHER' Enter" "$FAKE_TMUX_LOG"; ok "autonomous: relaunched into the same pane" "$?"
+grep -qxF -- "-S /tmp/t send-keys -t %21 clear; bash '$LAUNCHER' Enter" "$FAKE_TMUX_LOG"; ok "autonomous: relaunched into the same pane" "$?"
 
 # --user-confirmed without autonomous mode: no announce, existing short delay
 rm -f "$MODES/$SID"; : > "$NTFY_OUT"
@@ -639,13 +678,60 @@ start_target "$TMP/t8.pid" "$CFGA" TMUX=/tmp/t,1,2 TMUX_PANE=%22 -- --model opus
 T8="$(cat "$TMP/t8.pid")"
 out="$(CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T8 FAKE_TARGET_PIDFILE="$TMP/t8.pid" \
     CREDO_SELF_RESTART_NTFY_URL="$NTFY_URL" CREDO_SELF_RESTART_SIGNAL_PAUSE=0.3 CREDO_SELF_RESTART_STOP_TIMEOUT=10 \
-    CREDO_SELF_RESTART_DIALOG_WATCH=1 PATH="$FT:$FC:$BASE" "$PY" "$HELPER" run --user-confirmed --delay 0.2 2>&1)"; rc=$?
+    CREDO_SELF_RESTART_DIALOG_WATCH=1 PATH="$FT:$FC:$BASE" "$PY" "$HELPER" run --no-background-work --user-confirmed --delay 0.2 2>&1)"; rc=$?
 check "user-confirmed (no mode) -> rc 0" "0" "$rc"
 case "$out" in *"Self-restart scheduled"*) ok "user-confirmed: no announcement" 1 ;; *"End your turn now."*) ok "user-confirmed: no announcement" 0 ;; *) ok "user-confirmed: no announcement ($out)" 1 ;; esac
 for _ in $(seq 1 100); do grep -q '"dialog_guard"' "$MARK" 2>/dev/null && break; sleep 0.2; done
 gone "$T8"; ok "user-confirmed: fake target stopped" "$?"
 grep -q '"user_confirmed": true' "$MARK"; ok "user-confirmed: recorded in marker" "$?"
 check "user-confirmed: no announce ntfy" "0" "$(wc -l < "$NTFY_OUT" | tr -d ' ')"
+
+# --- idle guard: never stop while the user is typing or the session is busy ---------
+# typed text in the input -> the worker waits and gives up at the timeout, nothing stopped
+cp "$TMP/pane-typed.txt" "$TMP/pane-t9.txt"; : > "$FAKE_TMUX_LOG"
+start_target "$TMP/t9.pid" "$CFGA" TMUX=/tmp/t,1,2 TMUX_PANE=%23 -- --model opus
+T9="$(cat "$TMP/t9.pid")"
+out="$(CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T9 FAKE_TARGET_PIDFILE="$TMP/t9.pid" \
+    FAKE_IDLE_PANE="$TMP/pane-t9.txt" CREDO_SELF_RESTART_IDLE_TIMEOUT=1.5 CREDO_SELF_RESTART_SIGNAL_PAUSE=0.3 \
+    CREDO_SELF_RESTART_STOP_TIMEOUT=10 PATH="$FT:$FC:$BASE" "$PY" "$HELPER" run --no-background-work --user-confirmed --delay 0.2 2>&1)"; rc=$?
+check "idle guard (typed): run returns 0" "0" "$rc"
+for _ in $(seq 1 50); do grep -q '"status": "failed: session not idle"' "$MARK" 2>/dev/null && break; sleep 0.2; done
+grep -q '"status": "failed: session not idle"' "$MARK"; ok "idle guard (typed): marker failed: session not idle" "$?"
+check "idle guard (typed): no C-c sent" "0" "$(grep -c 'C-c' "$FAKE_TMUX_LOG")"
+ok "idle guard (typed): fake target NOT stopped" "$(kill -0 "$T9" 2>/dev/null && ! gone "$T9" && echo 0 || echo 1)"
+grep -q "pane %23: input not empty" "$LOGF"; ok "idle guard (typed): reason logged" "$?"
+grep -q -- "-S /tmp/t capture-pane -p -e -t %23" "$FAKE_TMUX_LOG"; ok "idle guard captures the target pane on the session socket" "$?"
+check "idle guard: every tmux call uses the session socket" "0" "$(grep -vc '^-S /tmp/t ' "$FAKE_TMUX_LOG")"
+# busy first, idle later -> waits, then stops; no C-c while busy
+cp "$TMP/pane-busy.txt" "$TMP/pane-t9.txt"; : > "$FAKE_TMUX_LOG"
+out="$(CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T9 FAKE_TARGET_PIDFILE="$TMP/t9.pid" \
+    FAKE_IDLE_PANE="$TMP/pane-t9.txt" CREDO_SELF_RESTART_SIGNAL_PAUSE=0.3 CREDO_SELF_RESTART_DIALOG_WATCH=1 \
+    CREDO_SELF_RESTART_STOP_TIMEOUT=10 PATH="$FT:$FC:$BASE" "$PY" "$HELPER" run --no-background-work --user-confirmed --delay 0.2 2>&1)"; rc=$?
+check "idle guard (busy): run returns 0" "0" "$rc"
+sleep 1.5
+check "idle guard (busy): no C-c while busy" "0" "$(grep -c 'C-c' "$FAKE_TMUX_LOG")"
+ok "idle guard (busy): target alive while busy" "$(kill -0 "$T9" 2>/dev/null && ! gone "$T9" && echo 0 || echo 1)"
+cp "$TMP/pane-idle.txt" "$TMP/pane-t9.txt"
+for _ in $(seq 1 100); do grep -q '"dialog_guard"' "$MARK" 2>/dev/null && break; sleep 0.2; done
+gone "$T9"; ok "idle guard (busy -> idle): target stopped once idle" "$?"
+grep -q "pane %23: busy: ✻ Brewing" "$LOGF"; ok "idle guard (busy): busy state logged" "$?"
+
+
+# --- target exits by itself while the worker waits for idle -> abort, no relaunch ------
+cp "$TMP/pane-busy.txt" "$TMP/pane-t10.txt"; : > "$FAKE_TMUX_LOG"; rm -f "$MARK"
+start_target "$TMP/t10.pid" "$CFGA" TMUX=/tmp/t,1,2 TMUX_PANE=%24 -- --model opus
+T10="$(cat "$TMP/t10.pid")"
+out="$(CREDO_SELF_RESTART_SESSION_ID=$SID CREDO_SELF_RESTART_TARGET_PID=$T10 FAKE_TARGET_PIDFILE="$TMP/t10.pid" \
+    FAKE_IDLE_PANE="$TMP/pane-t10.txt" CREDO_SELF_RESTART_SIGNAL_PAUSE=0.3 CREDO_SELF_RESTART_STOP_TIMEOUT=10 \
+    PATH="$FT:$FC:$BASE" "$PY" "$HELPER" run --no-background-work --user-confirmed --delay 0.2 2>&1)"; rc=$?
+check "target gone: run returns 0" "0" "$rc"
+sleep 1
+kill -TERM "$T10" 2>/dev/null
+for _ in $(seq 1 50); do grep -q '"status": "failed: target gone"' "$MARK" 2>/dev/null && break; sleep 0.2; done
+grep -q '"status": "failed: target gone"' "$MARK"; ok "target gone: marker failed: target gone" "$?"
+check "target gone: no C-c sent" "0" "$(grep -c 'C-c' "$FAKE_TMUX_LOG")"
+check "target gone: nothing relaunched" "0" "$(grep -c 'clear; bash' "$FAKE_TMUX_LOG")"
+grep -q "target gone while waiting for idle" "$LOGF"; ok "target gone: logged" "$?"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

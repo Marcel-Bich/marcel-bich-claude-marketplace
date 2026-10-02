@@ -2,10 +2,10 @@
 name: role-clear
 description: >
   Clear this session's credo role, returning to the default of NO role (the agent does
-  everything). Use ONLY when the user actually drops the role, for example "clear the role", "no
-  role", "forget the role", "you are no longer the plan/task agent", "back to doing everything",
-  "rolle weg", "keine rolle mehr", "vergiss die rolle" - or when the /credo:role-clear command is
-  run. Do NOT use for general talk ABOUT roles or explanations. It removes the persistent
+  everything). Use ONLY when the user actually drops the role, in any language, for example
+  "clear the role", "no role", "forget the role", "you are no longer the plan/task agent", "back
+  to doing everything", or German "rolle weg", "keine rolle mehr", "vergiss die rolle" - or when
+  the /credo:role-clear command is run. Do NOT use for general talk ABOUT roles or explanations. It removes the persistent
   per-session role marker so no role line is injected any more.
 ---
 
@@ -17,9 +17,9 @@ everything, as it does when no role is set. This is safe to run even if no role 
 ## When to use
 
 - The user runs `/credo:role-clear` (the explicit, deterministic, guaranteed path).
-- The user drops the role in passing (best-effort, casual path) - for example "clear the role",
-  "no role", "forget the role", "you are no longer the plan/task agent", "back to doing
-  everything", "rolle weg", "keine rolle mehr".
+- The user drops the role in passing (best-effort, casual path), in any language - for example
+  "clear the role", "no role", "forget the role", "you are no longer the plan/task agent", "back
+  to doing everything", or the same in another language such as German "rolle weg", "keine rolle mehr".
 
 Do NOT trigger on general discussion about roles or on explanations - those are not a request to
 clear.

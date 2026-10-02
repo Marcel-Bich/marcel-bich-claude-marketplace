@@ -61,6 +61,9 @@ SAFETY
   - The injected envelope NEVER carries a from-mode attribute. Omitting it is the
     whole point: the receiving session applies its OWN built-in consent gate instead
     of us forging a trusted sender. The relay is mode-agnostic (name/body/reply only).
+  - The only extra the relay may add is the local trust marker (see "trusted peers"):
+    for a deliver over a PAIRED link from a session the local user trusted with the
+    `trust` command. Nothing received over the wire can create or change trust.
   - This daemon only ever removes session descriptors that carry its own
     "credoPeerLan" marker, and only proxy sockets / holders it created.
   - No-op when no config file exists, or when CREDO_PEER_LAN is set to off.
@@ -1508,11 +1511,17 @@ MAX_LINE = 4 * 1024 * 1024
 # A peer that stops reading must never stall the sender: every channel write has a
 # short total deadline, after which the channel is dropped (and later re-opened).
 CHAN_WRITE_TIMEOUT = 5.0
+# a goodbye ping is best-effort: its total deadline (lock wait + write) is short, and
+# several are sent in parallel, so stalled links never stretch a shutdown or restart
+# towards TERMINATE_TIMEOUT
+BYE_TIMEOUT = 0.5
 # read timeout of a channel is ~3 roster intervals of the slower side, capped here so
 # a peer announcing a huge interval cannot pin a dead link (and its slot) for long
 CHAN_TIMEOUT_MAX = 60.0
 # idle channels are pinged at least this often (keeps every side under the cap above)
 CHAN_PING_MAX = 15.0
+# a goodbye reason from a peer is logged, so only plain characters are kept
+BYE_RE = re.compile(r"[^A-Za-z0-9 ._:-]")
 # holders hand delivers to the daemon's relay unix socket; a burst must not overflow
 # its accept queue, and a full queue (EAGAIN) is retried briefly, never bypassed
 RELAY_BACKLOG = 128
@@ -2075,6 +2084,7 @@ class Channel(object):
         self.registered = False
         self.last_tx = time.monotonic()
         self.last_rx = self.last_tx  # last frame received (idle detection)
+        self.bye = ""  # why the peer is about to close this link (its goodbye ping)
 
     def idle(self, limit):
         """No frame received for longer than limit seconds (a half-dead link)."""
@@ -2099,13 +2109,38 @@ class Channel(object):
             return verify_line(token, line)
         return self.pair.verify(token, line)
 
-    def _send(self, make):
-        if not self.wlock.acquire(timeout=self.write_timeout):
-            raise socket.timeout("channel write busy for %.0fs" % self.write_timeout)
+    def send_bye(self, token, why, timeout=BYE_TIMEOUT):
+        """Goodbye ping within a short total deadline (lock wait + write). Only on a
+        dedicated write socket, whose timeout can change without touching the reader;
+        otherwise it is skipped. Raises like send_line."""
+        if self.wsock is self.sock:
+            return
+        payload = {"kind": "ping", "bye": why}
+        if self.pair is None:
+            make = lambda: frame_for(token, payload).encode("utf-8")
+        else:
+            make = lambda: self.pair.frame(token, payload).encode("utf-8")
+        self._send(make, timeout)
+
+    def _send(self, make, timeout=None):
+        limit = self.write_timeout if timeout is None else timeout
+        deadline = time.monotonic() + limit
+        if not self.wlock.acquire(timeout=limit):
+            raise socket.timeout("channel write busy for %.1fs" % limit)
         try:
             if self.closed:
                 raise OSError("channel closed")
-            self.wsock.sendall(make())
+            if timeout is None:
+                self.wsock.sendall(make())
+            else:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise socket.timeout("channel write busy for %.1fs" % limit)
+                self.wsock.settimeout(left)
+                try:
+                    self.wsock.sendall(make())
+                finally:
+                    self.wsock.settimeout(self.write_timeout)
             self.last_tx = time.monotonic()
         finally:
             self.wlock.release()
@@ -2200,14 +2235,39 @@ def read_pidfile():
     return d if isinstance(d, dict) else None
 
 
-def daemon_is_alive(pid):
+# subcommands whose process runs the daemon itself (restart/start spawn `daemon`)
+DAEMON_SUBCOMMANDS = (b"daemon", b"ensure")
+
+
+def _is_daemon_argv(argv):
+    """argv (bytes, from /proc/<pid>/cmdline) has the shape of a running daemon: a
+    python interpreter, optional interpreter flags, the credo-peer-lan.py script and a
+    daemon subcommand right after it. A pager or editor on the script, a shell whose
+    command string mentions it, or a non-daemon subcommand never match."""
+    if len(argv) < 3 or not os.path.basename(argv[0]).startswith(b"python"):
+        return False
+    i = 1
+    while i < len(argv) and argv[i].startswith(b"-"):
+        if argv[i] in (b"-c", b"-m"):
+            return False
+        i += 1
+    return (i + 1 < len(argv)
+            and os.path.basename(argv[i]) == b"credo-peer-lan.py"
+            and argv[i + 1] in DAEMON_SUBCOMMANDS)
+
+
+def daemon_is_alive(pid, pstart=None):
     """True only when pid is a live credo-peer-lan daemon. Requires os.kill(pid,0) AND,
-    when /proc is available, that /proc/<pid>/cmdline mentions credo-peer-lan.py (so a
-    reused pid belonging to an unrelated process is never mistaken for our daemon). When
-    /proc is absent, falls back to os.kill alone."""
+    when /proc is available, that /proc/<pid>/cmdline has the argv shape of a daemon
+    (_is_daemon_argv) and, when pstart is given, that the process start time matches -
+    so a reused pid of an unrelated process (even one that has the script open) is
+    never mistaken for our daemon. Our own pid never counts. When /proc is absent,
+    falls back to os.kill alone."""
     try:
         pid = int(pid)
     except (TypeError, ValueError):
+        return False
+    if pid <= 0 or pid == os.getpid():
         return False
     try:
         os.kill(pid, 0)
@@ -2216,11 +2276,63 @@ def daemon_is_alive(pid):
     if os.path.isdir("/proc"):
         try:
             with open("/proc/%d/cmdline" % pid, "rb") as fh:
-                return b"credo-peer-lan.py" in fh.read()
+                argv = fh.read().split(b"\0")
         except OSError:
             # /proc present but this pid's entry vanished -> it is not alive
             return False
+        if not _is_daemon_argv(argv):
+            return False
+        if isinstance(pstart, str) and pstart:
+            try:
+                return proc_start(pid) == pstart
+            except (OSError, ValueError, IndexError):
+                return False
+        return True
     return True  # no /proc at all -> trust os.kill
+
+
+def pidfile_daemon(pf=None):
+    """pid of the live daemon the pidfile records for THIS config, or None. Only that
+    pid is ever signaled (stop/restart/ensure) - never a process found by a command-line
+    pattern, which would also hit the caller's own shell. Beyond daemon_is_alive it
+    checks, when the pidfile has them, the recorded config path and the process start
+    time, so a recycled pid is never taken for the daemon."""
+    if pf is None:
+        pf = read_pidfile()
+    if not isinstance(pf, dict):
+        return None
+    pid = pf.get("pid")
+    if not daemon_is_alive(pid, pf.get("pstart")):
+        return None
+    cfg = pf.get("config")
+    if isinstance(cfg, str) and cfg and os.path.abspath(cfg) != os.path.abspath(config_path()):
+        return None
+    return int(pid)
+
+
+def relay_log_path():
+    """The relay log next to the config (the file the autostart hook appends to)."""
+    return os.path.join(os.path.dirname(config_path()), "peer-lan.log")
+
+
+def spawn_detached_daemon():
+    """Start `credo-peer-lan.py daemon` fully detached from the caller: a new session
+    (no controlling terminal, own process group, so the caller's shell exiting or being
+    killed never takes it along), stdin from /dev/null, stdout/stderr appended to the
+    relay log. Returns the child pid."""
+    path = relay_log_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(os.devnull, "rb") as devnull, open(path, "ab") as out:
+        proc = subprocess.Popen(
+            [sys.executable, os.path.abspath(__file__), "daemon"],
+            stdin=devnull,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            close_fds=True,
+            start_new_session=True,
+            cwd="/",
+        )
+    return proc.pid
 
 
 def version_tuple(s):
@@ -2256,9 +2368,10 @@ def port_is_free(host, port):
             pass
 
 
-def _terminate_incumbent(pid, host, port, timeout=TERMINATE_TIMEOUT):
+def _terminate_incumbent(pid, host, port, timeout=TERMINATE_TIMEOUT, pstart=None):
     """SIGTERM pid, then poll up to timeout until the pid is gone AND the listen port is
     free. Returns True iff the port became free (so a replacement can bind), else False.
+    pstart (the pidfile's process start time) keeps a reused pid from reading as alive.
     Never raises - it is called where leaving a running daemon alone is the safe default."""
     try:
         os.kill(int(pid), signal.SIGTERM)
@@ -2266,7 +2379,7 @@ def _terminate_incumbent(pid, host, port, timeout=TERMINATE_TIMEOUT):
         pass
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not daemon_is_alive(pid) and port_is_free(host, port):
+        if not daemon_is_alive(pid, pstart) and port_is_free(host, port):
             return True
         time.sleep(0.2)
     return port_is_free(host, port)
@@ -2403,7 +2516,9 @@ def safe_reply(reply):
     return None
 
 
-def build_envelope(body, from_name, reply):
+def build_envelope(body, from_name, reply, trust=None):
+    """trust: (key, peer_id) from trust_lookup for a verified trusted paired sender;
+    only then are the credo-trust attributes added (see the trusted peers section)."""
     if not isinstance(body, str):
         raise ValueError("body must be text")
     if body_has_envelope_delim(body):
@@ -2415,15 +2530,21 @@ def build_envelope(body, from_name, reply):
     safe = sanitize_from_name(from_name)
     if safe:
         attrs.append('from-name="%s"' % safe)
+    inner = FRAMING_LINE + "\n" + body
+    if trust and safe:
+        key, pid = trust
+        attrs.append('credo-trust-peer="%s"' % peer_id_str(pid))
+        attrs.append('credo-trust="%s"' % trust_mac(key, peer_id_str(pid), safe, inner))
     head = "<cross-session-message" + "".join(" " + a for a in attrs) + ">"
-    return head + "\n" + FRAMING_LINE + "\n" + body + "\n</cross-session-message>"
+    return head + "\n" + inner + "\n</cross-session-message>"
 
 
-def inject(target_socket, from_name, body, reply):
+def inject(target_socket, from_name, body, reply, trust=None):
     """Write one cross-session-message frame into a local inbox unix socket.
-    reply is a 'uds:<path>' address or None. No from-mode is ever set."""
+    reply is a 'uds:<path>' address or None. No from-mode is ever set. trust: see
+    build_envelope (None for every sender that is not a trusted paired peer)."""
     reply = safe_reply(reply)
-    envelope = build_envelope(body, from_name, reply)
+    envelope = build_envelope(body, from_name, reply, trust)
     frame = {
         "type": "user",
         "message": {"content": envelope},
@@ -2441,6 +2562,204 @@ def inject(target_socket, from_name, body, reply):
         s.shutdown(socket.SHUT_WR)
     finally:
         s.close()
+
+
+# ---------------------------------------------------------------------------
+# trusted peers (local, per receiving machine)
+# ---------------------------------------------------------------------------
+# The user of THIS machine may declare that tasks from one named session on one
+# PAIRED peer count like the user's own tasks. The grant lives only here, in a 0600
+# file next to the config, and is written only by the `trust` CLI; nothing that
+# arrives over the wire ever reads into it or writes it. An entry binds the sender's
+# pairing peer id, its pinned DH public value (a re-paired id with another key never
+# inherits it) and its session name (the from-name the paired machine reports).
+#
+# When a deliver arrives over a link authenticated as that paired id from that
+# session name, the daemon adds two attributes to the OPENING tag of the envelope it
+# builds: credo-trust-peer (the peer id) and credo-trust, an HMAC under a random key
+# that only this file holds, over peer id, session name and the envelope text. The
+# body can never reach the opening tag (envelope delimiters are refused) and a forged
+# attribute fails the HMAC, so the peer-message hook (`trust verify`) can tell a
+# relay-made marker from text. Verification re-reads the file and the pairing store
+# every time, so `trust remove` / `pair-reset` end the trust at once.
+TRUST_FILE = "peer-lan-trust.json"
+TRUST_TAG = "credo-peer-lan-trust-v1"
+TRUST_KEY_RE = re.compile(r"[0-9a-f]{64}")
+TRUST_MAC_RE = re.compile(r"[0-9a-f]{64}")
+TRUST_ATTR_RE = re.compile(r' ([a-z][a-z-]*)="([^"<>]*)"')
+TRUST_ENVELOPE_RE = re.compile(
+    r'\A\s*<cross-session-message((?: [a-z][a-z-]*="[^"<>]*")*)>\n(.*)\n</cross-session-message>\s*\Z',
+    re.S)
+TRUST_TAG_MARK_RE = re.compile(r"<\s*cross-session-message[^>]*credo-trust", re.I)
+
+
+def trust_path():
+    return os.path.join(os.path.dirname(config_path()), TRUST_FILE)
+
+
+def _trust_entry(e):
+    """A stored trust entry in canonical form, or None when it is not valid."""
+    if not isinstance(e, dict):
+        return None
+    pid, pub, sess, machine = e.get("peer_id"), e.get("pub"), e.get("session"), e.get("machine")
+    if not (peer_id_str(pid) and isinstance(pub, str) and DH_HEX_RE.fullmatch(pub)
+            and isinstance(sess, str) and sess and sanitize_from_name(sess) == sess):
+        return None
+    return {"peer_id": pid, "pub": pub, "session": sess,
+            "machine": sanitize_from_name(machine) if isinstance(machine, str) else ""}
+
+
+class TrustStore(object):
+    """The local trust list: {"key": hex, "trusted": [entries]} in one 0600 file.
+    A missing, unreadable or corrupt file means no trust (fail closed). Writes go to
+    a fresh O_EXCL temp file renamed over the target; reads never follow a symlink."""
+
+    def __init__(self, path):
+        self.path = path
+
+    def read(self):
+        empty = {"key": "", "trusted": []}
+        try:
+            fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        except OSError:
+            return empty
+        try:
+            with os.fdopen(fd, "r") as fh:
+                d = json.load(fh)
+        except Exception:
+            return empty
+        if not isinstance(d, dict):
+            return empty
+        key = d.get("key")
+        out = {"key": key if isinstance(key, str) and TRUST_KEY_RE.fullmatch(key) else "",
+               "trusted": []}
+        for e in d.get("trusted") or []:
+            e = _trust_entry(e)
+            if e is not None:
+                out["trusted"].append(e)
+        return out
+
+    def _write(self, obj):
+        d = os.path.dirname(self.path) or "."
+        os.makedirs(d, exist_ok=True)
+        tmp = os.path.join(d, ".%s.tmp-%d-%s" % (os.path.basename(self.path), os.getpid(),
+                                                 secrets.token_hex(4)))
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            with os.fdopen(fd, "w") as fh:
+                os.fchmod(fh.fileno(), 0o600)
+                json.dump(obj, fh, indent=2)
+                fh.write("\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, self.path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
+    def add(self, peer_id, pub, session, machine=""):
+        """Trust session on the paired peer (peer_id, pub). True when it is new."""
+        e = _trust_entry({"peer_id": peer_id, "pub": pub, "session": session, "machine": machine})
+        if e is None:
+            raise ValueError("invalid trust entry")
+        cur = self.read()
+        if any(x["peer_id"] == e["peer_id"] and x["session"] == e["session"] and x["pub"] == e["pub"]
+               for x in cur["trusted"]):
+            return False
+        cur["key"] = cur["key"] or secrets.token_hex(32)
+        cur["trusted"] = [x for x in cur["trusted"]
+                          if not (x["peer_id"] == e["peer_id"] and x["session"] == e["session"])]
+        cur["trusted"].append(e)
+        self._write(cur)
+        return True
+
+    def remove(self, pred):
+        """Drop every entry pred(entry) is true for; returns the removed entries."""
+        cur = self.read()
+        gone = [x for x in cur["trusted"] if pred(x)]
+        if gone:
+            cur["trusted"] = [x for x in cur["trusted"] if not pred(x)]
+            self._write(cur)
+        return gone
+
+
+def trust_lookup(peer_id, session, pairs, store):
+    """(key, entry, paired record) when session on paired peer peer_id is trusted
+    here: an entry for exactly that id and name, and the id is still paired with
+    the same DH public value. None otherwise (also on any read problem)."""
+    pid = peer_id_str(peer_id)
+    if not pid or not isinstance(session, str) or not session or sanitize_from_name(session) != session:
+        return None
+    data = store.read()
+    if not data["key"]:
+        return None
+    for e in data["trusted"]:
+        if e["peer_id"] == pid and e["session"] == session:
+            try:
+                rec = pairs.get(pid)
+            except Exception:
+                return None
+            if rec is None or rec["pub"] != e["pub"]:
+                return None
+            return data["key"], e, rec
+    return None
+
+
+def trust_mac(key, peer_id, session, inner):
+    """The credo-trust marker: HMAC over peer id, session name and the envelope text
+    (the lines between the tags, CRLF folded, outer whitespace stripped)."""
+    text = (inner or "").replace("\r\n", "\n").strip()
+    msg = "%s|%s|%s|%s" % (TRUST_TAG, peer_id, session,
+                           hashlib.sha256(text.encode("utf-8")).hexdigest())
+    return hmac.new(bytes.fromhex(key), msg.encode("ascii"), hashlib.sha256).hexdigest()
+
+
+def verify_trust_prompt(prompt, pairs=None, store=None):
+    """Check a delivered prompt for a valid trust marker. The prompt must be exactly
+    one envelope (nothing before or after, one opening and one closing tag) whose
+    opening tag carries from-name, credo-trust-peer and a credo-trust HMAC that
+    matches a CURRENT trust entry of a still-paired peer. Returns {"trusted": bool,
+    "marker": "none" | "invalid" | "valid", ...}; never raises."""
+    out = {"trusted": False, "marker": "none"}
+    try:
+        if not isinstance(prompt, str):
+            return out
+        if TRUST_TAG_MARK_RE.search(unicodedata.normalize("NFKC", prompt)):
+            out["marker"] = "invalid"
+        m = TRUST_ENVELOPE_RE.match(prompt)
+        if not m:
+            return out
+        if len(ENVELOPE_DELIM_RE.findall(DELIM_CTRL_RE.sub("", unicodedata.normalize("NFKC", prompt)))) != 2:
+            return out
+        raw = m.group(1)
+        pairs_found = TRUST_ATTR_RE.findall(raw)
+        attrs = dict(pairs_found)
+        if len(attrs) != len(pairs_found) or "".join(' %s="%s"' % kv for kv in pairs_found) != raw:
+            return out
+        if "credo-trust" not in attrs and "credo-trust-peer" not in attrs:
+            return out
+        out["marker"] = "invalid"
+        name, pid, mac = attrs.get("from-name", ""), attrs.get("credo-trust-peer", ""), attrs.get("credo-trust", "")
+        if not TRUST_MAC_RE.fullmatch(mac):
+            return out
+        if pairs is None:
+            pairs = PairStore(keys_dir_for(load_config() or {}))
+        if store is None:
+            store = TrustStore(trust_path())
+        hit = trust_lookup(pid, name, pairs, store)
+        if hit is None:
+            return out
+        key, entry, rec = hit
+        if not hmac.compare_digest(mac.encode("ascii"), trust_mac(key, pid, name, m.group(2)).encode("ascii")):
+            return out
+        out.update(trusted=True, marker="valid", session=name, peer=pid,
+                   machine=entry["machine"] or sanitize_from_name(rec.get("machine") or ""))
+    except Exception:
+        out["trusted"] = False
+    return out
 
 
 # ===========================================================================
@@ -2873,6 +3192,7 @@ class Daemon(object):
             state["reason"],
         )
         changed = key != self._lan_key
+        gone = []  # (channel, was registered) dropped by the new network
         with self.lock:
             self.lan_state = state
             if changed:
@@ -2885,7 +3205,9 @@ class Daemon(object):
                     self.link_unsupported.clear()
                     self.link_refused.clear()
                 # channels never outlive their gate: an outbound link needs the
-                # outbound gate, an inbound one the inbound source gate
+                # outbound gate, an inbound one the inbound source gate. They are
+                # unregistered here; the goodbye and the close happen after self.lock
+                # is released, so a stalled link never blocks the daemon behind it.
                 with self.chan_lock:
                     chans = list(self.channels.values())
                 for ch in chans:
@@ -2894,7 +3216,7 @@ class Daemon(object):
                     else:
                         still = source_allowed(ch.src_ip, state, self.wsl)
                     if not still:
-                        self._drop_channel(ch, "no longer allowed on this network")
+                        gone.append((ch, self._unregister_channel(ch)))
                 for rkey, rec in list(self.remotes.items()):
                     host = split_host_port(rkey[0], self.listen_port)[0]
                     if peer_allowed_outbound(host, state):
@@ -2904,6 +3226,10 @@ class Daemon(object):
                     # was allowlisted is replaced by a --no-direct one on the next roster
                     if not (self._inbound_channel(rkey[0]) and rec.get("no_direct")):
                         self._remove_remote_locked(rkey)
+        if gone:
+            self._say_byes([ch for ch, _ in gone], "network no longer allowed")
+            for ch, was in gone:
+                self._close_channel(ch, was, "no longer allowed on this network")
         if changed:
             if state["enabled"]:
                 log(
@@ -2956,7 +3282,13 @@ class Daemon(object):
             "version": VERSION,
             "listen_port": self.listen_port,
             "started": time.time(),
+            "config": os.path.abspath(config_path()),
         }
+        try:
+            # process start time: lets stop/restart/status tell a recycled pid apart
+            data["pstart"] = proc_start(os.getpid())
+        except (OSError, ValueError, IndexError):
+            pass
         tmp = "%s.%d.tmp" % (path, os.getpid())
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -2994,6 +3326,7 @@ class Daemon(object):
         self._remove_pidfile()
         with self.chan_lock:
             chans = list(self.channels.values())
+        self._say_byes(chans, "daemon shutdown")
         for ch in chans:
             self._drop_channel(ch, "shutdown")
         if self.relay_srv is not None:
@@ -3117,7 +3450,12 @@ class Daemon(object):
         elif kind == "deliver":
             self._on_deliver(payload, src_ip, chan)
         elif kind in ("ping", "link"):
-            pass  # keepalive / a repeated hello: nothing to do
+            # keepalive / a repeated hello. A ping may carry "bye": the peer's reason
+            # for closing this link next (daemon shutdown, link replaced), so the
+            # "channel down" line here says why instead of only "closed by peer".
+            bye = payload.get("bye")
+            if chan is not None and isinstance(bye, str) and bye:
+                chan.bye = BYE_RE.sub("", bye)[:60]
         else:
             log("unknown message kind %r" % kind)
 
@@ -3563,18 +3901,57 @@ class Daemon(object):
                 % (ch.key, ch.direction, ch.remote_machine, ch.desc,
                    " paired=%s" % ch.pair_id[:8] if ch.pair_id else ""))
         if drop is not None:
+            self._say_bye(drop, "replaced by a newer link")
             drop.close()
         return True
 
-    def _drop_channel(self, ch, reason):
+    def _say_bye(self, ch, why):
+        """Best-effort goodbye on a link we are about to close: a ping carrying the
+        reason, so the peer logs why the link went down (a peer without this field
+        just sees a keepalive). Never raises; bounded by BYE_TIMEOUT. Never call it
+        while holding self.lock or chan_lock."""
+        if ch.closed:
+            return
+        try:
+            ch.send_bye(self.token, why)
+        except Exception:
+            pass
+
+    def _say_byes(self, chans, why):
+        """_say_bye on several links in parallel, so n stalled links cost about one
+        BYE_TIMEOUT instead of n. Returns after all are sent or the deadline passed."""
+        chans = [ch for ch in chans if not ch.closed]
+        if len(chans) <= 1:
+            for ch in chans:
+                self._say_bye(ch, why)
+            return
+        threads = []
+        for ch in chans:
+            t = threading.Thread(target=self._say_bye, args=(ch, why), daemon=True)
+            t.start()
+            threads.append(t)
+        deadline = time.monotonic() + BYE_TIMEOUT + 0.5
+        for t in threads:
+            t.join(max(0.0, deadline - time.monotonic()))
+
+    def _unregister_channel(self, ch):
+        """Remove ch from the channel table; True if it was registered."""
         with self.chan_lock:
             if self.channels.get(ch.key) is ch:
                 del self.channels[ch.key]
             was = ch.registered
             ch.registered = False
+        return was
+
+    def _close_channel(self, ch, was, reason):
         ch.close()
         if was:
             log("channel down: key=%s dir=%s conn=%s (%s)" % (ch.key, ch.direction, ch.desc, reason))
+
+    def _drop_channel(self, ch, reason, bye=None):
+        if bye:
+            self._say_bye(ch, bye)
+        self._close_channel(ch, self._unregister_channel(ch), reason)
 
     def _channel_reader(self, ch, buf=b""):
         """Read frames from a channel until EOF/error/timeout and dispatch each one
@@ -3584,6 +3961,8 @@ class Daemon(object):
             while not self.stop.is_set() and not ch.closed:
                 line, buf = recv_line(ch.sock, buf)
                 if line is None:
+                    if ch.bye:
+                        reason = "closed by peer: %s" % ch.bye
                     break
                 line = line.strip()
                 if not line:
@@ -3970,11 +4349,26 @@ class Daemon(object):
             return
         reply = self._reply_addr_for(payload.get("from_sessionId"), chan)
         from_name = sanitize_from_name(payload.get("from_name", ""))
+        trust = self._trust_for(chan, from_name)
         try:
-            inject(target_socket, from_name, body, reply)
-            log("deliver: injected into %s (from %r)" % (target, from_name))
+            inject(target_socket, from_name, body, reply, trust)
+            log("deliver: injected into %s (from %r%s)"
+                % (target, from_name, ", trusted peer" if trust else ""))
         except Exception as exc:
             log("deliver: inject into %s failed: %s" % (target_socket, exc))
+
+    def _trust_for(self, chan, from_name):
+        """(key, peer id) when this deliver came over a link authenticated as a paired
+        peer AND the local user trusts from_name on that peer (see TrustStore), else
+        None. Unpaired links, fresh connections and any read problem: None."""
+        pid = getattr(chan, "pair_id", "") if chan is not None else ""
+        if not peer_id_str(pid) or not from_name:
+            return None
+        try:
+            hit = trust_lookup(pid, from_name, self.pairs, TrustStore(trust_path()))
+        except Exception:
+            return None
+        return (hit[0], pid) if hit else None
 
     def _reply_addr_for(self, from_session, chan=None):
         """A local proxy socket that routes back to the remote sender, if we hold
@@ -4163,7 +4557,14 @@ class Daemon(object):
             if not peer_allowed_outbound(peer_addr[0], self.lan_state) and not via_inbound:
                 if addr_key not in self.outbound_skip_warned:
                     self.outbound_skip_warned.add(addr_key)
-                    log("roster from %s ignored: forward target not allowed" % addr_key)
+                    log("roster from %s ignored: forward target not allowed (%s; %s is "
+                        "outside this machine's allowlist, so replies could not go back). "
+                        "It is served once this peer's link to us is up, or add the "
+                        "address to the bound network's allow list (bind --allow)"
+                        % (addr_key,
+                           "fresh connection, no link from this peer" if chan is None
+                           else "over our own outbound link",
+                           peer_addr[0]))
                 return
             self.machine_seen[addr_key] = now
             # per-(address, machine) last roster, bounded: stale entries go first,
@@ -4610,7 +5011,7 @@ class Daemon(object):
 def _serve(cfg):
     """Build the Daemon, install SIGTERM/SIGINT handlers, start it (start() now
     bind-retries on EADDRINUSE), run until stopped, and always shut down in finally.
-    Shared by run_daemon / run_ensure / run_restart. Returns 0 normally, 0 on a clean
+    Shared by run_daemon / run_ensure (restart spawns a detached `daemon`). Returns 0 normally, 0 on a clean
     AlreadyRunning give-up, 1 on an unexpected start failure."""
     daemon = Daemon(cfg)
 
@@ -4667,7 +5068,7 @@ def run_ensure(_args):
         log("no config at %s; nothing to do (no-op)" % config_path())
         return 0
     pf = read_pidfile()
-    if pf and daemon_is_alive(pf.get("pid")):
+    if pidfile_daemon(pf) is not None:
         old_pid = pf.get("pid")
         running_v = version_tuple(pf.get("version"))
         cur_v = version_tuple(VERSION)
@@ -4683,7 +5084,7 @@ def run_ensure(_args):
         )
         host = cfg.get("listen_host", "127.0.0.1")
         port = int(cfg.get("listen_port", DEFAULT_PORT))
-        if _terminate_incumbent(old_pid, host, port):
+        if _terminate_incumbent(old_pid, host, port, pstart=pf.get("pstart")):
             return _serve(cfg)
         log(
             "could not reclaim %s:%d from older daemon pid %s; leaving it running"
@@ -4694,10 +5095,14 @@ def run_ensure(_args):
 
 
 def run_restart(_args):
-    """Explicit stop-then-start regardless of version. Never ends with no daemon: if a
-    running daemon cannot be stopped and its port reclaimed within the timeout, report a
-    clear error to STDERR and return 1 rather than leaving nothing (and never force-serve
-    into a still-held port)."""
+    """Explicit stop-then-start regardless of version, safe to call from any shell
+    (an agent's tool shell included). It signals ONLY the pidfile's verified daemon pid
+    (never a command-line pattern, which would also hit the calling shell), waits until
+    that daemon is gone and the port is free, then starts the new daemon fully DETACHED
+    (spawn_detached_daemon) and returns once it is up - the caller's shell exiting or
+    being killed never takes the new daemon along. Never ends with nothing running by
+    its own doing: if the old daemon cannot be stopped and its port reclaimed within
+    the timeout, it reports that on STDERR, leaves the old one running and returns 1."""
     if disabled():
         log("disabled via CREDO_PEER_LAN; exiting")
         return 0
@@ -4708,17 +5113,128 @@ def run_restart(_args):
     host = cfg.get("listen_host", "127.0.0.1")
     port = int(cfg.get("listen_port", DEFAULT_PORT))
     pf = read_pidfile()
-    if pf and daemon_is_alive(pf.get("pid")):
-        old_pid = pf.get("pid")
+    old_pid = pidfile_daemon(pf)
+    if old_pid is not None:
         log("restart: stopping running daemon pid %s" % old_pid)
-        if not _terminate_incumbent(old_pid, host, port):
+        if not _terminate_incumbent(old_pid, host, port, pstart=pf.get("pstart")):
             sys.stderr.write(
                 "credo-peer-lan restart: could not reclaim %s:%d from the running "
                 "daemon (pid %s) within %.0fs; left it running\n"
                 % (host, port, old_pid, TERMINATE_TIMEOUT)
             )
             return 1
-    return _serve(cfg)
+    return _start_detached(cfg, "restart")
+
+
+def run_start(_args):
+    """Start the daemon DETACHED from the calling shell (like restart) and return once
+    it listens. A running current/newer (or unparseable) daemon is left alone; a
+    positively OLDER one is replaced like `ensure` does after a plugin update."""
+    if disabled():
+        log("disabled via CREDO_PEER_LAN; exiting")
+        return 0
+    cfg = load_config()
+    if cfg is None:
+        log("no config at %s; nothing to do (no-op)" % config_path())
+        return 0
+    pf = read_pidfile()
+    pid = pidfile_daemon(pf)
+    if pid is not None:
+        running_v, cur_v = version_tuple(pf.get("version")), version_tuple(VERSION)
+        if running_v is None or cur_v is None or running_v >= cur_v:
+            print("relay already running: pid %d, version %s, port %s"
+                  % (pid, pf.get("version"), pf.get("listen_port")))
+            return 0
+        return run_restart(_args)
+    return _start_detached(cfg, "start")
+
+
+def _start_detached(cfg, what):
+    try:
+        child = spawn_detached_daemon()
+    except Exception as exc:
+        sys.stderr.write("credo-peer-lan %s: could not start the daemon: %s\n" % (what, exc))
+        return 1
+    log("%s: started daemon pid %d (detached, log %s)" % (what, child, relay_log_path()))
+    return _await_daemon(child, cfg, what)
+
+
+def _await_daemon(child, cfg, what="restart"):
+    """Wait until the detached daemon child recorded itself in the pidfile (it is
+    listening). Returns 0 then, 1 when it exited first or never came up in time."""
+    wait = float(cfg.get("bind_retry_total", BIND_RETRY_TOTAL)) + 10.0
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        pf = read_pidfile()
+        if pf and pf.get("pid") == child and pidfile_daemon(pf) == child:
+            print("relay %s: pid %d, version %s, port %s"
+                  % ("restarted" if what == "restart" else "started", child,
+                     pf.get("version"), pf.get("listen_port")))
+            return 0
+        try:
+            # reap it if it already exited (it is our child until it is reparented)
+            done, _status = os.waitpid(child, os.WNOHANG)
+        except ChildProcessError:
+            done = 0
+        if done == child or not pid_alive(child):
+            sys.stderr.write("credo-peer-lan %s: the new daemon exited at once; see %s\n"
+                             % (what, relay_log_path()))
+            return 1
+        time.sleep(0.2)
+    sys.stderr.write("credo-peer-lan %s: the new daemon (pid %d) did not come up within "
+                     "%.0fs; see %s\n" % (what, child, wait, relay_log_path()))
+    return 1
+
+
+def run_status(_args):
+    """Is the relay running? Decided by the pidfile and the verified daemon pid, so a
+    daemon started by `daemon`, `ensure` (autostart) or `restart` all count. Exit 0 =
+    running, 1 = not running."""
+    cfg = load_config()
+    pf = read_pidfile()
+    pid = pidfile_daemon(pf)
+    if pid is None:
+        print("relay not running")
+        if cfg is None:
+            print("No config at %s - the relay is a no-op until it exists. Create it with "
+                  "'credo-peer-lan.py init <peer-ip> ...'." % config_path())
+        return 1
+    started = pf.get("started")
+    try:
+        since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(started)))
+    except (TypeError, ValueError, OverflowError):
+        since = "unknown"
+    print("relay running: pid %d, version %s, port %s, since %s"
+          % (pid, pf.get("version"), pf.get("listen_port"), since))
+    running_v, cur_v = version_tuple(pf.get("version")), version_tuple(VERSION)
+    if running_v is not None and cur_v is not None and running_v != cur_v:
+        print("installed plugin version is %s; `restart` switches to it (the next "
+              "session's autostart also replaces an older daemon)" % VERSION)
+    return 0
+
+
+def run_stop(_args):
+    """Stop the running daemon: SIGTERM to the pidfile's verified daemon pid only, then
+    wait until it is gone. Exit 0 when it stopped or none was running, 1 when it is
+    still alive after the timeout."""
+    pf = read_pidfile()
+    pid = pidfile_daemon(pf)
+    if pid is None:
+        print("relay not running")
+        return 0
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        pass
+    deadline = time.monotonic() + TERMINATE_TIMEOUT
+    while time.monotonic() < deadline:
+        if not daemon_is_alive(pid, pf.get("pstart")):
+            print("relay stopped (pid %d)" % pid)
+            return 0
+        time.sleep(0.2)
+    sys.stderr.write("credo-peer-lan stop: daemon pid %d still running after %.0fs\n"
+                     % (pid, TERMINATE_TIMEOUT))
+    return 1
 
 
 def run_init(args):
@@ -4943,7 +5459,127 @@ def run_pair_reset(args):
         print("removed pairing with %s (machine %r, slot %s)" % (r["id"], r["machine"], r["slot"]))
     for e in drop:
         print("cleared pending repair at %s (peer id %s)" % (e["slot"], e["new_id"][:8]))
+    # a trust grant binds to the pairing: a reset pairing never keeps it (whoever
+    # pairs at that id next must be trusted again by the user)
+    ids = set(r["id"] for r in gone)
+    try:
+        dropped = TrustStore(trust_path()).remove(lambda e: e["peer_id"] in ids)
+    except OSError as exc:
+        dropped = []
+        print("could not update the trust list %s: %s (its entries no longer match the "
+              "reset pairing anyway)" % (trust_path(), exc))
+    for e in dropped:
+        print("removed trust for session %r on machine %r (peer %s)"
+              % (e["session"], e["machine"], e["peer_id"][:8]))
     print("the next link from that peer pairs again automatically")
+    return 0
+
+
+def _pair_matches(recs, sel):
+    """Paired records matching sel: peer id (or an 8+ char prefix), slot host:port,
+    host, or machine label (the same selectors as pair-reset)."""
+    sel = str(sel or "").strip()
+    if not sel:
+        return []
+    return [r for r in recs
+            if r["id"] == sel or (len(sel) >= 8 and r["id"].startswith(sel))
+            or r["slot"] == sel or r["slot"].rsplit(":", 1)[0] == sel
+            or (r["machine"] and r["machine"] == sel)]
+
+
+def run_trust(args):
+    """Local trust list (see TrustStore). Only the user of this machine grants trust,
+    here, never a peer: add asks for confirmation (or needs --yes after the user
+    confirmed elsewhere) and only accepts a PAIRED peer."""
+    cfg = load_config() or {}
+    store = TrustStore(trust_path())
+    pairs = PairStore(keys_dir_for(cfg))
+    if args.action == "verify":
+        # internal, for the peer-message hook: the hook's JSON on stdin
+        try:
+            data = json.loads(sys.stdin.read() or "{}")
+            prompt = data.get("prompt") if isinstance(data, dict) else None
+        except Exception:
+            prompt = None
+        print(json.dumps(verify_trust_prompt(prompt, pairs, store)))
+        return 0
+    try:
+        recs = pairs.records()
+    except PairStoreUnreadable as exc:
+        recs = None
+        if args.action == "add":
+            print("trust add: %s; nothing changed" % exc)
+            return 1
+    if args.action == "list":
+        print("Trusted peers (tasks count like the user's own, except dangerous ones): %s"
+              % store.path)
+        entries = store.read()["trusted"]
+        if not entries:
+            print("  none (add one with: credo-peer-lan.py trust add <peer> <session> --yes)")
+        by_id = dict((r["id"], r) for r in recs or [])
+        for e in entries:
+            rec = by_id.get(e["peer_id"])
+            state = "active" if rec is not None and rec["pub"] == e["pub"] else \
+                "INACTIVE (peer not paired with this key anymore)"
+            print("  session %r on machine %r  peer=%s  %s"
+                  % (e["session"], e["machine"], e["peer_id"], state))
+        return 0
+    if args.action == "add":
+        if not args.peer or not args.session:
+            print("usage: credo-peer-lan.py trust add <peer> <session> [--yes]")
+            return 2
+        hits = _pair_matches(recs, args.peer)
+        if len(hits) != 1:
+            print("trust add: %s paired peer matches %r; trust needs exactly one PAIRED peer "
+                  "(see: credo-peer-lan.py pairs)" % ("no" if not hits else "more than one", args.peer))
+            return 1
+        rec = hits[0]
+        session = sanitize_from_name(args.session)
+        if not session or session != args.session:
+            print("trust add: session name %r is not a valid from-name (allowed: "
+                  "A-Z a-z 0-9 space _ . ( ) @ : -, at most 80)" % args.session)
+            return 1
+        machine = sanitize_from_name(rec["machine"])
+        question = ("Treat tasks from session %r on machine %r (peer %s) like tasks from you? "
+                    "Dangerous ones (deleting data, installs, money, permissions, credentials, "
+                    "security settings, irreversible steps outside the repo) are still only "
+                    "reported, never done." % (session, machine, rec["id"][:8]))
+        if not args.yes:
+            if not sys.stdin.isatty():
+                print("trust add: not confirmed. %s Only the user of this machine may answer; "
+                      "re-run with --yes once the user said yes." % question)
+                return 1
+            try:
+                answer = input(question + " [y/N] ")
+            except EOFError:
+                answer = ""
+            if answer.strip().lower() not in ("y", "yes", "j", "ja"):
+                print("trust add: not confirmed, nothing changed")
+                return 1
+        new = store.add(rec["id"], rec["pub"], session, machine)
+        print("%s session %r on machine %r (peer %s)"
+              % ("trusted" if new else "already trusted:", session, machine, rec["id"]))
+        return 0
+    # remove
+    if not args.peer:
+        print("usage: credo-peer-lan.py trust remove <peer> [<session>]")
+        return 2
+    sel = args.peer.strip()
+    ids = set(r["id"] for r in _pair_matches(recs or [], sel))
+
+    def hit(e):
+        if args.session and e["session"] != args.session:
+            return False
+        return (e["peer_id"] in ids or e["peer_id"] == sel
+                or (len(sel) >= 8 and e["peer_id"].startswith(sel))
+                or (e["machine"] and e["machine"] == sel))
+    gone = store.remove(hit)
+    if not gone:
+        print("no trust entry matches %r (see: credo-peer-lan.py trust list)" % sel)
+        return 1
+    for e in gone:
+        print("removed trust for session %r on machine %r (peer %s)"
+              % (e["session"], e["machine"], e["peer_id"]))
     return 0
 
 
@@ -5156,12 +5792,32 @@ def main(argv=None):
     )
     p_ensure.set_defaults(func=run_ensure)
 
+    p_start = sub.add_parser(
+        "start",
+        help="start the daemon DETACHED from this shell and return once it listens; "
+        "no-op when a current/newer daemon already runs, an older one is replaced",
+    )
+    p_start.set_defaults(func=run_start)
+
     p_restart = sub.add_parser(
         "restart",
-        help="stop any running daemon and start a fresh one (race-safe; waits for the "
-        "port to actually free, errors out instead of leaving nothing running)",
+        help="stop the running daemon and start a fresh one DETACHED, then return "
+        "(race-safe; waits for the port to actually free, errors out instead of "
+        "leaving nothing running)",
     )
     p_restart.set_defaults(func=run_restart)
+
+    p_status = sub.add_parser(
+        "status",
+        help="is the daemon running? (pidfile + verified pid + version; exit 0 = "
+        "running, 1 = not running)",
+    )
+    p_status.set_defaults(func=run_status)
+
+    p_stop = sub.add_parser(
+        "stop", help="stop the running daemon (signals only the pidfile's daemon pid)"
+    )
+    p_stop.set_defaults(func=run_stop)
 
     p_init = sub.add_parser(
         "init", help="write/update the config from peer IPs (token-less)"
@@ -5203,6 +5859,19 @@ def main(argv=None):
     )
     p_preset.add_argument("peer", help="peer id (or 8+ char prefix), slot host:port, host or machine")
     p_preset.set_defaults(func=run_pair_reset)
+
+    p_trust = sub.add_parser(
+        "trust",
+        help="local trust list: tasks from a named session on a PAIRED peer count like "
+        "the user's own (granted only here, by the user of this machine)",
+    )
+    p_trust.add_argument("action", choices=("list", "add", "remove", "verify"))
+    p_trust.add_argument("peer", nargs="?", default="",
+                         help="peer id (or 8+ char prefix), slot host:port, host or machine")
+    p_trust.add_argument("session", nargs="?", default="", help="the sender's session name")
+    p_trust.add_argument("--yes", action="store_true",
+                         help="the user already confirmed (no interactive question)")
+    p_trust.set_defaults(func=run_trust)
 
     p_netinfo = sub.add_parser("netinfo", help="print the detected network as JSON")
     p_netinfo.set_defaults(func=run_netinfo)

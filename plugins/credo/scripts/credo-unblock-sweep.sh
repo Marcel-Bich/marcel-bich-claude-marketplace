@@ -17,7 +17,10 @@
 #     stands, the block merely paused it. 4_archived does NOT count as delivered.
 #
 #   Pass 2 (surface, no move): for the items STILL in 3_blocked after pass 1, flag
-#     the ones whose blockers are not heading toward done - a blocker in 1_clarify
+#     the ones whose blockers are all done but whose return move was refused (for a
+#     return to go: the GO gate refused, e.g. a human-owned item without the user's GO;
+#     printed as "all blockers done, GO gate refused: <reason>"), and the ones whose
+#     blockers are not heading toward done - a blocker in 1_clarify
 #     (waiting on an undecided question), a blocker in 4_archived (stranded, the
 #     dependency was abandoned), or a transitive dead-end (the blocker is itself
 #     blocked). This is a short nudge only; it never moves anything.
@@ -206,6 +209,10 @@ append_history() {
 # --- Pass 1: auto-unblock ----------------------------------------------------
 moved_lines=()
 remaining=()
+# Refused returns (all blockers done, move refused): parallel indexed arrays, not an
+# associative array, so this also runs on bash 3.2.
+refused_files=()
+refused_info=()
 
 if [ -d "$BLOCKED_DIR" ]; then
     while IFS= read -r bf; do
@@ -233,12 +240,20 @@ if [ -d "$BLOCKED_DIR" ]; then
             for id in $ids; do reason_ids="$reason_ids #$id"; done
             reason_ids="${reason_ids# }"
 
-            if CREDO_DIR="$CREDO_DIR" "$SCRIPT_DIR/credo-item-move.sh" "$oid" "$target" >/dev/null 2>&1; then
+            # A return to clarify is not a send-back to the user: keep the owner.
+            keep=()
+            [ "$target" = "clarify" ] && keep=(--keep-owner)
+            if move_err="$(CREDO_DIR="$CREDO_DIR" "$SCRIPT_DIR/credo-item-move.sh" "$oid" "$target" "${keep[@]}" 2>&1 >/dev/null)"; then
                 nf="$(find "$ITEMS_DIR" -type f -name "${oid}-*.md" 2>/dev/null | head -n1)"
                 [ -n "$nf" ] && append_history "$nf" "- -> $target $(date +%F) (auto-unblock: $reason_ids done)"
                 moved_lines+=("unblocked #$oid -> $target (blockers $reason_ids done)")
             else
-                # Move refused (clobber / ambiguous / guard) - leave it, surface in pass 2.
+                # Move refused (clobber / ambiguous / guard) - leave it, surface in pass 2
+                # with the helper's reason (first error line, prefix stripped).
+                reason="$(printf '%s\n' "$move_err" | grep -m1 '^credo-item-move: ' | sed 's/^credo-item-move: //')"
+                [ -n "$reason" ] || reason="move refused"
+                refused_files+=("$bf")
+                refused_info+=("$target|$reason")
                 remaining+=("$bf")
             fi
         else
@@ -252,6 +267,22 @@ surface_lines=()
 if [ "${#remaining[@]}" -gt 0 ]; then
     for bf in "${remaining[@]}"; do
         oid="$(own_id_of "$bf")"
+        info=""
+        i=0
+        while [ "$i" -lt "${#refused_files[@]}" ]; do
+            [ "${refused_files[$i]}" = "$bf" ] && { info="${refused_info[$i]}"; break; }
+            i=$((i + 1))
+        done
+        if [ -n "$info" ]; then
+            rt="${info%%|*}"
+            rr="${info#*|}"
+            if [ "$rt" = "go" ]; then
+                surface_lines+=("#$oid all blockers done, GO gate refused: $rr")
+            else
+                surface_lines+=("#$oid all blockers done, return to $rt refused: $rr")
+            fi
+            continue
+        fi
         ids="$(blocked_by_ids "$bf")"
         for id in $ids; do
             st="$(status_of "$id")"
@@ -272,7 +303,7 @@ if [ "$HOOK_MODE" -eq 1 ]; then
     # SessionStart: only the nudge, as additionalContext JSON. Moves already happened
     # on disk and are intentionally NOT printed (they would corrupt the JSON stdout).
     if [ "${#surface_lines[@]}" -gt 0 ] && command -v jq >/dev/null 2>&1; then
-        ctx="[credo] Unblock sweep: blocked items whose blocker is not heading toward done (no auto-move - resolve the blocker or re-decide):"
+        ctx="[credo] Unblock sweep: blocked items whose return was refused or whose blocker is not heading toward done (no auto-move - resolve the blocker or re-decide):"
         n=0
         for l in "${surface_lines[@]}"; do
             ctx="$ctx"$'\n'"- $l"

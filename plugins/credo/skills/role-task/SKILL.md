@@ -3,11 +3,11 @@ name: role-task
 description: >
   Assign this session the credo task/build role - the default owner of implementing GO items
   (items in 2_go/), INCLUDING commits and push where dogma permissions allow. Use ONLY when the
-  user actually assigns this role to you, for example "you are (now) the task/build agent", "you
-  build the GO items", "build the GO items", "take over building / implementing", "act as the
-  build agent", "switch into the task/build role", "du bist (jetzt) der task/build agent", "du
-  baust die GO-items", "übernimm das Bauen / Implementieren", "wechsel in die task/build rolle"
-  - or when the /credo:role-task command is run. Do NOT use for general talk ABOUT roles,
+  user actually assigns this role to you, in any language, for example "you are (now) the
+  task/build agent", "you build the GO items", "build the GO items", "take over building /
+  implementing", "act as the build agent", "switch into the task/build role", or German "du bist
+  (jetzt) der task/build agent", "du baust die GO-items", "übernimm das Bauen / Implementieren",
+  "wechsel in die task/build rolle" - or when the /credo:role-task command is run. Do NOT use for general talk ABOUT roles,
   explanations, or questions like "what does the task agent do". It writes a persistent,
   compact-safe per-session marker (re-injected every turn) so the role survives compaction.
 ---
@@ -26,9 +26,10 @@ mixed work, and an explicit user instruction always overrides the role.
 ## When to use
 
 - The user runs `/credo:role-task` (the explicit, deterministic, guaranteed path).
-- The user assigns you this role in passing (best-effort, casual path) - for example "you are
-  now the task/build agent", "you build the GO items", "take over the implementing", "act as the
-  build agent", "du baust die GO-items", "uebernimm das Bauen".
+- The user assigns you this role in passing (best-effort, casual path), in any language - for
+  example "you are now the task/build agent", "you build the GO items", "take over the
+  implementing", "act as the build agent", or the same in another language such as German "du baust die GO-items",
+  "übernimm das Bauen".
 
 Do NOT trigger on general discussion about roles, on explanations, or on questions such as
 "what does the task agent do" - those are not an assignment.
@@ -42,6 +43,14 @@ compaction, new sessions and subagents (stored on disk, not in context):
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/hooks/role-set.sh" task
 ```
+
+## Build questions without a plan agent
+
+Build questions and follow-ups that come up while building are agent-owned. If no plan agent
+peer is known (none announced as owning this), the task role temporarily takes the pseudo plan
+role for its own build questions and follow-ups and decides them per the agent decision rule in
+the `items` skill ("Clarify owner and the agent decision rule") - without changing its real
+role. Human-owned items and the escalation list there still go to the user.
 
 ## Confirm
 

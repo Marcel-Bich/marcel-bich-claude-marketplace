@@ -12,5 +12,6 @@
   { "key": "ph", "word": "commit+push", "meaning": "commit + push (repo rules)" },
   { "key": "cc-up", "word": "updated", "meaning": "Claude Code fully updated and restarted" },
   { "key": "exclude", "word": "git-exclude", "meaning": "always .git/info/exclude, never .gitignore" },
-  { "key": "🧪 B / ❓ Y", "word": "letters", "meaning": "open test / question letters; answer \"B vf\", \"B2 vf\", \"Y: ...\"; reply footer \"🧪: C · ❓: Y\"" }
+  { "key": "🧪 B / ❓ Y", "word": "letters", "meaning": "open test / question letters; answer \"B vf\", \"B2 vf\", \"Y: ...\"; reply footer \"🧪: C · ❓: Y\"" },
+  { "key": "§cct_N", "word": "task", "meaning": "harness task-list entry N (not an item); \"§cct_2 dd\" = task 2 done; #N stays reserved for real items" }
 ]
