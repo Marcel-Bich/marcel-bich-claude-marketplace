@@ -48,15 +48,26 @@ These steps touch the network and must be performed by Marcel himself:
 
 1. Write the config at `~/.claude/credo/peer-lan.json` (override path with
    `CREDO_PEER_LAN_CONFIG`). See `scripts/peer-lan.example.json` or the README for the
-   shape: `this_machine`, `listen_host`, `listen_port`, a shared `token` (identical on
-   every machine), and `peers[]` of `{name, host, port}`.
+   shape: `this_machine`, `listen_host`, `listen_port`, an OPTIONAL shared `token`, and
+   `peers[]` of `{name, host, port}`.
 2. Make the daemon reachable from the LAN - see Cross-machine networking below. This
    differs between WSL2 (needs a Windows portproxy) and native Linux (at most a firewall
    allow rule).
-3. Use the SAME `token` on every machine; machines with a different token are rejected.
 
-Do NOT perform step 2 or 3 automatically - opening a port, editing a firewall, and
+Do NOT perform step 2 automatically - opening a port, editing a firewall, and
 registering a scheduled task are manual, user-owned actions that need elevation.
+
+## Token (optional)
+
+The shared `token` is optional. Leave it empty or omit it and the relay runs TOKEN-LESS,
+which is the casual default for a trusted home LAN. Without a token, any device that can
+reach `listen_host:listen_port` can send messages to your sessions - gated only by the
+receiving session's own consent prompt (the relay never forges a trusted sender, so this
+gate always applies). Set the SAME non-empty `token` on every machine to restrict
+messaging to your own devices; a machine whose token differs from a token-requiring peer
+is rejected by that peer. Recommended on untrusted or company networks. Enabling it later
+is just adding the same `token` to the config on every machine - no code change, restart
+the daemon on each.
 
 ## Cross-machine networking
 

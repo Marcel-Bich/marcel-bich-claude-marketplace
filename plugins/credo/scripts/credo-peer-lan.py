@@ -37,8 +37,12 @@ SAFETY
     "credoPeerLan" marker, and only proxy sockets / holders it created.
   - No-op when no config file exists, or when CREDO_PEER_LAN is set to off.
 
-Transport: line-based JSON over TCP, authenticated with a shared token via HMAC-SHA256
-(reject on mismatch). Python 3 stdlib only.
+Transport: line-based JSON over TCP. A shared token is OPTIONAL. With a token, frames
+are signed and verified with HMAC-SHA256 (reject on mismatch). Without one (the casual
+default), the daemon runs token-less: it signs nothing and accepts unsigned frames, so
+any device that can reach the port may message local sessions - still gated by each
+receiving session's own consent prompt (we never forge a from-mode). Python 3 stdlib
+only.
 """
 
 import argparse
@@ -140,7 +144,7 @@ def load_config():
 
 
 # ---------------------------------------------------------------------------
-# authenticated line transport
+# line transport (HMAC-signed when a token is configured, unsigned otherwise)
 # ---------------------------------------------------------------------------
 def sign(token, body_str):
     return hmac.new(
@@ -150,11 +154,17 @@ def sign(token, body_str):
 
 def frame_for(token, payload):
     body = json.dumps(payload, separators=(",", ":"), sort_keys=True)
-    return json.dumps({"mac": sign(token, body), "body": body}) + "\n"
+    if token:
+        wire = {"mac": sign(token, body), "body": body}
+    else:
+        wire = {"body": body}
+    return json.dumps(wire) + "\n"
 
 
 def verify_line(token, line):
-    """Return the payload dict for an authentic line, else None."""
+    """Return the payload dict for an acceptable line, else None.
+    With a token the line MUST carry a matching HMAC (reject on mismatch or when
+    unsigned). Token-less, an unsigned body is accepted as-is (any mac is ignored)."""
     try:
         wire = json.loads(line)
     except Exception:
@@ -162,11 +172,14 @@ def verify_line(token, line):
     if not isinstance(wire, dict):
         return None
     body = wire.get("body")
-    mac = wire.get("mac")
-    if not isinstance(body, str) or not isinstance(mac, str):
+    if not isinstance(body, str):
         return None
-    if not hmac.compare_digest(sign(token, body), mac):
-        return None
+    if token:
+        mac = wire.get("mac")
+        if not isinstance(mac, str):
+            return None
+        if not hmac.compare_digest(sign(token, body), mac):
+            return None
     try:
         payload = json.loads(body)
     except Exception:
@@ -544,6 +557,14 @@ class Daemon(object):
                 [p.get("name") for p in self.peers],
             )
         )
+        if not self.token:
+            log(
+                "WARNING: running without a shared token - any device that can "
+                "reach %s:%d may send messages to your sessions (protected only by "
+                "the receiving session's consent gate); set \"token\" in the config "
+                "to restrict to your own devices."
+                % (self.listen_host, self.listen_port)
+            )
         threading.Thread(target=self._accept_loop, daemon=True).start()
         threading.Thread(target=self._roster_loop, daemon=True).start()
         threading.Thread(target=self._janitor_loop, daemon=True).start()
@@ -1033,9 +1054,6 @@ def run_daemon(_args):
     if cfg is None:
         log("no config at %s; nothing to do (no-op)" % config_path())
         return 0
-    if not cfg.get("token"):
-        log("config has no shared token; refusing to run")
-        return 2
     daemon = Daemon(cfg)
 
     def _sig(_signo, _frame):

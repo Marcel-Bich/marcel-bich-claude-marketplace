@@ -9,7 +9,12 @@
 #   - a message written into a proxy socket on daemon A arrives at the fake inbox
 #     socket on daemon B with the right from-name + body + a reply "from", and
 #     carries NO from-mode attribute (the most important assertion),
-#   - a wrong shared token is rejected (nothing is delivered),
+#   - with a shared token configured, a wrong token is rejected (nothing is delivered),
+#   - token-less (no token configured on either side): two daemons still deliver a
+#     message proxy->inbox end to end, the token-less daemon logs the startup warning,
+#     and the injected envelope STILL carries NO from-mode,
+#   - mixed case: a token-less sender (unsigned frame) against a token-requiring
+#     receiver is dropped and the receiver stays responsive to a later signed message,
 #   - a "credoPeerLan"-marked descriptor is created for a remote session and it is
 #     NOT a "credoPeerBridge" one,
 #   - single instance: a second daemon on the same listen port exits 0 cleanly
@@ -493,6 +498,110 @@ if [ -n "${PROXY_A:-}" ] && [ -S "$PROXY_A" ]; then
     done
 fi
 ok "first daemon keeps relaying through its holder after the second one exits" "$([ -n "$si_ok" ] && echo 0 || echo 1)"
+
+# --- TL: token-less end to end ----------------------------------------------
+# Two fresh daemons E and F with NO "token" key at all. They must still deliver a
+# message proxy->inbox, the sending daemon must log the no-token startup warning,
+# and the injected envelope must STILL carry NO from-mode (the key invariant).
+read PE PF < <("$PY" - <<'PYEOF'
+import socket
+ps = []
+for _ in range(2):
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); ps.append(s.getsockname()[1]); s.close()
+print(ps[0], ps[1])
+PYEOF
+)
+for M in E F; do
+    mkdir -p "$TMP/$M/cfg/sessions" "$TMP/$M/cfg/credo" "$TMP/$M/sock"
+done
+INBOX_F="$TMP/F/inbox.sock"
+SENDER_E="$TMP/E/sender.sock"   # path only; no live listener needed on E
+: > "$TMP/F/inbox.log"
+# NOTE: no "token" key at all -> token-less mode on both machines
+cat > "$TMP/E/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"E","listen_host":"127.0.0.1","listen_port":$PE,
+ "roster_interval":0.3,"machine_timeout":60,
+ "peers":[{"name":"F","host":"127.0.0.1","port":$PF}]}
+EOF
+cat > "$TMP/F/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"F","listen_host":"127.0.0.1","listen_port":$PF,
+ "roster_interval":0.3,"machine_timeout":60,
+ "peers":[{"name":"E","host":"127.0.0.1","port":$PE}]}
+EOF
+"$PY" "$TMP/inbox.py" "$INBOX_F" "$TMP/F/inbox.log" &
+PIDS="$PIDS $!"
+sleep 600 & SLEEP_E=$!; PIDS="$PIDS $SLEEP_E"
+sleep 600 & SLEEP_F=$!; PIDS="$PIDS $SLEEP_F"
+write_descriptor "$TMP/E/cfg/sessions/$SLEEP_E.json" "$SLEEP_E" "sid-E" "$SENDER_E" "werkbank-plan-e"
+write_descriptor "$TMP/F/cfg/sessions/$SLEEP_F.json" "$SLEEP_F" "sid-F" "$INBOX_F" "werkbank-task-f"
+CLAUDE_CONFIG_DIR="$TMP/E/cfg" CREDO_PEER_LAN_CONFIG="$TMP/E/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/E/sock" "$PY" "$DAEMON" daemon >"$TMP/E/daemon.log" 2>&1 &
+PIDS="$PIDS $!"
+CLAUDE_CONFIG_DIR="$TMP/F/cfg" CREDO_PEER_LAN_CONFIG="$TMP/F/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/F/sock" "$PY" "$DAEMON" daemon >"$TMP/F/daemon.log" 2>&1 &
+PIDS="$PIDS $!"
+
+DESC_E=""
+for _ in $(seq 1 60); do
+    [ -n "$DESC_E" ] || DESC_E="$(marked_desc "$TMP/E/cfg/sessions" || true)"
+    [ -n "$DESC_E" ] && break
+    sleep 0.25
+done
+ok "token-less daemon E created a credoPeerLan descriptor for the remote session" "$([ -n "$DESC_E" ] && echo 0 || echo 1)"
+grep -q "running without a shared token" "$TMP/E/daemon.log"; ok "token-less daemon logs the no-token startup warning" "$?"
+
+if [ -n "$DESC_E" ]; then
+    PROXY_E="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["messagingSocketPath"])' "$DESC_E" 2>/dev/null)"
+else
+    PROXY_E=""
+fi
+if [ -n "${PROXY_E:-}" ]; then
+    for _ in $(seq 1 40); do [ -S "$PROXY_E" ] && break; sleep 0.1; done
+    "$PY" "$TMP/sendproxy.py" "$PROXY_E" "localE" "hello token-less" "uds:$SENDER_E"
+    gotE=""
+    for _ in $(seq 1 60); do
+        if grep -q "hello token-less" "$TMP/F/inbox.log" 2>/dev/null; then gotE=1; break; fi
+        sleep 0.2
+    done
+    ok "token-less: message written to proxy on E arrives at the inbox on F" "$([ -n "$gotE" ] && echo 0 || echo 1)"
+    if [ -n "$gotE" ]; then
+        lineE="$(grep "hello token-less" "$TMP/F/inbox.log" | tail -n1)"
+        # THE key assertion is preserved token-less too: no from-mode anywhere
+        case "$lineE" in *from-mode*) FAIL=$((FAIL + 1)); printf 'FAIL token-less injected message contains from-mode (forbidden)\n  %s\n' "$lineE" ;; *) PASS=$((PASS + 1)) ;; esac
+    fi
+else
+    FAIL=$((FAIL + 1)); printf 'FAIL token-less: no proxy socket to test end to end\n'
+fi
+
+# --- MX: token-less sender vs token-requiring receiver ----------------------
+# A token-less sender transmits an UNSIGNED frame (no "mac") to the token-requiring
+# daemon B. B must reject it via its existing verify path (nothing delivered) and must
+# NOT crash: a subsequent VALID signed deliver still lands, proving B stays responsive.
+cat > "$TMP/sendtcp_nosig.py" <<'PYEOF'
+import json, socket, sys
+host, port, body = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+line = json.dumps({"body": body}) + "\n"   # no "mac": a token-less sender's frame
+s = socket.create_connection((host, port), timeout=5)
+s.sendall(line.encode())
+s.shutdown(socket.SHUT_WR)
+s.close()
+PYEOF
+
+before_mx="$(wc -c < "$TMP/B/inbox.log" 2>/dev/null || echo 0)"
+MX_BAD='{"body":"UNSIGNED-SHOULD-NOT-ARRIVE","from_name":"notoken","from_sessionId":"","kind":"deliver","target_sessionId":"sid-B"}'
+"$PY" "$TMP/sendtcp_nosig.py" 127.0.0.1 "$PB" "$MX_BAD" 2>/dev/null || true
+sleep 0.6
+after_mx="$(wc -c < "$TMP/B/inbox.log" 2>/dev/null || echo 0)"
+check "token-requiring receiver drops an unsigned frame from a token-less sender" "$before_mx" "$after_mx"
+
+MX_GOOD='{"body":"signed-after-unsigned","from_name":"mx","from_sessionId":"","kind":"deliver","target_sessionId":"sid-B"}'
+mx_ok=""
+for _ in $(seq 1 25); do
+    "$PY" "$TMP/sendtcp.py" 127.0.0.1 "$PB" "$TOKEN" "$MX_GOOD" 2>/dev/null || true
+    if grep -q "signed-after-unsigned" "$TMP/B/inbox.log" 2>/dev/null; then mx_ok=1; break; fi
+    sleep 0.2
+done
+ok "token-requiring receiver stays responsive after an unsigned frame (valid signed deliver still succeeds)" "$([ -n "$mx_ok" ] && echo 0 || echo 1)"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
