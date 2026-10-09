@@ -199,6 +199,18 @@ the process runs, NOT by the git branch: a checkout named `main` / `develop` / `
 make it remote. If locality cannot be positively established, do NOT restart - defer the
 visual verify as human-only. See the credo `verify` skill for the full rule and the config key.
 
+### After a plugin update: self-reload first, self-restart (cc-up) only as fallback
+
+A full restart is not always needed. After pushing or receiving a plugin update the
+session itself needs, run `/credo:self-reload` first: `run --auto` (add `--update` when the
+new version is not installed yet), then END THE TURN. Its worker types `/reload-plugins` and
+`/reload-skills` into this session's own tmux pane and then `.` to wake the session (60 s
+fallback re-send). No background work of any kind blocks it. On the woken turn the injected
+`[credo-self-reload]` note compares the loaded with the newest installed credo version:
+check that and whether the expected new command, skill or hook is listed. Only when the
+reload was not enough (or outside tmux) fall back to `/credo:self-restart --update` (cc-up)
+as described below.
+
 ### Self-restart: announced, never asked (owner rule)
 
 In autonomous mode `/credo:self-restart` runs WITHOUT the Ask tool, but always announced at

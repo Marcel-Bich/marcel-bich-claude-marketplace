@@ -128,7 +128,7 @@ These are the credo capabilities available in this session. Prefer them over the
 
 **Commands by execution class:**
 - **[A] may be run by the agent itself when useful:** `/credo:session-init`, `/credo:project` (show only, no path argument).
-- **[A only in autonomous mode]** `/credo:self-restart` (autonomous mode only, announced 5 min ahead via ntfy + message, cancellable: `run --announce 300 --no-background-work`; in every other mode only after the user's explicit yes via the Ask tool: `run --user-confirmed --no-background-work` - an unannounced restart could discard a prompt the user is typing; never with running background subagents). `/credo:self-compact` (real `/compact` typed into this session's own tmux pane, only after a green compact-plus report and only once idle with an empty input field and no dialog open: autonomous mode `run --auto` without a question; in every other mode ask once via the Ask tool and only after the explicit yes `run --user-confirmed`; never another session; running background subagents, shells and monitors do not block it - they survive `/compact`, the background check applies only to self-restart; end the turn right after `run`).
+- **[A only in autonomous mode]** After a plugin update: `/credo:self-reload` FIRST (types `/reload-plugins` and `/reload-skills` into this session's own tmux pane, then `.` to wake it, 60 s fallback re-send; on the woken turn check whether the reload was enough; autonomous mode `run --auto [--update]` without a question, in every other mode ask once via the Ask tool and only after the explicit yes `run --user-confirmed`; no background work of any kind blocks it; end the turn right after `run`) - the full restart `/credo:self-restart --update` (cc-up) only as fallback when the reload was not enough. `/credo:self-restart` (autonomous mode only, announced 5 min ahead via ntfy + message, cancellable: `run --announce 300 --no-background-work`; in every other mode only after the user's explicit yes via the Ask tool: `run --user-confirmed --no-background-work` - an unannounced restart could discard a prompt the user is typing; never with running background subagents). `/credo:self-compact` (real `/compact` typed into this session's own tmux pane, only after a green compact-plus report and only once idle with an empty input field and no dialog open: autonomous mode `run --auto` without a question; in every other mode ask once via the Ask tool and only after the explicit yes `run --user-confirmed`; never another session; running background subagents, shells, scripts, monitors and other background services do not block it - they survive `/compact`, the background check applies only to self-restart; after the compact the session wakes itself with `.`; end the turn right after `run`).
 - **[B] only on explicit user request** (interactive, or the user's call to make): `/credo:session-active`, `/credo:session-passive`, `/credo:psalm`, `/credo:project <path>` (pin a target), `/credo:optimize` (optimisation audit; also right after the user says Yes to a `[credo-optimize]` offer).
 - **[C] NEVER run autonomously** - only the user decides these (mode escalation / installs / structural migration): `/credo:session-autonomous`, `/credo:setup`, `/credo:migrate`.
 
@@ -181,6 +181,18 @@ an optimisation audit is wanted for this repo (read-only scan, findings offered 
 nothing scanned or changed without consent). Record the answer with `... optin yes` or
 `... optin no`; on Yes run `/credo:optimize` after this confirmation. Skip the question when
 it was already asked in this session's onboarding.
+
+Then check whether this session runs inside tmux (skip this when the SessionStart hook
+already injected its "does not run inside tmux" line this session, or in autonomous mode):
+
+```bash
+[ -n "${TMUX:-}" ] && echo "tmux: inside" || echo "tmux: outside"
+```
+
+On `outside`, add ONE short line to your confirmation saying that running Claude Code
+inside tmux is strongly recommended (`/credo:self-compact` and `/credo:self-reload` need it, and
+`/credo:self-restart` only waits for an idle pane there), and `/credo:setup` (Step 11)
+helps install tmux and add a launcher. Never install anything from here.
 
 Then confirm you understand these working instructions, then ask how you can help.
 

@@ -34,6 +34,7 @@ This outputs structured results for all checks. Parse the output to determine:
 - `files.roadmap` - Does ROADMAP.md exist? (only relevant if GSD is used)
 - `project.state` - Overall state (needs_setup, needs_mapping, needs_project, needs_roadmap, ready)
 - `todo_tools.state` / `todo_tools.declined` - Is the Claude Code task-list tools opt-in on for the active profile (see Step 10)?
+- `tmux.installed` / `tmux.inside` / `tmux.platform` / `tmux.pkg_manager` / `tmux.login_shell` - Is tmux installed, does this session run inside it, and how could it be installed (see Step 11)?
 
 **If project.state = ready:** Skip directly to "Setup Complete" section. Do NOT ask any questions.
 
@@ -654,13 +655,146 @@ It also stays silent (without using up its weekly slot) when the optimisation ho
 its own opt-in or welcome-back question at the same start, so a start carries at most one
 credo opt-in question.
 
+## Step 11: Run Claude Code Inside tmux (Strongly Recommended)
+
+Several credo features type into the session's OWN terminal pane, and only tmux gives them
+a pane they can safely inspect and type into:
+
+- `/credo:self-compact` (the real `/compact` after compact-plus) - tmux only.
+- `/credo:self-reload` (`/reload-plugins` + `/reload-skills` typed into the own pane) - tmux only.
+- `/credo:self-restart` - works without tmux (new Windows Terminal tab / terminal window),
+  but only inside tmux it waits until the pane is idle with an empty input field (so a
+  prompt being typed is never lost) and relaunches in the SAME pane.
+
+Never run this step in autonomous mode (setup is user-initiated anyway). Use the `tmux.*`
+lines from Step 1:
+
+**(a) `tmux.installed = true` and `tmux.inside = true`** -> nothing to do, skip silently.
+
+**(b) `tmux.installed = true`, `tmux.inside = false`** -> tell the user in 2-3 lines why
+tmux matters (the list above) and that this session itself is not inside tmux, so those
+features are unavailable until Claude Code is started inside tmux. Then offer the launcher
+in (d).
+
+**(c) `tmux.installed = false`** -> explain the benefit in 2-3 lines, then pick the install
+command for `tmux.pkg_manager`:
+
+| `pkg_manager` | Command |
+|---|---|
+| `apt` | `sudo apt update && sudo apt install -y tmux` |
+| `dnf` | `sudo dnf install -y tmux` |
+| `pacman` | `sudo pacman -S --needed --noconfirm tmux` |
+| `zypper` | `sudo zypper --non-interactive install tmux` |
+| `brew` | `brew install tmux` |
+| `none` | no known package manager: point to https://github.com/tmux/tmux/wiki/Installing and stop here |
+
+`tmux.platform = windows` (native Windows, Git Bash / MSYS / Cygwin) means tmux does not run
+natively. Recommend running Claude Code inside WSL (`wsl --install` in an admin PowerShell,
+then install Claude Code and tmux inside the Linux distro) and stop - do not run anything.
+`tmux.platform = wsl` is fine, because tmux runs inside WSL like on any Linux and a Windows
+Terminal tab is simply the window around it.
+
+Show the exact command, then ask via AskUserQuestion (hard rule - never install anything
+without the user's explicit yes):
+
+```
+tmux is not installed. credo can install it with:
+  <exact command>
+Run it now?
+
+- Yes, install tmux (Recommended) - runs exactly the command above
+- I'll run it myself - show the command only
+- No, skip tmux
+```
+
+- "Yes" -> for a `sudo` command, first check `sudo -n true 2>/dev/null`. If that fails, sudo
+  needs a password, which the agent cannot type. Do NOT run it; tell the user to run the
+  exact command in their own terminal (or via the `!` prefix in the Claude Code prompt)
+  and to say when it is done. Otherwise run exactly the shown command, then verify with
+  `tmux -V`. On failure show the error and stop; never try another package manager or
+  source on your own.
+- "I'll run it myself" -> show the command again, nothing else.
+- "No" -> persist the decline (below), then skip the rest of this step.
+
+**(d) Launcher (optional, after tmux is available and `tmux.inside = false`)** - a shell
+function that always starts Claude Code inside a named tmux session (`tmux new-session -A`
+attaches to the session when it already exists, so a closed terminal can be re-attached).
+`tmux.login_shell` is only `$SHELL`, which may differ from the shell the user really works
+in, so let them confirm the shell. Show the exact lines first, then ask via
+AskUserQuestion:
+
+```
+Start Claude Code inside tmux automatically? This adds a function "ctmux" to <rc file>:
+  <exact lines for the chosen shell>
+Usage: ctmux (session "claude") or ctmux <name> for a second session.
+
+- Yes, add it for bash (~/.bashrc)
+- Yes, add it for zsh (~/.zshrc)
+- Yes, add it for fish (~/.config/fish/functions/ctmux.fish)
+- No, I start tmux myself
+```
+
+Put the detected `tmux.login_shell` option first. The exact lines:
+
+bash / zsh (appended to `~/.bashrc` / `~/.zshrc`):
+
+```bash
+# credo: start Claude Code inside tmux (attach if the session exists)
+ctmux() { if [ -n "$TMUX" ]; then claude; else tmux new-session -A -s "${1:-claude}" claude; fi; }
+```
+
+fish (new file `~/.config/fish/functions/ctmux.fish`):
+
+```fish
+# credo: start Claude Code inside tmux (attach if the session exists)
+function ctmux
+    if set -q TMUX
+        claude
+    else if set -q argv[1]
+        tmux new-session -A -s $argv[1] claude
+    else
+        tmux new-session -A -s claude claude
+    end
+end
+```
+
+- On a Yes, first check that the target does not already define `ctmux`
+  (`grep -n 'ctmux' <rc file>`, or the fish file exists). If it does, show it and do not
+  write. Otherwise append the lines (bash/zsh: `printf` with `>>`, never overwrite the rc
+  file; fish: create the functions file, `mkdir -p ~/.config/fish/functions` first) and
+  show the user what was written. Tell them it takes effect in a new shell (or after
+  `source <rc file>`), and that this current session stays outside tmux until they quit
+  and start it again with `ctmux` (they can resume it with `claude --resume`).
+- "No, I start tmux myself" -> nothing is written to any rc file; persist the decline
+  (below).
+
+Never write to any shell rc file without that explicit Yes.
+
+**(e) Persist a decline.** After "No, skip tmux" or "No, I start tmux myself", record it so
+the SessionStart tmux hint stays silent from now on. Find the config file with
+`bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" paths` - the `profile:` file when a
+non-default Claude Code profile is active (it is listed there), else the `global:` file. Add
+or set this top-level key with Read + Edit (create the block if it is missing, change only
+this key, keep everything else):
+
+```yaml
+tmux:
+  hint: false
+```
+
+Then confirm in one line that the hint is off and how to turn it back on (set `hint: true`
+again, or run this step again). `bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get
+tmux.hint` must now print `false`.
+
 ## Setup Complete
 
 Before the message below: if Step 2c was skipped because `project.state` was `ready` and
 the optimisation-audit answer is still open (`credo-optimize-state.sh optin` prints
 nothing, in a git repo), ask Step 2c now. If the user said Yes in Step 2c, run
 `/credo:optimize` now. Likewise, if Step 10 was skipped because `project.state` was
-`ready` and `todo_tools.state` is `off`, run Step 10 now.
+`ready` and `todo_tools.state` is `off`, run Step 10 now. Likewise, if Step 11 was skipped
+because `project.state` was `ready` and `tmux.installed` or `tmux.inside` is `false`, run
+Step 11 now.
 
 **If all steps were skipped (project.state was ready):**
 

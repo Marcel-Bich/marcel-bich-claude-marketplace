@@ -7,7 +7,7 @@ EMPTY (or holds exactly an expected line, for the check right before Enter), no
 dialog / Ask question / permission prompt / menu is open, and (only with
 block_on_background=True, the default, as credo-self-restart.py uses it) the footer
 under the input box shows no background shells, monitors or background agents still
-running. credo-self-compact.py passes block_on_background=False: background work
+running. credo-self-compact.py and credo-self-reload.py pass block_on_background=False: background work
 survives /compact, so the footer rows are ignored there (they never hide the input box,
 which is found bottom-up as the last rule + marker row + rule). The rule is
 conservative. Anything not positively recognised as "idle with an empty input" is

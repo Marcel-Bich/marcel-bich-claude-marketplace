@@ -250,6 +250,14 @@ resources:
 optimize:
   idle_days: 7
 
+# --- tmux hint (SessionStart) -----------------------------------------------
+# When credo is active and a session starts outside tmux, the SessionStart hook adds
+# one short line recommending tmux (self-compact and self-reload need it). false ->
+# never show it again. /credo:setup Step 11 writes false into the global (or profile)
+# layer when the user declines tmux ("No, skip tmux" / "No, I start tmux myself").
+tmux:
+  hint: true
+
 # --- self-restart plugin update allowlist (/credo:self-restart run --update) --
 # Which plugins `run --update` may update before the session restarts. A mapping
 # marketplace name -> "*" (all installed plugins of that marketplace) or a list of

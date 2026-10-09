@@ -216,7 +216,7 @@ done < <("$PY" "$TMP/unit.py" "$GUARD" 2>&1)
 
 # --- fakes ---------------------------------------------------------------------------
 BASE="$TMP/base"; FT="$TMP/ftmux"; mkdir -p "$BASE" "$FT"
-for t in python3 bash dirname cat mkdir mv cp sleep env kill rm printf tr sed grep head; do
+for t in python3 bash dirname cat mkdir mv cp sleep env kill rm printf tr sed grep head jq find date; do
     p="$(command -v "$t" 2>/dev/null)" && ln -s "$p" "$BASE/$t"
 done
 # fake tmux: records argv; -S <socket> accepted; display-message answers only for
@@ -224,7 +224,11 @@ done
 # present, else $FAKE_IN_MODE); capture-pane serves the pane file named in $FAKE_STATE;
 # send-keys -l renders the typed text into the input box (plus $FAKE_TYPE_BELOW and the
 # lines of $FAKE_TYPE_BELOW_FILE under it,
-# and $FAKE_MODE_AFTER_TYPE as the new copy-mode flag), Enter switches to $FAKE_AFTER_PANE
+# and $FAKE_MODE_AFTER_TYPE as the new copy-mode flag), Enter switches to $FAKE_AFTER_PANE.
+# Enter of the /compact line with $FAKE_COMPACT_HOOK set runs that real SessionStart hook
+# with source "compact" (the compaction finished) and switches to $FAKE_IDLE_AFTER_COMPACT.
+# Enter of a "." records whether the wake file existed and, from the $FAKE_DOT_CLEARS_AT-th
+# "." on, consumes it (what the UserPromptSubmit hook does when the turn starts).
 cat > "$FT/tmux" <<'EOF'
 #!/bin/bash
 printf '%s\n' "$*" >> "$FAKE_TMUX_LOG"
@@ -243,8 +247,25 @@ case "$1" in
             [ -n "${FAKE_TYPE_BELOW_FILE:-}" ] && cat "$FAKE_TYPE_BELOW_FILE" >> "$FAKE_STATE.typed"
             echo "$FAKE_STATE.typed" > "$FAKE_STATE"
             [ -n "${FAKE_MODE_AFTER_TYPE:-}" ] && echo "$FAKE_MODE_AFTER_TYPE" > "$FAKE_STATE.mode"
+            printf '%s' "$5" > "$FAKE_STATE.last"
         elif [ "$4" = "Enter" ]; then
-            echo "$FAKE_AFTER_PANE" > "$FAKE_STATE"
+            last="$(cat "$FAKE_STATE.last" 2>/dev/null)"
+            case "$last" in
+                /compact*)
+                    echo "$FAKE_AFTER_PANE" > "$FAKE_STATE"
+                    if [ -n "${FAKE_COMPACT_HOOK:-}" ]; then
+                        # the compaction finishes: Claude Code fires SessionStart "compact"
+                        printf '{"session_id": "%s", "source": "compact", "cwd": "/"}' "$FAKE_SID" \
+                            | CLAUDE_CONFIG_DIR="$FAKE_CFG" bash "$FAKE_COMPACT_HOOK" >/dev/null 2>&1
+                        echo "$FAKE_IDLE_AFTER_COMPACT" > "$FAKE_STATE"
+                    fi ;;
+                .)
+                    n=$(( $(cat "$FAKE_STATE.dots" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE_STATE.dots"
+                    if [ -e "$FAKE_WAKE_FILE" ]; then echo "wake-present" >> "$FAKE_TMUX_LOG.wake"; else echo "wake-missing" >> "$FAKE_TMUX_LOG.wake"; fi; [ -e "$FAKE_WAKE_FILE" ] && cp "$FAKE_WAKE_FILE" "$FAKE_TMUX_LOG.wakecopy"
+                    if [ -n "${FAKE_DOT_CLEARS_AT:-}" ] && [ "$n" -ge "$FAKE_DOT_CLEARS_AT" ]; then rm -f "$FAKE_WAKE_FILE"; fi
+                    echo "$FAKE_IDLE_AFTER_COMPACT" > "$FAKE_STATE" ;;
+                *) echo "$FAKE_AFTER_PANE" > "$FAKE_STATE" ;;
+            esac
         fi ;;
 esac
 exit 0
@@ -252,7 +273,7 @@ EOF
 chmod +x "$FT/tmux"
 export FAKE_TMUX_LOG="$TMP/tmux.log" CREDO_SELF_COMPACT_NTFY_URL=off CREDO_SKIP_ENSURE=1
 export CREDO_SELF_COMPACT_POLL=0.2 CREDO_SELF_COMPACT_RECHECK=0.2 CREDO_SELF_COMPACT_KEY_PAUSE=0.1 \
-    CREDO_SELF_COMPACT_CONFIRM_WAIT=2
+    CREDO_SELF_COMPACT_CONFIRM_WAIT=2 CREDO_SELF_COMPACT_DONE_TIMEOUT=3
 export CREDO_GLOBAL="$TMP/global.yaml" CREDO_PROFILE="$TMP/none-profile" CREDO_PROJECT="$TMP/none-project"
 unset CREDO_SESSION_MODES_DIR CREDO_REHYDRATE_DIR
 : > "$CREDO_GLOBAL"
@@ -265,13 +286,16 @@ printf '%s\n' "● Pick one?" "" "❯ 1. Alpha" "  2. Beta" "" "Enter to select 
 printf '%s\n' "● Done." "" "✢ Compacting conversation$ELL" "" "$R" "❯ " "$R" > "$TMP/after.txt"
 printf '%s\n' "● Done." "" "$R" "❯ " "$R" "  ? for shortcuts · 2 shells" "  ◯ general-purpose  Fixture audit" > "$TMP/bg.txt"
 export FAKE_AFTER_PANE="$TMP/after.txt" FAKE_STATE="$TMP/state" FAKE_PANE_ID=%5
+export FAKE_COMPACT_HOOK="$SCRIPT_DIR/../hooks/credo-session-dir-record.sh" FAKE_IDLE_AFTER_COMPACT="$TMP/idle.txt" \
+    FAKE_DOT_CLEARS_AT=1
 
 SID="aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
 CFG="$TMP/cfg"; mkdir -p "$CFG/credo/rehydrate" "$CFG/credo/session-modes"
+export FAKE_SID="$SID" FAKE_CFG="$CFG" FAKE_WAKE_FILE="$CFG/credo/self-wake-$SID"
 MODES="$CFG/credo/session-modes"; MARK="$CFG/credo/self-compact-$SID.json"; LOGF="$CFG/credo/self-compact-$SID.log"
 cat > "$TMP/fake_target.py" <<'PYEOF'
 import time
-for _ in range(900):
+for _ in range(3000):
     time.sleep(0.1)
 PYEOF
 start_target() { # pidfile extra-env...
@@ -419,11 +443,13 @@ echo autonomous > "$MODES/$SID"; echo "$TMP/idle.txt" > "$FAKE_STATE"; : > "$FAK
 out="$(H run --auto --delay 0.1)"; rc=$?
 check "run --auto autonomous (no --no-background-work) -> rc 0" "0" "$rc"
 case "$out" in *"End your turn now."*) ok "run tells the agent to end the turn" 0 ;; *) ok "run end-turn line ($out)" 1 ;; esac
-wait_status '"status": "sent"'; ok "auto: marker sent" "$?"
+wait_status '"status": "woken"'; ok "auto: marker woken (compact done, '.' sent)" "$?"
 TEXT="/compact Afterwards reload .credo/process/handoffs/HANDOFF.md (secured by compact-plus) and continue from it."
 grep -qxF -- "-S /tmp/fake-sock send-keys -t %5 -l $TEXT" "$FAKE_TMUX_LOG"; ok "auto: typed /compact literally into %5" "$?"
 grep -qxF -- "-S /tmp/fake-sock send-keys -t %5 Enter" "$FAKE_TMUX_LOG"; ok "auto: Enter sent to %5" "$?"
-check "auto: exactly two send-keys" "2" "$(grep -c 'send-keys' "$FAKE_TMUX_LOG")"
+check "auto: exactly four send-keys (/compact, Enter, '.', Enter)" "4" "$(grep -c 'send-keys' "$FAKE_TMUX_LOG")"
+grep -qxF -- "-S /tmp/fake-sock send-keys -t %5 -l ." "$FAKE_TMUX_LOG"; ok "auto: '.' typed after the compact" "$?"
+check "auto: wake file existed before the '.' Enter" "wake-present" "$(cat "$FAKE_TMUX_LOG.wake")"
 check "auto: every tmux call targets %5 only" "0" "$(grep -- '-t ' "$FAKE_TMUX_LOG" | grep -vc -- '-t %5')"
 check "auto: every tmux call uses the session socket" "0" "$(grep -vc '^-S /tmp/fake-sock ' "$FAKE_TMUX_LOG")"
 "$PY" - "$FAKE_TMUX_LOG" <<'PYEOF'
@@ -483,7 +509,7 @@ out="$(H run --user-confirmed --delay 0.1 --timeout 30)"
 sleep 1.2
 check "busy: no keys while busy" "0" "$(grep -c 'send-keys' "$FAKE_TMUX_LOG")"
 echo "$TMP/idle.txt" > "$FAKE_STATE"
-wait_status '"status": "sent"'; ok "busy -> idle: sent" "$?"
+wait_status '"status": "woken"'; ok "busy -> idle: sent and woken" "$?"
 grep -q "pane state: busy: ✻ Brewing" "$LOGF"; ok "busy: state logged" "$?"
 
 # --- worker: input changed between typing and Enter -> NO Enter -----------------------
@@ -491,17 +517,20 @@ echo "$TMP/idle.txt" > "$FAKE_STATE"; : > "$FAKE_TMUX_LOG"
 out="$(FAKE_TYPE_PREFIX="user words " H run --user-confirmed --delay 0.1)"
 wait_status '"status": "failed: typed text not confirmed"'; ok "mismatch: marker failed" "$?"
 check "mismatch: no Enter sent" "0" "$(grep -c 'send-keys -t %5 Enter' "$FAKE_TMUX_LOG")"
+check "mismatch: user text never taken back" "0" "$(grep -c BSpace "$FAKE_TMUX_LOG")"
 
 # --- worker: dialog or copy mode right after typing -> the full assess says no Enter ----
 echo "$TMP/idle.txt" > "$FAKE_STATE"; : > "$FAKE_TMUX_LOG"
 out="$(FAKE_TYPE_BELOW="  Enter to confirm · Esc to cancel" H run --user-confirmed --delay 0.1)"
 wait_status '"status": "failed: typed text not confirmed"'; ok "dialog after typing: marker failed" "$?"
 check "dialog after typing: no Enter sent" "0" "$(grep -c 'send-keys -t %5 Enter' "$FAKE_TMUX_LOG")"
+check "dialog after typing: nothing taken back (keys would hit the dialog)" "0" "$(grep -c BSpace "$FAKE_TMUX_LOG")"
 grep -q "dialog or menu open" "$LOGF"; ok "dialog after typing: reason logged" "$?"
 echo "$TMP/idle.txt" > "$FAKE_STATE"; : > "$FAKE_TMUX_LOG"
 out="$(FAKE_MODE_AFTER_TYPE=1 H run --user-confirmed --delay 0.1)"
 wait_status '"status": "failed: typed text not confirmed"'; ok "copy mode after typing: marker failed" "$?"
 check "copy mode after typing: no Enter sent" "0" "$(grep -c 'send-keys -t %5 Enter' "$FAKE_TMUX_LOG")"
+check "copy mode after typing: nothing taken back (keys would hit copy mode)" "0" "$(grep -c BSpace "$FAKE_TMUX_LOG")"
 rm -f "$FAKE_STATE.mode"
 
 # --- worker: background agents / shells in the footer -> still types and sends --------
@@ -511,7 +540,7 @@ export FAKE_TYPE_BELOW_FILE="$TMP/bgfoot.txt"
 printf '%s\n' "  ? for shortcuts · 2 shells" "  ◯ general-purpose  Fixture audit" "  ◯ monitor  Fixture log" > "$FAKE_TYPE_BELOW_FILE"
 out="$(H run --user-confirmed --no-background-work --delay 0.1)"; rc=$?
 check "background: run (old flag accepted) -> rc 0" "0" "$rc"
-wait_status '"status": "sent"'; ok "background: marker sent" "$?"
+wait_status '"status": "woken"'; ok "background: marker woken" "$?"
 grep -qxF -- "-S /tmp/fake-sock send-keys -t %5 Enter" "$FAKE_TMUX_LOG"; ok "background: Enter sent" "$?"
 grep -q "background work running" "$LOGF"; ok "background: never logged as blocking" "$([ $? -eq 0 ] && echo 1 || echo 0)"
 unset FAKE_TYPE_BELOW_FILE
@@ -531,6 +560,100 @@ out="$(FAKE_PANE_PIDFILE="$TMP/t4.pid" TGT="$T4" H run --user-confirmed --delay 
 sleep 0.6; kill -TERM "$T4" 2>/dev/null; echo "$TMP/idle.txt" > "$FAKE_STATE"
 wait_status '"status": "failed: pane ownership"'; ok "target gone: marker failed: pane ownership" "$?"
 check "target gone: no keys sent" "0" "$(grep -c 'send-keys' "$FAKE_TMUX_LOG")"
+
+# --- SessionStart "compact" hook: compact-done only for a pending self-compact ---------
+HOOKSS="$SCRIPT_DIR/../hooks/credo-session-dir-record.sh"
+SIDH="ffffffff-0000-1111-2222-333333333333"; MH="$CFG/credo/self-compact-$SIDH.json"; DH="$CFG/credo/self-compact-done-$SIDH"
+ss() { printf '{"session_id": "%s", "source": "%s", "cwd": "/"}' "$SIDH" "$1" | CLAUDE_CONFIG_DIR="$CFG" PATH="$BASE" bash "$HOOKSS" >/dev/null 2>&1; }
+ss compact
+ok "hook: no marker -> no compact-done" "$([ ! -e "$DH" ] && echo 0 || echo 1)"
+printf '{"status": "typing", "session_id": "%s"}' "$SIDH" > "$MH"
+ss startup
+ok "hook: source startup -> no compact-done" "$([ ! -e "$DH" ] && echo 0 || echo 1)"
+for st in cancelled "failed: not idle" woken; do
+    printf '{"status": "%s", "session_id": "%s"}' "$st" "$SIDH" > "$MH"; ss compact
+    ok "hook: marker '$st' -> no compact-done" "$([ ! -e "$DH" ] && echo 0 || echo 1)"
+done
+for st in typing sent "sent (unconfirmed)"; do
+    printf '{"status": "%s", "session_id": "%s"}' "$st" "$SIDH" > "$MH"; ss compact
+    ok "hook: marker '$st' + compact -> compact-done" "$([ -s "$DH" ] && echo 0 || echo 1)"
+    rm -f "$DH"
+done
+# without jq the done signal still works (grep/sed fallback)
+NOJQ="$TMP/nojq"; mkdir -p "$NOJQ"
+for t in bash cat grep sed head date mv find mkdir printf; do
+    p="$(command -v "$t" 2>/dev/null)" && ln -sf "$p" "$NOJQ/$t"
+done
+ssnj() { printf '{"session_id": "%s", "source": "%s", "cwd": "/"}' "$SIDH" "$1" | CLAUDE_CONFIG_DIR="$CFG" PATH="$NOJQ" bash "$HOOKSS" >/dev/null 2>&1; }
+printf '{"status": "sent", "session_id": "%s"}' "$SIDH" > "$MH"; ssnj compact
+ok "hook without jq: marker 'sent' + compact -> compact-done" "$([ -s "$DH" ] && echo 0 || echo 1)"
+rm -f "$DH"
+printf '{"status": "cancelled", "session_id": "%s"}' "$SIDH" > "$MH"; ssnj compact
+ok "hook without jq: marker 'cancelled' -> no compact-done" "$([ ! -e "$DH" ] && echo 0 || echo 1)"
+printf '{"status": "typing", "session_id": "%s"}' "$SIDH" > "$MH"; ssnj startup
+ok "hook without jq: source startup -> no compact-done" "$([ ! -e "$DH" ] && echo 0 || echo 1)"
+rm -f "$MH"
+
+# --- wake after the compact -----------------------------------------------------------
+wreset() { # pane file
+    echo "$1" > "$FAKE_STATE"; : > "$FAKE_TMUX_LOG"
+    rm -f "$FAKE_TMUX_LOG.wake" "$FAKE_TMUX_LOG.wakecopy" "$FAKE_STATE.dots" "$FAKE_STATE.last" "$FAKE_WAKE_FILE" "$MARK"
+}
+dots() { grep -cxF -- "-S /tmp/fake-sock send-keys -t %5 -l ." "$FAKE_TMUX_LOG"; }
+touch "$CFG/credo/rehydrate/$SID"; rm -f "$MODES/$SID"
+# happy path: the wake file says compact + compact_done, the turn started -> woken
+wreset "$TMP/idle.txt"
+out="$(H run --user-confirmed --delay 0.1)"
+wait_status '"status": "woken"'; ok "wake: woken" "$?"
+grep -q '"kind": "compact"' "$FAKE_TMUX_LOG.wakecopy"; ok "wake: wake file kind compact" "$?"
+grep -q '"compact_done": true' "$FAKE_TMUX_LOG.wakecopy"; ok "wake: wake file records compact_done" "$?"
+check "wake: exactly one '.'" "1" "$(dots)"
+# fallback: the first "." does not start a turn -> re-sent after the nudge wait
+wreset "$TMP/idle.txt"
+out="$(FAKE_DOT_CLEARS_AT=2 H run --user-confirmed --delay 0.1 --nudge-wait 0.8)"
+wait_status '"status": "woken"'; ok "wake fallback: woken" "$?"
+check "wake fallback: two '.'" "2" "$(dots)"
+# a turn already started after the compact (e.g. a task notification): no "." at all
+wreset "$TMP/idle.txt"
+out="$(FAKE_IDLE_AFTER_COMPACT="$TMP/busy.txt" H run --user-confirmed --delay 0.1)"
+for _ in $(seq 1 50); do [ -e "$FAKE_WAKE_FILE" ] && break; sleep 0.2; done
+ok "turn started: wake file written while busy" "$([ -e "$FAKE_WAKE_FILE" ] && echo 0 || echo 1)"
+rm -f "$FAKE_WAKE_FILE"; sleep 0.5; echo "$TMP/idle.txt" > "$FAKE_STATE"
+wait_status '"status": "woken"'; ok "turn started: woken" "$?"
+sleep 1
+check "turn started: no '.' typed" "0" "$(dots)"
+# no compact-done signal in time, pane idle -> "." anyway (the agent checks the compact)
+wreset "$TMP/idle.txt"
+out="$(FAKE_COMPACT_HOOK= FAKE_AFTER_PANE="$TMP/idle.txt" H run --user-confirmed --delay 0.1)"
+wait_status '"status": "woken"'; ok "no signal, idle: woken" "$?"
+check "no signal, idle: one '.'" "1" "$(dots)"
+grep -q '"compact_done": false' "$FAKE_TMUX_LOG.wakecopy"; ok "no signal, idle: wake file says compact_done false" "$?"
+grep -q "no compact-done signal" "$LOGF"; ok "no signal, idle: logged" "$?"
+# no compact-done signal, pane NOT idle -> nothing typed, failure + ntfy
+wreset "$TMP/idle.txt"
+out="$(FAKE_COMPACT_HOOK= H run --user-confirmed --delay 0.1)"
+wait_status '"status": "failed: compact not confirmed'; ok "no signal, busy: failed" "$?"
+check "no signal, busy: no '.'" "0" "$(dots)"
+grep -q "ntfy disabled: credo: self-compact wake failed" "$LOGF"; ok "no signal, busy: ntfy path used" "$?"
+ok "no signal, busy: no wake file" "$([ ! -e "$FAKE_WAKE_FILE" ] && echo 0 || echo 1)"
+# cancel while waking removes the wake file
+wreset "$TMP/idle.txt"
+out="$(FAKE_DOT_CLEARS_AT=99 H run --user-confirmed --delay 0.1 --nudge-wait 30)"
+for _ in $(seq 1 75); do [ -e "$FAKE_WAKE_FILE" ] && grep -q '"status": "waking"' "$MARK" && break; sleep 0.2; done
+out="$(H cancel)"; rc=$?
+check "cancel while waking -> rc 0" "0" "$rc"
+ok "cancel removes the wake file" "$([ ! -e "$FAKE_WAKE_FILE" ] && echo 0 || echo 1)"
+# a pending self-reload of this session blocks a self-compact (same pane, same wake file)
+RMARK="$CFG/credo/self-reload-$SID.json"
+"$PY" -c 'import time; time.sleep(30)' _worker /fixture/credo-self-reload.py &
+RW=$!; PIDS="$PIDS $RW"; sleep 0.2
+printf '{"status": "waking", "session_id": "%s", "worker_pid": %s}' "$SID" "$RW" > "$RMARK"
+wreset "$TMP/idle.txt"
+out="$(H run --user-confirmed --delay 0.1)"; rc=$?
+check "pending self-reload -> self-compact refused" "1" "$rc"
+case "$out" in *"self-reload"*"pending"*) ok "refusal names the self-reload" 0 ;; *) ok "refusal names the self-reload ($out)" 1 ;; esac
+check "refused: no keys" "0" "$(grep -c 'send-keys' "$FAKE_TMUX_LOG")"
+kill "$RW" 2>/dev/null; rm -f "$RMARK"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

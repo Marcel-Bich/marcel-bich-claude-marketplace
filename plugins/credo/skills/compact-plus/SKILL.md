@@ -196,8 +196,9 @@ from step 3, so it only works after compact-plus.
 
 - Only after a green report ("safe to /compact"). The breadcrumb must be fresh (default
   at most 2 h old); an older one is refused - run compact-plus again.
-- Running background work does NOT block it: background subagents, background Bash
-  shells and monitors survive `/compact` and keep working (it can even be good that they
+- No background work of any kind blocks it. Background subagents, background Bash
+  shells, scripts, monitors and any other background service survive `/compact` and keep
+  working (it can even be good that they
   run during the compact). No background check and no `--no-background-work` flag are
   needed; the worker ignores background rows in the pane footer. Only
   `/credo:self-restart` keeps the background gate (a restart kills that work).
@@ -207,6 +208,9 @@ from step 3, so it only works after compact-plus.
   after an explicit yes run `credo-self-compact.py run --user-confirmed` and END THE
   TURN.
   No answer or no -> leave it; the user compacts when they want.
+- After the compact the session wakes itself. The worker waits for the compact-done
+  signal (SessionStart source `compact`) and types `.` (60 s fallback re-send), so the work
+  continues without relying on a subagent or background script happening to finish.
 - tmux only; outside tmux `check` says so and the user compacts by hand.
 
 Details and the owner rule: `commands/self-compact.md`.

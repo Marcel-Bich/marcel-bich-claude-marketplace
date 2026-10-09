@@ -2,7 +2,7 @@
 
 Credo (Latin: "I believe") is the mentor framework for Claude Code: a self-contained process layer that governs how a whole session runs. It turns a loose set of good habits into an enforced, project-local workflow: a per-session working mode, a work-item lifecycle with a hard Definition of Done, budget-aware autonomy, visual verification, and safety rules that travel into every subagent.
 
-It is opinionated by design and stands alone. Two external touchpoints are documented honestly below: the `limit` plugin (recommended prerequisite for a few features) and `ntfy` (optional push notifications). Everything else lives inside this plugin.
+It is opinionated by design and stands alone. Three external touchpoints are documented honestly below: the `limit` plugin (recommended prerequisite for a few features), `tmux` (strongly recommended, needed by the self-compact and self-reload commands) and `ntfy` (optional push notifications). Everything else lives inside this plugin.
 
 ## What credo is
 
@@ -21,7 +21,7 @@ credo is built from small, composable pieces:
 | Command | Description |
 |---------|-------------|
 | `/credo:psalm` | Interactive guide to available topics and workflows |
-| `/credo:setup` | Interactive setup wizard: install plugins, sync instructions, init project |
+| `/credo:setup` | Interactive setup wizard: install plugins, sync instructions, init project, detect tmux and help install it (strongly recommended) |
 | `/credo:migrate` | Migrate an existing repo into the `.credo/` structure |
 | `/credo:project` | Pin the target repo for credo's project layer (hub-aware), or show the resolved target |
 | `/credo:session-init` | Load the main-agent delegation-first workflow instructions |
@@ -37,7 +37,8 @@ credo is built from small, composable pieces:
 | `/credo:disable` | Disable credo for this directory (silence onboarding and the [credo] line here, reversible) |
 | `/credo:enable` | Enable credo for this directory (opt in; overrides a previous decline) |
 | `/credo:self-restart` | Restart this session and resume exactly the same session in the same profile (e.g. to load plugin updates); `check` (dry run), `run --user-confirmed` / `run --announce 300` (autonomous only) `[--update]`, both only with `--no-background-work` after checking that no own background subagent or shell still runs, `cancel`, `status` |
-| `/credo:self-compact` | After a green compact-plus report, type the real `/compact` into this session's own tmux pane once it is idle with an empty input field; `check` (dry run), `run --auto` (autonomous only) / `run --user-confirmed` (after an Ask yes), `cancel`, `status`; running background subagents / shells / monitors do not block it (they survive `/compact`) |
+| `/credo:self-reload` | After a plugin update, the cheap first try: type `/reload-plugins` and `/reload-skills` into this session's own tmux pane once it is idle, then `.` to wake it (60 s fallback re-send); the woken turn checks whether the reload was enough, else `/credo:self-restart --update` (cc-up); `check`, `run --auto` (autonomous only) / `run --user-confirmed` (after an Ask yes) `[--update]`, `cancel`, `status`; no background work of any kind blocks it |
+| `/credo:self-compact` | After a green compact-plus report, type the real `/compact` into this session's own tmux pane once it is idle with an empty input field; `check` (dry run), `run --auto` (autonomous only) / `run --user-confirmed` (after an Ask yes), `cancel`, `status`; no background work of any kind blocks it (subagents, shells, scripts, monitors survive `/compact`); afterwards the session wakes itself with `.` |
 
 Skills and hooks are auto-discovered by Claude Code from the `skills/` and `hooks/` directories, so they are not hand-listed in the manifest.
 
@@ -236,9 +237,13 @@ A remote session has no local process, so its descriptor would be reaped (the di
 - **Safety net.** Failures send an ntfy push; before restarting, the agent asks a reachable peer session to send a wake message after ~1 minute. Never while background subagents run. Details: `commands/self-restart.md`.
 - **Idle guard (tmux).** Before stopping a session in a tmux pane, the worker waits until the pane is idle with an empty input field and no dialog open (`scripts/credo_pane_guard.py`, two probes); it never stops while the user is typing and gives up after `CREDO_SELF_RESTART_IDLE_TIMEOUT` (default 30 min) with an ntfy push.
 
+## Self-reload (plugin update without a restart)
+
+`/credo:self-reload` (`scripts/credo-self-reload.py`) is the first try after a plugin update; the full restart (`/credo:self-restart --update`, cc-up) is only the fallback. A detached worker optionally runs the allowlisted plugin update (`--update`), then types `/reload-plugins` and `/reload-skills` into the session's OWN tmux pane - each only into an idle pane with an empty input field and no dialog, verified before Enter, and the next key only after the command's `Reloaded` result line (or its timeout). The reload commands do not start a model turn, so it then types `.` to wake the session. A UserPromptSubmit hook consumes the wake file on the next prompt, which cancels the 60 s fallback re-send of the `.` (bounded, only while the pane is idle), and injects a note: loaded vs newest installed credo version and the instruction to fall back to `/credo:self-restart --update` only if the reload was not enough. No background work of any kind blocks it. Owner rule like self-compact. Details: `commands/self-reload.md`.
+
 ## Self-compact (the real /compact after compact-plus)
 
-`/credo:self-compact` (`scripts/credo-self-compact.py`) runs the real Claude Code `/compact` on the same session after `compact-plus` secured its state, to save tokens. A detached worker types `/compact Afterwards reload <handoff> ...` into the session's OWN tmux pane (verified to belong to this Claude process, on this session's tmux server) - only once the session is idle, the input field is empty and no dialog, Ask question, permission prompt or menu is open, confirmed twice; it verifies the typed line before pressing Enter and never retypes user input. Autonomous mode: `run --auto` without a question; interactive modes: ask once via the Ask tool, then `run --user-confirmed`. It refuses without the compact-plus rehydrate breadcrumb and outside tmux. Details: `commands/self-compact.md`.
+`/credo:self-compact` (`scripts/credo-self-compact.py`) runs the real Claude Code `/compact` on the same session after `compact-plus` secured its state, to save tokens. A detached worker types `/compact Afterwards reload <handoff> ...` into the session's OWN tmux pane (verified to belong to this Claude process, on this session's tmux server) - only once the session is idle, the input field is empty and no dialog, Ask question, permission prompt or menu is open, confirmed twice; it verifies the typed line before pressing Enter and never retypes user input. Autonomous mode: `run --auto` without a question; interactive modes: ask once via the Ask tool, then `run --user-confirmed`. It refuses without the compact-plus rehydrate breadcrumb and outside tmux. After the compact the session wakes itself: the SessionStart hook (source `compact`) signals the finished compaction deterministically, then the worker types `.` (shared wake helper with self-reload, 60 s fallback); without the signal in time it types `.` only into an idle pane, else it sends an ntfy push. Details: `commands/self-compact.md`.
 
 ## Peer message etiquette
 
@@ -313,7 +318,7 @@ When credo runs inside Claude Code with mods support, `hooks/band.tsx` (listed u
 
 ## Dependencies
 
-credo works on its own. Two touchpoints are external:
+credo works on its own. Three touchpoints are external:
 
 ### `limit` plugin - recommended prerequisite
 
@@ -327,10 +332,28 @@ The [`limit`](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki
 
 If the `limit` plugin is absent, these features are silently unavailable. There is no error; credo simply does not run the budget or auto-compact logic that has no data.
 
+### tmux (strongly recommended)
+
+Run Claude Code inside [tmux](https://github.com/tmux/tmux). Several credo features type into the session's OWN terminal pane, and only tmux gives them a pane they can safely inspect and type into:
+
+- **`/credo:self-compact`** - tmux only. Outside tmux it refuses and you compact by hand.
+- **`/credo:self-reload`** - tmux only (types `/reload-plugins` and `/reload-skills` into the own pane).
+- **`/credo:self-restart`** - works without tmux (new Windows Terminal tab / terminal window), but only inside tmux it waits until the pane is idle with an empty input field, so a prompt you are typing is never lost, and relaunches in the same pane.
+
+This fits WSL too, because tmux runs inside the WSL distro like on any Linux and the Windows Terminal tab is just the window around it. Native Windows has no tmux - use WSL.
+
+`/credo:setup` (Step 11) detects whether tmux is installed and whether the current session runs inside it, shows the exact install command for your package manager (apt, dnf, pacman, zypper, brew) and runs it only after your explicit yes. It can also add a small `ctmux` shell function (bash, zsh or fish, again only after a yes) that always starts Claude Code inside a named tmux session and re-attaches to it if it already exists:
+
+```bash
+ctmux() { if [ -n "$TMUX" ]; then claude; else tmux new-session -A -s "${1:-claude}" claude; fi; }
+```
+
+When credo is active and a session starts outside tmux, the SessionStart hook adds one short line recommending tmux. It stays silent after you declined tmux in `/credo:setup` Step 11 (stored as `tmux.hint: false` in the credo config), in non-terminal hosts (`CLAUDE_CODE_ENTRYPOINT` other than `cli`) and with `CREDO_TMUX_HINT=false`.
+
 ### `ntfy` - optional
 
 Push notifications use `ntfy`. The topic is a personal field in the credo config (`personal.ntfy_topic`). If it is unset, ntfy is silently skipped; nothing else changes. Progress is bundled into a digest on a fixed interval (`ntfy.digest_interval_minutes`); when a topic is set, sending it is mandatory whenever there is progress (with no topic it stays silently skipped), and each completed item carries a content standard (what / how / where / why, verify state, what needs the user, budget snapshot) so a terse one-liner is never enough. One message is preferred, split into `n/m` when it would exceed ntfy's size limit.
 
 ## Installation
 
-Add the marketplace and install `credo`, or copy the plugin into your `.claude-plugin/` location. Then run `/credo:setup` to initialize a project and, optionally, pre-fill config.
+Add the marketplace and install `credo`, or copy the plugin into your `.claude-plugin/` location. Then run `/credo:setup` to initialize a project and, optionally, pre-fill config. Starting Claude Code inside tmux is strongly recommended (see [tmux](#tmux-strongly-recommended)); setup helps install it.

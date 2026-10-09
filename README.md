@@ -120,6 +120,8 @@ All plugins require:
 - **Supported:** Linux, macOS, WSL2
 - **Not supported:** Native Windows / PowerShell (use WSL2 instead)
 
+**Strongly recommended:** Run Claude Code inside [tmux](https://github.com/tmux/tmux) (also inside WSL2). credo's `/credo:self-compact` and `/credo:self-reload` only work in a tmux pane, and `/credo:self-restart` only waits for an idle input field there. `/credo:setup` detects tmux, shows the install command for your package manager and runs it only after your yes. Details: [credo wiki - tmux](https://github.com/Marcel-Bich/marcel-bich-claude-marketplace/wiki/Claude-Code-Credo-Plugin#tmux-strongly-recommended).
+
 ## Quick Start
 
 ```bash

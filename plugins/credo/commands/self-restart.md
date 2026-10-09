@@ -56,7 +56,10 @@ restart can no longer be cancelled.
 Further rules:
 
 - Use it after pushing or receiving plugin updates the session itself needs, or when the
-  user asks for it (interactive: still via the Ask tool first).
+  user asks for it (interactive: still via the Ask tool first). **Try `/credo:self-reload`
+  first** (`/reload-plugins` + `/reload-skills` typed into the own tmux pane, then `.` to
+  wake the session); use the restart only as fallback when the reload was not enough
+  (the woken turn checks it) or outside tmux.
 - **Mandatory background check before `run`.** NEVER while your own background work is
   still running - it would be lost with the old process. Check it yourself first: no
   running subagent of this session (`ListAgents`), no own background Bash shell or

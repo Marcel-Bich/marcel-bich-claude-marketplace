@@ -2,123 +2,41 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-10
 
-## dogma
-
-### v1
-
-#### v1.44
-
-##### v1.44.4
-
-###### Fixed
-
-- German-only language rules now fire on German text only: the write reminder's "Keep it in
-  German" note and the post-write ASCII umlaut check (fuer -> für) use a stricter shared
-  detection (`lib-german.sh`) instead of substring matches that also hit English or other
-  languages. Quoted text and code are ignored, and German function words must be a
-  meaningful share of all words and clearly outweigh English ones
-- An English file that quotes German examples is no longer reported as German, and a
-  bilingual file gets no language note instead of a wrong one
-- A German file is no longer reported as English because German prose contains "in" / "is"
-- `/dogma:force` examples show the real umlauts again (they had been stripped to "fur",
-  "konnen"); `/dogma:cleanup` and the prompt reminder state the umlaut rule is German text only
-- New `scripts/test-german-detection.sh` checks German, English, French, Spanish, Dutch and
-  Portuguese samples, English text with German quotes and code, and a bilingual document
-  against the detection and both hooks
-
-##### v1.44.3
-
-###### Fixed
-
-- dogma band no longer shows a "blocked" line forever: the notice is time-stamped and hidden after 15 s even when a plugin reload cut its timer short, and a new session starts without it
-
-##### v1.44.2
-
-###### Fixed
-
-- Delete guard only analyzes a segment whose command word can delete, move or link; a verb inside an argument (a file name, a grep pattern with <...>) no longer blocks harmless commands
-
-##### v1.44.1
-
-###### Changed
-
-- Notice tests use an invented project name instead of a real one
-
-##### v1.44.0
-
-###### Added
-
-- Always-on delete guard: blocks deleting, moving or symlinking onto protected paths (/, first-level dirs, /home depth 0-2, the home and its children); targets are resolved first (~, $HOME, cwd and cd, symlinks, glob base), unresolvable targets are blocked, fails closed without python3
-
-###### Security
-
-- A symlink under /tmp pointing at a protected directory can no longer route a recursive delete past the /tmp allowance
-
-#### v1.43
-
-##### Added
-
-- DOGMA-PERMISSIONS.md is picked by action target, pinned project, then session folder, with per-id inheritance (default on)
-- Notices also show in non-git folders and for pinned projects that inherit permissions
-
-#### v1.42
-
-##### Added
-
-- Source broadcasts via NOTICES.md
-- `CLAUDE_MB_DOGMA_SOURCE` for sync and recommended setup
-- Per-folder git identity for the source fetch
-
-#### v1.41
-
-##### Added
-
-- Stable setting ids (`§xxxx`) matched first with a text fallback, plus an id registry
-- changelog.d assembly in `/dogma:versioning`
-
-#### v1.40
-
-##### Added
-
-- Worktree files list (link or copy, `.credo/` included by default) and a cleanup-merged-worktrees checkbox
-
-##### Changed
-
-- Subagents may commit in their own worktree, never push or merge
-
-#### v1.39
-
-##### Added
-
-- One-time per-repo update notices for updates that need user action (Run/Later/Never), with an optional band toast
-
-#### v1.38
-
-##### Added
-
-- Final Verification option to run all tests only at release
-
-#### v1.37
-
-##### Added
-
-- Optional per-stage test commands (commit, push, relevant, build, all) with branch filters
-
-#### v1.36
-
-##### Added
-
-- Optional Claude Code band showing restricting permissions with change highlights
-
-#### v1.35
-
-##### Added
-
-- `permissions-summary.sh` listing only the restricting DOGMA-PERMISSIONS entries
-
 ## credo
 
 ### v0
+
+#### v0.76
+
+##### v0.76.0
+
+###### Added
+
+- `/credo:self-reload` (`scripts/credo-self-reload.py`): the cheap first try after a plugin update. A detached worker optionally runs the allowlisted plugin update (`--update`, same allowlist as self-restart), then types `/reload-plugins` and `/reload-skills` into the session's OWN tmux pane - each only into an idle pane with an empty input field and no dialog, verified before Enter, the next key only after the command's `Reloaded` result line (or its timeout) - and finally `.` to wake the session, because the reload commands do not start a model turn. `check`, `run --auto` (credo autonomous mode only) or `run --user-confirmed` (after an Ask yes), `cancel`, `status`. No background work of any kind (subagents, shells, scripts, monitors, other services) blocks it
+- `scripts/credo_pane_wake.py`: shared worker steps of self-reload and self-compact - idle wait with the pane ownership re-check, verified typing, and the `.` wake with a wake file `<configdir>/credo/self-wake-<session-id>` and a bounded 60 s fallback (`--nudge-wait`, `--max-nudges`): the `.` is re-sent only while the pane is idle and the wake file is still pending, a `.` left in the input field only gets Enter again, and no `.` is typed at all when a turn already started
+- The woken turn gets a short note: after a reload the loaded vs newest installed credo version and the instruction to fall back to `/credo:self-restart --update` (cc-up) only when the reload was not enough; after a compact the instruction to reload the secured handoff
+- Tests: `test-credo-self-reload.sh`; self-compact wake, compact-done signal and self-wake cases in `test-credo-self-compact.sh` and `test-credo-autonomy-clear.sh`
+- `/credo:setup` Step 11: detects tmux (installed, session inside tmux, platform, package manager), explains why tmux matters for `/credo:self-compact`, `/credo:self-reload` and the idle guard of `/credo:self-restart`, shows the exact install command for apt, dnf, pacman, zypper or brew and runs it only after an explicit yes (native Windows: recommends WSL)
+- Optional `ctmux` launcher for bash, zsh or fish that always starts Claude Code inside a named tmux session; written to the shell rc only after an explicit yes
+- `check-setup.sh` reports a `tmux:` block (`installed`, `version`, `inside`, `platform`, `pkg_manager`, `login_shell`)
+- SessionStart hook: one short tmux recommendation line when credo is active and a session starts or resumes outside tmux (never in autonomous mode; toggle `CREDO_TMUX_HINT=false`); `/credo:session-init` checks the same once
+
+###### Changed
+
+- `/credo:self-compact` wakes the session after the compact: the SessionStart hook (`credo-session-dir-record.sh`, source `compact`) writes a compact-done marker only while a self-compact of that session is in flight, the worker waits for it (`--done-timeout`, default 900 s) and then types `.` with the shared fallback. Without the signal in time it types `.` only into an idle pane; otherwise nothing is typed, the marker says `failed: compact not confirmed` and an ntfy push goes out
+- `credo-autonomy-clear.sh` consumes this session's wake file on the next prompt (any prompt counts as woken, which cancels the fallback) and injects the wake note; only the worker's own `.` is labelled as such and does not pause autonomous mode, any other prompt is named a real message to handle normally. A wake file older than 1 h is dropped without a note, and the hook also works without jq
+- `cancel` of self-reload and self-compact removes a pending wake file; the two never run at the same time (each refuses while the other has a pending worker of the same session)
+- A turn that starts while the `.` is being typed counts as woken: no Enter, and the own `.` is taken back only when the input field holds exactly `.`
+- Any abort between typing and Enter (failed check, a turn starting, `cancel`) takes the own typed line (`/compact ...`, `/reload-...`, `.`) back out of the input field, only when the field holds exactly that line and no dialog or copy mode is active; `cancel` of self-compact now also works while it types
+- The SessionStart compact-done signal also works without jq
+- The SessionStart tmux hint stays silent after a decline in `/credo:setup` Step 11 (stored as `tmux.hint: false` in the credo config) and in non-terminal hosts (`CLAUDE_CODE_ENTRYPOINT` other than `cli`); test `test-credo-session-start-tmux.sh`
+- After a plugin update the documented order is self-reload first, self-restart (cc-up) only as fallback (SessionStart command list, `/credo:session-init`, session-autonomous skill, `/credo:self-restart`, README)
+- The ntfy push of self-restart, self-compact and self-reload is one shared implementation
+- README, wiki and marketplace README strongly recommend running Claude Code inside tmux (also inside WSL)
+
+###### Fixed
+
+- LAN peer relay: hardened peer message body validation
 
 #### v0.75
 
@@ -677,6 +595,120 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 ##### Added
 
 - Budget read-back shows the active profile, config layers and the source of each cap
+
+## dogma
+
+### v1
+
+#### v1.44
+
+##### v1.44.4
+
+###### Fixed
+
+- German-only language rules now fire on German text only: the write reminder's "Keep it in
+  German" note and the post-write ASCII umlaut check (fuer -> für) use a stricter shared
+  detection (`lib-german.sh`) instead of substring matches that also hit English or other
+  languages. Quoted text and code are ignored, and German function words must be a
+  meaningful share of all words and clearly outweigh English ones
+- An English file that quotes German examples is no longer reported as German, and a
+  bilingual file gets no language note instead of a wrong one
+- A German file is no longer reported as English because German prose contains "in" / "is"
+- `/dogma:force` examples show the real umlauts again (they had been stripped to "fur",
+  "konnen"); `/dogma:cleanup` and the prompt reminder state the umlaut rule is German text only
+- New `scripts/test-german-detection.sh` checks German, English, French, Spanish, Dutch and
+  Portuguese samples, English text with German quotes and code, and a bilingual document
+  against the detection and both hooks
+
+##### v1.44.3
+
+###### Fixed
+
+- dogma band no longer shows a "blocked" line forever: the notice is time-stamped and hidden after 15 s even when a plugin reload cut its timer short, and a new session starts without it
+
+##### v1.44.2
+
+###### Fixed
+
+- Delete guard only analyzes a segment whose command word can delete, move or link; a verb inside an argument (a file name, a grep pattern with <...>) no longer blocks harmless commands
+
+##### v1.44.1
+
+###### Changed
+
+- Notice tests use an invented project name instead of a real one
+
+##### v1.44.0
+
+###### Added
+
+- Always-on delete guard: blocks deleting, moving or symlinking onto protected paths (/, first-level dirs, /home depth 0-2, the home and its children); targets are resolved first (~, $HOME, cwd and cd, symlinks, glob base), unresolvable targets are blocked, fails closed without python3
+
+###### Security
+
+- A symlink under /tmp pointing at a protected directory can no longer route a recursive delete past the /tmp allowance
+
+#### v1.43
+
+##### Added
+
+- DOGMA-PERMISSIONS.md is picked by action target, pinned project, then session folder, with per-id inheritance (default on)
+- Notices also show in non-git folders and for pinned projects that inherit permissions
+
+#### v1.42
+
+##### Added
+
+- Source broadcasts via NOTICES.md
+- `CLAUDE_MB_DOGMA_SOURCE` for sync and recommended setup
+- Per-folder git identity for the source fetch
+
+#### v1.41
+
+##### Added
+
+- Stable setting ids (`§xxxx`) matched first with a text fallback, plus an id registry
+- changelog.d assembly in `/dogma:versioning`
+
+#### v1.40
+
+##### Added
+
+- Worktree files list (link or copy, `.credo/` included by default) and a cleanup-merged-worktrees checkbox
+
+##### Changed
+
+- Subagents may commit in their own worktree, never push or merge
+
+#### v1.39
+
+##### Added
+
+- One-time per-repo update notices for updates that need user action (Run/Later/Never), with an optional band toast
+
+#### v1.38
+
+##### Added
+
+- Final Verification option to run all tests only at release
+
+#### v1.37
+
+##### Added
+
+- Optional per-stage test commands (commit, push, relevant, build, all) with branch filters
+
+#### v1.36
+
+##### Added
+
+- Optional Claude Code band showing restricting permissions with change highlights
+
+#### v1.35
+
+##### Added
+
+- `permissions-summary.sh` listing only the restricting DOGMA-PERMISSIONS entries
 
 ## signal
 

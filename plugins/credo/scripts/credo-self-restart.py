@@ -92,12 +92,12 @@ import signal
 import subprocess
 import sys
 import time
-import urllib.request
 
 SCRIPT_PATH = os.path.abspath(__file__)
 SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
 sys.path.insert(0, SCRIPT_DIR)
 import credo_pane_guard as pane_guard  # noqa: E402
+import credo_pane_wake as pane_wake  # noqa: E402
 DEFAULT_MARKETPLACE = "marcel-bich-claude-marketplace"
 PROMPT_TAG = "[credo-self-restart]"
 # Owner rule: an autonomous self-restart is announced at least this long ahead.
@@ -953,26 +953,11 @@ def run_update(plan):
     return summary, versions
 
 
-def ntfy(title, body, config_dir, config_explicit):
-    url = os.environ.get("CREDO_SELF_RESTART_NTFY_URL")
-    if url == "off":
-        log("ntfy disabled: %s - %s" % (title, body))
-        return
-    if not url:
-        topic = config_get("personal.ntfy_topic", config_dir, config_explicit)
-        if not topic:
-            log("ntfy not configured: %s - %s" % (title, body))
-            return
-        server = config_get("personal.ntfy_server", config_dir, config_explicit) \
-            or "https://ntfy.sh"
-        url = server.rstrip("/") + "/" + topic
-    req = urllib.request.Request(url, data=body.encode("utf-8"), method="POST",
-                                 headers={"Title": title, "Priority": "high"})
-    try:
-        urllib.request.urlopen(req, timeout=15).read()
-        log("ntfy sent: %s" % title)  # never log the url (topic is a secret)
-    except Exception as exc:
-        log("ntfy failed: %s" % type(exc).__name__)
+def ntfy(title, body, config_dir, config_explicit, override_var="CREDO_SELF_RESTART_NTFY_URL",
+         logger=None):
+    """ntfy push of the self-* helpers (shared implementation in credo_pane_wake)."""
+    pane_wake.ntfy(title, body, override_var,
+                   lambda key: config_get(key, config_dir, config_explicit), logger or log)
 
 
 # --- plan ----------------------------------------------------------------------

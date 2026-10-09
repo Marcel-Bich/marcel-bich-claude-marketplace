@@ -12,15 +12,16 @@ Subcommands
          Exit 1 with the reason when a precondition fails (not in tmux, pane of another
          process, no or stale breadcrumb, ...).
   run (--auto | --user-confirmed) [--delay S] [--timeout S] [--handoff PATH]
-      [--max-breadcrumb-age S]
+      [--max-breadcrumb-age S] [--nudge-wait S] [--max-nudges N] [--done-timeout S]
          OWNER RULE GUARD first (exit 3, nothing started):
            --auto            only when the credo session mode of THIS session is
                              "autonomous" (no question asked),
            --user-confirmed  only after the user said yes via the Ask tool in this
                              interactive session (never pass it without that answer).
-         No background rule: running background subagents, background shells and
-         monitors do NOT block a self-compact - they survive /compact (it can even be
-         good that they keep working meanwhile). --no-background-work is still accepted
+         No background rule: running background subagents, background shells,
+         scripts, monitors and any other background service do NOT block a
+         self-compact - they survive /compact (it can even be good that they keep
+         working meanwhile). --no-background-work is still accepted
          as a no-op for compatibility; only credo-self-restart.py requires it.
          Then validates like check (exit 1 on failure, ntfy). On success it spawns a
          fully detached worker and returns at once - the agent must END ITS TURN.
@@ -39,13 +40,25 @@ only then sends Enter. Anything else (someone typed meanwhile, a dialog opened, 
 sends NO Enter. --timeout (default 1800 s) -> give up, log, ntfy. Never targets any
 pane other than the resolved own pane; user input is never captured and retyped.
 
+Wake after the compact - a finished /compact does not start a model turn. Claude Code
+fires SessionStart with source "compact" when the compaction is done; the hook
+credo-session-dir-record.sh then drops <configdir>/credo/self-compact-done-<session-id>
+(only while this marker says "typing" / "sent..."). The worker waits for it
+(--done-timeout, default 900 s) and wakes the session with "." via credo_pane_wake
+(wake file first, idle wait, 60 s fallback re-send, --max-nudges). Without the signal
+in time: "." anyway when the pane is idle (the woken agent checks itself whether the
+compact happened), otherwise nothing is typed, status "failed: compact not
+confirmed" and an ntfy push "credo: self-compact wake failed".
+
 Files (per session id): <configdir>/credo/self-compact-<session-id>.json (marker),
-self-compact-<session-id>.log and self-compact-plan-<session-id>.json.
+self-compact-<session-id>.log, self-compact-plan-<session-id>.json,
+self-compact-done-<session-id> and the wake file self-wake-<session-id>.
 
 Env overrides (tests): CREDO_SELF_COMPACT_SESSION_ID, CREDO_SELF_COMPACT_TARGET_PID,
 CREDO_SELF_COMPACT_NTFY_URL ("off" or a URL), CREDO_SELF_COMPACT_POLL,
 CREDO_SELF_COMPACT_RECHECK, CREDO_SELF_COMPACT_KEY_PAUSE,
-CREDO_SELF_COMPACT_CONFIRM_WAIT, CREDO_SESSION_MODES_DIR, CREDO_REHYDRATE_DIR.
+CREDO_SELF_COMPACT_CONFIRM_WAIT, CREDO_SELF_COMPACT_DONE_TIMEOUT,
+CREDO_SELF_COMPACT_WAKE_TIMEOUT, CREDO_SESSION_MODES_DIR, CREDO_REHYDRATE_DIR.
 CREDO_SELF_COMPACT_BREADCRUMB_MAX_AGE (seconds, default 7200) is the default of
 --max-breadcrumb-age.
 
@@ -63,12 +76,12 @@ import signal
 import subprocess
 import sys
 import time
-import urllib.request
 
 SCRIPT_PATH = os.path.abspath(__file__)
 SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
 sys.path.insert(0, SCRIPT_DIR)
 import credo_pane_guard as guard  # noqa: E402
+import credo_pane_wake as wk  # noqa: E402
 
 
 def _load_restart():
@@ -163,10 +176,12 @@ def session_id():
 
 
 def state_files(state, sid):
-    """(marker, log, plan file) of one session."""
+    """(marker, log, plan file, compact-done file, wake file) of one session."""
     return (os.path.join(state, "self-compact-%s.json" % sid),
             os.path.join(state, "self-compact-%s.log" % sid),
-            os.path.join(state, "self-compact-plan-%s.json" % sid))
+            os.path.join(state, "self-compact-plan-%s.json" % sid),
+            os.path.join(state, "self-compact-done-%s" % sid),
+            wk.wake_path(state, sid))
 
 
 def fmt_age(seconds):
@@ -193,7 +208,8 @@ def breadcrumb(config_dir, sid):
 def gather(args):
     """(plan, errors). Read-only."""
     errors = []
-    plan = {"delay": args.delay, "timeout": args.timeout}
+    plan = {"delay": args.delay, "timeout": args.timeout, "nudge_wait": args.nudge_wait,
+            "max_nudges": args.max_nudges, "done_timeout": args.done_timeout}
     sid, serr = session_id()
     if serr:
         errors.append(serr)
@@ -218,7 +234,8 @@ def gather(args):
     plan["config_explicit"] = bool(cfg_env)
     plan["credo_mode"] = csr.read_credo_mode(config_dir, sid) if sid else None
     state = os.path.join(config_dir, "credo")
-    plan["marker"], plan["log"], plan["plan_file"] = state_files(state, sid or "none")
+    plan["marker"], plan["log"], plan["plan_file"], plan["done_file"], plan["wake_file"] = \
+        state_files(state, sid or "none")
     pane = tenv.get("TMUX_PANE") or ""
     if not err:
         if not tenv.get("TMUX") or not pane:
@@ -270,6 +287,9 @@ def print_plan(plan, errors, live_state=None):
     p("  typed text:   %s" % plan.get("text"))
     p("  wait:         until idle + empty input + no dialog (2 probes), timeout %ss"
       % csr.fmt_num(plan.get("timeout") or 0))
+    p("  then:         waits for the compact-done signal, then types \".\" to wake the "
+      "session (fallback: \".\" again after %ss, at most %d times)"
+      % (csr.fmt_num(plan.get("nudge_wait") or 0), plan.get("max_nudges") or 0))
     p("  background:   running background subagents / shells / monitors do not block "
       "(they survive /compact)")
     if live_state:
@@ -285,33 +305,16 @@ def print_plan(plan, errors, live_state=None):
 # --- ntfy and marker -------------------------------------------------------------
 
 def ntfy(title, body, plan):
-    url = os.environ.get("CREDO_SELF_COMPACT_NTFY_URL")
-    if url == "off":
-        log("ntfy disabled: %s - %s" % (title, body))
-        return
-    if not url:
-        topic = csr.config_get("personal.ntfy_topic", plan["config_dir"],
-                               plan["config_explicit"])
-        if not topic:
-            log("ntfy not configured: %s - %s" % (title, body))
-            return
-        server = csr.config_get("personal.ntfy_server", plan["config_dir"],
-                                plan["config_explicit"]) or "https://ntfy.sh"
-        url = server.rstrip("/") + "/" + topic
-    req = urllib.request.Request(url, data=body.encode("utf-8"), method="POST",
-                                 headers={"Title": title, "Priority": "high"})
-    try:
-        urllib.request.urlopen(req, timeout=15).read()
-        log("ntfy sent: %s" % title)  # never log the url (topic is a secret)
-    except Exception as exc:
-        log("ntfy failed: %s" % type(exc).__name__)
+    csr.ntfy(title, body, plan["config_dir"], plan["config_explicit"],
+             override_var="CREDO_SELF_COMPACT_NTFY_URL", logger=log)
 
 
 def write_marker(plan, status, extra=None):
     data = {"session_id": plan.get("session_id"), "pane": plan.get("pane"),
             "started": plan.get("started"), "status": status, "updated": now_iso(),
             "mode": plan.get("run_mode"), "worker_pid": plan.get("worker_pid"),
-            "text": plan.get("text")}
+            "text": plan.get("text"), "nudges": plan.get("nudges", 0),
+            "compact_done": plan.get("compact_done")}
     if extra:
         data.update(extra)
     csr.write_json(plan["marker"], data)
@@ -329,122 +332,126 @@ def is_worker(pid):
 
 # --- worker ----------------------------------------------------------------------
 
-class Cancelled(Exception):
-    pass
+def wait_compact_done(plan, since, timeout):
+    """True when the SessionStart hook (source "compact") dropped the compact-done
+    marker of this session at or after `since` (epoch) within `timeout` seconds."""
+    end = time.time() + max(0.0, timeout)
+    while True:
+        try:
+            if os.stat(plan["done_file"]).st_mtime >= since - 1:
+                return True
+        except OSError:
+            pass
+        if marker_cancelled(plan):
+            raise wk.Cancelled()
+        if csr.pane_owner_error(plan["pane"], plan.get("socket"), plan["target_pid"],
+                                plan["target_start"]):
+            raise wk.StepFailed("failed: pane ownership", "the Claude process or its pane "
+                                "is gone while waiting for the compact")
+        if time.time() >= end:
+            return False
+        time.sleep(min(0.5, max(0.0, end - time.time())))
 
 
-def send_keys(plan, keys, literal=False):
-    """The ONLY place that sends keys. Always the resolved own pane."""
-    pane = plan["pane"]
-    if not PANE_RE.fullmatch(pane or ""):
-        raise RuntimeError("refusing to send keys: no valid own pane")
-    argv = guard.tmux_base(plan.get("socket")) + ["send-keys", "-t", pane]
-    argv += (["-l", keys] if literal else [keys])
-    r = subprocess.run(argv, capture_output=True, text=True, timeout=10)
-    return r.returncode == 0
+def wake_after_compact(plan, pane):
+    """After Enter: wait for the compact-done signal, then wake the session with "."
+    (credo_pane_wake: idle wait, wake file, 60 s fallback). Without the signal in
+    time: "." anyway when the pane is idle (the woken agent checks itself whether the
+    compact happened), else nothing typed, a failure marker and an ntfy push."""
+    done = wait_compact_done(plan, plan["typed_at"],
+                             envf("CREDO_SELF_COMPACT_DONE_TIMEOUT", float(plan["done_timeout"])))
+    plan["compact_done"] = done
+    if done:
+        log("compact-done signal received")
+    else:
+        log("no compact-done signal within %ss" % csr.fmt_num(
+            envf("CREDO_SELF_COMPACT_DONE_TIMEOUT", float(plan["done_timeout"]))))
+        safe, why = pane.probe()
+        if safe:
+            time.sleep(pane.tim["recheck"])
+            safe, why = pane.probe()
+        if not safe:
+            write_marker(plan, "failed: compact not confirmed", {"detail": why})
+            log("pane not idle (%s); nothing typed" % why)
+            ntfy("credo: self-compact wake failed",
+                 "Session %s: no compact-done signal and the pane is not idle (%s), so the "
+                 "session was not woken. Check that session; send any prompt (e.g. \".\") "
+                 "to continue it." % (plan["session_id"], why), plan)
+            return 1
+    write_marker(plan, "waking")
 
+    def on_nudge(n):
+        plan["nudges"] = n
+        write_marker(plan, "waking")
 
-def norm(s):
-    return "".join((s or "").split())
+    wk.wake(pane, plan["wake_file"],
+            {"kind": "compact", "session_id": plan["session_id"], "started": plan["started"],
+             "compact_done": done, "handoff": plan.get("handoff")},
+            envf("CREDO_SELF_COMPACT_WAKE_TIMEOUT", 600.0), float(plan["nudge_wait"]),
+            int(plan["max_nudges"]), on_nudge=on_nudge)
+    write_marker(plan, "woken")
+    return 0
 
 
 def worker(plan_file):
     with open(plan_file) as fh:
         plan = json.load(fh)
     plan["worker_pid"] = os.getpid()
-    pane, sock = plan["pane"], plan.get("socket")
     log("worker started for session %s, pane %s, timeout %ss"
-        % (plan["session_id"], pane, csr.fmt_num(plan["timeout"])))
+        % (plan["session_id"], plan["pane"], csr.fmt_num(plan["timeout"])))
 
     def on_term(*_):
-        raise Cancelled()
+        raise wk.Cancelled()
 
     signal.signal(signal.SIGTERM, on_term)
-
-    owner_fail = []
-
-    def probe():
-        oerr = owner_error(pane, sock, plan["target_pid"], plan["target_start"])
-        if oerr:
-            owner_fail.append(oerr)
-            return False, "pane ownership lost: " + oerr
-        return guard.probe_pane(pane, sock, block_on_background=False)
-
-    def stop():
-        return bool(owner_fail) or marker_cancelled(plan)
-
+    pane = wk.Pane(plan, csr.pane_owner_error, lambda: marker_cancelled(plan), log,
+                   wk.timing("CREDO_SELF_COMPACT"))
+    stage = "wait"
     try:
         end = time.time() + max(0.0, float(plan.get("delay") or 0))
         while time.time() < end:
             if marker_cancelled(plan):
-                raise Cancelled()
+                raise wk.Cancelled()
             time.sleep(min(0.5, max(0.0, end - time.time())))
-        ok, reason = guard.wait_until_safe(
-            probe, plan["timeout"], poll=envf("CREDO_SELF_COMPACT_POLL", 2.0),
-            recheck=envf("CREDO_SELF_COMPACT_RECHECK", 1.5),
-            should_stop=stop, on_state=lambda r: log("pane state: %s" % r))
-        if owner_fail:
-            ok, reason = False, "pane ownership lost: " + owner_fail[0]
-        elif reason == "cancelled":
-            raise Cancelled()
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        pane.wait_safe(plan["timeout"])
         with csr.MarkerLock(plan["marker"]):
             if marker_cancelled(plan):
-                raise Cancelled()
-            if ok:
-                write_marker(plan, "typing")
-            else:
-                write_marker(plan, "failed: %s" % ("pane ownership" if owner_fail
-                                                   else "not idle"), {"detail": reason})
-    except Cancelled:
+                raise wk.Cancelled()
+            write_marker(plan, "typing")
+        # a cancel while typing aborts before Enter; type_and_enter takes the own
+        # line back out of the input field (only when it holds exactly that line)
+        stage = "type"
+        plan["typed_at"] = time.time()
+        confirmed = wk.type_and_enter(pane, plan["text"])
+        write_marker(plan, "sent" if confirmed else "sent (unconfirmed)")
+        log("/compact %s" % ("sent" if confirmed else "sent (unconfirmed)"))
+        stage = "wake"
+        return wake_after_compact(plan, pane)
+    except wk.Cancelled:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        log("self-compact cancelled; nothing typed")
+        log("self-compact cancelled%s" % ("; nothing typed" if stage == "wait" else ""))
         return 0
-    if not ok:
-        log("gave up: %s" % reason)
-        ntfy("credo self-compact gave up",
-             "Session %s: /compact was not typed (%s). Run /compact by hand when ready."
-             % (plan["session_id"], reason), plan)
+    except wk.StepFailed as exc:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        write_marker(plan, exc.status, {"detail": exc.detail})
+        if stage == "wait":
+            log("gave up: %s" % exc.detail)
+            ntfy("credo self-compact gave up",
+                 "Session %s: /compact was not typed (%s). Run /compact by hand when ready."
+                 % (plan["session_id"], exc.detail), plan)
+        elif stage == "type":
+            log("pre-Enter check failed (%s); NOT pressing Enter" % exc.detail)
+            ntfy("credo self-compact stopped",
+                 "Session %s: the pane was not safe after typing the /compact line (%s), so "
+                 "Enter was not pressed. Check the prompt of that session."
+                 % (plan["session_id"], exc.detail), plan)
+        else:
+            log("%s: %s" % (exc.status, exc.detail))
+            ntfy("credo: self-compact wake failed",
+                 "Session %s: the compact was sent but waking the session failed (%s: %s). "
+                 "Send any prompt (e.g. \".\") to continue it."
+                 % (plan["session_id"], exc.status, exc.detail), plan)
         return 1
-    text = plan["text"]
-    if not send_keys(plan, text, literal=True):
-        write_marker(plan, "failed: send-keys")
-        log("send-keys (text) failed")
-        ntfy("credo self-compact failed", "Session %s: typing /compact failed."
-             % plan["session_id"], plan)
-        return 1
-    log("typed: %s" % text)
-    time.sleep(envf("CREDO_SELF_COMPACT_KEY_PAUSE", 0.5))
-    # the full check again, now expecting exactly the typed line: owner, copy mode,
-    # busy, dialog / menu and the input content (background work never blocks)
-    oerr = owner_error(pane, sock, plan["target_pid"], plan["target_start"])
-    safe, why = (False, "pane ownership lost: " + oerr) if oerr else \
-        guard.probe_pane(pane, sock, expect=text, block_on_background=False)
-    if not safe:
-        # someone typed in between, a dialog opened, ...: never press Enter
-        write_marker(plan, "failed: typed text not confirmed", {"detail": why})
-        log("pre-Enter check failed (%s); NOT pressing Enter" % why)
-        ntfy("credo self-compact stopped",
-             "Session %s: the pane was not safe after typing the /compact line (%s), so "
-             "Enter was not pressed. Check the prompt of that session."
-             % (plan["session_id"], why), plan)
-        return 1
-    if not send_keys(plan, "Enter"):
-        write_marker(plan, "failed: send-keys Enter")
-        log("send-keys Enter failed")
-        return 1
-    log("Enter sent")
-    result = "sent (unconfirmed)"
-    end = time.time() + envf("CREDO_SELF_COMPACT_CONFIRM_WAIT", 10.0)
-    while time.time() < end:
-        seen = guard.input_content(guard.capture(pane, sock))
-        if seen is not None and norm(seen) != norm(text):
-            result = "sent"
-            break
-        time.sleep(0.5)
-    write_marker(plan, result)
-    log("/compact %s" % result)
-    return 0
 
 
 def spawn_worker(plan):
@@ -461,9 +468,14 @@ def spawn_worker(plan):
     return proc.pid
 
 
+finished = wk.finished
+
+
 def pending_worker(marker):
+    """Pid of a live worker of this session that is not finished (waiting, typing,
+    waiting for the compact or waking), else None."""
     m = csr.read_marker(marker)
-    if not m or m.get("status") != "pending":
+    if not m or finished(m.get("status")):
         return None
     pid = m.get("worker_pid")
     if isinstance(pid, int) and csr.alive(pid) and is_worker(pid):
@@ -500,6 +512,11 @@ def cmd_run(args):
     if other:
         print("REFUSED: a self-compact is already pending (worker %d); cancel it first" % other)
         return 1
+    busy = wk.other_pending(os.path.dirname(plan["marker"]), plan["session_id"], "compact")
+    if busy:
+        print("REFUSED: a %s of this session is still pending (worker %d); both type into "
+              "the same pane, so wait for it or cancel it first" % busy)
+        return 1
     plan["started"] = now_iso()
     plan["run_mode"] = "auto" if args.auto else "user-confirmed"
     with csr.MarkerLock(plan["marker"]):
@@ -533,11 +550,14 @@ def cmd_cancel(args):
     if serr:
         print("cannot cancel: %s" % serr)
         return 1
-    marker = state_files(state_dir(), sid)[0]
+    files = state_files(state_dir(), sid)
+    marker = files[0]
     with csr.MarkerLock(marker):
         m = csr.read_marker(marker)
         status = (m or {}).get("status") or "none"
-        if status != "pending":
+        wpid = (m or {}).get("worker_pid")
+        live = isinstance(wpid, int) and csr.alive(wpid) and is_worker(wpid)
+        if not (status == "pending" or (live and not finished(status))):
             print("nothing to cancel for session %s (self-compact status: %s)" % (sid, status))
             return 1
         if m.get("session_id") != sid:
@@ -555,9 +575,11 @@ def cmd_cancel(args):
             killed = True
         except OSError:
             pass
-    print("credo self-compact cancelled (session %s)%s" % (
+    dropped = wk.drop_wake(files[4])
+    print("credo self-compact cancelled (session %s)%s%s" % (
         m.get("session_id") or "?",
-        "; worker %d terminated" % pid if killed else "; no waiting worker found"))
+        "; worker %d terminated" % pid if killed else "; no waiting worker found",
+        "; pending wake file removed" if dropped else ""))
     return 0
 
 
@@ -567,7 +589,7 @@ def cmd_status(args):
         print("cannot show status: %s" % serr)
         return 1
     state = state_dir()
-    marker, logf, _ = state_files(state, sid)
+    marker, logf = state_files(state, sid)[:2]
     m = csr.read_marker(marker)
     if not m:
         print("no self-compact marker for session %s in %s" % (sid, state))
@@ -607,6 +629,14 @@ def main(argv=None):
                     help="handoff path named in the /compact instructions (default: the "
                          "path in the compact-plus breadcrumb); only the typed path, a fresh "
                          "breadcrumb is still required")
+    ap.add_argument("--nudge-wait", type=float, default=60.0,
+                    help="after the compact: send the \".\" again when no new turn started "
+                         "within this many seconds (default 60)")
+    ap.add_argument("--max-nudges", type=int, default=3,
+                    help="at most this many re-sends of the \".\" (default 3)")
+    ap.add_argument("--done-timeout", type=float, default=900.0,
+                    help="wait at most this many seconds for the compact-done signal "
+                         "(default 900; CREDO_SELF_COMPACT_DONE_TIMEOUT overrides)")
     ap.add_argument("--no-background-work", action="store_true",
                     help=argparse.SUPPRESS)  # accepted no-op: background work survives /compact
     ap.add_argument("--max-breadcrumb-age", type=float,
@@ -616,8 +646,10 @@ def main(argv=None):
                          "seconds (default 7200 = 2 h, env "
                          "CREDO_SELF_COMPACT_BREADCRUMB_MAX_AGE)")
     args = ap.parse_args(argv)
-    if args.timeout <= 0 or args.delay < 0 or args.max_breadcrumb_age <= 0:
-        ap.error("--timeout and --max-breadcrumb-age must be > 0 and --delay >= 0")
+    if args.timeout <= 0 or args.delay < 0 or args.max_breadcrumb_age <= 0 or \
+            args.nudge_wait <= 0 or args.max_nudges < 0 or args.done_timeout <= 0:
+        ap.error("--timeout, --max-breadcrumb-age, --nudge-wait and --done-timeout must be "
+                 "> 0, --delay and --max-nudges >= 0")
     return {"check": cmd_check, "run": cmd_run, "cancel": cmd_cancel,
             "status": cmd_status}[args.action](args)
 

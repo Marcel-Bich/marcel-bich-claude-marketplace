@@ -112,6 +112,30 @@ TODO_TOOLS_STATE="$(printf '%s\n' "$TODO_TOOLS_STATUS" | sed -n 's/^state=//p')"
 TODO_TOOLS_DECLINED="$(printf '%s\n' "$TODO_TOOLS_STATUS" | sed -n 's/^declined=//p')"
 [ -n "$TODO_TOOLS_DECLINED" ] || TODO_TOOLS_DECLINED="no"
 
+# tmux (recommended): self-compact / self-reload need it, self-restart uses it for its idle
+# guard and same-pane relaunch. Detection only - this script never installs anything.
+TMUX_INSTALLED=$(command -v tmux >/dev/null 2>&1 && echo "true" || echo "false")
+TMUX_VERSION="none"
+[ "$TMUX_INSTALLED" = "true" ] && TMUX_VERSION="$(tmux -V 2>/dev/null | awk '{print $2}')"
+[ -n "$TMUX_VERSION" ] || TMUX_VERSION="unknown"
+TMUX_INSIDE=$([ -n "${TMUX:-}" ] && echo "true" || echo "false")
+case "$(uname -s 2>/dev/null)" in
+    Darwin) TMUX_PLATFORM="macos" ;;
+    MINGW*|MSYS*|CYGWIN*) TMUX_PLATFORM="windows" ;;
+    Linux)
+        if grep -qi microsoft /proc/version 2>/dev/null; then TMUX_PLATFORM="wsl"; else TMUX_PLATFORM="linux"; fi ;;
+    *) TMUX_PLATFORM="other" ;;
+esac
+[ "${OS:-}" = "Windows_NT" ] && [ "$TMUX_PLATFORM" != "wsl" ] && TMUX_PLATFORM="windows"
+TMUX_PKG_MANAGER="none"
+if [ "$TMUX_PLATFORM" != "windows" ]; then
+    for _pm in apt dnf pacman zypper brew; do
+        if command -v "$_pm" >/dev/null 2>&1; then TMUX_PKG_MANAGER="$_pm"; break; fi
+    done
+fi
+TMUX_LOGIN_SHELL="$(basename "${SHELL:-unknown}" 2>/dev/null)"
+[ -n "$TMUX_LOGIN_SHELL" ] || TMUX_LOGIN_SHELL="unknown"
+
 # Output structured results
 cat <<EOF
 CREDO_SETUP_CHECK_V1
@@ -143,6 +167,13 @@ credo_project:
 todo_tools:
   state: $TODO_TOOLS_STATE
   declined: $TODO_TOOLS_DECLINED
+tmux:
+  installed: $TMUX_INSTALLED
+  version: $TMUX_VERSION
+  inside: $TMUX_INSIDE
+  platform: $TMUX_PLATFORM
+  pkg_manager: $TMUX_PKG_MANAGER
+  login_shell: $TMUX_LOGIN_SHELL
 EOF
 
 # Output warnings for missing requirements

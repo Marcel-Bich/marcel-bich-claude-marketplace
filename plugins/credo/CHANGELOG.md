@@ -4,6 +4,38 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ## v0
 
+### v0.76
+
+#### v0.76.0
+
+##### Added
+
+- `/credo:self-reload` (`scripts/credo-self-reload.py`): the cheap first try after a plugin update. A detached worker optionally runs the allowlisted plugin update (`--update`, same allowlist as self-restart), then types `/reload-plugins` and `/reload-skills` into the session's OWN tmux pane - each only into an idle pane with an empty input field and no dialog, verified before Enter, the next key only after the command's `Reloaded` result line (or its timeout) - and finally `.` to wake the session, because the reload commands do not start a model turn. `check`, `run --auto` (credo autonomous mode only) or `run --user-confirmed` (after an Ask yes), `cancel`, `status`. No background work of any kind (subagents, shells, scripts, monitors, other services) blocks it
+- `scripts/credo_pane_wake.py`: shared worker steps of self-reload and self-compact - idle wait with the pane ownership re-check, verified typing, and the `.` wake with a wake file `<configdir>/credo/self-wake-<session-id>` and a bounded 60 s fallback (`--nudge-wait`, `--max-nudges`): the `.` is re-sent only while the pane is idle and the wake file is still pending, a `.` left in the input field only gets Enter again, and no `.` is typed at all when a turn already started
+- The woken turn gets a short note: after a reload the loaded vs newest installed credo version and the instruction to fall back to `/credo:self-restart --update` (cc-up) only when the reload was not enough; after a compact the instruction to reload the secured handoff
+- Tests: `test-credo-self-reload.sh`; self-compact wake, compact-done signal and self-wake cases in `test-credo-self-compact.sh` and `test-credo-autonomy-clear.sh`
+- `/credo:setup` Step 11: detects tmux (installed, session inside tmux, platform, package manager), explains why tmux matters for `/credo:self-compact`, `/credo:self-reload` and the idle guard of `/credo:self-restart`, shows the exact install command for apt, dnf, pacman, zypper or brew and runs it only after an explicit yes (native Windows: recommends WSL)
+- Optional `ctmux` launcher for bash, zsh or fish that always starts Claude Code inside a named tmux session; written to the shell rc only after an explicit yes
+- `check-setup.sh` reports a `tmux:` block (`installed`, `version`, `inside`, `platform`, `pkg_manager`, `login_shell`)
+- SessionStart hook: one short tmux recommendation line when credo is active and a session starts or resumes outside tmux (never in autonomous mode; toggle `CREDO_TMUX_HINT=false`); `/credo:session-init` checks the same once
+
+##### Changed
+
+- `/credo:self-compact` wakes the session after the compact: the SessionStart hook (`credo-session-dir-record.sh`, source `compact`) writes a compact-done marker only while a self-compact of that session is in flight, the worker waits for it (`--done-timeout`, default 900 s) and then types `.` with the shared fallback. Without the signal in time it types `.` only into an idle pane; otherwise nothing is typed, the marker says `failed: compact not confirmed` and an ntfy push goes out
+- `credo-autonomy-clear.sh` consumes this session's wake file on the next prompt (any prompt counts as woken, which cancels the fallback) and injects the wake note; only the worker's own `.` is labelled as such and does not pause autonomous mode, any other prompt is named a real message to handle normally. A wake file older than 1 h is dropped without a note, and the hook also works without jq
+- `cancel` of self-reload and self-compact removes a pending wake file; the two never run at the same time (each refuses while the other has a pending worker of the same session)
+- A turn that starts while the `.` is being typed counts as woken: no Enter, and the own `.` is taken back only when the input field holds exactly `.`
+- Any abort between typing and Enter (failed check, a turn starting, `cancel`) takes the own typed line (`/compact ...`, `/reload-...`, `.`) back out of the input field, only when the field holds exactly that line and no dialog or copy mode is active; `cancel` of self-compact now also works while it types
+- The SessionStart compact-done signal also works without jq
+- The SessionStart tmux hint stays silent after a decline in `/credo:setup` Step 11 (stored as `tmux.hint: false` in the credo config) and in non-terminal hosts (`CLAUDE_CODE_ENTRYPOINT` other than `cli`); test `test-credo-session-start-tmux.sh`
+- After a plugin update the documented order is self-reload first, self-restart (cc-up) only as fallback (SessionStart command list, `/credo:session-init`, session-autonomous skill, `/credo:self-restart`, README)
+- The ntfy push of self-restart, self-compact and self-reload is one shared implementation
+- README, wiki and marketplace README strongly recommend running Claude Code inside tmux (also inside WSL)
+
+##### Fixed
+
+- LAN peer relay: hardened peer message body validation
+
 ### v0.75
 
 #### v0.75.0

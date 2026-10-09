@@ -191,7 +191,7 @@ SKILLS (auto-trigger by their description - use them actively whenever they appl
 
 COMMANDS by execution class:
 [A] may be run by the agent itself when useful: /credo:session-init, /credo:project (show only, no path argument).
-[A only in autonomous mode] /credo:self-restart (autonomous mode only, announced 5 min ahead via ntfy + message, cancellable: run --announce 300 --no-background-work; in every other mode only after the user's explicit yes via the Ask tool: run --user-confirmed --no-background-work - an unannounced restart could discard a prompt the user is typing; never with running background subagents). /credo:self-compact (real /compact typed into this session's own tmux pane, only after a green compact-plus report and only once idle with an empty input field and no dialog open: autonomous mode run --auto without a question; in every other mode ask once via the Ask tool and only after the explicit yes run --user-confirmed; never another session; running background subagents, shells and monitors do not block it - they survive /compact, the background check applies only to self-restart; end the turn right after run).
+[A only in autonomous mode] After a plugin update: /credo:self-reload FIRST (types /reload-plugins and /reload-skills into this session's own tmux pane, then "." to wake it, 60 s fallback re-send; on the woken turn check whether the reload was enough; autonomous mode run --auto [--update] without a question, in every other mode ask once via the Ask tool and only after the explicit yes run --user-confirmed; no background work of any kind blocks it; end the turn right after run) - the full restart /credo:self-restart --update (cc-up) only as fallback when the reload was not enough. /credo:self-restart (autonomous mode only, announced 5 min ahead via ntfy + message, cancellable: run --announce 300 --no-background-work; in every other mode only after the user's explicit yes via the Ask tool: run --user-confirmed --no-background-work - an unannounced restart could discard a prompt the user is typing; never with running background subagents). /credo:self-compact (real /compact typed into this session's own tmux pane, only after a green compact-plus report and only once idle with an empty input field and no dialog open: autonomous mode run --auto without a question; in every other mode ask once via the Ask tool and only after the explicit yes run --user-confirmed; never another session; running background subagents, shells, scripts, monitors and other background services do not block it - they survive /compact, the background check applies only to self-restart; after the compact the session wakes itself with "."; end the turn right after run).
 [B] only on explicit user request (interactive or the user's call to make): /credo:session-active, /credo:session-passive, /credo:psalm, /credo:project <path> (pin a target), /credo:optimize (optimisation audit; also right after the user says Yes to a credo-optimize offer).
 [C] NEVER run autonomously - only the user decides these (mode escalation / installs / structural migration): /credo:session-autonomous, /credo:setup, /credo:migrate.
 K
@@ -269,6 +269,32 @@ elif [[ "$mode" != "autonomous" ]]; then
     # open decision: ASK only on a human-present (re)start, never in autonomous work
     case "$source" in
         startup|clear) [[ "$ask_enabled" == true ]] && OUT="$ASK" ;;
+    esac
+fi
+
+# tmux hint - one short line when credo is active but this session does not run inside
+# tmux (the hook inherits the Claude process environment, so TMUX is the session's own).
+# Only on startup/resume (a new process), never in autonomous mode, never installs.
+# Silent when the user declined it in /credo:setup Step 11 (credo config tmux.hint:
+# false, read only when the hint would fire) and in a non-terminal host
+# (CLAUDE_CODE_ENTRYPOINT set and not "cli", e.g. an SDK or IDE host).
+# Toggle: CREDO_TMUX_HINT (default on).
+tmux_hint=false
+if [[ "$active" == true && -z "${TMUX:-}" && "$mode" != "autonomous" \
+      && "${CREDO_TMUX_HINT:-true}" == "true" ]]; then
+    case "${CLAUDE_CODE_ENTRYPOINT:-cli}" in
+        cli) tmux_hint=true ;;
+    esac
+fi
+if [[ "$tmux_hint" == true ]]; then
+    _hint_cfg="$("${HOOK_DIR}/../scripts/credo-config.sh" get tmux.hint 2>/dev/null)" || _hint_cfg=""
+    [[ "$(printf '%s' "$_hint_cfg" | tr '[:upper:]' '[:lower:]')" == "false" ]] && tmux_hint=false
+fi
+if [[ "$tmux_hint" == true ]]; then
+    case "$source" in
+        startup|resume)
+            OUT="$OUT"$'\n\n'"[credo] This session does not run inside tmux, so /credo:self-compact, /credo:self-reload and the idle guard of /credo:self-restart are unavailable. Mention once, in one short line, that starting Claude Code inside tmux is strongly recommended and that /credo:setup (Step 11) helps set it up. Never install anything from here."
+            ;;
     esac
 fi
 
