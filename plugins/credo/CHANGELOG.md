@@ -6,6 +6,12 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.78
 
+#### v0.78.2
+
+##### Fixed
+
+- Test suites remove their temp dirs and stop their child processes on exit, including failures and interrupts
+
 #### v0.78.1
 
 ##### Fixed

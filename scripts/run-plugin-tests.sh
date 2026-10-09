@@ -44,6 +44,23 @@ case "${1:-}" in
         ;;
 esac
 
+# One temp root per run: every suite gets TMPDIR below it, so whatever a suite leaves
+# behind is removed with it. The cleanup stops a still running suite first (its own trap
+# then stops its child processes) and removes only this root.
+RUN_TMP="$(mktemp -d "${TMPDIR:-/tmp}/pt.XXXXXX")" || exit 1
+child=""
+cleanup() {
+    if [ -n "$child" ]; then kill -TERM "$child" 2>/dev/null; wait "$child" 2>/dev/null; fi
+    case "$RUN_TMP" in
+        "${TMPDIR:-/tmp}"/pt.??????) rm -rf -- "$RUN_TMP" ;;
+        *) echo "refusing to remove unexpected temp root: '$RUN_TMP'" >&2 ;;
+    esac
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
 count=0
 skipped=0
 for p in $plugins; do
@@ -54,7 +71,11 @@ for p in $plugins; do
             skipped=$((skipped + 1))
             continue
         fi
-        bash "$t" >/dev/null 2>&1 || { echo "FAIL $t"; exit 1; }
+        # in the background + wait, so a signal reaches the trap at once
+        TMPDIR="$RUN_TMP" bash "$t" >/dev/null 2>&1 </dev/null &
+        child=$!
+        wait "$child" || { child=""; echo "FAIL $t"; exit 1; }
+        child=""
         count=$((count + 1))
     done
 done

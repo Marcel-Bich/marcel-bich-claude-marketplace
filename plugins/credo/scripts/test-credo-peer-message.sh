@@ -33,7 +33,8 @@ HOOK="$SCRIPT_DIR/../hooks/credo-peer-message.sh"
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not found"; exit 0; }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/cpm.XXXXXX")"
-trap 'rm -rf -- "$TMP"' EXIT
+SPID=""
+trap '[ -n "$SPID" ] && kill "$SPID" 2>/dev/null; rm -rf -- "$TMP"' EXIT
 mkdir -p "$TMP/cfg/credo"
 export CLAUDE_CONFIG_DIR="$TMP/cfg"
 export CREDO_PEER_LAN_CONFIG="$TMP/cfg/credo/peer-lan.json"

@@ -9,6 +9,7 @@ SID="11111111-2222-3333-4444-555555555555"
 pass=0
 fail=0
 TMP="$(mktemp -d)"
+trap 'rm -rf -- "$TMP"' EXIT
 export CREDO_AUTONOMY_DIR="$TMP/autonomy"
 export CREDO_SESSION_MODES_DIR="$TMP/modes"
 export CLAUDE_CONFIG_DIR="$TMP/cfg"
@@ -197,6 +198,5 @@ echo '{"version": "0.3.0"}' > "$TMP/cache2/plugins/cache/mkt-a/credo/0.3.0/.clau
 out="$(jq -n --arg p "." --arg s "$SID" '{prompt: $p, session_id: $s}' | bash "$TMP/cache2/plugins/cache/mkt-a/credo/0.3.0/hooks/credo-autonomy-clear.sh" 2>/dev/null)"
 has "version match reported" "loaded credo 0.3.0 = newest in the plugin cache" "$out"
 
-rm -rf "$TMP"
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]

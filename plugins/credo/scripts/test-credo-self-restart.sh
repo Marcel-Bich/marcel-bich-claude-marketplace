@@ -305,7 +305,7 @@ while IFS= read -r line; do
         "") ;;
         *) PASS=$((PASS + 1)) ;;
     esac
-done < <(PATH="$BASE" "$PY" "$TMP/unit.py" "$HELPER" 2>&1)
+done < <(PATH="$BASE" TMPDIR="$TMP" "$PY" "$TMP/unit.py" "$HELPER" 2>&1)   # unit mkdtemp() dirs stay under $TMP
 
 # --- method selection + invocation ----------------------------------------------
 cat > "$TMP/method.py" <<'PYEOF'
