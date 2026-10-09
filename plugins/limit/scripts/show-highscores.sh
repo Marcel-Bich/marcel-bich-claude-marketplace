@@ -15,20 +15,22 @@ PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DATA_DIR="${PLUGIN_DATA_DIR:-${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit}"
 HIGHSCORE_STATE="${PLUGIN_DATA_DIR}/limit-highscore-state_${PROFILE_NAME}.json"
-MAIN_AGENT_STATE="${PLUGIN_DATA_DIR}/limit-main-agent-state_${PROFILE_NAME}.json"
-SUBAGENT_STATE="${PLUGIN_DATA_DIR}/limit-subagent-state_${PROFILE_NAME}.json"
 API_CACHE="/tmp/claude-mb-limit-cache_${PROFILE_NAME}.json"
 HISTORY_FILE="${PLUGIN_DATA_DIR}/limit-history_${PROFILE_NAME}.jsonl"
+DEVICE_LABEL="${CLAUDE_MB_LIMIT_DEVICE_LABEL:-$(hostname 2>/dev/null || echo unknown)}"
 
-# Source history functions
+# Source history functions (averages) and the token ledger
 # shellcheck source=limit-history.sh
 source "${SCRIPT_DIR}/limit-history.sh"
+# shellcheck source=usage-ledger.sh
+source "${SCRIPT_DIR}/usage-ledger.sh"
 
 # Format number as human-readable (1.5M, 500.0k, 2.0G, 1.5T)
 # Uses G (Giga) instead of B (Billion) for consistency with statusline
 format_number() {
     local num="${1:-0}"
     [[ "$num" == "null" || -z "$num" ]] && { echo "n/a"; return; }
+    [[ "$num" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "$num"; return; }
 
     # Remove decimals for comparison
     local int_num="${num%.*}"
@@ -126,19 +128,6 @@ json_get() {
     fi
 }
 
-# Calculate model total from state
-calc_model_total() {
-    local file="$1"
-    local model="$2"
-
-    if [[ ! -f "$file" ]]; then
-        echo "0"
-        return
-    fi
-
-    jq -r "(.${model}.input_tokens // 0) + (.${model}.output_tokens // 0) + (.${model}.cache_read_tokens // 0) + (.${model}.cache_creation_tokens // 0)" "$file" 2>/dev/null || echo "0"
-}
-
 # Detect current plan
 detect_plan() {
     # First try highscore state
@@ -164,69 +153,79 @@ detect_plan() {
     echo "unknown"
 }
 
+# Window start (read-only) from the stored window tracking:
+# max(resets_at - duration, override, resets_at if already passed)
+window_start() {
+    local win="$1" dur=18000
+    [[ "$win" == "7d" ]] && dur=604800
+    [[ -f "$HIGHSCORE_STATE" ]] || { echo 0; return; }
+    jq -r --arg w "$win" --argjson dur "$dur" --argjson now "$(date +%s)" '
+        (.windows[$w] // {}) as $x
+        | if $x.reset_epoch == null then ($x.override // 0)
+          else ([$x.reset_epoch - $dur, ($x.override // 0)]
+                + (if $now >= $x.reset_epoch then [$x.reset_epoch] else [] end) | max) end
+        | floor' "$HIGHSCORE_STATE" 2>/dev/null || echo 0
+}
+
 # Main output
 main() {
-    local hostname_val
-    hostname_val=$(hostname 2>/dev/null || echo "unknown")
-
     local current_plan
     current_plan=$(detect_plan)
 
     echo "## Highscore Status"
     echo ""
-    echo "**Plan:** $current_plan | **Device:** $hostname_val"
+    echo "**Plan:** $current_plan | **Device:** $DEVICE_LABEL"
+    echo ""
+    echo "Token unit: work tokens = input + output + cache writes, each API message"
+    echo "counted once (Claude Code repeats usage on every content-block line)."
+    echo "Cache reads are listed separately."
     echo ""
     echo "---"
     echo ""
 
-    # Combined Total
+    ledger_scan_all >/dev/null 2>&1 || true
+    local start_5h start_7d summary=""
+    start_5h=$(window_start 5h)
+    start_7d=$(window_start 7d)
+    summary=$(ledger_summary "" "$start_5h" "$start_7d" 2>/dev/null) || summary=""
+
     echo "### Combined Total (Main + Subagents)"
     echo ""
-
-    local main_tokens main_price sub_tokens sub_price
-    main_tokens=$(json_get "$MAIN_AGENT_STATE" ".total_tokens" "0")
-    main_price=$(json_get "$MAIN_AGENT_STATE" ".total_price" "0")
-    sub_tokens=$(json_get "$SUBAGENT_STATE" ".total_tokens" "0")
-    sub_price=$(json_get "$SUBAGENT_STATE" ".total_price" "0")
-
-    local combined_tokens combined_price
-    combined_tokens=$((main_tokens + sub_tokens))
-    combined_price=$(echo "$main_price + $sub_price" | bc)
-
-    echo "**$(format_number "$combined_tokens") Tokens** | \$$(format_price "$combined_price")"
-    echo ""
-    echo "---"
-    echo ""
-
-    # Current Window
-    echo "### Current Window (Main + Subagents)"
-    echo ""
-
-    local window_5h window_7d sub_window_5h sub_window_7d
-    window_5h=$(json_get "$HIGHSCORE_STATE" ".window_tokens_5h" "0")
-    window_7d=$(json_get "$HIGHSCORE_STATE" ".window_tokens_7d" "0")
-    sub_window_5h=$(json_get "$HIGHSCORE_STATE" ".subagent_window_5h" "0")
-    sub_window_7d=$(json_get "$HIGHSCORE_STATE" ".subagent_window_7d" "0")
-
-    local total_5h total_7d
-    total_5h=$((window_5h + sub_window_5h))
-    total_7d=$((window_7d + sub_window_7d))
-
-    if [[ -f "$HIGHSCORE_STATE" ]]; then
-        echo "- **5h:** $(format_number "$total_5h") Tokens"
-        echo "- **7d:** $(format_number "$total_7d") Tokens"
+    if [[ -n "$summary" ]]; then
+        local lt_tokens lt_cost lt_unpriced lt_cr
+        read -r lt_tokens lt_cost lt_unpriced lt_cr <<< "$(jq -r '.lifetime | "\(.tokens) \(.cost) \(.unpriced) \(.cache_read)"' <<< "$summary")"
+        local cost_str
+        cost_str="\$$(format_price "$lt_cost")"
+        [[ "$lt_unpriced" -gt 0 ]] && cost_str="${cost_str} (+n/a: ${lt_unpriced} unpriced model(s))"
+        echo "**$(format_number "$lt_tokens") Tokens** | ${cost_str} | Cache reads: $(format_number "$lt_cr")"
     else
-        echo "- **5h:** n/a"
-        echo "- **7d:** n/a"
+        echo "> Ledger not available yet (it is built on the next statusline render)."
     fi
     echo ""
     echo "---"
     echo ""
 
-    # Current Usage (from API)
-    echo "### Current Usage (from API)"
+    echo "### Current Window (Main + Subagents)"
+    echo ""
+    if [[ -n "$summary" ]]; then
+        local w5 w5cr w7 w7cr
+        read -r w5 w5cr w7 w7cr <<< "$(jq -r '"\(.w5[0]) \(.w5[1]) \(.w7[0]) \(.w7[1])"' <<< "$summary")"
+        echo "- **5h:** $(format_number "$w5") Tokens (cache reads $(format_number "$w5cr"))"
+        echo "- **7d:** $(format_number "$w7") Tokens (cache reads $(format_number "$w7cr"))"
+        if [[ "$(jq -r '.complete == true' <<< "$summary")" != "true" ]]; then
+            echo ""
+            echo "> Transcript backfill still running: window sums are incomplete and no"
+            echo "> Est100% samples are taken until it has finished (a few statusline renders)."
+        fi
+    else
+        echo "- n/a"
+    fi
+    echo ""
+    echo "---"
     echo ""
 
+    echo "### Current Usage (from API)"
+    echo ""
     if [[ -f "$API_CACHE" ]]; then
         local five_util five_reset seven_util seven_reset
         five_util=$(json_get "$API_CACHE" ".five_hour.utilization" "n/a")
@@ -236,6 +235,9 @@ main() {
 
         echo "- **5h:** ${five_util}% (resets in $(format_time_until "$five_reset") - $(format_reset_datetime "$five_reset"))"
         echo "- **7d:** ${seven_util}% (resets in $(format_time_until "$seven_reset") - $(format_reset_datetime "$seven_reset"))"
+        jq -r '.limits[]? | select(.kind != "session" and .kind != "weekly_all")
+            | "- **\(.kind)\((.scope.model.display_name // .scope.surface) as $n | if $n then " (" + $n + ")" else "" end):** \(.percent // 0)%"' \
+            "$API_CACHE" 2>/dev/null || true
     else
         echo "> API cache not available. Run a Claude session to populate usage data."
     fi
@@ -243,20 +245,25 @@ main() {
     echo "---"
     echo ""
 
-    # Highscores
-    echo "### Local Highscores"
+    echo "### Local Highscores and Est100%"
     echo ""
-
     if [[ -f "$HIGHSCORE_STATE" ]]; then
         local hs_5h hs_7d
         hs_5h=$(json_get "$HIGHSCORE_STATE" ".highscores[\"$current_plan\"][\"5h\"]" "0")
         hs_7d=$(json_get "$HIGHSCORE_STATE" ".highscores[\"$current_plan\"][\"7d\"]" "0")
-
         echo "**Highscores ($current_plan)**"
         echo "- 5h: $(format_number "$hs_5h")"
         echo "- 7d: $(format_number "$hs_7d")"
         echo ""
-
+        local est5 est7
+        est5=$(jq -r 'def median: sort | length as $n | if $n == 0 then null elif $n % 2 == 1 then .[($n-1)/2] else ((.[$n/2-1] + .[$n/2]) / 2) end;
+            (.est["5h"] // {}) | ((.samples // []) | map(.[1]) | median) // .prev // "n/a"' "$HIGHSCORE_STATE" 2>/dev/null) || est5="n/a"
+        est7=$(jq -r 'def median: sort | length as $n | if $n == 0 then null elif $n % 2 == 1 then .[($n-1)/2] else ((.[$n/2-1] + .[$n/2]) / 2) end;
+            (.est["7d"] // {}) | ((.samples // []) | map(.[1]) | median) // .prev // "n/a"' "$HIGHSCORE_STATE" 2>/dev/null) || est7="n/a"
+        echo "**Est100% (${DEVICE_LABEL})** (median of this device's tokens / (account-wide API% / 100), samples at >= 20 %)"
+        echo "- 5h: $(format_number "$est5")"
+        echo "- 7d: $(format_number "$est7")"
+        echo ""
         echo "**Other Plans:**"
         for other_plan in max20 max5 pro unknown; do
             if [[ "$other_plan" != "$current_plan" ]]; then
@@ -268,85 +275,64 @@ main() {
         done
     else
         echo "> No local highscore data yet."
-        echo "> Local tracking is enabled by default (v1.9.0+)."
         echo "> All data stays on your device - nothing is sent anywhere."
     fi
     echo ""
     echo "---"
     echo ""
 
-    # Lifetime Breakdown
-    echo "### Lifetime Breakdown"
+    echo "### Lifetime Breakdown (per model)"
     echo ""
-
-    echo "**Main Agent:**"
-    if [[ -f "$MAIN_AGENT_STATE" ]]; then
-        echo "- Tokens: $(format_number "$main_tokens")"
-        echo "- Cost: \$$(format_price "$main_price")"
-        echo "- Haiku: $(format_number "$(calc_model_total "$MAIN_AGENT_STATE" "haiku")")"
-        echo "- Sonnet: $(format_number "$(calc_model_total "$MAIN_AGENT_STATE" "sonnet")")"
-        echo "- Opus: $(format_number "$(calc_model_total "$MAIN_AGENT_STATE" "opus")")"
+    if [[ -n "$summary" ]] && [[ -f "$LEDGER_FILE" ]]; then
+        local kind label
+        for kind in main sub; do
+            [[ "$kind" == "main" ]] && label="Main Agent" || label="Subagents"
+            echo "**${label}:**"
+            local rows
+            rows=$(jq -r --argjson p "$LEDGER_PRICES" --arg k "$kind" '
+                def base: sub("\\[.*$"; "") | sub("-[0-9]{8}$"; "");
+                .lifetime[$k] // {} | to_entries[]
+                | (.value) as $v | ($p[.key | base]) as $pr
+                | [.key, (($v[0] // 0) + ($v[1] // 0) + ($v[3] // 0) + ($v[4] // 0)), ($v[2] // 0),
+                   (if $pr == null then "n/a" else ([range(0;5) as $i | ($v[$i] // 0) * $pr[$i]] | add / 1000000 | tostring) end)]
+                | @tsv' "$LEDGER_FILE" 2>/dev/null) || rows=""
+            if [[ -z "$rows" ]]; then
+                echo "- none recorded"
+            else
+                local m t cr c
+                while IFS=$'\t' read -r m t cr c; do
+                    if [[ "$c" == "n/a" ]]; then
+                        echo "- ${m}: $(format_number "$t") (cache reads $(format_number "$cr")), cost n/a (unknown price)"
+                    else
+                        echo "- ${m}: $(format_number "$t") (cache reads $(format_number "$cr")), \$$(format_price "$c")"
+                    fi
+                done <<< "$rows"
+            fi
+            echo ""
+        done
     else
         echo "- n/a"
+        echo ""
     fi
-    echo ""
-
-    echo "**Subagents:**"
-    if [[ -f "$SUBAGENT_STATE" ]] && (( sub_tokens > 0 )); then
-        echo "- Tokens: $(format_number "$sub_tokens")"
-        echo "- Cost: \$$(format_price "$sub_price")"
-        echo "- Haiku: $(format_number "$(calc_model_total "$SUBAGENT_STATE" "haiku")")"
-        echo "- Sonnet: $(format_number "$(calc_model_total "$SUBAGENT_STATE" "sonnet")")"
-        echo "- Opus: $(format_number "$(calc_model_total "$SUBAGENT_STATE" "opus")")"
-    else
-        echo "- No subagent usage recorded yet"
-    fi
-    echo ""
     echo "---"
     echo ""
 
-    # History & Averages
     echo "### History & Averages"
     echo ""
-
     if [[ -f "$HISTORY_FILE" ]]; then
-        local total_entries entries_24h entries_7d
-        total_entries=$(get_history_count)
-        entries_24h=$(get_history_count 24)
-        entries_7d=$(get_history_count 168)
-
         echo "**History Data:**"
-        echo "- Total entries: $total_entries"
-        echo "- Last 24h: $entries_24h entries"
-        echo "- Last 7d: $entries_7d entries"
+        echo "- Total entries: $(get_history_count)"
+        echo "- Last 24h: $(get_history_count 24) entries"
+        echo "- Last 7d: $(get_history_count 168) entries"
         echo ""
-
-        # Get averages
-        local avg_5h_local avg_5h_api avg_7d_local avg_7d_api
-        local device_label
-        device_label=$(hostname 2>/dev/null || echo "unknown")
-
-        avg_5h_local=$(get_local_average '."5h".api' 24 "$device_label")
-        avg_5h_api=$(get_average '."5h".api' 24)
-        avg_7d_local=$(get_local_average '."7d".api' 168 "$device_label")
-        avg_7d_api=$(get_average '."7d".api' 168)
-
-        echo "**Averages (24h/7d):**"
-        echo "- 5h window: Local ${avg_5h_local:-n/a}% / API ${avg_5h_api:-n/a}%"
-        echo "- 7d window: Local ${avg_7d_local:-n/a}% / API ${avg_7d_api:-n/a}%"
+        local p5 r5 p7 r7 po ps
+        read -r p5 r5 p7 r7 po ps <<< "$(history_averages)"
+        echo "**Averages (account-wide API utilization):**"
+        echo "- 5h: average peak per window (7d) ${p5/#-/n/a}% | usage per hour (24h) ${r5/#-/n/a}%"
+        echo "- 7d: average peak per window (28d) ${p7/#-/n/a}% | usage per day (7d) ${r7/#-/n/a}%"
+        [[ "$po" != "-" ]] && echo "- Opus 7d: average peak ${po}%"
+        [[ "$ps" != "-" ]] && echo "- Sonnet 7d: average peak ${ps}%"
         echo ""
-
-        # Model averages
-        local avg_opus avg_sonnet
-        avg_opus=$(get_average '.opus' 168)
-        avg_sonnet=$(get_average '.sonnet' 168)
-
-        if [[ -n "$avg_opus" ]] || [[ -n "$avg_sonnet" ]]; then
-            echo "**Model Averages (7d):**"
-            [[ -n "$avg_opus" ]] && echo "- Opus: ${avg_opus}%"
-            [[ -n "$avg_sonnet" ]] && echo "- Sonnet: ${avg_sonnet}%"
-            echo ""
-        fi
     else
         echo "> No history data yet. History is recorded every 10 minutes"
         echo "> during active usage and retained for 28 days."
@@ -355,28 +341,26 @@ main() {
 
     echo "---"
     echo ""
-
-    # Achievement explanation
     echo "### Achievement Symbol"
     echo ""
     echo "The achievement symbol (trophy or [!]) appears when the global API"
     echo "usage is >= 95% AND your local device usage is >= 95% of its own"
-    echo "highscore. This means the real limit is nearly exhausted and you"
-    echo "have almost maxed out your device's recorded capacity."
+    echo "highscore."
     echo ""
     echo "---"
     echo ""
-
-    # Explanation
     echo "> **How does Local Highscore Tracking work?**"
     echo ">"
-    echo "> Highscores can only increase, never decrease. The more you work,"
-    echo "> the higher your record gets."
+    echo "> Window tokens are summed from the Claude Code transcripts for the"
+    echo "> current 5h / 7d window. Highscores only increase; they are stored per"
+    echo "> plan so that a plan change does not mix up the records. Est100% is a"
+    echo "> continuous estimate of the token count at 100 % API utilization."
+    echo "> Both only see this device's transcripts: other devices on the same"
+    echo "> account keep their own ~/.claude, which cannot be read from here, while"
+    echo "> the API percentage is account-wide. With parallel use on other devices"
+    echo "> Est100% is therefore a lower bound."
     echo ">"
-    echo "> Highscores are stored per plan so that a plan change"
-    echo "> (e.g., from Max20 to Pro) doesn't mix up the records."
-    echo ">"
-    echo "> All data is stored locally in ~/.claude/ - nothing leaves your device."
+    echo "> All data is stored locally - nothing leaves your device."
 }
 
 main "$@"

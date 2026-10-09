@@ -41,11 +41,12 @@ BACKOFF_STATE_FILE=""  # Set in ensure_plugin_dir
 # Plugin data directory (organized under marketplace name)
 PLUGIN_DATA_DIR="${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit"
 
-# State file for local tracking (sessions, totals, calibration) - profile-specific
-STATE_FILE="${PLUGIN_DATA_DIR}/limit-usage-state_${PROFILE_NAME}.json"
+# NOTE: limit-usage-state_<profile>.json (per-session stdin deltas, totals,
+# calibration) is no longer written since v2.36: token counting moved to the
+# deduplicated JSONL ledger (usage-ledger.sh). An existing old file is left alone.
 
 # Debug mode - logs stay in /tmp (temporary, cleared on reboot) - profile-specific
-DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-false}"
+DEBUG=false  # resolved via limit_debug_enabled once state-io.sh is sourced
 DEBUG_LOG="/tmp/claude-mb-limit-debug_${PROFILE_NAME}.log"
 
 SCRIPT_DIR="$(dirname "$0")"
@@ -70,13 +71,20 @@ fi
 # Plan detection - determine subscription type for plan-specific highscores
 CURRENT_PLAN=$("${SCRIPT_DIR}/plan-detect.sh" 2>/dev/null || echo "unknown")
 
-# Source highscore state management functions
+# Shared state primitives (locks, atomic writes, debug flag, backoff, rounding)
+# shellcheck source=state-io.sh
+source "${SCRIPT_DIR}/state-io.sh"
+if limit_debug_enabled; then
+    DEBUG=true
+fi
+
+# Source window tracking / highscore / estimate functions
 # shellcheck source=highscore-state.sh
 source "${SCRIPT_DIR}/highscore-state.sh"
 
-# Source subagent token tracking functions
-# shellcheck source=subagent-tokens.sh
-source "${SCRIPT_DIR}/subagent-tokens.sh"
+# Source the deduplicated JSONL token ledger (main agent + subagents)
+# shellcheck source=usage-ledger.sh
+source "${SCRIPT_DIR}/usage-ledger.sh"
 
 # Source history tracking functions
 # shellcheck source=limit-history.sh
@@ -178,180 +186,9 @@ sleep_jitter() {
     sleep "$secs" 2>/dev/null || sleep 1
 }
 
-# Get current backoff state
-# Returns: consecutive_failures count (0 if none or file missing)
-get_backoff_state() {
-    ensure_plugin_dir
-    if [[ -f "$BACKOFF_STATE_FILE" ]]; then
-        local failures
-        failures=$(jq -r '.consecutive_failures // 0' "$BACKOFF_STATE_FILE" 2>/dev/null) || failures=0
-        [[ "$failures" == "null" ]] && failures=0
-        echo "$failures"
-    else
-        echo "0"
-    fi
-}
-
-# Set backoff state after rate limit
-# Args: consecutive_failures
-set_backoff_state() {
-    local failures="$1"
-    ensure_plugin_dir
-    cat > "$BACKOFF_STATE_FILE" << EOF
-{
-  "consecutive_failures": ${failures},
-  "last_rate_limit": "$(date -Iseconds)"
-}
-EOF
-}
-
-# Reset backoff state after successful request
-reset_backoff_state() {
-    if [[ -f "$BACKOFF_STATE_FILE" ]]; then
-        rm -f "$BACKOFF_STATE_FILE" 2>/dev/null || true
-    fi
-}
-
-# Reset backoff if last rate-limit was more than 10 minutes ago
-# This prevents the counter from staying high forever if API recovers
-maybe_reset_backoff() {
-    if [[ ! -f "$BACKOFF_STATE_FILE" ]]; then
-        return
-    fi
-
-    local last_rate_limit
-    last_rate_limit=$(jq -r '.last_rate_limit // empty' "$BACKOFF_STATE_FILE" 2>/dev/null)
-
-    if [[ -z "$last_rate_limit" ]] || [[ "$last_rate_limit" == "null" ]]; then
-        return
-    fi
-
-    # Convert ISO timestamp to epoch seconds
-    local last_epoch now_epoch
-    last_epoch=$(date -d "$last_rate_limit" +%s 2>/dev/null) || return
-    now_epoch=$(date +%s)
-
-    # 600 seconds = 10 minutes
-    if [[ $((now_epoch - last_epoch)) -gt 600 ]]; then
-        debug_log "Backoff reset: last rate-limit was >10 minutes ago"
-        reset_backoff_state
-    fi
-}
-
-# Calculate backoff time with jitter for rate limits
-# Args: consecutive_failures (1-based)
-# Returns: backoff time in seconds (with jitter)
-# Pattern: 60-90s, 120-180s, 240-360s, max 600s
-calculate_backoff() {
-    local failures="${1:-1}"
-    local base_time=60
-    local max_time=600
-
-    # Exponential: base * 2^(failures-1), capped at max
-    local multiplier=1
-    for ((i=1; i<failures; i++)); do
-        multiplier=$((multiplier * 2))
-    done
-    base_time=$((60 * multiplier))
-    [[ "$base_time" -gt "$max_time" ]] && base_time="$max_time"
-
-    # Add 50% jitter (e.g., 60 -> 60-90, 120 -> 120-180)
-    local jitter=$((base_time / 2))
-    local jittered=$((base_time + RANDOM % (jitter + 1)))
-    [[ "$jittered" -gt "$max_time" ]] && jittered="$max_time"
-
-    echo "$jittered"
-}
-
-# =============================================================================
-# Session compaction - prevents limit-usage-state.json from growing indefinitely
-# =============================================================================
-
-# Compaction thresholds
-SESSION_COMPACT_THRESHOLD=50
-SESSION_COMPACT_COUNT=25
-
-# Compact sessions in limit-usage-state.json when threshold exceeded
-# Archives oldest sessions to _archived entry, preserving totals
-# Called automatically during state file updates
-compact_sessions() {
-    if [[ ! -f "$STATE_FILE" ]]; then
-        return 0
-    fi
-
-    # Check session count
-    local session_count
-    session_count=$(jq '.sessions | length' "$STATE_FILE" 2>/dev/null) || return 0
-    [[ "$session_count" == "null" ]] && return 0
-
-    if [[ "$session_count" -le "$SESSION_COMPACT_THRESHOLD" ]]; then
-        debug_log "Session compaction not needed: $session_count <= $SESSION_COMPACT_THRESHOLD"
-        return 0
-    fi
-
-    debug_log "Session compaction triggered: $session_count > $SESSION_COMPACT_THRESHOLD"
-
-    # Use jq to:
-    # 1. Sort sessions by last_cost (proxy for activity/age - lower = older/less active)
-    # 2. Take oldest SESSION_COMPACT_COUNT sessions
-    # 3. Sum their tokens and costs to _archived
-    # 4. Remove them from sessions
-    local tmp_file
-    tmp_file=$(mktemp)
-
-    jq --argjson count "$SESSION_COMPACT_COUNT" '
-        # Capture original object for final update
-        . as $orig |
-
-        # Get existing _archived values or defaults
-        .sessions["_archived"] as $existing_archived |
-        ($existing_archived.input_tokens // 0) as $arch_input |
-        ($existing_archived.output_tokens // 0) as $arch_output |
-        ($existing_archived.cost // 0) as $arch_cost |
-        ($existing_archived.session_count // 0) as $arch_count |
-
-        # Get sessions excluding _archived, convert to array with keys
-        # Use "| not" instead of != for shell compatibility
-        [.sessions | to_entries[] | select(.key == "_archived" | not)] |
-
-        # Sort by last_cost ascending (lower cost = older/less active sessions)
-        sort_by(.value.last_cost // 0) |
-
-        # Split into sessions to archive and sessions to keep
-        (.[0:$count]) as $to_archive |
-        (.[$count:]) as $to_keep |
-
-        # Calculate sums from sessions to archive
-        ($to_archive | map(.value.last_input // 0) | add // 0) as $sum_input |
-        ($to_archive | map(.value.last_output // 0) | add // 0) as $sum_output |
-        ($to_archive | map(.value.last_cost // 0) | add // 0) as $sum_cost |
-        ($to_archive | length) as $archived_count |
-
-        # Build new sessions object from kept sessions
-        ($to_keep | from_entries) as $kept_sessions |
-
-        # Add updated _archived entry
-        ($kept_sessions + {
-            "_archived": {
-                "input_tokens": ($arch_input + $sum_input),
-                "output_tokens": ($arch_output + $sum_output),
-                "cost": ($arch_cost + $sum_cost),
-                "session_count": ($arch_count + $archived_count)
-            }
-        }) as $new_sessions |
-
-        # Return updated state with new sessions
-        $orig | .sessions = $new_sessions
-    ' "$STATE_FILE" > "$tmp_file" 2>/dev/null
-
-    if [[ $? -eq 0 ]] && [[ -s "$tmp_file" ]]; then
-        mv "$tmp_file" "$STATE_FILE"
-        debug_log "Session compaction complete: archived $SESSION_COMPACT_COUNT sessions"
-    else
-        rm -f "$tmp_file" 2>/dev/null
-        debug_log "Session compaction failed, state unchanged"
-    fi
-}
+# Backoff: refresh-usage.sh owns the backoff state (it stores ONE retry_at when
+# the API answers 429 and refuses to call the API before it). This script only
+# displays the remaining seconds via backoff_retry_in (state-io.sh).
 
 # Debug logging function
 # SECURITY: This function NEVER logs OAuth tokens or other secrets.
@@ -393,10 +230,14 @@ LOCAL_DEVICE_LABEL="${CLAUDE_MB_LIMIT_DEVICE_LABEL:-$(hostname)}"
 # History and average display (default true)
 SHOW_AVERAGE="${CLAUDE_MB_LIMIT_AVERAGE:-true}"
 
-# Default estimated max tokens (can be overridden, will be calibrated dynamically)
-# These are conservative estimates for Max20 plan
-DEFAULT_ESTIMATED_MAX_5H="${CLAUDE_MB_LIMIT_EST_MAX_5H:-220000}"
-DEFAULT_ESTIMATED_MAX_7D="${CLAUDE_MB_LIMIT_EST_MAX_7D:-5000000}"
+# Further limits from the API's limits[] list (e.g. weekly_scoped per model)
+SHOW_SCOPED="${CLAUDE_MB_LIMIT_SCOPED:-true}"
+
+# The cached API numbers are marked stale after this many seconds
+STALE_AFTER="${CLAUDE_MB_LIMIT_STALE_AFTER:-600}"
+# Est100% samples only use API numbers younger than this many seconds
+EST_MAX_AGE="${CLAUDE_MB_LIMIT_EST_MAX_AGE:-120}"
+[[ "$EST_MAX_AGE" =~ ^[0-9]+$ ]] || EST_MAX_AGE=120
 
 # Default color (full ANSI escape sequence, default \033[90m = dark gray)
 # Example: export CLAUDE_MB_LIMIT_DEFAULT_COLOR='\033[38;5;244m' for lighter gray
@@ -468,13 +309,8 @@ set_api_error() {
             API_ERROR="Limits: [auth] run 'claude login'"
             ;;
         api_429)
-            # Calculate backoff time with exponential increase and jitter
-            local failures backoff_time
-            failures=$(get_backoff_state)
-            failures=$((failures + 1))
-            set_backoff_state "$failures"
-            backoff_time=$(calculate_backoff "$failures")
-            API_ERROR="Limits: [rate-limit] retry in ${backoff_time}s"
+            # The backoff is stored by refresh-usage.sh; only display it.
+            API_ERROR="Limits: [rate-limit] retry in $(backoff_retry_in "$BACKOFF_STATE_FILE")s"
             ;;
         api_500|api_502|api_503|api_504|api_5xx)
             API_ERROR="Limits: [api-error] try again later"
@@ -977,172 +813,17 @@ format_highscore() {
     fi
 }
 
-
-# Get and update totals using per-session delta tracking
-# Each session is tracked by its session_id, allowing parallel sessions to accumulate correctly
-# Also tracks cost using Claude's total_cost_usd (which is correctly calculated)
-get_total_tokens_ever() {
-    ensure_plugin_dir
-
-    # Get current session data from stdin
-    local session_id="" current_input=0 current_output=0 current_cost="0.00"
-    if [[ -n "$STDIN_DATA" ]]; then
-        session_id=$(echo "$STDIN_DATA" | jq -r '.session_id // ""' 2>/dev/null) || session_id=""
-        current_input=$(echo "$STDIN_DATA" | jq -r '.context_window.total_input_tokens // 0' 2>/dev/null) || current_input=0
-        current_output=$(echo "$STDIN_DATA" | jq -r '.context_window.total_output_tokens // 0' 2>/dev/null) || current_output=0
-        current_cost=$(echo "$STDIN_DATA" | jq -r '.cost.total_cost_usd // 0' 2>/dev/null) || current_cost="0"
-        [[ "$session_id" == "null" ]] && session_id=""
-        [[ "$current_input" == "null" ]] && current_input=0
-        [[ "$current_output" == "null" ]] && current_output=0
-        [[ "$current_cost" == "null" ]] && current_cost="0"
-    fi
-
-    debug_log "get_total_tokens_ever: session_id=$session_id current_in=$current_input current_out=$current_output current_cost=$current_cost"
-
-    # If no session_id, fall back to simple mode
-    if [[ -z "$session_id" ]]; then
-        debug_log "No session_id available, skipping total tracking"
-        echo "0"
-        return
-    fi
-
-    # Read current state file
-    local state="{}"
-    local state_file_exists="false"
-    if [[ -f "$STATE_FILE" ]]; then
-        state=$(cat "$STATE_FILE" 2>/dev/null) || state="{}"
-        state_file_exists="true"
-        debug_log "State file exists, content length: ${#state}"
-    else
-        debug_log "State file does not exist, will create new"
-    fi
-
-    # Check if this session already exists in state
-    local session_exists="false"
-    if [[ "$state_file_exists" == "true" ]]; then
-        local existing_session
-        existing_session=$(echo "$state" | jq -r ".sessions[\"$session_id\"] // \"null\"" 2>/dev/null)
-        if [[ "$existing_session" != "null" ]] && [[ -n "$existing_session" ]]; then
-            session_exists="true"
-        fi
-    fi
-    debug_log "Session $session_id exists in state: $session_exists"
-
-    # Get previous values for this session
-    local last_input=0 last_output=0 last_cost="0"
-    last_input=$(echo "$state" | jq -r ".sessions[\"$session_id\"].last_input // 0" 2>/dev/null) || last_input=0
-    last_output=$(echo "$state" | jq -r ".sessions[\"$session_id\"].last_output // 0" 2>/dev/null) || last_output=0
-    last_cost=$(echo "$state" | jq -r ".sessions[\"$session_id\"].last_cost // 0" 2>/dev/null) || last_cost="0"
-    [[ "$last_input" == "null" ]] && last_input=0
-    [[ "$last_output" == "null" ]] && last_output=0
-    [[ "$last_cost" == "null" ]] && last_cost="0"
-
-    debug_log "Previous values for session: last_in=$last_input last_out=$last_output last_cost=$last_cost"
-
-    # Calculate deltas for this session
-    local delta_input=0 delta_output=0 delta_cost="0"
-    local reset_detected="false"
-    if [[ "$current_input" -lt "$last_input" ]] || [[ "$current_output" -lt "$last_output" ]]; then
-        # Session reset detected - use current values as delta
-        delta_input="$current_input"
-        delta_output="$current_output"
-        delta_cost="$current_cost"
-        reset_detected="true"
-        debug_log "Session reset detected (current < last), using current as delta"
-    else
-        delta_input=$((current_input - last_input))
-        delta_output=$((current_output - last_output))
-        delta_cost=$(awk "BEGIN {printf \"%.4f\", $current_cost - $last_cost}")
-    fi
-
-    debug_log "Deltas: in=$delta_input out=$delta_output cost=$delta_cost reset=$reset_detected"
-
-    # Get current totals
-    local total_input=0 total_output=0 total_cost="0"
-    total_input=$(echo "$state" | jq -r '.totals.input_tokens // 0' 2>/dev/null) || total_input=0
-    total_output=$(echo "$state" | jq -r '.totals.output_tokens // 0' 2>/dev/null) || total_output=0
-    total_cost=$(echo "$state" | jq -r '.totals.total_cost_usd // 0' 2>/dev/null) || total_cost="0"
-    [[ "$total_input" == "null" ]] && total_input=0
-    [[ "$total_output" == "null" ]] && total_output=0
-    [[ "$total_cost" == "null" ]] && total_cost="0"
-
-    debug_log "Current totals from state: in=$total_input out=$total_output cost=$total_cost"
-
-    # Update totals with deltas
-    local new_total_input=$((total_input + delta_input))
-    local new_total_output=$((total_output + delta_output))
-    local new_total_cost
-    new_total_cost=$(awk "BEGIN {printf \"%.4f\", $total_cost + $delta_cost}")
-
-    debug_log "New totals: in=$new_total_input out=$new_total_output cost=$new_total_cost"
-
-    # Only update if there was a change
-    local delta_total=$((delta_input + delta_output))
-    if [[ "$delta_total" -gt 0 ]] || [[ ! -f "$STATE_FILE" ]]; then
-        ensure_plugin_dir
-
-        # Preserve local tracking values
-        local last_5h="" last_7d=""
-        last_5h=$(echo "$state" | jq -r '.last_5h_reset // ""' 2>/dev/null) || last_5h=""
-        last_7d=$(echo "$state" | jq -r '.last_7d_reset // ""' 2>/dev/null) || last_7d=""
-        [[ "$last_5h" == "null" ]] && last_5h=""
-        [[ "$last_7d" == "null" ]] && last_7d=""
-
-        # Preserve calibration block for local tracking
-        # NOTE: Do NOT update last_total_tokens here - that's done by local tracking at the end
-        local calibration_json
-        calibration_json=$(echo "$state" | jq -c '.calibration // {"estimated_max_5h":'"$DEFAULT_ESTIMATED_MAX_5H"',"estimated_max_7d":'"$DEFAULT_ESTIMATED_MAX_7D"',"last_total_tokens":0,"last_api_5h":0,"last_api_7d":0,"window_tokens_5h":0,"window_tokens_7d":0}' 2>/dev/null)
-        [[ -z "$calibration_json" || "$calibration_json" == "null" ]] && calibration_json='{"estimated_max_5h":'"$DEFAULT_ESTIMATED_MAX_5H"',"estimated_max_7d":'"$DEFAULT_ESTIMATED_MAX_7D"',"last_total_tokens":0,"last_api_5h":0,"last_api_7d":0,"window_tokens_5h":0,"window_tokens_7d":0}'
-
-        # Build sessions object - preserve existing sessions, update current
-        local sessions_json
-        sessions_json=$(echo "$state" | jq -r '.sessions // {}' 2>/dev/null) || sessions_json="{}"
-        sessions_json=$(echo "$sessions_json" | jq --arg sid "$session_id" \
-            --argjson inp "$current_input" \
-            --argjson out "$current_output" \
-            --arg cost "$current_cost" \
-            '.[$sid] = {"last_input": $inp, "last_output": $out, "last_cost": ($cost | tonumber)}' 2>/dev/null) || sessions_json="{}"
-
-        debug_log "Writing state file with sessions: $(echo "$sessions_json" | jq -c '.')"
-
-        # Write updated state (preserving calibration block)
-        cat > "$STATE_FILE" << EOF
-{
-  "current_plan": "${CURRENT_PLAN}",
-  "last_5h_reset": "${last_5h}",
-  "last_7d_reset": "${last_7d}",
-  "sessions": ${sessions_json},
-  "totals": {
-    "input_tokens": ${new_total_input},
-    "output_tokens": ${new_total_output},
-    "total_cost_usd": ${new_total_cost}
-  },
-  "calibration": ${calibration_json}
-}
-EOF
-        debug_log "State file written successfully"
-
-        # Run compaction if needed (non-blocking, runs only when threshold exceeded)
-        compact_sessions
-    else
-        debug_log "No change detected (delta_total=$delta_total), skipping write"
-    fi
-
-    # Return total tokens (input + output)
-    echo "$((new_total_input + new_total_output))"
+# " [Est100%:X]" for the device line, empty without an estimate.
+# Args: est_tokens est_src (prev = previous window, shown with "~").
+format_est100() {
+    local est="${1:-}" src="${2:-}"
+    [[ "$est" =~ ^[0-9]+$ ]] && [[ "$est" -gt 0 ]] || return 0
+    local fmt
+    fmt=$(format_highscore "$est")
+    [[ "$src" == "prev" ]] && fmt="~${fmt}"
+    printf ' [Est100%%:%s]' "$fmt"
 }
 
-# Get total accumulated cost from state file
-get_total_cost_ever() {
-    if [[ -f "$STATE_FILE" ]]; then
-        local cost
-        cost=$(jq -r '.totals.total_cost_usd // 0' "$STATE_FILE" 2>/dev/null) || cost="0"
-        [[ "$cost" == "null" ]] && cost="0"
-        awk "BEGIN {printf \"%.2f\", $cost}"
-    else
-        echo "0.00"
-    fi
-}
 
 # Get context length from stdin data
 # Current context = cache_read + cache_creation + input tokens
@@ -1662,6 +1343,75 @@ format_output() {
         [[ -n "$sonnet_pct" ]] && sonnet_pct=$(cap_decimal "$sonnet_pct" 100)
     fi
 
+    # -------------------------------------------------------------------------
+    # Local accounting: deduplicated JSONL ledger + window tracking
+    # -------------------------------------------------------------------------
+    # All local token numbers (session sums, window tokens, lifetime) come from
+    # ONE ledger (usage-ledger.sh): JSONL lines deduplicated by message.id +
+    # requestId, main agent and subagents alike. Window tokens are summed for
+    # [window_start, now] from timestamps, so there is no stdin delta, no
+    # baseline and nothing a lost write could reset to 0. Cache reads are kept
+    # separate from the "work tokens" (input + output + cache writes).
+    local now_epoch
+    now_epoch=$(date +%s)
+    local five_reset_epoch="" seven_reset_epoch=""
+    five_reset_epoch=$(_hs_epoch "$five_hour_reset")
+    seven_reset_epoch=$(_hs_epoch "$seven_day_reset")
+    # After resets_at the cached numbers belong to the previous window.
+    local five_expired=false seven_expired=false
+    if [[ -n "$five_reset_epoch" ]] && [[ "$now_epoch" -ge "$five_reset_epoch" ]]; then
+        five_expired=true
+    fi
+    if [[ -n "$seven_reset_epoch" ]] && [[ "$now_epoch" -ge "$seven_reset_epoch" ]]; then
+        seven_expired=true
+    fi
+
+    local ledger_json="" local_ok=false ledger_complete=false
+    local start_5h=0 start_7d=0 reset_5h_detected=0 reset_7d_detected=0
+    local window_tokens_5h=0 window_tokens_7d=0
+    if [[ "$SHOW_LOCAL" == "true" ]] || [[ "$SHOW_TOKENS" == "true" ]] || [[ "$SHOW_MODEL" == "true" ]]; then
+        local sid_now="" transcript=""
+        sid_now=$(get_session_id)
+        if [[ -n "$STDIN_DATA" ]]; then
+            transcript=$(echo "$STDIN_DATA" | jq -r '.transcript_path // empty' 2>/dev/null) || transcript=""
+        fi
+        ledger_refresh "$transcript" >/dev/null 2>&1 || true
+
+        if [[ "$SHOW_LOCAL" == "true" ]]; then
+            local_ok=true
+            # Track both windows. API values are passed only when fresh for the
+            # current window; otherwise the stored values are used.
+            local api5_in="" api7_in="" wt=""
+            if [[ "$api_available" == "true" ]] && [[ "$five_expired" != "true" ]]; then
+                api5_in="$five_hour_util"
+            fi
+            if [[ "$api_available" == "true" ]] && [[ "$seven_expired" != "true" ]]; then
+                api7_in="$seven_day_util"
+            fi
+            if wt=$(window_track 5h "$api5_in" "$five_hour_reset" "$now_epoch" 2>/dev/null) && [[ -n "$wt" ]]; then
+                read -r start_5h reset_5h_detected <<< "$wt"
+            else
+                local_ok=false
+            fi
+            if wt=$(window_track 7d "$api7_in" "$seven_day_reset" "$now_epoch" 2>/dev/null) && [[ -n "$wt" ]]; then
+                read -r start_7d reset_7d_detected <<< "$wt"
+            else
+                local_ok=false
+            fi
+            debug_log "windows: 5h start=$start_5h reset=$reset_5h_detected 7d start=$start_7d reset=$reset_7d_detected"
+        fi
+
+        if ! ledger_json=$(ledger_summary "$sid_now" "$start_5h" "$start_7d" 2>/dev/null) || [[ -z "$ledger_json" ]]; then
+            # Unreadable ledger: skip the local parts of this render instead of
+            # showing 0 (and never let a 0 into highscores or estimates).
+            ledger_json=""
+            local_ok=false
+            debug_log "ledger unreadable - local values skipped this render"
+        else
+            read -r window_tokens_5h window_tokens_7d ledger_complete <<< "$(echo "$ledger_json" | jq -r '"\(.w5[0]) \(.w7[0]) \(.complete == true)"')"
+        fi
+    fi
+
     # Build output lines
     local lines=()
 
@@ -1839,14 +1589,21 @@ format_output() {
     local ctx_val1="" ctx_val2="" ctx_val3="" ctx_val4=""
     local sess_val1="" sess_val2="" sess_val3=""
 
-    # Tokens values
+    # Tokens values: session sums (main + its subagents) from the deduplicated
+    # ledger. Input = uncached input + cache writes, Cached = cache reads.
+    # Without a readable ledger the last request from stdin is shown instead,
+    # labelled "LastReq" (stdin has no cumulative per-session totals).
+    local tok_label="Tokens  -> "
     if [[ "$SHOW_TOKENS" == "true" ]]; then
-        local in_tokens out_tokens cache_read total_tokens
-        in_tokens=$(get_token_metrics "input")
-        out_tokens=$(get_token_metrics "output")
-        cache_read=$(get_token_metrics "cache_read")
+        local in_tokens=0 out_tokens=0 cache_read=0 total_tokens=0
+        if [[ -n "$ledger_json" ]]; then
+            read -r in_tokens out_tokens cache_read <<< "$(echo "$ledger_json" | jq -r '.session | "\(.[0] + .[3] + .[4]) \(.[1]) \(.[2])"')"
+        elif [[ -n "$STDIN_DATA" ]]; then
+            tok_label="LastReq -> "
+            read -r in_tokens out_tokens cache_read <<< "$(echo "$STDIN_DATA" | jq -r '.context_window.current_usage // {} |
+                "\((.input_tokens // 0) + (.cache_creation_input_tokens // 0)) \(.output_tokens // 0) \(.cache_read_input_tokens // 0)"' 2>/dev/null || echo "0 0 0")"
+        fi
         total_tokens=$((in_tokens + out_tokens))
-
         tok_val1=$(format_tokens "$in_tokens")
         tok_val2=$(format_tokens "$out_tokens")
         tok_val3=$(format_tokens "$cache_read")
@@ -1988,7 +1745,7 @@ format_output() {
     # col4 uses padded width so value aligns with Session's progress bar percentage
     if [[ "$SHOW_TOKENS" == "true" ]]; then
         local tok_line
-        printf -v tok_line "Tokens  -> Input: %${col1_width}s    Output: %${col2_width}s    Cached: %${col3_width}s    User Tokens: %${col4_padded_width}s" \
+        printf -v tok_line "${tok_label}Input: %${col1_width}s    Output: %${col2_width}s    Cached: %${col3_width}s    User Tokens: %${col4_padded_width}s" \
             "$tok_val1" "$tok_val2" "$tok_val3" "$tok_val4"
         lines+=("${gray_color}${tok_line}${gray_color_reset}")
     fi
@@ -2052,25 +1809,18 @@ format_output() {
         # Format: {Model} | {Effort} | {style} | LifetimeTotal: {tokens} ${cost} | Device: {device}
         # {Effort} is omitted when stdin has no effort.level (model without reasoning effort)
         if [[ "$SHOW_MODEL" == "true" ]] && [[ -n "$current_model_sess" ]]; then
-            # Get lifetime tokens from JSONL files (main + subagent)
-            local main_tokens_lifetime subagent_tokens_lifetime total_tokens_lifetime
-            main_tokens_lifetime=$(get_main_agent_tokens 2>/dev/null) || main_tokens_lifetime=0
-            [[ "$main_tokens_lifetime" == "null" ]] && main_tokens_lifetime=0
-            subagent_tokens_lifetime=$(get_subagent_tokens 2>/dev/null) || subagent_tokens_lifetime=0
-            [[ "$subagent_tokens_lifetime" == "null" ]] && subagent_tokens_lifetime=0
-            total_tokens_lifetime=$((main_tokens_lifetime + subagent_tokens_lifetime))
-
-            local formatted_tokens_lifetime=""
-            local total_cost_lifetime="0.00"
-            if [[ "$total_tokens_lifetime" -gt 0 ]]; then
-                formatted_tokens_lifetime=$(format_tokens "$total_tokens_lifetime")
-                # Get cost from JSONL-based calculation (main + subagent)
-                local main_cost_lifetime subagent_cost_lifetime
-                main_cost_lifetime=$(get_main_agent_cost 2>/dev/null) || main_cost_lifetime=0
-                [[ "$main_cost_lifetime" == "null" ]] && main_cost_lifetime=0
-                subagent_cost_lifetime=$(get_subagent_cost 2>/dev/null) || subagent_cost_lifetime=0
-                [[ "$subagent_cost_lifetime" == "null" ]] && subagent_cost_lifetime=0
-                total_cost_lifetime=$(awk -v m="$main_cost_lifetime" -v s="$subagent_cost_lifetime" 'BEGIN {printf "%.2f", m + s}')
+            # Lifetime work tokens + cost from the ledger (main + subagents,
+            # deduplicated, priced per concrete model id; unknown models are
+            # not priced and flagged "+n/a").
+            local formatted_tokens_lifetime="" total_cost_lifetime="0.00"
+            if [[ -n "$ledger_json" ]]; then
+                local lt_tokens lt_cost lt_unpriced
+                read -r lt_tokens lt_cost lt_unpriced <<< "$(echo "$ledger_json" | jq -r '.lifetime | "\(.tokens) \(.cost) \(.unpriced)"')"
+                if [[ "${lt_tokens:-0}" -gt 0 ]]; then
+                    formatted_tokens_lifetime=$(format_tokens "$lt_tokens")
+                    total_cost_lifetime=$(awk -v c="${lt_cost:-0}" 'BEGIN {printf "%.2f", c}')
+                    [[ "${lt_unpriced:-0}" -gt 0 ]] && total_cost_lifetime="${total_cost_lifetime}+n/a"
+                fi
             fi
 
             local model_line=""
@@ -2097,234 +1847,81 @@ format_output() {
         lines+=("${COLOR_BLACK}-${COLOR_RESET}")
     fi
 
-    # IMPORTANT: Call get_total_tokens_ever FIRST to update state file totals
-    # This ensures window tokens can be calculated from session totals
-    local _total_tokens_sync=""
-    if [[ "$SHOW_LOCAL" == "true" ]]; then
-        _total_tokens_sync=$(get_total_tokens_ever)
-        debug_log "Synced totals before highscore tracking: $_total_tokens_sync"
-    fi
-
-    # Highscore-based local tracking:
-    # - Tracks highest token usage per plan (max20, max5, pro, unknown)
-    # - 5h and 7d are SEPARATE highscores
-    # - Highscores can only INCREASE, never decrease
-    # - Converges to true limit over time
+    # Highscore-based local tracking (per plan, 5h and 7d separately):
+    # - window tokens: deduplicated work tokens of the current window (ledger)
+    # - highscore: the highest window token count ever seen (only rises)
     # - local_pct = window_tokens * 100 / highscore
-    # - LimitAt: When highscore is broken at >95% API utilization, we've found the real limit!
+    # - Est100%: median of tokens / (api% / 100) over samples with api >= 20 %
+    #   in the current window (falls back to the previous window's median).
+    #   The tokens are THIS device's transcripts only (other devices write their
+    #   own ~/.claude and cannot be read), while API% is account-wide, so the
+    #   value is shown on the device line and is a lower bound when other
+    #   devices are active. Samples are only taken with a complete ledger
+    #   (backfill finished, nothing pending) and a fresh API value - otherwise
+    #   the ratio comes out too low (missing tokens) or too high (old API%).
+    #   "Fresh" = cache younger than EST_MAX_AGE (default 120 s), tighter than
+    #   the [stale] marker.
     local local_5h_pct="" local_7d_pct=""
     local highscore_5h=0 highscore_7d=0
-    local window_tokens_5h=0 window_tokens_7d=0
-    local limit_at_5h="" limit_at_7d=""
+    local est_5h="" est_7d="" est_5h_src="" est_7d_src=""
 
-    if [[ "$SHOW_LOCAL" == "true" ]]; then
-        # Initialize highscore state if needed
-        init_state
+    # Cache age, needed for the sampling decision and the [stale] marker.
+    local cache_age=0
+    if [[ "$api_available" == "true" ]] && [[ -f "$CACHE_FILE" ]]; then
+        local cache_mtime
+        cache_mtime=$(stat -c %Y "$CACHE_FILE" 2>/dev/null || stat -f %m "$CACHE_FILE" 2>/dev/null || echo "$now_epoch")
+        cache_age=$((now_epoch - cache_mtime))
+    fi
 
-        # Update current plan in highscore state
-        set_current_plan "$CURRENT_PLAN"
+    if [[ "$SHOW_LOCAL" == "true" ]] && [[ "$local_ok" == "true" ]]; then
+        local hs_json="" api5_rec="" api7_rec="" est_sampling=true
+        [[ "$ledger_complete" == "true" ]] || est_sampling=false
+        [[ "$cache_age" -gt "$EST_MAX_AGE" || "$cache_age" -gt "$STALE_AFTER" ]] && est_sampling=false
+        [[ "$est_sampling" == "true" && "$api_available" == "true" && "$five_expired" != "true" ]] && api5_rec="$five_hour_util"
+        [[ "$est_sampling" == "true" && "$api_available" == "true" && "$seven_expired" != "true" ]] && api7_rec="$seven_day_util"
+        debug_log "est sampling=$est_sampling (ledger complete=$ledger_complete, cache age=${cache_age}s)"
 
-        # Get current total tokens from session tracking
-        local current_total_tokens=0
-        if [[ -f "$STATE_FILE" ]]; then
-            local in_tok out_tok
-            in_tok=$(jq -r '.totals.input_tokens // 0' "$STATE_FILE" 2>/dev/null) || in_tok=0
-            out_tok=$(jq -r '.totals.output_tokens // 0' "$STATE_FILE" 2>/dev/null) || out_tok=0
-            [[ "$in_tok" == "null" ]] && in_tok=0
-            [[ "$out_tok" == "null" ]] && out_tok=0
-            current_total_tokens=$((in_tok + out_tok))
-        fi
-
-        # Reset detection: check if API reset times have changed
-        # If reset time changed, window tokens are reset to 0
-        # Also save subagent token baseline at reset time
-        # Note: Skip reset detection when API is unavailable (no reset times)
-        local reset_5h_detected=false reset_7d_detected=false
-        if [[ "$api_available" == "true" ]]; then
-            if check_reset "5h" "$five_hour_reset"; then
-                reset_5h_detected=true
-            fi
-            if [[ -n "$seven_day_reset" ]]; then
-                if check_reset "7d" "$seven_day_reset"; then
-                    reset_7d_detected=true
-                fi
+        if [[ "$start_5h" -ge 0 ]] && hs_json=$(highscore_record "$CURRENT_PLAN" 5h "$start_5h" "$window_tokens_5h" "$api5_rec" "$now_epoch" 2>/dev/null) && [[ -n "$hs_json" ]]; then
+            read -r highscore_5h est_5h est_5h_src <<< "$(echo "$hs_json" | jq -r '"\(.hs) \(.est // "-") \(.src)"')"
+            if [[ "$highscore_5h" -gt 0 ]]; then
+                local_5h_pct=$(awk "BEGIN {pct = ($window_tokens_5h * 100) / $highscore_5h; if (pct > 100) pct = 100; printf \"%.1f\", pct}")
             fi
         fi
-
-        # Get subagent tokens (incremental scan with caching)
-        local subagent_tokens_total=0
-        subagent_tokens_total=$(get_subagent_tokens 2>/dev/null) || subagent_tokens_total=0
-        [[ "$subagent_tokens_total" == "null" ]] && subagent_tokens_total=0
-        debug_log "Subagent tokens total: $subagent_tokens_total"
-
-        # Get subagent baseline from state (saved at last reset)
-        local subagent_baseline_5h=0 subagent_baseline_7d=0
-        if [[ -f "$STATE_FILE" ]]; then
-            subagent_baseline_5h=$(jq -r '.calibration.subagent_baseline_5h // 0' "$STATE_FILE" 2>/dev/null) || subagent_baseline_5h=0
-            subagent_baseline_7d=$(jq -r '.calibration.subagent_baseline_7d // 0' "$STATE_FILE" 2>/dev/null) || subagent_baseline_7d=0
-            [[ "$subagent_baseline_5h" == "null" ]] && subagent_baseline_5h=0
-            [[ "$subagent_baseline_7d" == "null" ]] && subagent_baseline_7d=0
-        fi
-
-        # Initialize baseline to current total on first run (prevents historical tokens in window)
-        # This ensures that only tokens since plugin install count toward the window
-        if [[ "$subagent_baseline_5h" -eq 0 ]] && [[ "$subagent_tokens_total" -gt 0 ]]; then
-            subagent_baseline_5h="$subagent_tokens_total"
-            debug_log "Initialized 5h subagent baseline to current total: $subagent_baseline_5h"
-        fi
-        if [[ "$subagent_baseline_7d" -eq 0 ]] && [[ "$subagent_tokens_total" -gt 0 ]]; then
-            subagent_baseline_7d="$subagent_tokens_total"
-            debug_log "Initialized 7d subagent baseline to current total: $subagent_baseline_7d"
-        fi
-
-        # On reset, update baseline to current subagent total
-        if [[ "$reset_5h_detected" == "true" ]]; then
-            subagent_baseline_5h="$subagent_tokens_total"
-            debug_log "5h reset: new subagent baseline = $subagent_baseline_5h"
-        fi
-        if [[ "$reset_7d_detected" == "true" ]]; then
-            subagent_baseline_7d="$subagent_tokens_total"
-            debug_log "7d reset: new subagent baseline = $subagent_baseline_7d"
-        fi
-
-        # Calculate subagent window tokens (tokens since last reset)
-        local subagent_window_5h=$((subagent_tokens_total - subagent_baseline_5h))
-        local subagent_window_7d=$((subagent_tokens_total - subagent_baseline_7d))
-        [[ "$subagent_window_5h" -lt 0 ]] && subagent_window_5h=0
-        [[ "$subagent_window_7d" -lt 0 ]] && subagent_window_7d=0
-        debug_log "Subagent window tokens: 5h=$subagent_window_5h 7d=$subagent_window_7d"
-
-        # Get current window tokens from highscore state
-        window_tokens_5h=$(get_window_tokens "5h")
-        window_tokens_7d=$(get_window_tokens "7d")
-
-        # Calculate token delta since last update (main agent only)
-        local last_total_tokens=0
-        if [[ -f "$STATE_FILE" ]]; then
-            last_total_tokens=$(jq -r '.calibration.last_total_tokens // 0' "$STATE_FILE" 2>/dev/null) || last_total_tokens=0
-            [[ "$last_total_tokens" == "null" ]] && last_total_tokens=0
-        fi
-        local token_delta=$((current_total_tokens - last_total_tokens))
-        [[ "$token_delta" -lt 0 ]] && token_delta=0
-
-        # Accumulate main agent tokens to window counters
-        window_tokens_5h=$((window_tokens_5h + token_delta))
-        window_tokens_7d=$((window_tokens_7d + token_delta))
-
-        # Update window tokens in highscore state (main agent only, before adding subagent)
-        set_window_tokens "5h" "$window_tokens_5h"
-        set_window_tokens "7d" "$window_tokens_7d"
-
-        # Add subagent window tokens to display totals
-        # These are already relative to the baseline at reset time
-        window_tokens_5h=$((window_tokens_5h + subagent_window_5h))
-        window_tokens_7d=$((window_tokens_7d + subagent_window_7d))
-        debug_log "Window tokens with subagents: 5h=$window_tokens_5h 7d=$window_tokens_7d"
-
-
-        # Get highscores for current plan
-        highscore_5h=$(get_highscore "$CURRENT_PLAN" "5h")
-        highscore_7d=$(get_highscore "$CURRENT_PLAN" "7d")
-
-        # Update highscores if window_tokens exceed current highscore
-        # Highscores can only increase, never decrease
-        if update_highscore "$CURRENT_PLAN" "5h" "$window_tokens_5h"; then
-            highscore_5h="$window_tokens_5h"
-            debug_log "New 5h highscore for $CURRENT_PLAN: $highscore_5h"
-
-            # LimitAt Easter-Egg: If new highscore AND API utilization >= 95%,
-            # we've found the real user limit!
-            # Use awk for float comparison since bash arithmetic doesn't support floats
-            local five_pct_in_range
-            five_pct_in_range=$(awk "BEGIN {print ($five_pct >= 95 && $five_pct <= 100) ? 1 : 0}")
-            if [[ "$five_pct_in_range" -eq 1 ]]; then
-                set_limit_at "$CURRENT_PLAN" "5h" "$window_tokens_5h"
-                debug_log "LimitAt 5h discovered for $CURRENT_PLAN: $window_tokens_5h at ${five_pct}% API"
+        if [[ "$start_7d" -ge 0 ]] && hs_json=$(highscore_record "$CURRENT_PLAN" 7d "$start_7d" "$window_tokens_7d" "$api7_rec" "$now_epoch" 2>/dev/null) && [[ -n "$hs_json" ]]; then
+            read -r highscore_7d est_7d est_7d_src <<< "$(echo "$hs_json" | jq -r '"\(.hs) \(.est // "-") \(.src)"')"
+            if [[ "$highscore_7d" -gt 0 ]]; then
+                local_7d_pct=$(awk "BEGIN {pct = ($window_tokens_7d * 100) / $highscore_7d; if (pct > 100) pct = 100; printf \"%.1f\", pct}")
             fi
         fi
-        if update_highscore "$CURRENT_PLAN" "7d" "$window_tokens_7d"; then
-            highscore_7d="$window_tokens_7d"
-            debug_log "New 7d highscore for $CURRENT_PLAN: $highscore_7d"
+        debug_log "local: plan=$CURRENT_PLAN w5=$window_tokens_5h hs5=$highscore_5h est5=$est_5h w7=$window_tokens_7d hs7=$highscore_7d est7=$est_7d"
 
-            # LimitAt Easter-Egg: If new highscore AND API utilization >= 95%,
-            # we've found the real user limit!
-            # Use awk for float comparison since bash arithmetic doesn't support floats
-            if [[ -n "$seven_pct" ]]; then
-                local seven_pct_in_range
-                seven_pct_in_range=$(awk "BEGIN {print ($seven_pct >= 95 && $seven_pct <= 100) ? 1 : 0}")
-                if [[ "$seven_pct_in_range" -eq 1 ]]; then
-                    set_limit_at "$CURRENT_PLAN" "7d" "$window_tokens_7d"
-                    debug_log "LimitAt 7d discovered for $CURRENT_PLAN: $window_tokens_7d at ${seven_pct}% API"
-                fi
-            fi
-        fi
-
-        # Calculate local percentage: window_tokens * 100 / highscore
-        # Uses decimal with one digit precision and commercial rounding
-        if [[ "$highscore_5h" -gt 0 ]]; then
-            local_5h_pct=$(awk "BEGIN {pct = ($window_tokens_5h * 100) / $highscore_5h; if (pct > 100) pct = 100; printf \"%.1f\", pct}")
-            debug_log "5h: window=$window_tokens_5h highscore=$highscore_5h pct=$local_5h_pct"
-        else
-            local_5h_pct="0.0"
-        fi
-
-        # Local 7d % is purely local (window_tokens_7d / highscore_7d). Do NOT gate it on the
-        # API-derived seven_pct - otherwise the local weekly line vanishes on any API error,
-        # even though it does not depend on the API (mirror the 5h guard above).
-        if [[ "$highscore_7d" -gt 0 ]]; then
-            local_7d_pct=$(awk "BEGIN {pct = ($window_tokens_7d * 100) / $highscore_7d; if (pct > 100) pct = 100; printf \"%.1f\", pct}")
-            debug_log "7d: window=$window_tokens_7d highscore=$highscore_7d pct=$local_7d_pct"
-        fi
-
-        # Retrieve LimitAt values (Easter-Egg: discovered when hitting >95% API)
-        limit_at_5h=$(get_limit_at "$CURRENT_PLAN" "5h")
-        limit_at_7d=$(get_limit_at "$CURRENT_PLAN" "7d")
-        debug_log "LimitAt: 5h=$limit_at_5h 7d=$limit_at_7d"
-
-        # Update legacy state file with last_total_tokens for delta calculation
-        ensure_plugin_dir
-        local existing_sessions="{}" existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
-        local existing_5h_reset="" existing_7d_reset=""
-        if [[ -f "$STATE_FILE" ]]; then
-            existing_sessions=$(jq -r '.sessions // {}' "$STATE_FILE" 2>/dev/null) || existing_sessions="{}"
-            existing_totals=$(jq -c '.totals // {"input_tokens":0,"output_tokens":0,"total_cost_usd":0}' "$STATE_FILE" 2>/dev/null) || existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
-            existing_5h_reset=$(jq -r '.last_5h_reset // ""' "$STATE_FILE" 2>/dev/null) || existing_5h_reset=""
-            existing_7d_reset=$(jq -r '.last_7d_reset // ""' "$STATE_FILE" 2>/dev/null) || existing_7d_reset=""
-            [[ "$existing_sessions" == "null" ]] && existing_sessions="{}"
-            [[ "$existing_totals" == "null" ]] && existing_totals='{"input_tokens":0,"output_tokens":0,"total_cost_usd":0}'
-            [[ "$existing_5h_reset" == "null" ]] && existing_5h_reset=""
-            [[ "$existing_7d_reset" == "null" ]] && existing_7d_reset=""
-        fi
-
-        # Use API reset times if available, otherwise preserve existing values
-        local state_5h_reset="${five_hour_reset:-$existing_5h_reset}"
-        local state_7d_reset="${seven_day_reset:-$existing_7d_reset}"
-
-        # Write minimal state for session tracking (highscores are in separate file)
-        cat > "$STATE_FILE" << EOF
-{
-  "current_plan": "${CURRENT_PLAN}",
-  "last_5h_reset": "${state_5h_reset}",
-  "last_7d_reset": "${state_7d_reset}",
-  "sessions": ${existing_sessions},
-  "totals": ${existing_totals},
-  "calibration": {
-    "last_total_tokens": ${current_total_tokens},
-    "subagent_baseline_5h": ${subagent_baseline_5h},
-    "subagent_baseline_7d": ${subagent_baseline_7d}
-  }
-}
-EOF
-        debug_log "Highscore tracking: plan=$CURRENT_PLAN window_5h=$window_tokens_5h window_7d=$window_tokens_7d hs_5h=$highscore_5h hs_7d=$highscore_7d local_5h_pct=$local_5h_pct local_7d_pct=$local_7d_pct"
-
-        # Append history entry (respects 10-min interval and retention cleanup)
-        if [[ "$api_available" == "true" ]]; then
+        # History entry (10-min interval) for the averages, only with API values
+        # that belong to the current window.
+        if [[ "$api_available" == "true" ]] && [[ "$five_expired" != "true" ]]; then
             append_history \
                 "${five_pct:-0}" "$window_tokens_5h" "$highscore_5h" \
                 "${seven_pct:-0}" "$window_tokens_7d" "$highscore_7d" \
                 "${opus_pct:-0}" "${sonnet_pct:-0}" \
-                "$CURRENT_PLAN" "$LOCAL_DEVICE_LABEL"
+                "$CURRENT_PLAN" "$LOCAL_DEVICE_LABEL" \
+                "$five_hour_reset" "$seven_day_reset" || true
         fi
+    fi
+
+    # After resets_at the cached utilization belongs to the old window: show 0 %.
+    local five_reset_note="" seven_reset_note=""
+    if [[ "$five_expired" == "true" ]] && [[ -n "$five_pct" ]]; then
+        five_pct="0.0"
+        five_reset_note=" (reset)"
+    fi
+    if [[ "$seven_expired" == "true" ]] && [[ -n "$seven_pct" ]]; then
+        seven_pct="0.0"
+        seven_reset_note=" (reset)"
+    fi
+
+    # Cache age marker when the API numbers are old.
+    local stale_note=""
+    if [[ "$api_available" == "true" ]] && [[ "$cache_age" -gt "$STALE_AFTER" ]]; then
+        stale_note=" [stale $(format_duration "$cache_age")]"
     fi
 
     # API error handling: show error message instead of API-dependent limits
@@ -2348,7 +1945,7 @@ EOF
             window_5h_formatted=$(format_highscore "$window_tokens_5h")
             hs_5h_formatted=$(format_highscore "$highscore_5h")
             # Show without reset time since we don't have fresh API data
-            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "" 1) ${local_5h_color}[Highest:${window_5h_formatted}/${hs_5h_formatted}] (${LOCAL_DEVICE_LABEL})${local_5h_color_reset}")
+            lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "" 1) ${local_5h_color}[Highest:${window_5h_formatted}/${hs_5h_formatted}]$(format_est100 "$est_5h" "$est_5h_src") (${LOCAL_DEVICE_LABEL})${local_5h_color_reset}")
         fi
 
         # Still show the local 7d/weekly highscore line too (also API-independent, without reset)
@@ -2362,24 +1959,19 @@ EOF
             window_7d_formatted=$(format_highscore "$window_tokens_7d")
             hs_7d_formatted=$(format_highscore "$highscore_7d")
             # Show without reset time since we don't have fresh API data
-            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "" 1) ${local_7d_color}[Highest:${window_7d_formatted}/${hs_7d_formatted}] (${LOCAL_DEVICE_LABEL})${local_7d_color_reset}")
+            lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "" 1) ${local_7d_color}[Highest:${window_7d_formatted}/${hs_7d_formatted}]$(format_est100 "$est_7d" "$est_7d_src") (${LOCAL_DEVICE_LABEL})${local_7d_color_reset}")
         fi
     else
         # Normal mode: API available, show all limits
 
-        # Calculate averages from history (for [Average:X%/Y%] display)
-        local avg_5h_local="" avg_5h_api="" avg_7d_local="" avg_7d_api=""
-        local avg_opus="" avg_sonnet=""
+        # Averages from the history (one jq pass):
+        #   5h: [AvgPeak:X%] average peak of completed 5h windows (7 days)
+        #       [Avg:Y%/h]   average consumption per hour (24 h, idle included)
+        #   7d: [AvgPeak:X%] (28 days) [Avg:Y%/d] (7 days); Opus/Sonnet: AvgPeak
+        local avg_5h_peak="-" avg_5h_rate="-" avg_7d_peak="-" avg_7d_rate="-"
+        local avg_opus="-" avg_sonnet="-"
         if [[ "$SHOW_AVERAGE" == "true" ]]; then
-            # Local averages (this device only, over 24h for 5h window, 168h for 7d)
-            avg_5h_local=$(get_local_average '."5h".api' 24 "$LOCAL_DEVICE_LABEL")
-            avg_7d_local=$(get_local_average '."7d".api' 168 "$LOCAL_DEVICE_LABEL")
-            # API averages (all devices, same time windows)
-            avg_5h_api=$(get_average '."5h".api' 24)
-            avg_7d_api=$(get_average '."7d".api' 168)
-            # Model averages (API only, no local tracking)
-            avg_opus=$(get_average '.opus' 168)
-            avg_sonnet=$(get_average '.sonnet' 168)
+            read -r avg_5h_peak avg_5h_rate avg_7d_peak avg_7d_rate avg_opus avg_sonnet <<< "$(history_averages "$now_epoch" 2>/dev/null || echo "- - - - - -")"
         fi
 
         # Check for achievement: trophy appears when global API usage >= 95%
@@ -2402,23 +1994,15 @@ EOF
 
         # 5-hour limit (if enabled) - all models
         if [[ "$SHOW_5H" == "true" ]]; then
-            # Global 5h line - append [LimitAt:X.XM] Easter-Egg if discovered
             local global_5h_line global_5h_color="" global_5h_color_reset=""
             if [[ "$SHOW_COLORS" == "true" ]]; then
                 global_5h_color=$(get_color "$five_pct")
                 global_5h_color_reset="${COLOR_RESET}"
             fi
-            global_5h_line="$(format_limit_line "5h all" "$five_pct" "$five_hour_reset")"
-            if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "$limit_at_5h" ]] && [[ "$limit_at_5h" != "null" ]]; then
-                local limit_at_5h_fmt window_5h_limit_fmt
-                limit_at_5h_fmt=$(format_highscore "$limit_at_5h")
-                window_5h_limit_fmt=$(format_highscore "$window_tokens_5h")
-                global_5h_line="${global_5h_line} ${global_5h_color}[LimitAt:${window_5h_limit_fmt}/${limit_at_5h_fmt}]${global_5h_color_reset}"
-            fi
-            # Append [Average:LOCAL%/API%] if available
-            if [[ "$SHOW_AVERAGE" == "true" ]] && [[ -n "$avg_5h_local" || -n "$avg_5h_api" ]]; then
-                local avg_5h_display="${avg_5h_local:-n/a}%/${avg_5h_api:-n/a}%"
-                global_5h_line="${global_5h_line} ${global_5h_color}[Average:${avg_5h_display}]${global_5h_color_reset}"
+            global_5h_line="$(format_limit_line "5h all" "$five_pct" "$five_hour_reset")${five_reset_note}${stale_note}"
+            if [[ "$SHOW_AVERAGE" == "true" ]]; then
+                [[ "$avg_5h_peak" != "-" ]] && global_5h_line="${global_5h_line} ${global_5h_color}[AvgPeak:${avg_5h_peak}%]${global_5h_color_reset}"
+                [[ "$avg_5h_rate" != "-" ]] && global_5h_line="${global_5h_line} ${global_5h_color}[Avg:${avg_5h_rate}%/h]${global_5h_color_reset}"
             fi
             lines+=("$global_5h_line")
             # Local 5h directly below global 5h - shows highscore-based percentage
@@ -2428,33 +2012,24 @@ EOF
                     local_5h_color=$(get_color "${local_5h_pct}")
                     local_5h_color_reset="${COLOR_RESET}"
                 fi
-                # Format current window tokens and highscore (e.g., 150.0k/1.5M)
                 local window_5h_formatted hs_5h_formatted
                 window_5h_formatted=$(format_highscore "$window_tokens_5h")
                 hs_5h_formatted=$(format_highscore "$highscore_5h")
-                lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset" 1) ${local_5h_color}[Highest:${window_5h_formatted}/${hs_5h_formatted}] (${LOCAL_DEVICE_LABEL})${achievement_5h}${local_5h_color_reset}")
+                lines+=("$(format_limit_line "5h all" "${local_5h_pct}" "$five_hour_reset" 1) ${local_5h_color}[Highest:${window_5h_formatted}/${hs_5h_formatted}]$(format_est100 "$est_5h" "$est_5h_src") (${LOCAL_DEVICE_LABEL})${achievement_5h}${local_5h_color_reset}")
             fi
         fi
 
         # 7-day limit (if enabled and available) - all models
         if [[ "$SHOW_7D" == "true" ]] && [[ -n "$seven_pct" ]]; then
-            # Global 7d line - append [LimitAt:X.XM] Easter-Egg if discovered
             local global_7d_line global_7d_color="" global_7d_color_reset=""
             if [[ "$SHOW_COLORS" == "true" ]]; then
                 global_7d_color=$(get_color "$seven_pct")
                 global_7d_color_reset="${COLOR_RESET}"
             fi
-            global_7d_line="$(format_limit_line "7d all" "$seven_pct" "$seven_day_reset")"
-            if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "$limit_at_7d" ]] && [[ "$limit_at_7d" != "null" ]]; then
-                local limit_at_7d_fmt window_7d_limit_fmt
-                limit_at_7d_fmt=$(format_highscore "$limit_at_7d")
-                window_7d_limit_fmt=$(format_highscore "$window_tokens_7d")
-                global_7d_line="${global_7d_line} ${global_7d_color}[LimitAt:${window_7d_limit_fmt}/${limit_at_7d_fmt}]${global_7d_color_reset}"
-            fi
-            # Append [Average:LOCAL%/API%] if available
-            if [[ "$SHOW_AVERAGE" == "true" ]] && [[ -n "$avg_7d_local" || -n "$avg_7d_api" ]]; then
-                local avg_7d_display="${avg_7d_local:-n/a}%/${avg_7d_api:-n/a}%"
-                global_7d_line="${global_7d_line} ${global_7d_color}[Average:${avg_7d_display}]${global_7d_color_reset}"
+            global_7d_line="$(format_limit_line "7d all" "$seven_pct" "$seven_day_reset")${seven_reset_note}"
+            if [[ "$SHOW_AVERAGE" == "true" ]]; then
+                [[ "$avg_7d_peak" != "-" ]] && global_7d_line="${global_7d_line} ${global_7d_color}[AvgPeak:${avg_7d_peak}%]${global_7d_color_reset}"
+                [[ "$avg_7d_rate" != "-" ]] && global_7d_line="${global_7d_line} ${global_7d_color}[Avg:${avg_7d_rate}%/d]${global_7d_color_reset}"
             fi
             lines+=("$global_7d_line")
             # Local 7d directly below global 7d - shows highscore-based percentage
@@ -2464,11 +2039,10 @@ EOF
                     local_7d_color=$(get_color "${local_7d_pct}")
                     local_7d_color_reset="${COLOR_RESET}"
                 fi
-                # Format current window tokens and highscore (e.g., 150.0k/1.5M)
                 local window_7d_formatted hs_7d_formatted
                 window_7d_formatted=$(format_highscore "$window_tokens_7d")
                 hs_7d_formatted=$(format_highscore "$highscore_7d")
-                lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset" 1) ${local_7d_color}[Highest:${window_7d_formatted}/${hs_7d_formatted}] (${LOCAL_DEVICE_LABEL})${achievement_7d}${local_7d_color_reset}")
+                lines+=("$(format_limit_line "7d all" "${local_7d_pct}" "$seven_day_reset" 1) ${local_7d_color}[Highest:${window_7d_formatted}/${hs_7d_formatted}]$(format_est100 "$est_7d" "$est_7d_src") (${LOCAL_DEVICE_LABEL})${achievement_7d}${local_7d_color_reset}")
             fi
         fi
 
@@ -2480,9 +2054,8 @@ EOF
                 opus_color_reset="${COLOR_RESET}"
             fi
             opus_line="$(format_limit_line "7d Opus" "$opus_pct" "$opus_reset")"
-            # Append [Average:X%] for Opus (API only, no local tracking)
-            if [[ "$SHOW_AVERAGE" == "true" ]] && [[ -n "$avg_opus" ]]; then
-                opus_line="${opus_line} ${opus_color}[Average:${avg_opus}%]${opus_color_reset}"
+            if [[ "$SHOW_AVERAGE" == "true" ]] && [[ "$avg_opus" != "-" ]]; then
+                opus_line="${opus_line} ${opus_color}[AvgPeak:${avg_opus}%]${opus_color_reset}"
             fi
             lines+=("$opus_line")
         fi
@@ -2500,12 +2073,36 @@ EOF
                     sonnet_color_reset="${COLOR_RESET}"
                 fi
                 sonnet_line="$(format_limit_line "7d Sonnet" "$sonnet_pct" "$sonnet_reset")"
-                # Append [Average:X%] for Sonnet (API only, no local tracking)
-                if [[ "$SHOW_AVERAGE" == "true" ]] && [[ -n "$avg_sonnet" ]]; then
-                    sonnet_line="${sonnet_line} ${sonnet_color}[Average:${avg_sonnet}%]${sonnet_color_reset}"
+                if [[ "$SHOW_AVERAGE" == "true" ]] && [[ "$avg_sonnet" != "-" ]]; then
+                    sonnet_line="${sonnet_line} ${sonnet_color}[AvgPeak:${avg_sonnet}%]${sonnet_color_reset}"
                 fi
                 lines+=("$sonnet_line")
             fi
+        fi
+
+        # Further limits from limits[] (e.g. weekly_scoped per model). The
+        # session and weekly_all entries are the 5h/7d lines above; scoped
+        # entries already shown as Opus/Sonnet lines are skipped.
+        if [[ "$SHOW_SCOPED" == "true" ]]; then
+            local sc_label sc_pct sc_reset
+            while IFS=$'\t' read -r sc_label sc_pct sc_reset; do
+                [[ -n "$sc_label" ]] || continue
+                [[ "$sc_label" == "7d Opus" && -n "$opus_pct" ]] && continue
+                [[ "$sc_label" == "7d Sonnet" && -n "$sonnet_pct" ]] && continue
+                sc_pct=$(cap_decimal "$(parse_decimal "$sc_pct")" 100)
+                [[ -n "$sc_pct" ]] || continue
+                local sc_epoch
+                sc_epoch=$(_hs_epoch "$sc_reset")
+                if [[ -n "$sc_epoch" ]] && [[ "$now_epoch" -ge "$sc_epoch" ]]; then
+                    lines+=("$(format_limit_line "$sc_label" "0.0" "$sc_reset") (reset)")
+                else
+                    lines+=("$(format_limit_line "$sc_label" "$sc_pct" "$sc_reset")")
+                fi
+            done < <(echo "$response" | jq -r '
+                .limits[]? | select(.kind != "session" and .kind != "weekly_all")
+                | [ ((if .group == "session" then "5h" elif .group == "weekly" then "7d" else (.group // "") end)
+                     + " " + ((.scope.model.display_name // .scope.surface // .kind // "limit") | tostring)),
+                    ((.percent // 0) | tostring), (.resets_at // "") ] | @tsv' 2>/dev/null)
         fi
 
         # Extra usage (if enabled AND used_credits > 0)
@@ -2691,16 +2288,10 @@ main() {
                 set_api_error "curl_failed"
                 ;;
             rate-limited)
-                # refresh-usage.sh already advanced the backoff state. Do NOT
-                # increment it again (that is why we bypass set_api_error's
-                # api_429 branch). Rebuild the message from the current state so
-                # the displayed retry time matches the persisted backoff.
-                local rl_failures rl_backoff
-                rl_failures=$(get_backoff_state)
-                [[ "$rl_failures" -lt 1 ]] && rl_failures=1
-                rl_backoff=$(calculate_backoff "$rl_failures")
-                API_ERROR_CODE="api_429"
-                API_ERROR="Limits: [rate-limit] retry in ${rl_backoff}s"
+                # refresh-usage.sh stored ONE retry time when the 429 arrived;
+                # show the remaining seconds of exactly that backoff (stable
+                # across renders, and the helper honours it).
+                set_api_error "api_429"
                 ;;
             http-error | http-error\ *)
                 # refresh-usage.sh appends only curl's numeric transport status

@@ -43,6 +43,10 @@ set -euo pipefail
 # Force C locale for numeric operations (avoids de_DE comma issues)
 export LC_NUMERIC=C
 
+# Shared atomic-write / backoff helpers (no token handling in there).
+# shellcheck source=state-io.sh
+source "$(dirname "${BASH_SOURCE[0]}")/state-io.sh"
+
 # =============================================================================
 # Configuration (kept identical to usage-statusline.sh)
 # =============================================================================
@@ -133,16 +137,18 @@ get_backoff_state() {
     fi
 }
 
-# Persist backoff state after a rate limit.
+# Persist backoff state after a rate limit. The retry time is computed ONCE
+# here (retry_at) - the statusline only displays it and this script refuses to
+# call the API before it, so the shown countdown and the real retry agree.
 set_backoff_state() {
     local failures="$1"
+    local wait now
+    wait=$(calculate_backoff "$failures")
+    now=$(date +%s)
     ensure_plugin_dir
-    cat > "$BACKOFF_STATE_FILE" << EOF
-{
-  "consecutive_failures": ${failures},
-  "last_rate_limit": "$(date -Iseconds)"
-}
-EOF
+    jq -n --argjson f "$failures" --arg last "$(date -Iseconds)" --argjson r $((now + wait)) \
+        '{consecutive_failures: $f, last_rate_limit: $last, retry_at: $r}' \
+        | limit_atomic_write "$BACKOFF_STATE_FILE" || true
 }
 
 # Remove backoff state after a successful request.
@@ -152,25 +158,30 @@ reset_backoff_state() {
     fi
 }
 
-# Reset backoff if the last rate-limit was more than 10 minutes ago.
+# Reset backoff once the stored retry time has passed by more than 10 minutes
+# (the API recovered and no new 429 arrived).
 maybe_reset_backoff() {
     if [[ ! -f "$BACKOFF_STATE_FILE" ]]; then
         return
     fi
-    local last_rate_limit
-    last_rate_limit=$(jq -r '.last_rate_limit // empty' "$BACKOFF_STATE_FILE" 2>/dev/null)
-    if [[ -z "$last_rate_limit" ]] || [[ "$last_rate_limit" == "null" ]]; then
+    local retry_at now
+    retry_at=$(jq -r '.retry_at // 0' "$BACKOFF_STATE_FILE" 2>/dev/null) || retry_at=0
+    [[ "$retry_at" =~ ^[0-9]+$ ]] || retry_at=0
+    now=$(date +%s)
+    if [[ "$retry_at" -eq 0 ]]; then
+        # Old format without retry_at: fall back to last_rate_limit + 10 min.
+        local last_rate_limit last_epoch
+        last_rate_limit=$(jq -r '.last_rate_limit // empty' "$BACKOFF_STATE_FILE" 2>/dev/null)
+        last_epoch=$(date -d "$last_rate_limit" +%s 2>/dev/null) || last_epoch=0
+        [[ $((now - last_epoch)) -gt 600 ]] && reset_backoff_state
         return
     fi
-    local last_epoch now_epoch
-    last_epoch=$(date -d "$last_rate_limit" +%s 2>/dev/null) || return
-    now_epoch=$(date +%s)
-    if [[ $((now_epoch - last_epoch)) -gt 600 ]]; then
+    if [[ $((now - retry_at)) -gt 600 ]]; then
         reset_backoff_state
     fi
 }
 
-# Calculate backoff time with jitter (kept for parity; state lives in the file).
+# Calculate backoff time with jitter (called once per 429; result is stored).
 # Pattern: 60-90s, 120-180s, 240-360s, max 600s.
 calculate_backoff() {
     local failures="${1:-1}"
@@ -200,6 +211,11 @@ main() {
 
     # Recover from stale backoff before deciding anything.
     maybe_reset_backoff
+
+    # Honour an active backoff: no API call before the stored retry time.
+    if [[ -f "$BACKOFF_STATE_FILE" ]] && [[ "$(backoff_retry_in "$BACKOFF_STATE_FILE")" -gt 0 ]]; then
+        emit "rate-limited" 6
+    fi
 
     # Throttle: if the cache is still fresh enough, do not fetch at all.
     # Skip when the cache is younger than the hard floor OR still within the

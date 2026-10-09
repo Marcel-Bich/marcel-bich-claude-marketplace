@@ -1,246 +1,157 @@
-#!/bin/bash
-# test-local-tracking.sh - Test local tracking logic in isolation
-# Tests get_total_tokens_ever function directly without API calls
+#!/usr/bin/env bash
+# test-local-tracking.sh - Fixture tests for window tracking, reset detection,
+# highscores, the Est100% estimate, averages, concurrency and the API backoff.
+# Everything runs in a temp dir with a fake profile; the real plugin state, the
+# real usage cache and the credentials file are never read or written.
+# shellcheck disable=SC2250
 
-set -euo pipefail
+set -uo pipefail
 
-# Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
-CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
-PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
-
-# Plugin data directory (organized under marketplace name) - profile-specific
-PLUGIN_DATA_DIR="${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit"
-STATE_FILE="${PLUGIN_DATA_DIR}/limit-usage-state_${PROFILE_NAME}.json"
-
-# Ensure directory exists
-mkdir -p "$PLUGIN_DATA_DIR" 2>/dev/null || true
-
-# Colors
-RED='\033[31m'
-GREEN='\033[32m'
-YELLOW='\033[33m'
-CYAN='\033[36m'
-RESET='\033[0m'
-
-echo -e "${CYAN}=== Local Tracking Unit Test ===${RESET}"
-echo ""
-
-# Clean start
-echo -e "${YELLOW}1. Cleaning up old state file...${RESET}"
-rm -f "$STATE_FILE"
-echo "   Removed $STATE_FILE"
-echo ""
-
-# Source the functions we need (extract just the function)
-# We'll inline test the logic directly
-
-# Debug function
-debug_log() {
-    echo "[DEBUG] $*" >> /tmp/test-local-debug.log
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEST_DIR=$(mktemp -d)
+FAKE_PROFILE="limit-test-$$-${RANDOM}"
+export HOME="$TEST_DIR/home"
+export CLAUDE_CONFIG_DIR="$TEST_DIR/home/$FAKE_PROFILE"
+export CLAUDE_MB_LIMIT_DEBUG=false
+export PLUGIN_DATA_DIR="$CLAUDE_CONFIG_DIR/marcel-bich-claude-marketplace/limit"
+mkdir -p "$PLUGIN_DATA_DIR" "$CLAUDE_CONFIG_DIR/projects"
+FAKE_CACHE="/tmp/claude-mb-limit-cache_${FAKE_PROFILE}.json"
+FAKE_STATUS="/tmp/claude-mb-limit-refresh-status_${FAKE_PROFILE}"
+FAKE_LOCK="/tmp/claude-mb-limit-refresh_${FAKE_PROFILE}.lock"
+cleanup() {
+    rm -rf "$TEST_DIR"
+    rm -f "$FAKE_CACHE" "$FAKE_STATUS" "$FAKE_LOCK" "/tmp/claude-mb-context-cache_${FAKE_PROFILE}.json" \
+        "/tmp/claude-mb-context-cache_test-session-1.json" "/tmp/claude-mb-limit-caption-test-session-1" 2>/dev/null
 }
+trap cleanup EXIT
 
-# The actual function we're testing (copied from usage-statusline.sh for isolation)
-test_get_total_tokens_ever() {
-    local STDIN_DATA="$1"
-    local state_file="${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit/limit-usage-state_${PROFILE_NAME}.json"
+PASS=0
+FAIL=0
+ok() { PASS=$((PASS + 1)); echo "  PASS: $1"; }
+bad() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
+check() { if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1 (expected '$2', got '$3')"; fi; }
+iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%S.000000+00:00; }
 
-    # Get current session data from stdin
-    local session_id="" current_input=0 current_output=0 current_cost="0.00"
-    if [[ -n "$STDIN_DATA" ]]; then
-        session_id=$(echo "$STDIN_DATA" | jq -r '.session_id // ""' 2>/dev/null) || session_id=""
-        current_input=$(echo "$STDIN_DATA" | jq -r '.context_window.total_input_tokens // 0' 2>/dev/null) || current_input=0
-        current_output=$(echo "$STDIN_DATA" | jq -r '.context_window.total_output_tokens // 0' 2>/dev/null) || current_output=0
-        current_cost=$(echo "$STDIN_DATA" | jq -r '.cost.total_cost_usd // 0' 2>/dev/null) || current_cost="0"
-        [[ "$session_id" == "null" ]] && session_id=""
-        [[ "$current_input" == "null" ]] && current_input=0
-        [[ "$current_output" == "null" ]] && current_output=0
-        [[ "$current_cost" == "null" ]] && current_cost="0"
-    fi
+# shellcheck source=highscore-state.sh
+source "$SCRIPT_DIR/highscore-state.sh"
+# shellcheck source=limit-history.sh
+source "$SCRIPT_DIR/limit-history.sh"
 
-    # If no session_id, fall back to simple mode
-    if [[ -z "$session_id" ]]; then
-        debug_log "No session_id available, skipping total tracking"
-        echo "0"
-        return
-    fi
+NOW=$(date -u +%s)
+R1=$(( (NOW / 3600 + 2) * 3600 ))          # reset in ~2h
+R1_ISO=$(iso "$R1")
 
-    # Read current state file
-    local state="{}"
-    if [[ -f "$state_file" ]]; then
-        state=$(cat "$state_file" 2>/dev/null) || state="{}"
-    fi
+echo ">>> window start follows resets_at (5h window = resets_at - 5h)"
+read -r start detected <<< "$(window_track 5h 30 "$R1_ISO" "$NOW")"
+check "start = resets_at - 5h" "$((R1 - 18000))" "$start"
 
-    # Get previous values for this session
-    local last_input=0 last_output=0 last_cost="0"
-    last_input=$(echo "$state" | jq -r ".sessions[\"$session_id\"].last_input // 0" 2>/dev/null) || last_input=0
-    last_output=$(echo "$state" | jq -r ".sessions[\"$session_id\"].last_output // 0" 2>/dev/null) || last_output=0
-    last_cost=$(echo "$state" | jq -r ".sessions[\"$session_id\"].last_cost // 0" 2>/dev/null) || last_cost="0"
-    [[ "$last_input" == "null" ]] && last_input=0
-    [[ "$last_output" == "null" ]] && last_output=0
-    [[ "$last_cost" == "null" ]] && last_cost="0"
+echo ">>> unknown window (no API yet, nothing stored) is -1, never 'all history'"
+read -r start detected <<< "$(window_track 7d "" "" "$NOW")"
+check "unknown start" "-1" "$start"
 
-    # Calculate deltas for this session
-    local delta_input=0 delta_output=0 delta_cost="0"
-    if [[ "$current_input" -lt "$last_input" ]] || [[ "$current_output" -lt "$last_output" ]]; then
-        # Session reset detected - use current values as delta
-        delta_input="$current_input"
-        delta_output="$current_output"
-        delta_cost="$current_cost"
-    else
-        delta_input=$((current_input - last_input))
-        delta_output=$((current_output - last_output))
-        delta_cost=$(awk "BEGIN {printf \"%.4f\", $current_cost - $last_cost}")
-    fi
+echo ">>> sharp utilization drop with unchanged resets_at is a reset"
+window_track 5h 82 "$R1_ISO" "$((NOW + 60))" >/dev/null
+read -r start detected <<< "$(window_track 5h 4 "$R1_ISO" "$((NOW + 120))")"
+check "drop detected" "1" "$detected"
+check "window restarts at the last sample before the drop" "$((NOW + 60))" "$start"
+read -r start detected <<< "$(window_track 5h 6 "$R1_ISO" "$((NOW + 180))")"
+check "no second reset while rising again" "0" "$detected"
+check "override kept for the same resets_at" "$((NOW + 60))" "$start"
 
-    # Get current totals
-    local total_input=0 total_output=0 total_cost="0"
-    total_input=$(echo "$state" | jq -r '.totals.input_tokens // 0' 2>/dev/null) || total_input=0
-    total_output=$(echo "$state" | jq -r '.totals.output_tokens // 0' 2>/dev/null) || total_output=0
-    total_cost=$(echo "$state" | jq -r '.totals.total_cost_usd // 0' 2>/dev/null) || total_cost="0"
-    [[ "$total_input" == "null" ]] && total_input=0
-    [[ "$total_output" == "null" ]] && total_output=0
-    [[ "$total_cost" == "null" ]] && total_cost="0"
+echo ">>> small fluctuation is not a reset"
+read -r start detected <<< "$(window_track 5h 5 "$R1_ISO" "$((NOW + 240))")"
+check "1 point dip ignored" "0" "$detected"
 
-    # Update totals with deltas
-    local new_total_input=$((total_input + delta_input))
-    local new_total_output=$((total_output + delta_output))
-    local new_total_cost
-    new_total_cost=$(awk "BEGIN {printf \"%.4f\", $total_cost + $delta_cost}")
+echo ">>> now past resets_at (stale cache) is a reset; window starts at the old reset"
+read -r start detected <<< "$(window_track 5h 90 "$R1_ISO" "$((R1 + 30))")"
+check "expired window detected" "1" "$detected"
+check "start = old resets_at" "$R1" "$start"
 
-    # Always update on first run or when there's a change
-    local delta_total=$((delta_input + delta_output))
-    if [[ "$delta_total" -gt 0 ]] || [[ ! -f "$state_file" ]]; then
-        mkdir -p "$(dirname "$state_file")" 2>/dev/null || true
+echo ">>> new resets_at hour clears the override"
+R2=$((R1 + 5 * 3600))
+read -r start detected <<< "$(window_track 5h 3 "$(iso "$R2")" "$((R1 + 300))")"
+check "start from new resets_at" "$((R2 - 18000))" "$start"
 
-        # Preserve start_pct values for local tracking feature
-        local start_5h=-1 start_7d=-1 last_5h="" last_7d=""
-        start_5h=$(echo "$state" | jq -r '.start_5h_pct // -1' 2>/dev/null) || start_5h=-1
-        start_7d=$(echo "$state" | jq -r '.start_7d_pct // -1' 2>/dev/null) || start_7d=-1
-        last_5h=$(echo "$state" | jq -r '.last_5h_reset // ""' 2>/dev/null) || last_5h=""
-        last_7d=$(echo "$state" | jq -r '.last_7d_reset // ""' 2>/dev/null) || last_7d=""
-        [[ "$start_5h" == "null" ]] && start_5h=-1
-        [[ "$start_7d" == "null" ]] && start_7d=-1
-        [[ "$last_5h" == "null" ]] && last_5h=""
-        [[ "$last_7d" == "null" ]] && last_7d=""
+echo ">>> highscores only rise; Est100% is the median of tokens/(api%/100)"
+out=$(highscore_record max20 5h "$R2" 1000 10 "$((R1 + 400))")   # api < 20: no sample
+check "below 20 % no estimate yet" "1000000 null cur" "$(jq -r '"\(.hs) \(.est) \(.src)"' <<< "$out")"
+highscore_record max20 5h "$R2" 2000000 20 "$((R1 + 500))" >/dev/null   # ratio 10.0M
+highscore_record max20 5h "$R2" 4400000 40 "$((R1 + 600))" >/dev/null   # ratio 11.0M
+out=$(highscore_record max20 5h "$R2" 6000000 60 "$((R1 + 700))")       # ratio 10.0M
+check "highscore raised to window tokens" "6000000" "$(jq -r '.hs' <<< "$out")"
+check "estimate median" "10000000" "$(jq -r '.est' <<< "$out")"
+out=$(highscore_record max20 5h "$R2" 100 60 "$((R1 + 800))")
+check "highscore never decreases" "6000000" "$(jq -r '.hs' <<< "$out")"
+check "repeated api value adds no sample" "10000000" "$(jq -r '.est' <<< "$out")"
+R3=$((R2 + 5 * 3600))
+out=$(highscore_record max20 5h "$R3" 500 2 "$((R2 + 100))")
+check "new window falls back to previous window estimate" "10000000 prev" "$(jq -r '"\(.est) \(.src)"' <<< "$out")"
 
-        # Build sessions object - preserve existing sessions, update current
-        local sessions_json
-        sessions_json=$(echo "$state" | jq -r '.sessions // {}' 2>/dev/null) || sessions_json="{}"
-        sessions_json=$(echo "$sessions_json" | jq --arg sid "$session_id" \
-            --argjson inp "$current_input" \
-            --argjson out "$current_output" \
-            --arg cost "$current_cost" \
-            '.[$sid] = {"last_input": $inp, "last_output": $out, "last_cost": ($cost | tonumber)}' 2>/dev/null) || sessions_json="{}"
+echo ">>> parallel renders against one state file stay consistent"
+pids=()
+for i in $(seq 1 12); do
+    highscore_record max20 7d "$R3" "$((20000000 + i * 1000))" 30 "$((R2 + 200 + i))" >/dev/null &
+    pids+=($!)
+done
+for p in "${pids[@]}"; do wait "$p"; done
+if jq -e . "$HIGHSCORE_STATE_FILE" >/dev/null 2>&1; then ok "state is valid JSON after 12 parallel writers"; else bad "state corrupt after parallel writers"; fi
+check "7d highscore is the max of all writers" "20012000" "$(jq -r '.highscores.max20["7d"]' "$HIGHSCORE_STATE_FILE")"
+check "5h highscore untouched by 7d writers" "6000000" "$(jq -r '.highscores.max20["5h"]' "$HIGHSCORE_STATE_FILE")"
 
-        # Write updated state
-        cat > "$state_file" << EOF
-{
-  "start_5h_pct": ${start_5h},
-  "start_7d_pct": ${start_7d},
-  "last_5h_reset": "${last_5h}",
-  "last_7d_reset": "${last_7d}",
-  "sessions": ${sessions_json},
-  "totals": {
-    "input_tokens": ${new_total_input},
-    "output_tokens": ${new_total_output},
-    "total_cost_usd": ${new_total_cost}
-  }
-}
+echo ">>> unreadable state is skipped, not treated as zero"
+cp "$HIGHSCORE_STATE_FILE" "$TEST_DIR/hs.good"
+: > "$HIGHSCORE_STATE_FILE"
+if highscore_record max20 5h "$R3" 1 30 "$((R2 + 999))" >/dev/null 2>&1; then
+    bad "empty state must skip the render"
+else
+    ok "empty state skips the render"
+fi
+cp "$TEST_DIR/hs.good" "$HIGHSCORE_STATE_FILE"
+
+echo ">>> schema bump discards inflated old highscores and LimitAt"
+cat > "$HIGHSCORE_STATE_FILE" << 'EOF'
+{"schema_version": 1, "plan": "max20", "highscores": {"max20": {"5h": 698300000, "7d": 9000000000}},
+ "limits_at": {"max20": {"5h": 25000000, "7d": null}}, "window_tokens_5h": 698300000}
 EOF
-        debug_log "Updated state: session=$session_id delta_in=$delta_input delta_out=$delta_output delta_cost=$delta_cost"
-    fi
+out=$(highscore_record max20 5h "$R3" 1500000 30 "$((R2 + 1000))")
+check "old inflated highscore discarded" "1500000" "$(jq -r '.hs' <<< "$out")"
+if [[ -f "${HIGHSCORE_STATE_FILE}.bak" ]]; then ok "old state backed up"; else bad "no backup of old state"; fi
+check "no limits_at in new schema" "null" "$(jq -r '.limits_at' "$HIGHSCORE_STATE_FILE")"
 
-    # Return total tokens (input + output)
-    echo "$((new_total_input + new_total_output))"
-}
+echo ">>> averages: peak per window and usage per hour from history"
+HISTORY_FILE="$TEST_DIR/history.jsonl"
+H0=$((NOW - 20 * 3600))
+{
+    # window A peaks at 60, window B peaks at 40 (sawtooth), current window at 10
+    for v in 10 30 60; do jq -cn --arg ts "$(date -u -d "@$H0" +%Y-%m-%dT%H:%M:%SZ)" --argjson v "$v" '{ts:$ts,"5h":{api:$v},"7d":{api:1}}'; H0=$((H0 + 3600)); done
+    for v in 5 25 40; do jq -cn --arg ts "$(date -u -d "@$H0" +%Y-%m-%dT%H:%M:%SZ)" --argjson v "$v" '{ts:$ts,"5h":{api:$v},"7d":{api:2}}'; H0=$((H0 + 3600)); done
+    for v in 2 10; do jq -cn --arg ts "$(date -u -d "@$H0" +%Y-%m-%dT%H:%M:%SZ)" --argjson v "$v" '{ts:$ts,"5h":{api:$v},"7d":{api:3}}'; H0=$((H0 + 3600)); done
+} > "$HISTORY_FILE"
+check "avg peak of completed windows (60, 40)" "50.0" "$(get_avg_peak '."5h".api' 168)"
+# consumption between consecutive samples: 20+30 (A) + 5+20+15 (B, restart counts
+# from 0) + 2+8 (C) = 100; history is only 20h old, so the rate is per 20h, not 24h
+check "avg usage per hour" "5.0" "$(get_avg_rate '."5h".api' 24 "$NOW")"
+check "rounding is half-up, not floor or half-even" "2.3" "$(limit_round1 2.25)"
+# one pass for the statusline: 5h peak, 5h %/h, 7d peak (none completed), 7d %/day
+# (increase 2 points over 20h = 2.4 per day), opus, sonnet (no data)
+check "single-pass averages" "50.0 5.0 - 2.4 - -" "$(history_averages "$NOW")"
+check "no history -> empty" "" "$(HISTORY_FILE=$TEST_DIR/none.jsonl get_avg_peak '."5h".api' 168)"
 
-# Test 1: Session A first update
-echo -e "${YELLOW}2. Test: Session A first update...${RESET}"
-MOCK_A1='{"session_id":"session-aaa-111","context_window":{"total_input_tokens":5000,"total_output_tokens":1000},"cost":{"total_cost_usd":0.05}}'
-result=$(test_get_total_tokens_ever "$MOCK_A1")
-echo "   Result: $result tokens"
-echo "   State:"
-jq '.' "$STATE_FILE" 2>/dev/null | sed 's/^/   /'
-echo ""
-
-# Test 2: Session B (parallel)
-echo -e "${YELLOW}3. Test: Session B (parallel session)...${RESET}"
-MOCK_B1='{"session_id":"session-bbb-222","context_window":{"total_input_tokens":3000,"total_output_tokens":500},"cost":{"total_cost_usd":0.03}}'
-result=$(test_get_total_tokens_ever "$MOCK_B1")
-echo "   Result: $result tokens"
-echo "   State:"
-jq '.' "$STATE_FILE" 2>/dev/null | sed 's/^/   /'
-echo ""
-
-# Test 3: Session A second update
-echo -e "${YELLOW}4. Test: Session A second update (more tokens)...${RESET}"
-MOCK_A2='{"session_id":"session-aaa-111","context_window":{"total_input_tokens":10000,"total_output_tokens":2500},"cost":{"total_cost_usd":0.12}}'
-result=$(test_get_total_tokens_ever "$MOCK_A2")
-echo "   Result: $result tokens"
-echo "   State:"
-jq '.' "$STATE_FILE" 2>/dev/null | sed 's/^/   /'
-echo ""
-
-# Verify
-echo -e "${YELLOW}5. Verification...${RESET}"
-total_input=$(jq -r '.totals.input_tokens' "$STATE_FILE")
-total_output=$(jq -r '.totals.output_tokens' "$STATE_FILE")
-total_cost=$(jq -r '.totals.total_cost_usd' "$STATE_FILE")
-session_count=$(jq -r '.sessions | length' "$STATE_FILE")
-
-# Expected:
-# A1: +5000 in, +1000 out, +0.05 cost
-# B1: +3000 in, +500 out, +0.03 cost
-# A2: +5000 in (10000-5000), +1500 out (2500-1000), +0.07 cost (0.12-0.05)
-# Total: 13000 in, 3000 out, 0.15 cost
-
-expected_input=13000
-expected_output=3000
-expected_cost="0.15"
-
-echo "   Sessions tracked: $session_count (expected: 2)"
-echo "   Total input:  $total_input (expected: $expected_input)"
-echo "   Total output: $total_output (expected: $expected_output)"
-echo "   Total cost:   \$$total_cost (expected: \$$expected_cost)"
-echo ""
-
-# Validate
-errors=0
-if [[ "$total_input" != "$expected_input" ]]; then
-    echo -e "   ${RED}FAIL: Input mismatch${RESET}"
-    errors=$((errors + 1))
-else
-    echo -e "   ${GREEN}PASS: Input correct${RESET}"
-fi
-
-if [[ "$total_output" != "$expected_output" ]]; then
-    echo -e "   ${RED}FAIL: Output mismatch${RESET}"
-    errors=$((errors + 1))
-else
-    echo -e "   ${GREEN}PASS: Output correct${RESET}"
-fi
-
-# Cost comparison with tolerance
-cost_check=$(awk "BEGIN {diff = $total_cost - $expected_cost; print (diff < 0.01 && diff > -0.01) ? 1 : 0}")
-if [[ "$cost_check" != "1" ]]; then
-    echo -e "   ${RED}FAIL: Cost mismatch${RESET}"
-    errors=$((errors + 1))
-else
-    echo -e "   ${GREEN}PASS: Cost correct${RESET}"
-fi
-
-if [[ "$session_count" != "2" ]]; then
-    echo -e "   ${RED}FAIL: Session count mismatch${RESET}"
-    errors=$((errors + 1))
-else
-    echo -e "   ${GREEN}PASS: Session count correct${RESET}"
-fi
+echo ">>> refresh-usage honours the stored backoff (no API call, no credentials read)"
+mkdir -p "$PLUGIN_DATA_DIR"
+jq -n --argjson r $((NOW + 300)) '{consecutive_failures: 2, last_rate_limit: "x", retry_at: $r}' \
+    > "$PLUGIN_DATA_DIR/backoff-state_${FAKE_PROFILE}.json"
+rc=0; out=$(bash "$SCRIPT_DIR/refresh-usage.sh" 2>/dev/null) || rc=$?
+check "backoff active -> rate-limited without fetching" "rate-limited 6" "$out $rc"
+jq -n --argjson r $((NOW - 5)) '{consecutive_failures: 2, last_rate_limit: "x", retry_at: $r}' \
+    > "$PLUGIN_DATA_DIR/backoff-state_${FAKE_PROFILE}.json"
+rc=0; out=$(bash "$SCRIPT_DIR/refresh-usage.sh" 2>/dev/null) || rc=$?
+check "backoff expired -> proceeds (fake profile has no credentials)" "no-credentials 3" "$out $rc"
+jq -n --argjson r $((NOW + 300)) '{consecutive_failures: 2, last_rate_limit: "x", retry_at: $r}' \
+    > "$TEST_DIR/backoff.json"
+check "retry seconds come from the stored retry_at (stable across renders)" "300 300" \
+    "$(backoff_retry_in "$TEST_DIR/backoff.json" "$NOW") $(backoff_retry_in "$TEST_DIR/backoff.json" "$NOW")"
 
 echo ""
-if [[ "$errors" -eq 0 ]]; then
-    echo -e "${GREEN}=== ALL TESTS PASSED ===${RESET}"
-    exit 0
-else
-    echo -e "${RED}=== $errors TEST(S) FAILED ===${RESET}"
-    exit 1
-fi
+echo "passed: $PASS failed: $FAIL"
+[[ "$FAIL" -eq 0 ]]

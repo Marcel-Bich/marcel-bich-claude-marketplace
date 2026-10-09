@@ -7,19 +7,21 @@ Live API usage in Claude Code statusline - colored progress bars, Git info, toke
 **API Usage Tracking**
 - Real API data from Anthropic (same as `/usage`)
 - Colored progress bars with signal colors (gray/green/yellow/orange/red)
-- Multiple limits: 5-hour, 7-day, Sonnet, Extra Credits
-- Reset times for each limit (minute-precise)
+- Multiple limits: 5-hour, 7-day, Sonnet, Extra Credits, plus further entries of the API's `limits[]` list (e.g. per-model `weekly_scoped` limits, shown as `7d <Model>`)
+- Reset times for each limit (minute-precise); after a reset time has passed the bar shows `0.0% ... (reset)` instead of the previous window's value
+- `[stale 12m]` marks API numbers older than `CLAUDE_MB_LIMIT_STALE_AFTER` seconds
+- Averages from the local history: `[AvgPeak:X%]` average peak per completed window, `[Avg:Y%/h]` (5h) / `[Avg:Y%/d]` (7d) average consumption including idle time
 
 **Highscore Tracking** (enabled by default, disable with `CLAUDE_MB_LIMIT_LOCAL=false`)
 - Tracks highest token usage per plan (max20, max5, pro)
 - Separate highscores for 5h and 7d windows
 - Automatic plan detection from credentials
-- LimitAt Achievement: Discover your real plan limit when hitting >95% API usage
+- `[Est100%:X]` on the device line: continuous estimate of the token count at 100 % API utilization (median of this device's tokens / (API% / 100) over samples at >= 20 % in the current window; `~` = value of the previous window). Per device: a lower bound when other devices use the same account at the same time
 
 **Extended Features**
 - CWD (Current Working Directory)
 - Git: branch, worktree name, changes (+insertions, -deletions) with colors. The line is prefixed with `git: <parent>/<repo>` showing the resolved target repo. The target is resolved in this order: (1) the repo the MAIN agent last worked in - captured live from its Edit/Write and Bash `cd` / `git -C` calls via a PostToolUse hook (session-affine, subagents excluded), so the line follows the agent into whatever repo it touches even from a non-git hub directory; (2) the repo at the cwd; (3) the credo session-pin. Sources 1 and 3 are soft dependencies - without them, only cwd-based discovery is used
-- Token metrics: Input, Output, Cached, Total
+- Token metrics of the current session (main agent + its subagents, from the transcripts): Input (incl. cache writes), Output, Cached (cache reads), Total. Without a readable ledger the line is labelled `LastReq` and shows the last request from Claude Code's stdin
 - Context usage with percentage of max and usable (before auto-compact)
 - Session timing: Total duration, API time
 - Model line: `<Model> | <Effort> | <style> | LifetimeTotal: ... | Device: ...` - the live session effort level (Low/Medium/High/XHigh/Max) is read from the statusline stdin `effort.level` and only shown for models that support reasoning effort
@@ -42,7 +44,7 @@ Live API usage in Claude Code statusline - colored progress bars, Git info, toke
 
 ## Commands
 
-- `/limit:highscore` - Display all highscores and LimitAt achievements
+- `/limit:highscore` - Display highscores, Est100%, window tokens, per-model lifetime breakdown and averages
 
 ## Requirements
 
@@ -139,11 +141,19 @@ All features can be toggled via environment variables. Export them in your shell
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CLAUDE_MB_LIMIT_REFRESH_CADENCE` | 150 | Base seconds between usage-API refreshes; plus 0-60s jitter, so 150-210s (avg ~180). Raise it if you hit usage-endpoint rate limits |
-| `CLAUDE_MB_LIMIT_CACHE_AGE` | 120 | Max age (seconds) of the local JSONL token-accounting scan cache (no API calls; unrelated to rate limits) |
+| `CLAUDE_MB_LIMIT_CACHE_AGE` | 120 | Seconds between global scans of the JSONL transcripts for the token ledger (no API calls; runs detached, never blocks the render) |
+| `CLAUDE_MB_LIMIT_SESSION_SCAN` | 10 | Minimum seconds between scans of the current session transcript |
+| `CLAUDE_MB_LIMIT_SESSION_SCAN_BYTES` | 2097152 | About this many bytes of the current session transcript are read per render (a single longer line is read whole); a larger backlog (e.g. right after an upgrade) is read over several renders and by the detached scan |
+| `CLAUDE_MB_LIMIT_BG_SCAN_BUDGET` | 25 | Time budget (seconds) of one detached global scan; a first backfill continues on the next scans |
+| `CLAUDE_MB_LIMIT_SCAN_BYTES` | 0 | Byte budget of one global scan (0 = only the time budget applies) |
+| `CLAUDE_MB_LIMIT_STALE_AFTER` | 600 | Mark API numbers as `[stale ...]` when the usage cache is older than this |
+| `CLAUDE_MB_LIMIT_SCOPED` | true | Show further limits from the API's `limits[]` list (e.g. `weekly_scoped`) |
+| `CLAUDE_MB_LIMIT_EST_MIN_PCT` | 20 | Minimum API utilization for an Est100% sample |
+| `CLAUDE_MB_LIMIT_EST_MAX_AGE` | 120 | Est100% samples only use API numbers younger than this many seconds |
 | `CLAUDE_MB_LIMIT_DEFAULT_COLOR` | `\033[90m` | Default color (ANSI escape sequence) |
 | `CLAUDE_MB_LIMIT_SHOW_ERRORS` | false | Show "limit: error" on failures |
-| `CLAUDE_MB_LIMIT_AVERAGE` | true | Show rolling average display |
-| `CLAUDE_MB_LIMIT_DEBUG` | false | Enable debug logging to `/tmp/claude-mb-limit-debug_${PROFILE_NAME}.log` |
+| `CLAUDE_MB_LIMIT_AVERAGE` | true | Show `[AvgPeak:...]` / `[Avg:...]` averages |
+| `CLAUDE_MB_LIMIT_DEBUG` | false | Enable debug logging to `/tmp/claude-mb-limit-debug_${PROFILE_NAME}.log` (`true`, `1`, `yes` or `on`; same flag for every script) |
 | `CLAUDE_MB_LIMIT_HISTORY_ENABLED` | true | Enable history tracking for average display |
 | `CLAUDE_MB_LIMIT_HISTORY_INTERVAL` | 600 | Minimum seconds between history writes (10 min) |
 | `CLAUDE_MB_LIMIT_HISTORY_DAYS` | 28 | History retention in days |
@@ -178,6 +188,44 @@ CLAUDE_CONFIG_DIR=~/.claude-work claude
 
 Each profile gets separate state files (highscores, history, cache).
 
+## Token Accounting
+
+All local token numbers (session line, window tokens, highscores, Est100%,
+LifetimeTotal) come from one ledger built from the Claude Code transcripts
+(`projects/<project>/<session>.jsonl` and `.../<session>/subagents/agent-*.jsonl`):
+
+- **One count per API message.** Claude Code writes one transcript line per
+  content block (thinking, text, tool use) and repeats the message's usage on
+  each; lines are deduplicated by `message.id` + `requestId` (last line wins).
+  Known limit: the deduplication works per transcript file. The rare API
+  message that appears in two files (e.g. a subagent sidechain and its parent
+  transcript) is counted in both - about 1 % extra in observed transcripts.
+- **One spelling per transcript.** Paths are canonicalized (duplicate slashes,
+  `/./` and symlinked directories), so a transcript is never counted twice
+  under two spellings, e.g. with a trailing slash in `CLAUDE_CONFIG_DIR`.
+- **Work tokens** = input + output + cache writes. Cache reads (typically
+  ~99 % of the raw volume) are tracked and shown separately, never added 1:1.
+- **Windows from timestamps.** Window tokens are the sum of messages since the
+  window start (`resets_at` - 5h / 7d), so there is no per-render delta and no
+  baseline that a lost write could reset. A window reset is also detected when
+  the utilization drops sharply with an unchanged `resets_at`, or when the
+  reset time has passed.
+- **Cost** per concrete model id (cache writes priced by TTL). Models without a
+  known price are not guessed: the cost is shown as `$X+n/a`.
+- State writes are atomic and locked, so parallel sessions cannot corrupt them;
+  an unreadable state skips the local values for one render instead of showing 0.
+
+**Ledger file:** `~/.claude/marcel-bich-claude-marketplace/limit/limit-ledger_${PROFILE_NAME}.json`.
+After an upgrade it is backfilled from all existing transcripts in the
+background (a few detached scans). Reading is linear in the transcript size
+(a 34 MB transcript takes about 2 s) and always bounded: the render reads
+about `CLAUDE_MB_LIMIT_SESSION_SCAN_BYTES` of the current transcript (a single
+longer line is read whole), the detached scan stops at its time budget and
+reads small transcripts in batches (thousands per run), and both resume from
+the stored byte offsets. Entries of deleted transcripts are pruned; the
+lifetime totals keep their tokens. Until the backfill is complete the window sums are too low, so no
+Est100% samples are taken (`/limit:highscore` says so while it runs).
+
 ## Highscore Concept
 
 Instead of complex calibration, we track the highest token usage ever measured on this device:
@@ -187,7 +235,11 @@ Instead of complex calibration, we track the highest token usage ever measured o
 - **Separate highscores per plan** - Switching plans (max20/max5/pro) uses the correct highscore for each
 - **5h and 7d are independent records** - Each window has its own highscore
 
-**LimitAt Achievement:** If you push hard enough to reach >95% API utilization when breaking your highscore, you discover the real limit of your plan - like an Easter-Egg!
+**Est100%:** a continuous estimate of where 100 % lies, in work tokens: the median of `window_tokens / (API% / 100)` over samples taken at >= 20 % utilization in the current window. It replaces the former LimitAt easter egg, which compared counts from different schemes and almost never refreshed.
+
+Est100% is a per-device value and is therefore shown on the device line (`... [Highest:...] [Est100%:X] (device)`). The tokens come from this device's transcripts only - other devices keep their own `~/.claude` and cannot be read from here - while the API percentage is account-wide. With parallel use on other devices the estimate is a lower bound. Samples are skipped while the transcript backfill is incomplete (tokens missing, ratio too low) and while the API numbers are older than `CLAUDE_MB_LIMIT_EST_MAX_AGE` (old percentage, ratio too high).
+
+Upgrading to the ledger-based accounting resets highscores once (the old values were measured in an inflated unit); the old state is kept as `.bak`.
 
 **State file:** `~/.claude/marcel-bich-claude-marketplace/limit/limit-highscore-state_${PROFILE_NAME}.json`
 

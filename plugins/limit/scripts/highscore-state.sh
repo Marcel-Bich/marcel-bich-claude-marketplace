@@ -1,525 +1,223 @@
 #!/usr/bin/env bash
-# highscore-state.sh - Highscore state management for limit plugin
-# Tracks highest token usage per plan (max20, max5, pro, unknown)
-# 5h and 7d windows are tracked separately
+# highscore-state.sh - Window tracking, highscores and the Est100% estimate.
+#
+# Window tokens are no longer accumulated here. They are summed from the
+# deduplicated JSONL ledger (usage-ledger.sh) for the time range
+# [window_start, now], so there is no per-render delta, no baseline and no
+# counter that a lost write can reset. This file only keeps:
+#   - windows.<5h|7d>: last resets_at, last API value and an optional start
+#     override, used to detect window resets and derive window_start
+#   - highscores.<plan>.<5h|7d>: highest window token count ever seen (only rises)
+#   - est.<5h|7d>: samples tokens/(api%/100) of the current window; the median
+#     is the Est100% estimate (replaces the old LimitAt easter egg)
+#
+# Every update is one read-modify-write under an exclusive lock with an atomic
+# write. An unreadable state makes the caller skip the render instead of
+# counting from zero.
 # shellcheck disable=SC2250
 
-# =============================================================================
-# Theoretical Token Limits (User Calculation - 2026-01-19)
-# =============================================================================
-# Based on user's calculation:
-# - max20 in 5h window: ~12.5M tokens (theoretical maximum)
-# - 20% of 5h = 2.5M tokens
-# - 1% of 5h = 125k tokens
-#
-# This could be extrapolated to:
-# - max5: proportionally lower
-# - pro: even lower
-#
-# WARNING: These calculations are likely INCORRECT because subagent/Task tool
-# tokens were NOT included in the measurement when these numbers were derived.
-# Subagents (spawned via Task tool) run in separate sessions and their tokens
-# are stored in agent-*.jsonl files, not in the main session's STDIN_DATA.
-# The actual limits may be significantly higher than estimated here.
-#
-# TODO: Re-measure limits with subagent tokens included
-# =============================================================================
-
-set -euo pipefail
-
-# =============================================================================
-# Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
-# =============================================================================
 CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
 PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
+_HS_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_HS_DIR" == "${BASH_SOURCE[0]}" ]] && _HS_DIR="."
 
-# State file location - profile-specific
+# shellcheck source=state-io.sh
+source "${_HS_DIR}/state-io.sh"
+
 HIGHSCORE_STATE_FILE="${PLUGIN_DATA_DIR:-${CLAUDE_BASE_DIR}/marcel-bich-claude-marketplace/limit}/limit-highscore-state_${PROFILE_NAME}.json"
+HIGHSCORE_LOCK="${HIGHSCORE_STATE_FILE}.lock"
 
-# Default highscore values (conservative estimates)
-# These will be exceeded and updated as usage is tracked
-declare -A DEFAULT_HIGHSCORES_5H=(
-    ["max20"]=1000000
-    ["max5"]=500000
-    ["pro"]=200000
-    ["unknown"]=1000000
-)
+# Schema 2 (v2.36): window tokens are deduplicated work tokens (input + output +
+# cache writes, cache reads excluded). Highscores and LimitAt values of schema 1
+# were measured in an inflated unit (duplicated lines, cache reads 1:1, context
+# re-adds) and are discarded on upgrade (a .bak copy is kept).
+HIGHSCORE_SCHEMA_VERSION=2
 
-declare -A DEFAULT_HIGHSCORES_7D=(
-    ["max20"]=10000000
-    ["max5"]=5000000
-    ["pro"]=2000000
-    ["unknown"]=10000000
-)
+# Starting highscores per plan (work tokens). They only serve as the initial
+# denominator and are exceeded by real usage.
+HIGHSCORE_DEFAULTS='{"max20": {"5h": 1000000, "7d": 10000000},
+                     "max5":  {"5h": 500000,  "7d": 5000000},
+                     "pro":   {"5h": 200000,  "7d": 2000000},
+                     "unknown": {"5h": 1000000, "7d": 10000000}}'
 
-# Current schema version - bump on breaking changes to trigger reset
-HIGHSCORE_SCHEMA_VERSION=1
-
-# Debug logging - profile-specific
-HIGHSCORE_DEBUG="${CLAUDE_MB_LIMIT_DEBUG:-0}"
-HIGHSCORE_LOG_FILE="/tmp/claude-mb-limit-highscore-debug_${PROFILE_NAME}.log"
+# Estimate samples are only taken at or above this API utilization; below it the
+# ratio tokens/pct is dominated by rounding of the integer percentage.
+EST_MIN_PCT="${CLAUDE_MB_LIMIT_EST_MIN_PCT:-20}"
 
 highscore_log() {
-    if [[ "$HIGHSCORE_DEBUG" == "1" ]]; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$HIGHSCORE_LOG_FILE"
-    fi
+    limit_debug_enabled || return 0
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] highscore: $*" >> "/tmp/claude-mb-limit-debug_${PROFILE_NAME}.log" 2>/dev/null || true
 }
 
-# Reset state if schema version mismatch (no migration, clean reset)
-reset_highscore_if_incompatible() {
-    if [[ ! -f "${HIGHSCORE_STATE_FILE}" ]]; then
-        return 0
-    fi
-
-    local file_version
-    file_version=$(jq -r '.schema_version // 0' "${HIGHSCORE_STATE_FILE}" 2>/dev/null) || file_version=0
-
-    if [[ "$file_version" != "$HIGHSCORE_SCHEMA_VERSION" ]]; then
-        highscore_log "Schema mismatch: file=$file_version current=$HIGHSCORE_SCHEMA_VERSION - resetting state"
-        # Backup old state (single backup, overwrites previous)
-        cp "${HIGHSCORE_STATE_FILE}" "${HIGHSCORE_STATE_FILE}.bak" 2>/dev/null || true
-        rm -f "${HIGHSCORE_STATE_FILE}"
-        highscore_log "Old state backed up to ${HIGHSCORE_STATE_FILE}.bak"
-    fi
+_hs_fresh_state() {
+    jq -cn --argjson v "$HIGHSCORE_SCHEMA_VERSION" --argjson d "$HIGHSCORE_DEFAULTS" \
+        '{schema_version: $v, plan: "unknown", highscores: $d, windows: {}, est: {}}'
 }
 
-# =============================================================================
-# State file operations
-# =============================================================================
-
-# Initialize state file with defaults if it doesn't exist
-# Usage: init_state
-init_state() {
-    # Check for schema mismatch first (reset if needed)
-    reset_highscore_if_incompatible
-
-    if [[ -f "${HIGHSCORE_STATE_FILE}" ]]; then
-        highscore_log "init_state: state file exists"
-        return 0
-    fi
-
-    highscore_log "init_state: creating new state file"
-
-    # Detect current plan
-    local current_plan="unknown"
-    local script_dir
-    script_dir="$(dirname "$0")"
-    if [[ -x "${script_dir}/plan-detect.sh" ]]; then
-        current_plan=$("${script_dir}/plan-detect.sh" 2>/dev/null || echo "unknown")
-    fi
-
-    # Create state file with default values
-    cat > "${HIGHSCORE_STATE_FILE}" << EOF
-{
-  "schema_version": ${HIGHSCORE_SCHEMA_VERSION},
-  "plan": "${current_plan}",
-  "highscores": {
-    "max20": {"5h": ${DEFAULT_HIGHSCORES_5H[max20]}, "7d": ${DEFAULT_HIGHSCORES_7D[max20]}},
-    "max5": {"5h": ${DEFAULT_HIGHSCORES_5H[max5]}, "7d": ${DEFAULT_HIGHSCORES_7D[max5]}},
-    "pro": {"5h": ${DEFAULT_HIGHSCORES_5H[pro]}, "7d": ${DEFAULT_HIGHSCORES_7D[pro]}},
-    "unknown": {"5h": ${DEFAULT_HIGHSCORES_5H[unknown]}, "7d": ${DEFAULT_HIGHSCORES_7D[unknown]}}
-  },
-  "limits_at": {
-    "max20": {"5h": null, "7d": null},
-    "max5": {"5h": null, "7d": null},
-    "pro": {"5h": null, "7d": null},
-    "unknown": {"5h": null, "7d": null}
-  },
-  "window_tokens_5h": 0,
-  "window_tokens_7d": 0,
-  "subagent_window_5h": 0,
-  "subagent_window_7d": 0,
-  "subagent_baseline_5h": 0,
-  "subagent_baseline_7d": 0,
-  "last_5h_reset": null,
-  "last_7d_reset": null
-}
-EOF
-    highscore_log "init_state: state file created"
-    return 0
-}
-
-# Get highscore for a specific plan and window
-# Usage: get_highscore <plan> <window>
-# Example: get_highscore max20 5h
-get_highscore() {
-    local plan="${1:-unknown}"
-    local window="${2:-5h}"
-
-    init_state
-
-    local highscore
-    highscore=$(jq -r ".highscores[\"${plan}\"][\"${window}\"] // 0" "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
-
-    # If plan not found, fall back to unknown
-    if [[ "${highscore}" == "null" ]] || [[ -z "${highscore}" ]]; then
-        highscore=$(jq -r ".highscores[\"unknown\"][\"${window}\"] // 0" "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
-    fi
-
-    # If still null, return default
-    if [[ "${highscore}" == "null" ]] || [[ -z "${highscore}" ]]; then
-        if [[ "${window}" == "5h" ]]; then
-            highscore="${DEFAULT_HIGHSCORES_5H[unknown]}"
-        else
-            highscore="${DEFAULT_HIGHSCORES_7D[unknown]}"
+# Locked RMW. Args: jq_program [jq args...]. The program gets the state as input
+# and must output {state: <new state>, out: <value to print>}.
+_hs_rmw_locked() {
+    local program="$1"
+    shift
+    local result="" state_line="" out_line=""
+    # Fast path (every render, four times): ONE jq call reads the current
+    # state, checks it and runs the program; it prints the new state and the
+    # output on two lines. Anything unusual falls through to the slow path.
+    if [[ -s "$HIGHSCORE_STATE_FILE" ]]; then
+        result=$(jq -r "$@" --argjson __v "$HIGHSCORE_SCHEMA_VERSION" '
+            if type == "object" and .schema_version == $__v then . else error("state") end
+            | '"$program"' | (.state | tojson), (.out | tostring)' "$HIGHSCORE_STATE_FILE" 2>/dev/null) || result=""
+        if [[ -n "$result" ]]; then
+            state_line="${result%%$'\n'*}"
+            out_line="${result#*$'\n'}"
+            printf '%s\n' "$state_line" | LIMIT_ATOMIC_RAW=1 limit_atomic_write "$HIGHSCORE_STATE_FILE" || return 1
+            printf '%s' "$out_line"
+            return 0
         fi
     fi
-
-    echo "${highscore}"
+    _hs_rmw_slow "$program" "$@"
 }
 
-# Update highscore - only if new value is higher
-# Usage: update_highscore <plan> <window> <tokens>
-# Returns: 0 if updated, 1 if not updated (current value higher)
-update_highscore() {
-    local plan="${1:-unknown}"
-    local window="${2:-5h}"
-    local tokens="${3:-0}"
-
-    init_state
-
-    local current_highscore
-    current_highscore=$(get_highscore "${plan}" "${window}")
-
-    # Only update if tokens > current highscore
-    if [[ "${tokens}" -gt "${current_highscore}" ]]; then
-        # Update the highscore in state file
-        local tmp_file
-        tmp_file=$(mktemp)
-        jq ".highscores[\"${plan}\"][\"${window}\"] = ${tokens}" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
-            mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
-        return 0
+# Slow path: missing, unreadable or old-schema state (rare).
+_hs_rmw_slow() {
+    local program="$1"
+    shift
+    local state=""
+    if [[ -e "$HIGHSCORE_STATE_FILE" ]]; then
+        if ! state=$(limit_read_json "$HIGHSCORE_STATE_FILE"); then
+            # Unreadable. Writes are atomic, so this is real corruption (or a file
+            # from an old non-atomic version). Skip this render; only rebuild when
+            # the file has been broken for a while.
+            local mtime now
+            mtime=$(stat -c %Y "$HIGHSCORE_STATE_FILE" 2>/dev/null || stat -f %m "$HIGHSCORE_STATE_FILE" 2>/dev/null || echo 0)
+            now=$(date +%s)
+            if [[ $((now - mtime)) -lt 30 ]]; then
+                highscore_log "state unreadable - skipping render"
+                return 1
+            fi
+            cp "$HIGHSCORE_STATE_FILE" "${HIGHSCORE_STATE_FILE}.bak" 2>/dev/null || true
+            state=""
+        elif [[ "$(printf '%s' "$state" | jq -r '.schema_version // 0')" != "$HIGHSCORE_SCHEMA_VERSION" ]]; then
+            highscore_log "schema mismatch - discarding old highscores (backup kept)"
+            cp "$HIGHSCORE_STATE_FILE" "${HIGHSCORE_STATE_FILE}.bak" 2>/dev/null || true
+            state=""
+        fi
     fi
+    [[ -n "$state" ]] || state=$(_hs_fresh_state)
 
-    return 1
+    local result
+    result=$(printf '%s' "$state" | jq -c "$@" "$program" 2>/dev/null) || return 1
+    [[ -n "$result" ]] || return 1
+    printf '%s' "$result" | jq -c '.state' | limit_atomic_write "$HIGHSCORE_STATE_FILE" || return 1
+    printf '%s' "$result" | jq -r '.out'
 }
 
-# Get current window tokens
-# Usage: get_window_tokens <window>
-get_window_tokens() {
-    local window="${1:-5h}"
-
-    init_state
-
-    local tokens
-    if [[ "${window}" == "5h" ]]; then
-        tokens=$(jq -r '.window_tokens_5h // 0' "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
-    else
-        tokens=$(jq -r '.window_tokens_7d // 0' "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
-    fi
-
-    [[ "${tokens}" == "null" ]] && tokens=0
-    echo "${tokens}"
+_hs_rmw() {
+    limit_with_lock "$HIGHSCORE_LOCK" _hs_rmw_locked "$@"
 }
 
-# Set window tokens
-# Usage: set_window_tokens <window> <tokens>
-set_window_tokens() {
-    local window="${1:-5h}"
-    local tokens="${2:-0}"
-
-    init_state
-
-    local tmp_file
-    tmp_file=$(mktemp)
-
-    if [[ "${window}" == "5h" ]]; then
-        jq ".window_tokens_5h = ${tokens}" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
-            mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
-    else
-        jq ".window_tokens_7d = ${tokens}" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
-            mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
-    fi
-}
-
-# =============================================================================
-# Subagent window token tracking (persistent across restarts)
-# =============================================================================
-
-# Get subagent window tokens
-# Usage: get_subagent_window_tokens <window>
-get_subagent_window_tokens() {
-    local window="${1:-5h}"
-
-    init_state
-
-    local tokens
-    if [[ "${window}" == "5h" ]]; then
-        tokens=$(jq -r '.subagent_window_5h // 0' "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
-    else
-        tokens=$(jq -r '.subagent_window_7d // 0' "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
-    fi
-
-    [[ "${tokens}" == "null" ]] && tokens=0
-    echo "${tokens}"
-}
-
-# Set subagent window tokens
-# Usage: set_subagent_window_tokens <window> <tokens>
-set_subagent_window_tokens() {
-    local window="${1:-5h}"
-    local tokens="${2:-0}"
-
-    init_state
-
-    local tmp_file
-    tmp_file=$(mktemp)
-
-    if [[ "${window}" == "5h" ]]; then
-        jq ".subagent_window_5h = ${tokens}" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
-            mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
-    else
-        jq ".subagent_window_7d = ${tokens}" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
-            mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
-    fi
-}
-
-# Get subagent baseline (saved at last window reset)
-# Usage: get_subagent_baseline <window>
-get_subagent_baseline() {
-    local window="${1:-5h}"
-
-    init_state
-
-    local baseline
-    if [[ "${window}" == "5h" ]]; then
-        baseline=$(jq -r '.subagent_baseline_5h // 0' "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
-    else
-        baseline=$(jq -r '.subagent_baseline_7d // 0' "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
-    fi
-
-    [[ "${baseline}" == "null" ]] && baseline=0
-    echo "${baseline}"
-}
-
-# Set subagent baseline (called at window reset)
-# Usage: set_subagent_baseline <window> <tokens>
-set_subagent_baseline() {
-    local window="${1:-5h}"
-    local tokens="${2:-0}"
-
-    init_state
-
-    local tmp_file
-    tmp_file=$(mktemp)
-
-    if [[ "${window}" == "5h" ]]; then
-        jq ".subagent_baseline_5h = ${tokens}" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
-            mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
-    else
-        jq ".subagent_baseline_7d = ${tokens}" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
-            mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
-    fi
-}
-
-# Reset subagent tracking for a window (called when window resets)
-# Sets baseline to current total and window to 0
-# Usage: reset_subagent_window <window> <current_subagent_total>
-reset_subagent_window() {
-    local window="${1:-5h}"
-    local current_total="${2:-0}"
-
-    init_state
-
-    local tmp_file
-    tmp_file=$(mktemp)
-
-    if [[ "${window}" == "5h" ]]; then
-        jq ".subagent_baseline_5h = ${current_total} | .subagent_window_5h = 0" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
-            mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
-    else
-        jq ".subagent_baseline_7d = ${current_total} | .subagent_window_7d = 0" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
-            mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
-    fi
-}
-
-# Normalize reset time to hour (round to nearest hour)
-# API sometimes returns :59:59, sometimes :00:00 for same reset
-# This function extracts YYYY-MM-DD HH for comparison
-# Usage: normalize_reset_hour <reset_time>
-normalize_reset_hour() {
-    local reset_time="${1:-}"
-
-    if [[ -z "${reset_time}" ]] || [[ "${reset_time}" == "null" ]]; then
-        echo ""
-        return
-    fi
-
-    # Extract date and hour from ISO timestamp (e.g., 2026-01-19T12:00:00.123+00:00 -> 2026-01-19T12)
-    # Handle both :59:59 and :00:00 by rounding: add 30 minutes then truncate to hour
-    local epoch_seconds
+_hs_epoch() {
+    local iso="${1:-}"
+    [[ -z "$iso" || "$iso" == "null" ]] && { echo ""; return; }
     if date --version >/dev/null 2>&1; then
-        # GNU date (Linux)
-        epoch_seconds=$(date -d "${reset_time} + 30 minutes" "+%s" 2>/dev/null) || { echo "${reset_time:0:13}"; return; }
-        date -d "@${epoch_seconds}" "+%Y-%m-%dT%H" 2>/dev/null || echo "${reset_time:0:13}"
+        date -d "$iso" +%s 2>/dev/null || echo ""
     else
-        # BSD date (macOS)
-        local clean_time="${reset_time%%.*}"
-        clean_time="${clean_time%%+*}"
-        epoch_seconds=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${clean_time}" "+%s" 2>/dev/null) || { echo "${reset_time:0:13}"; return; }
-        epoch_seconds=$((epoch_seconds + 1800))
-        date -r "${epoch_seconds}" "+%Y-%m-%dT%H" 2>/dev/null || echo "${reset_time:0:13}"
+        local clean="${iso%%.*}"
+        clean="${clean%%+*}"
+        date -j -u -f "%Y-%m-%dT%H:%M:%S" "$clean" +%s 2>/dev/null || echo ""
     fi
 }
 
-# Check if window has reset and reset tokens if needed
-# Usage: check_reset <window> <new_reset_time>
-# Returns: 0 if reset detected (tokens reset to 0), 1 if no reset
-check_reset() {
-    local window="${1:-5h}"
-    local new_reset_time="${2:-}"
-
-    init_state
-
-    if [[ -z "${new_reset_time}" ]] || [[ "${new_reset_time}" == "null" ]]; then
-        return 1
-    fi
-
-    local last_reset_key
-    if [[ "${window}" == "5h" ]]; then
-        last_reset_key="last_5h_reset"
-    else
-        last_reset_key="last_7d_reset"
-    fi
-
-    local last_reset
-    last_reset=$(jq -r ".${last_reset_key} // \"\"" "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
-
-    # Normalize both times to hour for comparison
-    # This prevents false resets when API returns :59:59 vs :00:00
-    local new_hour last_hour
-    new_hour=$(normalize_reset_hour "${new_reset_time}")
-    last_hour=$(normalize_reset_hour "${last_reset}")
-
-    # If normalized hour changed, window has actually reset
-    if [[ "${new_hour}" != "${last_hour}" ]]; then
-        local tmp_file
-        tmp_file=$(mktemp)
-
-        # Update last reset time and reset window tokens to 0
-        if [[ "${window}" == "5h" ]]; then
-            jq ".last_5h_reset = \"${new_reset_time}\" | .window_tokens_5h = 0" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
-                mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
-        else
-            jq ".last_7d_reset = \"${new_reset_time}\" | .window_tokens_7d = 0" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
-                mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
-        fi
-        return 0
-    fi
-
-    return 1
+# Track a limit window and detect resets.
+# Usage: window_track <5h|7d> <api_pct|""> <resets_at_iso|""> [now]
+# Prints "<window_start_epoch> <reset_detected 0|1>"; the start is -1 when it is
+# unknown (no resets_at seen yet and none passed) - callers must skip that window.
+# A reset is detected when
+#   a) resets_at moved to a different hour (normal case), or
+#   b) the utilization dropped sharply (> 20 points, or below half of a value
+#      >= 10) while resets_at stayed the same - the window then starts at the
+#      last sample before the drop, or
+#   c) now is past the stored resets_at (stale cache) - the new window starts at
+#      the old resets_at.
+# With an empty api/resets_at (API unavailable) the stored values are used.
+window_track() {
+    local win="$1" api="${2:-}" reset_iso="${3:-}" now="${4:-$(date +%s)}"
+    local dur=18000
+    [[ "$win" == "7d" ]] && dur=604800
+    local reset_epoch
+    reset_epoch=$(_hs_epoch "$reset_iso")
+    [[ "$api" =~ ^[0-9]+(\.[0-9]+)?$ ]] || api=""
+    _hs_rmw '
+        def hour(e): ((e + 1800) / 3600 | floor);
+        (.windows[$w] // {}) as $p
+        | ($p.reset_epoch // null) as $prev
+        | (if $r == "" then $prev else ($r | tonumber) end) as $new
+        | (if $a == "" then null else ($a | tonumber) end) as $api
+        | ($p.override // 0) as $ov0
+        | (if $prev != null and $new != null and hour($new) != hour($prev) then {d: 1, ov: 0}
+           elif $prev != null and $now > $prev and hour($new) == hour($prev) and $ov0 != $prev
+               then {d: 1, ov: $prev}
+           elif $api != null and $p.last_api != null
+               and (($p.last_api - $api) > 20 or ($p.last_api >= 10 and $api < ($p.last_api / 2)))
+               then {d: 1, ov: ($p.last_seen // $now)}
+           else {d: 0, ov: $ov0} end) as $res
+        | (if $new == null then (if $res.ov > 0 then $res.ov else -1 end)
+           else ([$new - $dur, $res.ov] + (if $now >= $new then [$new] else [] end) | max) end) as $start
+        | .windows[$w] = {reset_epoch: $new, override: $res.ov,
+                          last_api: ($api // $p.last_api), last_seen: (if $api != null then $now else $p.last_seen end)}
+        | {state: ., out: "\($start | floor) \($res.d)"}
+    ' --arg w "$win" --arg a "$api" --arg r "${reset_epoch:-}" \
+      --argjson now "$now" --argjson dur "$dur"
 }
 
-# Update the current plan in state
-# Usage: set_current_plan <plan>
-set_current_plan() {
-    local plan="${1:-unknown}"
-
-    init_state
-
-    local tmp_file
-    tmp_file=$(mktemp)
-    jq ".plan = \"${plan}\"" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
-        mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
+# Record window tokens: raise the highscore and collect an Est100% sample.
+# Usage: highscore_record <plan> <5h|7d> <window_id> <window_tokens> <api_pct|""> [now]
+# window_id identifies the current window (its start epoch); a new id starts a
+# new sample set and keeps the old median as fallback.
+# Prints JSON {hs, est, src} (est null when unknown, src "cur" or "prev").
+highscore_record() {
+    local plan="${1:-unknown}" win="$2" wid="${3:-0}" tokens="${4:-0}" api="${5:-}" now="${6:-$(date +%s)}"
+    [[ "$tokens" =~ ^[0-9]+$ ]] || tokens=0
+    [[ "$api" =~ ^[0-9]+(\.[0-9]+)?$ ]] || api=""
+    _hs_rmw '
+        def median: sort | length as $n
+            | if $n == 0 then null
+              elif $n % 2 == 1 then .[($n - 1) / 2]
+              else ((.[$n / 2 - 1] + .[$n / 2]) / 2) end;
+        .plan = $plan
+        | (.highscores[$plan][$w] // $defaults[$plan][$w] // $defaults.unknown[$w]) as $hs0
+        | ([$hs0, $tok] | max) as $hs
+        | .highscores[$plan][$w] = $hs
+        | (.est[$w] // {id: null, samples: [], prev: null}) as $e0
+        | (if $e0.id != $wid
+             then {id: $wid, samples: [],
+                   prev: (($e0.samples | map(.[1]) | median) // $e0.prev)}
+             else $e0 end) as $e1
+        | (if $a != "" and ($a | tonumber) >= $min and ($a | tonumber) <= 100 and $tok > 0
+              and (($e1.samples | last | .[0]) != ($a | tonumber))
+             then $e1 | .samples = ((.samples + [[($a | tonumber), ($tok * 100 / ($a | tonumber) | round)]]) | .[-50:])
+             else $e1 end) as $e
+        | .est[$w] = $e
+        | ($e.samples | map(.[1]) | median) as $cur
+        | {state: ., out: ({hs: $hs,
+                            est: (if $cur != null then ($cur | round) elif $e.prev != null then ($e.prev | round) else null end),
+                            src: (if $cur == null and $e.prev != null then "prev" else "cur" end)} | tojson)}
+    ' --arg plan "$plan" --arg w "$win" --argjson wid "$wid" --argjson tok "$tokens" \
+      --arg a "$api" --argjson min "$EST_MIN_PCT" --argjson defaults "$HIGHSCORE_DEFAULTS"
 }
 
-# Get current plan from state
-# Usage: get_current_plan
-get_current_plan() {
-    init_state
-
-    local plan
-    plan=$(jq -r '.plan // "unknown"' "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
-    [[ "${plan}" == "null" ]] && plan="unknown"
-    echo "${plan}"
+# Read-only helpers (show-highscores, debug). Print nothing when unreadable.
+get_highscore() {
+    local plan="${1:-unknown}" win="${2:-5h}"
+    limit_read_json "$HIGHSCORE_STATE_FILE" 2>/dev/null \
+        | jq -r --arg p "$plan" --arg w "$win" --argjson d "$HIGHSCORE_DEFAULTS" \
+            '.highscores[$p][$w] // $d[$p][$w] // $d.unknown[$w]' 2>/dev/null
 }
 
-# Update limit_at value (when user hits 100% on API)
-# Usage: set_limit_at <plan> <window> <tokens>
-set_limit_at() {
-    local plan="${1:-unknown}"
-    local window="${2:-5h}"
-    local tokens="${3:-0}"
-
-    init_state
-
-    local tmp_file
-    tmp_file=$(mktemp)
-    jq ".limits_at[\"${plan}\"][\"${window}\"] = ${tokens}" "${HIGHSCORE_STATE_FILE}" > "${tmp_file}" && \
-        mv "${tmp_file}" "${HIGHSCORE_STATE_FILE}"
-}
-
-# Get limit_at value
-# Usage: get_limit_at <plan> <window>
-get_limit_at() {
-    local plan="${1:-unknown}"
-    local window="${2:-5h}"
-
-    init_state
-
-    local limit
-    limit=$(jq -r ".limits_at[\"${plan}\"][\"${window}\"] // null" "${HIGHSCORE_STATE_FILE}" 2>/dev/null)
-    echo "${limit}"
-}
-
-# =============================================================================
-# CLI interface for testing
-# =============================================================================
-
-# If script is called directly (not sourced), provide CLI interface
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     case "${1:-}" in
-        init)
-            init_state
-            echo "State file initialized: ${HIGHSCORE_STATE_FILE}"
-            ;;
-        get-highscore)
-            get_highscore "${2:-unknown}" "${3:-5h}"
-            ;;
-        update-highscore)
-            if update_highscore "${2:-unknown}" "${3:-5h}" "${4:-0}"; then
-                echo "Highscore updated"
-            else
-                echo "No update (current value higher)"
-            fi
-            ;;
-        get-window-tokens)
-            get_window_tokens "${2:-5h}"
-            ;;
-        set-window-tokens)
-            set_window_tokens "${2:-5h}" "${3:-0}"
-            echo "Window tokens set"
-            ;;
-        check-reset)
-            if check_reset "${2:-5h}" "${3:-}"; then
-                echo "Reset detected, window tokens reset to 0"
-            else
-                echo "No reset"
-            fi
-            ;;
-        get-plan)
-            get_current_plan
-            ;;
-        set-plan)
-            set_current_plan "${2:-unknown}"
-            echo "Plan set to ${2:-unknown}"
-            ;;
-        show)
-            jq . < "${HIGHSCORE_STATE_FILE}" 2>/dev/null
-            ;;
-        *)
-            echo "Usage: $0 <command> [args]"
-            echo ""
-            echo "Commands:"
-            echo "  init                          Initialize state file"
-            echo "  get-highscore <plan> <window> Get highscore (e.g., max20 5h)"
-            echo "  update-highscore <plan> <window> <tokens>"
-            echo "  get-window-tokens <window>    Get current window tokens"
-            echo "  set-window-tokens <window> <tokens>"
-            echo "  check-reset <window> <reset_time>"
-            echo "  get-plan                      Get current plan"
-            echo "  set-plan <plan>               Set current plan"
-            echo "  show                          Show full state"
-            ;;
+        show) jq . "$HIGHSCORE_STATE_FILE" 2>/dev/null ;;
+        get-highscore) get_highscore "${2:-unknown}" "${3:-5h}" ;;
+        *) echo "Usage: $0 <show|get-highscore <plan> <5h|7d>>" ;;
     esac
 fi
