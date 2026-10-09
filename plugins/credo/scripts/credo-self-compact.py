@@ -405,7 +405,9 @@ def worker(plan_file):
 
     signal.signal(signal.SIGTERM, on_term)
     pane = wk.Pane(plan, csr.pane_owner_error, lambda: marker_cancelled(plan), log,
-                   wk.timing("CREDO_SELF_COMPACT"))
+                   wk.timing("CREDO_SELF_COMPACT"),
+                   on_blocked=lambda r: ntfy("credo: self-compact blocked",
+                                             wk.blocked_text("self-compact", plan["pane"]), plan))
     stage = "wait"
     try:
         end = time.time() + max(0.0, float(plan.get("delay") or 0))

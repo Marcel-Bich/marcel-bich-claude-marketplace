@@ -2,210 +2,37 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-10
 
-## dogma
-
-### v1
-
-#### v1.45
-
-##### v1.45.1
-
-###### Fixed
-
-- bash-guard: strings that are executed in a way the analyser cannot follow (the arguments and input of a command word chosen at run time, launcher option values, tmux command strings and send-keys text) are parsed as shell text with an unknown working directory, so relative delete targets fail closed; text that cannot be parsed is refused when a delete-capable verb with an operand appears in it. Plain arguments and stdin of ordinary programs (commit messages, test filters, clipboard tools, database clients) are not treated as shell text
-- bash-guard: sudo -s/-i, doas -s, su and runuser without a command are handled like a shell reading its script from stdin
-- bash-guard: tmux command names resolve by alias and unique prefix, ";" at the end of an argument splits commands, nested command strings (if-shell, confirm-before, bind-key, set-hook and similar) go through the same tmux analysis, and send-keys text is checked with an unknown working directory (hex keys decoded, single keys joined, unclear keys fail closed)
-- bash-guard: wsl.exe honours --cd, ~ and other distributions for the working directory and checks the joined command line its shell runs; bwrap with an unknown option runs with an unknown working directory
-- bash-guard: awk programs are only checked through system(), print | and getline, so patterns such as /mv / no longer count as commands
-- bash-guard: brace expansion is bounded (long words such as a JSON document are not expanded), the time budget is checked inside the analysis loops, and long or pathological arguments are analysed in linear time
-- bash-guard: every refusal of a git hook bypass (core.hooksPath, HUSKY=0/SKIP=, --no-verify, commit -n) now ends with the same hint to make a normal commit and to fix or report a failing hook
-- delete-guard: string arguments of a command word chosen at run time that contain a delete command are checked with an unknown working directory
-
-##### v1.45.0
-
-###### Added
-
-- `scripts/bash-guard.py`: shell-aware analysis of Bash commands for the guard hooks (quoting, variables, wrappers, nested shells, substitutions, heredocs, `cd` tracking, abbreviated long options); every simple command is checked on its own
-- Protected paths now also cover mount points, devices, the working directory and its parents, and whole repositories or worktrees; `CLAUDE_MB_DOGMA_PROTECTED_MOUNTS` adds mount points
-- `scripts/test-guard-parity.py` with shared case tables in `scripts/guard-cases/` (review rounds, audit probes, everyday commands that must pass)
-
-###### Changed
-
-- Hardened the delete guard: commands whose command word is only known at run time, archive/sync tools that delete their sources, data-destroying git commands with a redirected work tree or git dir, filesystem wipe tools and Windows-side deletion from WSL are blocked; inline interpreter code is checked for deletes near protected paths
-- File protection, git permissions, token protection and dependency verification use the shell-aware analysis when python3 exists (text patterns remain the fallback); data-destroying git commands follow the delete setting, and words inside commit messages or search patterns no longer trigger the guards
-- Git hook bypasses (`--no-verify`, also abbreviated, hook path overrides, hook-skipping variables) are blocked
-- Both guards share one option parser (`scripts/dogma_getopt.py`) for cp, mv, install, ln, rm, unlink, rmdir, rsync, su, runuser and the env, sudo and doas wrappers: bundled short options, abbreviated long options (exact match for rsync, unknown rsync options are blocked), and both the GNU and the `POSIXLY_CORRECT` reading of the arguments are checked; an `env -S` string is split by the GNU env rules and refused when it uses an escape or expansion those rules do not allow; unknown wrapper options make relative targets fail closed
-- Commands that start in another working directory are checked there (`env -C`, `sudo -D`, systemd-run, tmux, bwrap, nsenter, unshare, start-stop-daemon); where it is not known before running (a login with `sudo -i` or `su -`, a systemd service, a new tmux window) relative targets fail closed, and a command run below another root or mount namespace (chroot, nsenter/unshare with a root or mount namespace, bwrap with remapped paths) is blocked
-- `rm`, `unlink`, `rmdir` and `mv` of a symlink act on the link itself and are no longer blocked when it points at a protected path; `..` after a symlink component is resolved against the link target, as the kernel does, and a path whose component before `..` does not exist yet is blocked
-
-#### v1.44
-
-##### v1.44.4
-
-###### Fixed
-
-- German-only language rules now fire on German text only: the write reminder's "Keep it in
-  German" note and the post-write ASCII umlaut check (fuer -> für) use a stricter shared
-  detection (`lib-german.sh`) instead of substring matches that also hit English or other
-  languages. Quoted text and code are ignored, and German function words must be a
-  meaningful share of all words and clearly outweigh English ones
-- An English file that quotes German examples is no longer reported as German, and a
-  bilingual file gets no language note instead of a wrong one
-- A German file is no longer reported as English because German prose contains "in" / "is"
-- `/dogma:force` examples show the real umlauts again (they had been stripped to "fur",
-  "konnen"); `/dogma:cleanup` and the prompt reminder state the umlaut rule is German text only
-- New `scripts/test-german-detection.sh` checks German, English, French, Spanish, Dutch and
-  Portuguese samples, English text with German quotes and code, and a bilingual document
-  against the detection and both hooks
-
-##### v1.44.3
-
-###### Fixed
-
-- dogma band no longer shows a "blocked" line forever: the notice is time-stamped and hidden after 15 s even when a plugin reload cut its timer short, and a new session starts without it
-
-##### v1.44.2
-
-###### Fixed
-
-- Delete guard only analyzes a segment whose command word can delete, move or link; a verb inside an argument (a file name, a grep pattern with <...>) no longer blocks harmless commands
-
-##### v1.44.1
-
-###### Changed
-
-- Notice tests use an invented project name instead of a real one
-
-##### v1.44.0
-
-###### Added
-
-- Always-on delete guard: blocks deleting, moving or symlinking onto protected paths (/, first-level dirs, /home depth 0-2, the home and its children); targets are resolved first (~, $HOME, cwd and cd, symlinks, glob base), unresolvable targets are blocked, fails closed without python3
-
-###### Security
-
-- A symlink under /tmp pointing at a protected directory can no longer route a recursive delete past the /tmp allowance
-
-#### v1.43
-
-##### Added
-
-- DOGMA-PERMISSIONS.md is picked by action target, pinned project, then session folder, with per-id inheritance (default on)
-- Notices also show in non-git folders and for pinned projects that inherit permissions
-
-#### v1.42
-
-##### Added
-
-- Source broadcasts via NOTICES.md
-- `CLAUDE_MB_DOGMA_SOURCE` for sync and recommended setup
-- Per-folder git identity for the source fetch
-
-#### v1.41
-
-##### Added
-
-- Stable setting ids (`§xxxx`) matched first with a text fallback, plus an id registry
-- changelog.d assembly in `/dogma:versioning`
-
-#### v1.40
-
-##### Added
-
-- Worktree files list (link or copy, `.credo/` included by default) and a cleanup-merged-worktrees checkbox
-
-##### Changed
-
-- Subagents may commit in their own worktree, never push or merge
-
-#### v1.39
-
-##### Added
-
-- One-time per-repo update notices for updates that need user action (Run/Later/Never), with an optional band toast
-
-#### v1.38
-
-##### Added
-
-- Final Verification option to run all tests only at release
-
-#### v1.37
-
-##### Added
-
-- Optional per-stage test commands (commit, push, relevant, build, all) with branch filters
-
-#### v1.36
-
-##### Added
-
-- Optional Claude Code band showing restricting permissions with change highlights
-
-#### v1.35
-
-##### Added
-
-- `permissions-summary.sh` listing only the restricting DOGMA-PERMISSIONS entries
-
-## limit
-
-### v2
-
-#### v2.36
-
-##### v2.36.1
-
-###### Added
-
-- `scripts/test-inject-status.sh`: fixture test for the main-session-only ACTION, the untouched main state on subagent calls, the reset after a drop (also inside the throttle interval) and malformed input
-
-###### Fixed
-
-- The threshold ACTION line is injected into the main session only: a tool call inside a subagent (`agent_id` in the hook input) no longer receives it and never writes the main session's inject state (fired thresholds, throttle, delta baseline), so the main session still gets the ACTION on its next prompt or tool call; a subagent gets at most the plain status line, throttled by its own per-agent state file
-- A threshold reset (fill dropped back below it, e.g. after a compact) is persisted for the main session even when no status line is written on that call, so the threshold fires again when the fill climbs back before the next line
-
-##### v2.36.0
-
-###### Added
-
-- One deduplicated token ledger (`scripts/usage-ledger.sh`) for main agent and subagents: transcript lines are counted once per API message (`message.id` + `requestId`, last line wins), read incrementally without consuming a partial trailing line, and summed into 5-minute buckets so window tokens come from timestamps
-- `[Est100%:X]` on the 5h / 7d device lines: median of window tokens / (API% / 100) over samples at >= 20 % in the current window, falling back to the previous window (`~`). It is a per-device value (only this device's transcripts are readable, API% is account-wide) and a lower bound with parallel use on other devices; no samples are taken while the transcript backfill is incomplete or the API numbers are older than `CLAUDE_MB_LIMIT_EST_MAX_AGE` (default 120 s)
-- `[AvgPeak:X%]` (average peak per completed window) and `[Avg:Y%/h]` / `[Avg:Y%/d]` (average consumption incl. idle time) from the history; history entries now record `resets_at`
-- Further limits from the API's `limits[]` list (e.g. `weekly_scoped` per model) as their own lines (`CLAUDE_MB_LIMIT_SCOPED`)
-- `[stale Xm]` when the usage cache is older than `CLAUDE_MB_LIMIT_STALE_AFTER` (default 600 s); after `resets_at` a limit shows `0.0% ... (reset)`
-- `scripts/state-io.sh`: shared lock, atomic write, safe read, debug flag, half-up rounding and backoff helpers
-- Fixture tests: `test-usage-ledger.sh` (duplicated message ids, split messages, partial lines, parallel scans, pricing), `test-local-tracking.sh` (reset detection incl. utilization drop with unchanged `resets_at`, parallel writers, Est100%, averages, backoff), `test-statusline-render.sh` (end-to-end render, parallel renders)
-
-###### Changed
-
-- Tokens line shows the session sums (main agent + its subagents) from the ledger: Input incl. cache writes, Output, Cached (cache reads); it falls back to `LastReq` (last request from stdin) when the ledger is unreadable
-- Window tokens, highscores and LifetimeTotal count work tokens (input + output + cache writes); cache reads are tracked and shown separately
-- LifetimeTotal and `/limit:highscore` price usage per concrete model id with cache writes by TTL; models without a known price show `$X+n/a` instead of Opus pricing
-- Window resets are also detected on a sharp utilization drop (> 20 points or below half) with an unchanged `resets_at`, and when `resets_at` has passed
-- All state read-modify-writes run under a lock with atomic writes; an unreadable state skips the local values for one render instead of counting from 0
-- A 429 stores one `retry_at`; the statusline shows exactly that countdown and `refresh-usage.sh` does not call the API before it
-- `CLAUDE_MB_LIMIT_DEBUG` accepts `true`/`1`/`yes`/`on` in every script
-- `/limit:highscore` uses `CLAUDE_MB_LIMIT_DEVICE_LABEL` and shows Est100%, window tokens with cache reads and a per-model lifetime breakdown
-- Transcript reading is linear in the bytes read (grep prefilter, one streaming jq pass, one awk pass for dedup and sums) and always bounded: the render reads about `CLAUDE_MB_LIMIT_SESSION_SCAN_BYTES` (default 2 MiB) of the current transcript per render (a single longer line is read whole), the global scan runs detached with a time budget (default 25 s, checked with millisecond resolution) (optional byte budget `CLAUDE_MB_LIMIT_SCAN_BYTES`), small transcripts are read in batches, and both resume from stored byte offsets with unfinished files marked pending, so a first backfill never blocks the statusline. The render-time scan is gated per transcript and writes nothing when the transcript did not grow; entries of deleted transcripts are pruned (lifetime totals stay; a transcript read or marked pending in the same run is never pruned). Transcript paths are canonicalized, so one file is never counted under two spellings. Known limit: deduplication is per file, so an API message present in two transcripts (e.g. a subagent sidechain and its parent) is counted in both (about 1 %)
-- Fewer jq calls per render: highscore/window updates and the ledger summary each read their state in a single jq pass
-- Highscore state schema 2: highscores and LimitAt values of the old counting scheme are discarded once (a `.bak` copy is kept)
-
-###### Removed
-
-- `[LimitAt:...]` and the `[Average:L%/A%]` display (both halves read the same field)
-- The stdin delta accounting (`limit-usage-state_<profile>.json`, no longer written) with its false "session reset" path, and the separate main/subagent scanner states (`subagent-tokens.sh` is a compatibility wrapper now)
-
-###### Fixed
-
-- Token counts were ~2.3x too high because every content-block line of a message was counted
-- Main-agent window tokens measured context growth and re-added the full context on almost every other turn
-- Mid-window drops caused by empty reads of non-atomically written state files (subagent baseline reset)
-- `test-local-tracking.sh` deleted and rewrote the real state file; it now runs in a temp profile
-
 ## credo
 
 ### v0
+
+#### v0.78
+
+##### v0.78.0
+
+###### Added
+
+- Peer metadata for orchestrators: `credo-peer-check.py` shows per peer its credo session mode, credo role, model, effort level, credo directory decision, project (cwd basename) and status (idle / busy / waiting) in a new `META` column (`meta` in `--json`); `-` means unknown
+- `hooks/credo-peer-meta-record.sh` (SessionStart + UserPromptSubmit) records model, effort and the credo directory decision per session; disable with `CREDO_PEER_META_RECORD=0`
+- `credo-peer-check.py sender --from uds:<socket>` prints the metadata of one peer; the peer-message hook adds it to incoming peer messages as one `[credo-peer-sender]` line (`CREDO_PEER_SENDER_META=0` turns it off)
+- LAN relay rosters publish the same metadata per session, read from the sender's own credo state; the receiver stores only whitelisted values in the mirror descriptor (`credoPeerMeta`). The project name is opt-in (`"publish_project": true` or `CREDO_PEER_LAN_META_PROJECT=1`); `"publish_meta": false` or `CREDO_PEER_LAN_META=0` stops LAN metadata publication
+- Tests: `test-credo-peer-meta-record.sh`; metadata cases in `test-credo-peer-check.sh`, `test-credo-peer-message.sh` and the MD block of `test-credo-peer-lan.sh`
+
+###### Changed
+
+- compact-plus and session-autonomous: in autonomous mode the first compact-plus ACTION already leads to compact-plus plus the self-compact (`credo-self-compact.py run --auto`) right after a green report, without asking, unless something important speaks against it; the ACTION is for the main session only, a subagent that sees one ignores it
+- self-reload, self-compact and self-restart: when no input box is visible, the pane guard now names the cause in the log ("permission prompt open, waiting for the user: ..." or "no input box, dialog or menu open: ...") instead of only "no empty prompt input box visible". A permission prompt raised by a background agent replaces the input box in the main pane while the session itself looks idle; this, not the footer layout, made the workers wait until their 1800 s timeout
+- self-reload, self-compact and self-restart: a classified dialog or permission prompt that blocks the pane for 120 s (`CREDO_SELF_RELOAD_BLOCKED_NOTIFY`, `CREDO_SELF_COMPACT_BLOCKED_NOTIFY`, `CREDO_SELF_RESTART_IDLE_BLOCKED_NOTIFY`; 0 = off) now sends one early ntfy push per blocked wait asking to answer it (without the dialog text); the generic "no input box" state (maybe a pane that is not Claude Code) never counts as blocked; the worker keeps waiting and continues by itself once the dialog is closed. Dialogs are still never typed into
+- Peer trust guard is quiet by default: a recognized peer trust grant (Bash or Write/Edit/MultiEdit) no longer returns a permission "ask" - which overrode allow rules and bypass mode and blocked autonomous runs with peers - but a non-blocking reminder that only the user grants trust and that an unrequested grant must be revoked right away (`trust remove`) and reported. Strict mode (confirm every grant) via config `peer.trust_guard.quiet: false` or env `CREDO_PEER_TRUST_GUARD_QUIET=false` (env wins); the key is read from the global and profile layers only, so a repo's `.credo/config` cannot downgrade it; without python3 the config is not read and only the env variable selects strict mode; strict mode also asks on obfuscated forms (arguments from variables or command substitution, `$'...'`, brace expansion, globs, `eval`, `bash -c` with variable code, a trust file name built from variables or string pieces); the guard is documented as a best-effort reminder, not a security boundary; `/credo:setup` Step 12 explains the switch and sets it on request, `check-setup.sh` reports it (`peer_trust_guard`)
+- Sender metadata line of incoming peer messages is labelled self-reported and unverified; each key=value pair is validated on its own (same whitelist as `credo_peer_meta.py`): no brackets except a context suffix like `[1m]` on the model, status only `idle`, `busy` or `waiting`
+
+###### Fixed
+
+- Peer trust guard false positives: a shell-aware parser (`scripts/credo_trust_guard.py`) replaces the text match. It flags a run of `credo-peer-lan.py` with `trust` and later `add` (direct, via python3, wrappers or a variable command word) and writes to the trust file (redirects, cp/mv/tee/ln/install/rsync/dd, sed -i, perl -i, truncate, rm, chmod, interpreter code with the file as a path literal), but no longer mentions: read-only commands (cat, grep, jq, ls), commit messages, echo strings and heredoc bodies such as a python3 heredoc editing another JSON doc. Unparsable commands get a cautious line check; without python3 the old text match applies
+
+###### Security
+
+- Metadata is informational only: every value passes a strict whitelist (enums including status, short fixed charset, model brackets only as a trailing context suffix such as `[1m]`, unknown keys dropped) and it never reaches the message envelope, trust, routing or any permission decision
 
 #### v0.77
 
@@ -812,6 +639,207 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 ##### Added
 
 - Budget read-back shows the active profile, config layers and the source of each cap
+
+## dogma
+
+### v1
+
+#### v1.45
+
+##### v1.45.1
+
+###### Fixed
+
+- bash-guard: strings that are executed in a way the analyser cannot follow (the arguments and input of a command word chosen at run time, launcher option values, tmux command strings and send-keys text) are parsed as shell text with an unknown working directory, so relative delete targets fail closed; text that cannot be parsed is refused when a delete-capable verb with an operand appears in it. Plain arguments and stdin of ordinary programs (commit messages, test filters, clipboard tools, database clients) are not treated as shell text
+- bash-guard: sudo -s/-i, doas -s, su and runuser without a command are handled like a shell reading its script from stdin
+- bash-guard: tmux command names resolve by alias and unique prefix, ";" at the end of an argument splits commands, nested command strings (if-shell, confirm-before, bind-key, set-hook and similar) go through the same tmux analysis, and send-keys text is checked with an unknown working directory (hex keys decoded, single keys joined, unclear keys fail closed)
+- bash-guard: wsl.exe honours --cd, ~ and other distributions for the working directory and checks the joined command line its shell runs; bwrap with an unknown option runs with an unknown working directory
+- bash-guard: awk programs are only checked through system(), print | and getline, so patterns such as /mv / no longer count as commands
+- bash-guard: brace expansion is bounded (long words such as a JSON document are not expanded), the time budget is checked inside the analysis loops, and long or pathological arguments are analysed in linear time
+- bash-guard: every refusal of a git hook bypass (core.hooksPath, HUSKY=0/SKIP=, --no-verify, commit -n) now ends with the same hint to make a normal commit and to fix or report a failing hook
+- delete-guard: string arguments of a command word chosen at run time that contain a delete command are checked with an unknown working directory
+
+##### v1.45.0
+
+###### Added
+
+- `scripts/bash-guard.py`: shell-aware analysis of Bash commands for the guard hooks (quoting, variables, wrappers, nested shells, substitutions, heredocs, `cd` tracking, abbreviated long options); every simple command is checked on its own
+- Protected paths now also cover mount points, devices, the working directory and its parents, and whole repositories or worktrees; `CLAUDE_MB_DOGMA_PROTECTED_MOUNTS` adds mount points
+- `scripts/test-guard-parity.py` with shared case tables in `scripts/guard-cases/` (review rounds, audit probes, everyday commands that must pass)
+
+###### Changed
+
+- Hardened the delete guard: commands whose command word is only known at run time, archive/sync tools that delete their sources, data-destroying git commands with a redirected work tree or git dir, filesystem wipe tools and Windows-side deletion from WSL are blocked; inline interpreter code is checked for deletes near protected paths
+- File protection, git permissions, token protection and dependency verification use the shell-aware analysis when python3 exists (text patterns remain the fallback); data-destroying git commands follow the delete setting, and words inside commit messages or search patterns no longer trigger the guards
+- Git hook bypasses (`--no-verify`, also abbreviated, hook path overrides, hook-skipping variables) are blocked
+- Both guards share one option parser (`scripts/dogma_getopt.py`) for cp, mv, install, ln, rm, unlink, rmdir, rsync, su, runuser and the env, sudo and doas wrappers: bundled short options, abbreviated long options (exact match for rsync, unknown rsync options are blocked), and both the GNU and the `POSIXLY_CORRECT` reading of the arguments are checked; an `env -S` string is split by the GNU env rules and refused when it uses an escape or expansion those rules do not allow; unknown wrapper options make relative targets fail closed
+- Commands that start in another working directory are checked there (`env -C`, `sudo -D`, systemd-run, tmux, bwrap, nsenter, unshare, start-stop-daemon); where it is not known before running (a login with `sudo -i` or `su -`, a systemd service, a new tmux window) relative targets fail closed, and a command run below another root or mount namespace (chroot, nsenter/unshare with a root or mount namespace, bwrap with remapped paths) is blocked
+- `rm`, `unlink`, `rmdir` and `mv` of a symlink act on the link itself and are no longer blocked when it points at a protected path; `..` after a symlink component is resolved against the link target, as the kernel does, and a path whose component before `..` does not exist yet is blocked
+
+#### v1.44
+
+##### v1.44.4
+
+###### Fixed
+
+- German-only language rules now fire on German text only: the write reminder's "Keep it in
+  German" note and the post-write ASCII umlaut check (fuer -> für) use a stricter shared
+  detection (`lib-german.sh`) instead of substring matches that also hit English or other
+  languages. Quoted text and code are ignored, and German function words must be a
+  meaningful share of all words and clearly outweigh English ones
+- An English file that quotes German examples is no longer reported as German, and a
+  bilingual file gets no language note instead of a wrong one
+- A German file is no longer reported as English because German prose contains "in" / "is"
+- `/dogma:force` examples show the real umlauts again (they had been stripped to "fur",
+  "konnen"); `/dogma:cleanup` and the prompt reminder state the umlaut rule is German text only
+- New `scripts/test-german-detection.sh` checks German, English, French, Spanish, Dutch and
+  Portuguese samples, English text with German quotes and code, and a bilingual document
+  against the detection and both hooks
+
+##### v1.44.3
+
+###### Fixed
+
+- dogma band no longer shows a "blocked" line forever: the notice is time-stamped and hidden after 15 s even when a plugin reload cut its timer short, and a new session starts without it
+
+##### v1.44.2
+
+###### Fixed
+
+- Delete guard only analyzes a segment whose command word can delete, move or link; a verb inside an argument (a file name, a grep pattern with <...>) no longer blocks harmless commands
+
+##### v1.44.1
+
+###### Changed
+
+- Notice tests use an invented project name instead of a real one
+
+##### v1.44.0
+
+###### Added
+
+- Always-on delete guard: blocks deleting, moving or symlinking onto protected paths (/, first-level dirs, /home depth 0-2, the home and its children); targets are resolved first (~, $HOME, cwd and cd, symlinks, glob base), unresolvable targets are blocked, fails closed without python3
+
+###### Security
+
+- A symlink under /tmp pointing at a protected directory can no longer route a recursive delete past the /tmp allowance
+
+#### v1.43
+
+##### Added
+
+- DOGMA-PERMISSIONS.md is picked by action target, pinned project, then session folder, with per-id inheritance (default on)
+- Notices also show in non-git folders and for pinned projects that inherit permissions
+
+#### v1.42
+
+##### Added
+
+- Source broadcasts via NOTICES.md
+- `CLAUDE_MB_DOGMA_SOURCE` for sync and recommended setup
+- Per-folder git identity for the source fetch
+
+#### v1.41
+
+##### Added
+
+- Stable setting ids (`§xxxx`) matched first with a text fallback, plus an id registry
+- changelog.d assembly in `/dogma:versioning`
+
+#### v1.40
+
+##### Added
+
+- Worktree files list (link or copy, `.credo/` included by default) and a cleanup-merged-worktrees checkbox
+
+##### Changed
+
+- Subagents may commit in their own worktree, never push or merge
+
+#### v1.39
+
+##### Added
+
+- One-time per-repo update notices for updates that need user action (Run/Later/Never), with an optional band toast
+
+#### v1.38
+
+##### Added
+
+- Final Verification option to run all tests only at release
+
+#### v1.37
+
+##### Added
+
+- Optional per-stage test commands (commit, push, relevant, build, all) with branch filters
+
+#### v1.36
+
+##### Added
+
+- Optional Claude Code band showing restricting permissions with change highlights
+
+#### v1.35
+
+##### Added
+
+- `permissions-summary.sh` listing only the restricting DOGMA-PERMISSIONS entries
+
+## limit
+
+### v2
+
+#### v2.36
+
+##### v2.36.1
+
+###### Added
+
+- `scripts/test-inject-status.sh`: fixture test for the main-session-only ACTION, the untouched main state on subagent calls, the reset after a drop (also inside the throttle interval) and malformed input
+
+###### Fixed
+
+- The threshold ACTION line is injected into the main session only: a tool call inside a subagent (`agent_id` in the hook input) no longer receives it and never writes the main session's inject state (fired thresholds, throttle, delta baseline), so the main session still gets the ACTION on its next prompt or tool call; a subagent gets at most the plain status line, throttled by its own per-agent state file
+- A threshold reset (fill dropped back below it, e.g. after a compact) is persisted for the main session even when no status line is written on that call, so the threshold fires again when the fill climbs back before the next line
+
+##### v2.36.0
+
+###### Added
+
+- One deduplicated token ledger (`scripts/usage-ledger.sh`) for main agent and subagents: transcript lines are counted once per API message (`message.id` + `requestId`, last line wins), read incrementally without consuming a partial trailing line, and summed into 5-minute buckets so window tokens come from timestamps
+- `[Est100%:X]` on the 5h / 7d device lines: median of window tokens / (API% / 100) over samples at >= 20 % in the current window, falling back to the previous window (`~`). It is a per-device value (only this device's transcripts are readable, API% is account-wide) and a lower bound with parallel use on other devices; no samples are taken while the transcript backfill is incomplete or the API numbers are older than `CLAUDE_MB_LIMIT_EST_MAX_AGE` (default 120 s)
+- `[AvgPeak:X%]` (average peak per completed window) and `[Avg:Y%/h]` / `[Avg:Y%/d]` (average consumption incl. idle time) from the history; history entries now record `resets_at`
+- Further limits from the API's `limits[]` list (e.g. `weekly_scoped` per model) as their own lines (`CLAUDE_MB_LIMIT_SCOPED`)
+- `[stale Xm]` when the usage cache is older than `CLAUDE_MB_LIMIT_STALE_AFTER` (default 600 s); after `resets_at` a limit shows `0.0% ... (reset)`
+- `scripts/state-io.sh`: shared lock, atomic write, safe read, debug flag, half-up rounding and backoff helpers
+- Fixture tests: `test-usage-ledger.sh` (duplicated message ids, split messages, partial lines, parallel scans, pricing), `test-local-tracking.sh` (reset detection incl. utilization drop with unchanged `resets_at`, parallel writers, Est100%, averages, backoff), `test-statusline-render.sh` (end-to-end render, parallel renders)
+
+###### Changed
+
+- Tokens line shows the session sums (main agent + its subagents) from the ledger: Input incl. cache writes, Output, Cached (cache reads); it falls back to `LastReq` (last request from stdin) when the ledger is unreadable
+- Window tokens, highscores and LifetimeTotal count work tokens (input + output + cache writes); cache reads are tracked and shown separately
+- LifetimeTotal and `/limit:highscore` price usage per concrete model id with cache writes by TTL; models without a known price show `$X+n/a` instead of Opus pricing
+- Window resets are also detected on a sharp utilization drop (> 20 points or below half) with an unchanged `resets_at`, and when `resets_at` has passed
+- All state read-modify-writes run under a lock with atomic writes; an unreadable state skips the local values for one render instead of counting from 0
+- A 429 stores one `retry_at`; the statusline shows exactly that countdown and `refresh-usage.sh` does not call the API before it
+- `CLAUDE_MB_LIMIT_DEBUG` accepts `true`/`1`/`yes`/`on` in every script
+- `/limit:highscore` uses `CLAUDE_MB_LIMIT_DEVICE_LABEL` and shows Est100%, window tokens with cache reads and a per-model lifetime breakdown
+- Transcript reading is linear in the bytes read (grep prefilter, one streaming jq pass, one awk pass for dedup and sums) and always bounded: the render reads about `CLAUDE_MB_LIMIT_SESSION_SCAN_BYTES` (default 2 MiB) of the current transcript per render (a single longer line is read whole), the global scan runs detached with a time budget (default 25 s, checked with millisecond resolution) (optional byte budget `CLAUDE_MB_LIMIT_SCAN_BYTES`), small transcripts are read in batches, and both resume from stored byte offsets with unfinished files marked pending, so a first backfill never blocks the statusline. The render-time scan is gated per transcript and writes nothing when the transcript did not grow; entries of deleted transcripts are pruned (lifetime totals stay; a transcript read or marked pending in the same run is never pruned). Transcript paths are canonicalized, so one file is never counted under two spellings. Known limit: deduplication is per file, so an API message present in two transcripts (e.g. a subagent sidechain and its parent) is counted in both (about 1 %)
+- Fewer jq calls per render: highscore/window updates and the ledger summary each read their state in a single jq pass
+- Highscore state schema 2: highscores and LimitAt values of the old counting scheme are discarded once (a `.bak` copy is kept)
+
+###### Removed
+
+- `[LimitAt:...]` and the `[Average:L%/A%]` display (both halves read the same field)
+- The stdin delta accounting (`limit-usage-state_<profile>.json`, no longer written) with its false "session reset" path, and the separate main/subagent scanner states (`subagent-tokens.sh` is a compatibility wrapper now)
+
+###### Fixed
+
+- Token counts were ~2.3x too high because every content-block line of a message was counted
+- Main-agent window tokens measured context growth and re-added the full context on almost every other turn
+- Mid-window drops caused by empty reads of non-atomically written state files (subagent baseline reset)
+- `test-local-tracking.sh` deleted and rewrote the real state file; it now runs in a temp profile
 
 ## signal
 

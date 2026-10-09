@@ -34,7 +34,10 @@
 #   - return channel hardening (RH/RO/RP): proven address claims, same-source
 #     replacement, link caps, write deadline, per-link secret proofs for tie-break
 #     and replacement, --no-direct holders, busy relay retry, relay socket perms,
-#     old-peer marking, mirror machine rename.
+#     old-peer marking, mirror machine rename,
+#   - per-session metadata (MD): rosters carry the sender's own mode / role / model /
+#     effort / credo (project only on opt-in, all of it switchable off); the receiver keeps only whitelisted values in the
+#     mirror descriptor (credoPeerMeta), never in the envelope.
 #
 # Usage: bash test-credo-peer-lan.sh
 
@@ -4907,6 +4910,103 @@ while IFS= read -r line; do
 done <<< "$SD_OUT"
 case "$SD_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL SD: traceback\n%s\n' "$SD_OUT" ;; esac
 check "SD: expected number of results" "14" "$(printf '%s\n' "$SD_OUT" | grep -cE '^(PASS|FAIL) ')"
+
+# --- MD: per-session metadata (mode / role / model / effort / credo / project) ----
+# The sender publishes it per roster session, read fresh from its own credo state;
+# the receiver keeps only whitelisted enum / charset-checked values and writes them
+# into the mirror descriptor as credoPeerMeta. Informational only: it never reaches
+# the envelope, trust or any permission decision.
+mkdir -p "$TMP/MD/cfg/sessions" "$TMP/MD/cfg/credo/session-modes" "$TMP/MD/cfg/credo/session-roles" \
+    "$TMP/MD/cfg/credo/session-meta" "$TMP/MD/sock"
+MD_OUT="$(env -u CREDO_SESSION_MODES_DIR -u CREDO_SESSION_ROLES_DIR -u CREDO_SESSION_META_DIR \
+    "$PY" - "$DAEMON" "$TMP/MD" <<'PYEOF'
+import importlib.util, json, os, sys
+daemon_path, root = sys.argv[1:3]
+cfg = os.path.join(root, "cfg")
+os.environ["CLAUDE_CONFIG_DIR"] = cfg
+os.environ["CREDO_PEER_LAN_SOCKDIR"] = os.path.join(root, "sock")
+spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.log = lambda m: None
+def res(name, cond, detail=""):
+    print(("PASS " if cond else "FAIL ") + name + ("" if cond else " %r" % (detail,)))
+json.dump({"pid": 4242, "sessionId": "sid-l", "name": "local-one", "status": "busy",
+           "messagingSocketPath": os.path.join(root, "x.sock"), "cwd": "/home/myuser/proj-l"},
+          open(os.path.join(cfg, "sessions", "4242.json"), "w"))
+open(os.path.join(cfg, "credo", "session-modes", "sid-l"), "w").write("autonomous\n")
+open(os.path.join(cfg, "credo", "session-roles", "sid-l"), "w").write("task\n")
+json.dump({"model": "claude-test-5", "effort": "high", "credo": "on"},
+          open(os.path.join(cfg, "credo", "session-meta", "sid-l.json"), "w"))
+d = mod.Daemon({"this_machine": "B", "peers": ["127.0.0.1:41001"], "listen_port": 41002,
+                "keys_dir": os.path.join(root, "keys")})
+got = []
+mod.send_to_peer = lambda h, p, t, payload, timeout=5.0: got.append(payload)
+d.roster_tick()
+sess = got[0]["sessions"] if got else []
+res("roster session carries the sender's own metadata, project not by default",
+    sess and sess[0].get("meta") == {"mode": "autonomous", "role": "task", "model": "claude-test-5",
+                                     "effort": "high", "credo": "on"}, sess)
+got.clear()
+d.cfg_meta = {"publish_project": True}
+d.roster_tick()
+sess = got[0]["sessions"] if got else []
+res("project is published only on opt-in", sess and sess[0].get("meta", {}).get("project") == "proj-l", sess)
+got.clear()
+os.environ["CREDO_PEER_LAN_META"] = "0"
+d.roster_tick()
+del os.environ["CREDO_PEER_LAN_META"]
+sess = got[0]["sessions"] if got else []
+res("CREDO_PEER_LAN_META=0 publishes no metadata", sess and "meta" not in sess[0], sess)
+got.clear()
+d.cfg_meta = {"publish_meta": False}
+d.roster_tick()
+sess = got[0]["sessions"] if got else []
+res("config publish_meta false publishes no metadata", sess and "meta" not in sess[0], sess)
+d.cfg_meta = {}
+created = []
+d._template_descriptor_locked = lambda: {"pidDomain": "x"}
+d._create_remote_locked = lambda key, s, t: created.append(s)
+d._on_roster({"kind": "roster", "machine": "C", "sessions": [
+    {"name": "r1", "sessionId": "sid-r1", "status": "idle",
+     "meta": {"mode": "autonomous", "role": "boss", "model": "x[urgent]", "effort": "max",
+              "credo": "on", "project": "../p", "trusted": "yes", "permission": "bypass"}},
+    {"name": "r2", "sessionId": "sid-r2", "status": "idle", "meta": "autonomous"},
+    {"name": "r3", "sessionId": "sid-r3", "status": "idle"}]}, "127.0.0.1")
+metas = {s["sessionId"]: s.get("meta") for s in created}
+res("receiver keeps only whitelisted metadata",
+    metas.get("sid-r1") == {"mode": "autonomous", "effort": "max", "credo": "on"}, metas)
+res("non-dict or missing metadata becomes empty", metas.get("sid-r2") == {} and metas.get("sid-r3") == {}, metas)
+path = os.path.join(cfg, "sessions", "9999.json")
+d._write_descriptor(path, os.getpid(), "sid-r1", "n", "C", {"status": "idle", "meta": {"mode": "passive"}},
+                    {"pidDomain": "x"}, "/nonexistent/pl.sock")
+dd = json.load(open(path))
+res("mirror descriptor carries credoPeerMeta", dd.get("credoPeerMeta") == {"mode": "passive"}, dd)
+class Live(object):
+    def poll(self):
+        return None
+d.remotes[("127.0.0.1:41001", "sid-r1")] = {"holder": Live(), "descriptor": path, "machine": "C",
+                                             "proxy": "/nonexistent/pl.sock"}
+d._refresh_descriptor_locked(("127.0.0.1:41001", "sid-r1"),
+                             {"name": "n", "machine": "C", "status": "busy", "meta": {"role": "plan"}})
+dd = json.load(open(path))
+res("refresh follows a metadata change", dd.get("credoPeerMeta") == {"role": "plan"}, dd)
+d._refresh_descriptor_locked(("127.0.0.1:41001", "sid-r1"), {"name": "n", "machine": "C", "status": "idle"})
+dd = json.load(open(path))
+res("refresh drops metadata the sender no longer publishes", "credoPeerMeta" not in dd, dd)
+head = mod.build_envelope("hello", "r1", None).split("\n")[0]
+res("metadata never reaches the envelope", "mode" not in head and "role" not in head, head)
+del d.remotes[("127.0.0.1:41001", "sid-r1")]
+PYEOF
+)"
+while IFS= read -r line; do
+    case "$line" in
+        PASS\ *) PASS=$((PASS + 1)) ;;
+        FAIL\ *) FAIL=$((FAIL + 1)); printf '%s\n' "$line" ;;
+    esac
+done <<< "$MD_OUT"
+case "$MD_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL MD: traceback\n%s\n' "$MD_OUT" ;; esac
+check "MD: expected number of results" "10" "$(printf '%s\n' "$MD_OUT" | grep -cE '^(PASS|FAIL) ')"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

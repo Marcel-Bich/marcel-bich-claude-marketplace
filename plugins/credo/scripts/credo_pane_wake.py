@@ -71,7 +71,8 @@ def timing(prefix):
     return {"poll": env_float(prefix + "_POLL", 2.0),
             "recheck": env_float(prefix + "_RECHECK", 1.5),
             "key_pause": env_float(prefix + "_KEY_PAUSE", 0.5),
-            "confirm_wait": env_float(prefix + "_CONFIRM_WAIT", 10.0)}
+            "confirm_wait": env_float(prefix + "_CONFIRM_WAIT", 10.0),
+            "blocked_notify": env_float(prefix + "_BLOCKED_NOTIFY", 120.0)}
 
 
 def wake_path(state, sid):
@@ -98,10 +99,13 @@ class Pane(object):
     owner_error(pane, socket, pid, start) -> None or the reason; cancelled() -> bool;
     log(msg)."""
 
-    def __init__(self, plan, owner_error, cancelled, log, tim):
+    def __init__(self, plan, owner_error, cancelled, log, tim, on_blocked=None):
         self.plan, self.owner_error, self.cancelled, self.log = plan, owner_error, cancelled, log
         self.tim = tim
         self.owner_fail = []
+        # on_blocked(reason): called once per wait when a dialog / permission prompt
+        # has blocked the pane for tim["blocked_notify"] seconds (early ntfy).
+        self.on_blocked = on_blocked
 
     def owner(self):
         p = self.plan
@@ -123,7 +127,8 @@ class Pane(object):
             self.probe, timeout, poll=self.tim["poll"], recheck=self.tim["recheck"],
             should_stop=lambda: bool(self.owner_fail) or self.cancelled() or
             bool(stop and stop()),
-            on_state=lambda r: self.log("pane state: %s" % r))
+            on_state=lambda r: self.log("pane state: %s" % r),
+            on_blocked=self._blocked, blocked_after=self.tim.get("blocked_notify", 120.0))
         if stop and stop():
             raise Woken()
         if self.owner_fail:
@@ -133,6 +138,20 @@ class Pane(object):
         if not ok:
             raise StepFailed("failed: not idle", reason)
         return reason
+
+    def _blocked(self, reason):
+        self.log("pane blocked by a dialog for %gs, user notified, still waiting: %s"
+                 % (self.tim.get("blocked_notify", 120.0), reason))
+        if self.on_blocked:
+            self.on_blocked(reason)
+
+
+def blocked_text(tool, pane):
+    """ntfy body for a dialog that blocks a self-* worker. Never carries the dialog
+    text (the push goes to a public topic)."""
+    return ("A dialog or permission prompt in tmux pane %s blocks %s - please answer it. "
+            "The worker keeps waiting and continues by itself once it is closed."
+            % (pane, tool))
 
 
 def send_key_list(plan, keys):

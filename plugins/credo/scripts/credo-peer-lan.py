@@ -64,6 +64,13 @@ SAFETY
   - The only extra the relay may add is the local trust marker (see "trusted peers"):
     for a deliver over a PAIRED link from a session the local user trusted with the
     `trust` command. Nothing received over the wire can create or change trust.
+  - Session metadata (credo mode, role, model, effort, credo decision; the project
+    name only on opt-in) is published per roster session from the sender's own
+    credo state (off: config "publish_meta": false or CREDO_PEER_LAN_META=0; project:
+    "publish_project": true or CREDO_PEER_LAN_META_PROJECT=1) and stored in
+    the mirror descriptor as credoPeerMeta after a strict whitelist (see
+    credo_peer_meta.py). It is informational only: never part of the envelope, trust, routing
+    or any permission decision.
   - This daemon only ever removes session descriptors that carry its own
     "credoPeerLan" marker, and only proxy sockets / holders it created.
   - No-op when no config file exists, or when CREDO_PEER_LAN is set to off.
@@ -106,7 +113,18 @@ import threading
 import time
 import uuid
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import credo_peer_meta as peer_meta
+except ImportError:  # metadata is optional; the relay works without it
+    peer_meta = None
+
 MARK = "credoPeerLan"
+# mirror descriptor key holding the sender's validated session metadata (credo mode,
+# role, model, effort, credo decision, project). Informational only: it never reaches
+# the envelope, trust, routing or any permission decision.
+META_KEY = "credoPeerMeta"
+META_FIELDS = ("mode", "role", "model", "effort", "credo", "project")
 MARK_FROM = "credoPeerLanFrom"
 DEFAULT_PORT = 48610
 DEFAULT_ROSTER_INTERVAL = 5.0
@@ -2604,6 +2622,51 @@ def local_real_session_ids(sess_dir):
     return out
 
 
+def _switch(var, cfg_value, default):
+    """A boolean publication switch: the environment variable wins (0/false/no/off
+    or 1/true/yes/on), then a boolean config value, else the default."""
+    raw = (os.environ.get(var) or "").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    return cfg_value if isinstance(cfg_value, bool) else default
+
+
+def meta_publication(cfg):
+    """(publish metadata at all, include project) for rosters. Metadata is on by
+    default (config "publish_meta", variable CREDO_PEER_LAN_META); the project name
+    (cwd basename) is opt-in (config "publish_project", variable
+    CREDO_PEER_LAN_META_PROJECT)."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    return (_switch("CREDO_PEER_LAN_META", cfg.get("publish_meta"), True),
+            _switch("CREDO_PEER_LAN_META_PROJECT", cfg.get("publish_project"), False))
+
+
+def roster_meta(sess_dir, d, project=False):
+    """The validated metadata a roster publishes for local session d, read fresh from
+    this profile's own credo state (never from anything received). The project name
+    only when project is True."""
+    if peer_meta is None:
+        return {}
+    try:
+        prof = os.path.dirname(os.path.abspath(sess_dir))
+        meta = peer_meta.clean(peer_meta.local_meta(d.get("sessionId"), [prof], d.get("cwd")),
+                               META_FIELDS)
+    except Exception:
+        return {}
+    if not project:
+        meta.pop("project", None)
+    return meta
+
+
+def clean_meta(meta):
+    """Received metadata reduced to whitelisted, validated values ({} otherwise)."""
+    if peer_meta is None:
+        return {}
+    return peer_meta.clean(meta, META_FIELDS)
+
+
 def descriptor_live(d):
     """True when the descriptor's pid is a live process and, when the descriptor
     records procStart, that it matches field 22 of /proc/<pid>/stat (pid reuse)."""
@@ -3227,6 +3290,8 @@ class Daemon(object):
         self.this_machine = cfg.get("this_machine", socket.gethostname())
         self.listen_host = cfg.get("listen_host", "127.0.0.1")
         self.listen_port = int(cfg.get("listen_port", DEFAULT_PORT))
+        # roster metadata publication switches (see meta_publication)
+        self.cfg_meta = {k: cfg.get(k) for k in ("publish_meta", "publish_project")}
         # how long start() poll-retries the bind on EADDRINUSE before giving up cleanly
         # (config keys bind_retry_total / bind_retry_interval; tests shorten the window)
         self.bind_retry_total = float(cfg.get("bind_retry_total", BIND_RETRY_TOTAL))
@@ -4689,14 +4754,17 @@ class Daemon(object):
             targets = [t for t in targets if paired_ok(t[0])]
         if not targets:
             return 0
-        sessions = [
-            {
+        pub_meta, pub_project = meta_publication(self.cfg_meta)
+        sessions = []
+        for d in read_local_sessions(self.sess_dir):
+            entry = {
                 "sessionId": d.get("sessionId"),
                 "name": d.get("name") or d.get("sessionId"),
                 "status": d.get("status", "idle"),
             }
-            for d in read_local_sessions(self.sess_dir)
-        ]
+            if pub_meta:
+                entry["meta"] = roster_meta(self.sess_dir, d, pub_project)
+            sessions.append(entry)
         payload = {
             "kind": "roster",
             "machine": self.this_machine,
@@ -4891,6 +4959,8 @@ class Daemon(object):
                     break
                 s = dict(s)
                 s["machine"] = machine  # announced this_machine, for the display name
+                # sender-published metadata: whitelist only, never trusted
+                s["meta"] = clean_meta(s.get("meta"))
                 # sender-level naming fields (optional; older senders omit them)
                 for fld in ("harness", "network", "user", "profile"):
                     v = payload.get(fld)
@@ -5082,6 +5152,11 @@ class Daemon(object):
         if sess.get("machine"):
             rec["machine"] = sess["machine"]
             d[MARK_FROM] = sess["machine"]
+        meta = clean_meta(sess.get("meta"))
+        if meta:
+            d[META_KEY] = meta
+        else:
+            d.pop(META_KEY, None)
         d["statusUpdatedAt"] = now_ms
         d["updatedAt"] = now_ms
         self._atomic_write(rec["descriptor"], d)
@@ -5115,6 +5190,9 @@ class Daemon(object):
             MARK: True,
             MARK_FROM: machine,
         }
+        meta = clean_meta(sess.get("meta"))
+        if meta:
+            d[META_KEY] = meta
         self._atomic_write(path, d)
 
     def _atomic_write(self, path, obj):

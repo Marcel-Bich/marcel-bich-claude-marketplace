@@ -13,6 +13,15 @@ which is found bottom-up as the last rule + marker row + rule). The rule is
 conservative. Anything not positively recognised as "idle with an empty input" is
 NOT safe. Callers wait and re-check; they never capture and retype user input.
 
+No input box visible -> the reason is classified from the bottom of the pane:
+"permission prompt open, waiting for the user: ..." (also a background agent's
+permission prompt, which Claude Code shows in the main pane in place of the input box
+while the main agent keeps running turns underneath), "no input box, dialog or menu
+open: ...", or the generic "no empty prompt input box visible ...". wait_until_safe()
+calls on_blocked(reason) once per wait when a classified user-only state (permission
+prompt, dialog or menu; not the generic reason) lasts `blocked_after` seconds (the
+callers send one early ntfy push per blocked wait and keep waiting).
+
 Pure functions (no I/O) - strip_ansi, styled_chars, find_input_box, input_content,
 assess, wait_until_safe. tmux helpers - tmux_base, pane_info, capture, probe_pane.
 
@@ -48,6 +57,14 @@ DIALOG_RE = re.compile(
     r"|to navigate|to switch|again to (exit|close)|Do you want to|Would you like to"
     r"|\(y/n\)|Press Enter|Ready to code\?|Type something\.?"
     r"|^\s*[❯>]\s*\d+\.\s", re.I)
+# A permission prompt (also one raised by a background agent, which Claude Code shows
+# in the main pane in place of the input box while the main agent keeps running turns
+# underneath). Only used to name the reason when no input box is visible.
+PERMISSION_RE = re.compile(
+    r"Do you want to (proceed|make this edit|create|allow)|requires confirmation"
+    r"|Yes, and don't ask again|to stop background agents", re.I)
+NO_BOX_SCAN = 30
+
 # Background work shown in the footer under the input box while it runs: a shell
 # count ("1 shell", "3 shells", also inside the status line) and the background agent
 # list, one row per agent starting with "◯" (U+25EF) and the agent type. Only the
@@ -204,6 +221,20 @@ def _norm(s):
     return "".join((s or "").split())
 
 
+def _no_box_reason(lines):
+    """Why no input box is visible, as specific as the bottom of the pane allows. A
+    permission prompt is named as such (it waits for the user, so polling alone never
+    clears it - typically a background agent's tool call asking for approval)."""
+    plain = [strip_ansi(l).strip() for l in lines[-NO_BOX_SCAN:]]
+    for line in plain:
+        if PERMISSION_RE.search(line):
+            return "permission prompt open, waiting for the user: %s" % line[:80]
+    for line in plain:
+        if DIALOG_RE.search(line):
+            return "no input box, dialog or menu open: %s" % line[:80]
+    return "no empty prompt input box visible (dialog, menu or not Claude Code)"
+
+
 def assess(text, expect=None, block_on_background=True):
     """(safe, reason) for one capture-pane snapshot. safe only when an input box is
     visible, no busy indicator is shown, no dialog, picker or menu hint is visible near
@@ -216,7 +247,7 @@ def assess(text, expect=None, block_on_background=True):
     lines = (text or "").rstrip("\n").split("\n")
     box = find_input_box(lines)
     if box is None:
-        return False, "no empty prompt input box visible (dialog, menu or not Claude Code)"
+        return False, _no_box_reason(lines)
     top, bottom = box
     plain = [strip_ansi(l) for l in lines]
     for idx in range(max(0, top - BUSY_SCAN_ABOVE), top):
@@ -244,14 +275,37 @@ def assess(text, expect=None, block_on_background=True):
     return True, "idle, input empty"
 
 
+# Only CLASSIFIED dialogs and permission prompts count as blocked. The generic
+# "no empty prompt input box visible (dialog, menu or not Claude Code)" reason does
+# not: it also covers a pane that is not Claude Code at all, so it never triggers
+# the early push.
+BLOCKED_PREFIXES = ("permission prompt open", "no input box, dialog or menu open",
+                    "dialog or menu open")
+
+
+def is_blocked_reason(reason):
+    """True for a classified not-safe reason that only the user can clear (a
+    permission prompt, dialog, picker or menu in place of or next to the input box),
+    as opposed to a busy turn or typed input that clears by itself or must never be
+    touched, and to the unclassified generic no-input-box reason."""
+    return (reason or "").startswith(BLOCKED_PREFIXES)
+
+
 def wait_until_safe(probe, timeout, poll=2.0, recheck=1.5, sleep=time.sleep,
-                    clock=time.monotonic, should_stop=None, on_state=None):
+                    clock=time.monotonic, should_stop=None, on_state=None,
+                    on_blocked=None, blocked_after=120.0):
     """Poll probe() -> (safe, reason) until two consecutive probes `recheck` seconds
     apart are both safe. Returns (True, reason) right after the second safe probe,
     (False, "cancelled") when should_stop() turns true, (False, "timeout ...") after
-    `timeout` seconds. on_state(reason) is called whenever the reason changes."""
+    `timeout` seconds. on_state(reason) is called whenever the reason changes.
+    on_blocked(reason) is called ONCE when a blocking reason (is_blocked_reason: a
+    dialog or permission prompt waits for the user) has lasted `blocked_after` seconds
+    without interruption; waiting goes on and proceeds once the dialog is closed.
+    blocked_after <= 0 disables it."""
     end = clock() + max(0.0, float(timeout))
     last = None
+    blocked_since = None
+    blocked_sent = False
     while True:
         if should_stop and should_stop():
             return False, "cancelled"
@@ -266,6 +320,15 @@ def wait_until_safe(probe, timeout, poll=2.0, recheck=1.5, sleep=time.sleep,
         if on_state and reason != last:
             on_state(reason)
         last = reason
+        if is_blocked_reason(reason):
+            if blocked_since is None:
+                blocked_since = clock()
+            if (on_blocked and not blocked_sent and blocked_after > 0
+                    and clock() - blocked_since >= blocked_after):
+                blocked_sent = True
+                on_blocked(reason)
+        else:
+            blocked_since = None
         if clock() >= end:
             return False, "timeout after %gs (last state: %s)" % (float(timeout), reason)
         sleep(poll)

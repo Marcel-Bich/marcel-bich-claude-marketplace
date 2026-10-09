@@ -43,7 +43,12 @@ Helper: `${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-reload.py`
   ever addressed.
 - **Only into an empty input field.** Never while the user is typing, a dialog / Ask
   question / permission prompt / menu is open, or the session is busy - the worker waits
-  and re-checks. User input is never captured and retyped.
+  and re-checks. User input is never captured and retyped. A permission prompt raised by a
+  background agent also replaces the input box (the session itself may look idle); after
+  `CREDO_SELF_RELOAD_BLOCKED_NOTIFY` seconds (default 120, 0 = off) of an uninterrupted
+  classified dialog or permission prompt (not the generic "no input box" state, which may
+  be a pane that is not Claude Code) the worker sends one ntfy push per blocked wait ("please answer it", without the dialog text), logs
+  the classified state and keeps waiting; it continues by itself once the dialog is closed.
 - **No background work of any kind blocks it.** Running background subagents, background
   shells, scripts, monitors and any other background service survive a reload; there is no
   background check and no `--no-background-work` flag. The footer rows under the input box

@@ -35,6 +35,7 @@ This outputs structured results for all checks. Parse the output to determine:
 - `project.state` - Overall state (needs_setup, needs_mapping, needs_project, needs_roadmap, ready)
 - `todo_tools.state` / `todo_tools.declined` - Is the Claude Code task-list tools opt-in on for the active profile (see Step 10)?
 - `tmux.installed` / `tmux.inside` / `tmux.platform` / `tmux.pkg_manager` / `tmux.login_shell` - Is tmux installed, does this session run inside it, and how could it be installed (see Step 11)?
+- `peer_trust_guard.quiet` / `peer_trust_guard.env` - Does credo only remind (quiet, default) or ask for confirmation (strict) when a command grants LAN peer trust, and is the env override `CREDO_PEER_TRUST_GUARD_QUIET` set (see Step 12)?
 
 **If project.state = ready:** Skip directly to "Setup Complete" section. Do NOT ask any questions.
 
@@ -785,6 +786,49 @@ tmux:
 Then confirm in one line that the hint is off and how to turn it back on (set `hint: true`
 again, or run this step again). `bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get
 tmux.hint` must now print `false`.
+
+## Step 12: Peer Trust Confirmation (Optional)
+
+Only relevant when the user uses LAN peers (`/credo:peer-lan`); otherwise mention it in one
+line at most. Never run this step in autonomous mode. Use the `peer_trust_guard.*` lines
+from Step 1.
+
+Explain in 2-3 lines: a trusted LAN peer's tasks count like the user's own, and only the
+user may grant that trust (`credo-peer-lan.py trust add`). credo recognizes such a grant
+(and any write to the trust file `peer-lan-trust.json`). By default (`quiet: true`) it only
+adds a non-blocking reminder and does NOT ask for confirmation, because a hook confirmation
+overrides the user's allow rules and bypass mode and would block unattended (autonomous)
+runs with peers. Users who want to confirm every grant themselves can switch on strict
+mode. Then ask via AskUserQuestion:
+
+```
+Confirm every peer trust grant yourself (strict mode)?
+
+- No, keep the default (Recommended) - only a reminder, autonomous runs are never blocked
+- Yes, ask me for confirmation on every trust grant
+```
+
+- "No" -> nothing is written.
+- "Yes" -> find the config file with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh"
+  paths` (the `profile:` file when a non-default Claude Code profile is active, else the
+  `global:` file) and add or set this key with Read + Edit (create the block if missing,
+  change only this key, keep everything else):
+
+  ```yaml
+  peer:
+    trust_guard:
+      quiet: false
+  ```
+
+  `bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get peer.trust_guard.quiet` must
+  now print `false`. Tell the user how to switch back (`quiet: true`, or run this step
+  again).
+
+When `peer_trust_guard.env` is not `unset`, tell the user that the env variable
+`CREDO_PEER_TRUST_GUARD_QUIET` overrides the config key in that shell. The key is read
+only from the global and profile layers (a repo's `.credo/config` cannot change it), and
+reading the config needs `python3`: without python3 the strict config is not read, only
+`CREDO_PEER_TRUST_GUARD_QUIET=false` in the environment selects strict mode.
 
 ## Setup Complete
 

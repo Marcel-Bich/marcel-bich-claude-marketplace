@@ -32,6 +32,9 @@ Exactly two triggers, never a third:
    context fill crossed a configured threshold. Run it then.
 2. The user invokes it manually.
 
+The ACTION line is meant for the MAIN session only. A subagent that sees one ignores it
+and does not run compact-plus (or a self-compact); the main session gets it on its own.
+
 Do NOT run this on your own initiative. The model must never decide by itself that now
 is a good time to secure and then start the checklist unprompted - that burns tokens on
 every turn. Wait for the hook ACTION line or a manual invocation. This is a hard rule.
@@ -202,8 +205,10 @@ from step 3, so it only works after compact-plus.
   run during the compact). No background check and no `--no-background-work` flag are
   needed; the worker ignores background rows in the pane footer. Only
   `/credo:self-restart` keeps the background gate (a restart kills that work).
-- credo autonomous mode - no question. Set the `ScheduleWakeup` plus wake mark the
-  keep-alive demands, then run `credo-self-compact.py run --auto` and END THE TURN.
+- credo autonomous mode - no question, already at the FIRST ACTION: run compact-plus,
+  and right after its green report set the `ScheduleWakeup` plus wake mark the keep-alive
+  demands, then run `credo-self-compact.py run --auto` and END THE TURN - unless something
+  important speaks against it (then record why).
 - Interactive modes - ask ONCE via the Ask tool whether to run the real /compact now. Only
   after an explicit yes run `credo-self-compact.py run --user-confirmed` and END THE
   TURN.

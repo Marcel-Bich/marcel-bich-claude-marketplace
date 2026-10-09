@@ -133,6 +133,15 @@ if [ "$TMUX_PLATFORM" != "windows" ]; then
         if command -v "$_pm" >/dev/null 2>&1; then TMUX_PKG_MANAGER="$_pm"; break; fi
     done
 fi
+# Peer trust guard (credo-peer-message.sh): quiet (default) = reminder only, no
+# confirmation dialog; false = strict, the user confirms every peer trust grant.
+# Read like the hook: builtin/global/profile only, never the project layer.
+PEER_TRUST_GUARD_QUIET="$(CREDO_PROJECT=/dev/null "$CHECK_DIR/credo-config.sh" get peer.trust_guard.quiet 2>/dev/null)" || PEER_TRUST_GUARD_QUIET=""
+case "$(printf '%s' "$PEER_TRUST_GUARD_QUIET" | tr '[:upper:]' '[:lower:]')" in
+    false|0|no|off) PEER_TRUST_GUARD_QUIET="false" ;;
+    *) PEER_TRUST_GUARD_QUIET="true" ;;
+esac
+PEER_TRUST_GUARD_ENV="${CREDO_PEER_TRUST_GUARD_QUIET:-unset}"
 TMUX_LOGIN_SHELL="$(basename "${SHELL:-unknown}" 2>/dev/null)"
 [ -n "$TMUX_LOGIN_SHELL" ] || TMUX_LOGIN_SHELL="unknown"
 
@@ -174,6 +183,9 @@ tmux:
   platform: $TMUX_PLATFORM
   pkg_manager: $TMUX_PKG_MANAGER
   login_shell: $TMUX_LOGIN_SHELL
+peer_trust_guard:
+  quiet: $PEER_TRUST_GUARD_QUIET
+  env: $PEER_TRUST_GUARD_ENV
 EOF
 
 # Output warnings for missing requirements

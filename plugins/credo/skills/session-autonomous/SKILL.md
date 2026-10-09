@@ -903,3 +903,9 @@ limit plugin's session-context threshold signal (config `compact.thresholds`). D
 self-trigger compact-plus proactively - only on the injected ACTION line or a manual
 invocation. Pair the keep-alive wake marker with this securing so a long unattended run
 neither falls asleep nor loses approved work.
+
+Already at the FIRST compact-plus ACTION: run compact-plus, and right after its green report
+set the `ScheduleWakeup` plus wake mark the keep-alive demands, then run the self-compact
+(`credo-self-compact.py run --auto`, see compact-plus "After a green report") without
+asking - unless something important speaks against it. The ACTION is for the main session
+only; a subagent that sees one ignores it and does not run compact-plus.

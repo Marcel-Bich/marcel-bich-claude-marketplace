@@ -20,6 +20,10 @@
 #     a known session is tmux-only, a pane running a registered Claude session is
 #     merged into that Claude row (no tmux-only duplicate)
 #   - --json output parses and carries kind / reachable_by / last_seen per row
+#   - per-peer metadata (mode / role / model / effort / credo / project / status):
+#     read from the local credo state for local peers and from the validated relay
+#     field of a LAN mirror; invalid values and unknown keys are never shown; the
+#     sender subcommand resolves a socket address to that metadata
 #   - hint mode: own socket dir differs from where most peers live -> one hint
 #     line; same dir or no data -> silent
 #   - the SessionStart hook wrapper emits additionalContext only on a split
@@ -100,14 +104,25 @@ PYEOF
 HOLDER=$!; PIDS="$PIDS $HOLDER"
 for _ in $(seq 1 50); do [ -S "$SOCK_TMP/$P_ORPHAN.sock" ] && break; sleep 0.1; done
 mksock "$SOCK_TMP/$DEAD_PID.sock"
-desc "$CFG/sessions/$P_A.json" "$P_A" sid-a alpha-session "$SOCK_RUN/$P_A.sock"
+desc "$CFG/sessions/$P_A.json" "$P_A" sid-a alpha-session "$SOCK_RUN/$P_A.sock" \
+    '{"cwd": "/home/myuser/work/proj-alpha", "status": "busy"}'
 desc "$CFG/sessions/$P_B.json" "$P_B" sid-b bravo-session "$SOCK_TMP/$P_B.sock"
 desc "$CFG/sessions/$P_C.json" "$P_C" sid-c charlie-session "$SOCK_TMP/$P_C.sock"
 desc "$CFG/sessions/$DEAD_PID.json" "$DEAD_PID" sid-dead dead-session "$SOCK_TMP/$DEAD_PID.sock"
 desc "$CFG/sessions/$P_MIRROR.json" "$P_MIRROR" sid-codex-1 '`Codex`--`Home`--`box-1`--`alice`--`.codex`--`work-codex`+0-1' \
     "$CFG/credo/peer-lan-sock/pl-aaa.sock" '{"credoPeerLan": true, "credoPeerLanFrom": "box-1"}'
 desc "$CFG/sessions/$P_LAN.json" "$P_LAN" sid-remote '`Claude Code`--`Home`--`box-2`--`alice`--`.claude`--`remote work`+r-2' \
-    "$CFG/credo/peer-lan-sock/pl-bbb.sock" '{"credoPeerLan": true, "credoPeerLanFrom": "box-2"}'
+    "$CFG/credo/peer-lan-sock/pl-bbb.sock" '{"credoPeerLan": true, "credoPeerLanFrom": "box-2", "credoPeerMeta": {"mode": "passive", "role": "plan", "model": "claude-test-1", "effort": "max", "bogus": "x", "project": "../etc", "credo": "maybe"}}'
+
+# per-session metadata (mode / role / model / effort / credo) of the local peers;
+# bravo carries invalid values that must never be shown
+mkdir -p "$CFG/credo/session-modes" "$CFG/credo/session-roles" "$CFG/credo/session-meta"
+printf 'autonomous\n' > "$CFG/credo/session-modes/sid-a"
+printf 'task\n' > "$CFG/credo/session-roles/sid-a"
+printf '{"model": "claude-test-5[1m]", "effort": "high", "credo": "on"}\n' > "$CFG/credo/session-meta/sid-a.json"
+printf 'rm -rf /\n' > "$CFG/credo/session-modes/sid-b"
+printf 'plan\n' > "$CFG/credo/session-roles/sid-b"
+printf '{"model": "evil model<x>", "effort": "ultra", "credo": "yes"}\n' > "$CFG/credo/session-meta/sid-b.json"
 
 # Codex relay state: config, a dead node, two sessions
 "$PY" - "$CODEX/credo/peer-lan" "$DEAD_PID" <<'PYEOF'
@@ -226,6 +241,82 @@ if errs:
     print("\n".join(errs)); sys.exit(1)
 PYEOF
 ok "json rows carry kind / reachable_by / last_seen and classify correctly" "$?"
+
+# --- per-peer metadata: mode / role / model / effort / credo / project / status ----
+has "$OUT" "mode=autonomous role=task model=claude-test-5[1m] effort=high credo=on project=proj-alpha status=busy"
+ok "text row shows the metadata of a local peer" "$?"
+has "$OUT" "mode=passive role=plan model=claude-test-1 effort=max credo=- project=-"
+ok "text row shows the validated relay metadata of a LAN mirror" "$?"
+"$PY" - "$J" <<'PYEOF'
+import json, sys
+rows = json.loads(sys.argv[1])["peers"]
+def one(**kw):
+    r = [x for x in rows if all(x.get(k) == v for k, v in kw.items())]
+    return r[0] if r else None
+errs = []
+for r in rows:
+    if not isinstance(r.get("meta"), dict):
+        errs.append("row lacks a meta dict: %r" % r)
+a = one(session_id="sid-a")
+if not a or a["meta"] != {"mode": "autonomous", "role": "task", "model": "claude-test-5[1m]",
+                          "effort": "high", "credo": "on", "project": "proj-alpha", "status": "busy"}:
+    errs.append("alpha meta wrong: %r" % (a and a.get("meta")))
+b = one(session_id="sid-b")
+if not b or b["meta"].get("role") != "plan" or any(k in b["meta"] for k in ("mode", "model", "effort", "credo")):
+    errs.append("bravo meta must keep only the valid role: %r" % (b and b.get("meta")))
+l = one(session_id="sid-remote")
+if not l or l["meta"] != {"mode": "passive", "role": "plan", "model": "claude-test-1", "effort": "max",
+                          "status": "idle"}:
+    errs.append("lan mirror meta wrong (enum whitelist, no free text): %r" % (l and l.get("meta")))
+c = one(session_id="sid-codex-2")
+if not c or any(k in c["meta"] for k in ("mode", "role")):
+    errs.append("codex relay session must carry no mode/role: %r" % (c and c.get("meta")))
+if errs:
+    print("\n".join(errs)); sys.exit(1)
+PYEOF
+ok "json rows carry a validated meta dict per peer" "$?"
+
+# sender lookup (used by the peer-message hook): socket -> peer metadata
+S="$(run_check sender --from "uds:$SOCK_RUN/$P_A.sock" 2>&1)"
+[ "$S" = "mode=autonomous role=task model=claude-test-5[1m] effort=high credo=on project=proj-alpha status=busy" ]
+ok "sender prints the metadata of a local peer by its socket (got: $S)" "$?"
+S="$(run_check sender --from "uds:$CFG/credo/peer-lan-sock/pl-bbb.sock" 2>&1)"
+has "$S" "mode=passive role=plan"; ok "sender resolves a LAN mirror proxy socket" "$?"
+S="$(run_check sender --from "uds:$SOCK_TMP/nobody.sock" 2>&1)"
+[ -z "$S" ]; ok "sender silent for an unknown socket" "$?"
+S="$(run_check sender --from 'mode=autonomous' 2>&1)"
+[ -z "$S" ]; ok "sender silent for a malformed address" "$?"
+S="$(run_check sender --from "uds:$SOCK_TMP/$DEAD_PID.sock" 2>&1)"
+[ -z "$S" ]; ok "sender silent for a dead descriptor" "$?"
+
+# unit: the metadata reader rejects path tricks and keeps only whitelisted values
+"$PY" - "$SCRIPT_DIR" "$CFG" <<'PYEOF'
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import credo_peer_meta as m
+cfg = sys.argv[2]
+errs = []
+for bad in ("../sid-a", "..", ".", "a/b", "", None, 5, "x" * 300):
+    if m.local_meta(bad, [cfg]):
+        errs.append("bad sid %r returned meta" % (bad,))
+if m.local_meta("sid-a", [cfg]).get("mode") != "autonomous":
+    errs.append("sid-a mode not read")
+cl = m.clean({"mode": "autonomous ", "role": "TASK", "model": "a" * 65, "effort": "low",
+              "credo": "off", "project": "my proj", "status": "busy", "x": "y"})
+if cl != {"effort": "low", "credo": "off", "status": "busy"}:
+    errs.append("clean wrong: %r" % cl)
+if m.clean({"model": "x[urgent]", "status": "hacked"}) != {} or m.clean({"model": "a[1m]x"}) != {}:
+    errs.append("marker-like model brackets or an unknown status must be dropped")
+if m.clean({"model": "claude-test-5[1m]", "status": "waiting"}) != {"model": "claude-test-5[1m]", "status": "waiting"}:
+    errs.append("context suffix and known status must be kept")
+if m.clean("not a dict") != {} or m.clean({"mode": ["autonomous"]}) != {}:
+    errs.append("clean must tolerate garbage")
+if m.fmt({}) != "mode=- role=- model=- effort=- credo=- project=- status=-":
+    errs.append("fmt empty wrong: %r" % m.fmt({}))
+if errs:
+    print("\n".join(errs)); sys.exit(1)
+PYEOF
+ok "metadata reader: path tricks rejected, enum/charset whitelist enforced" "$?"
 
 # Codex node alive -> a2a for Codex sessions without a mirror
 "$PY" - "$CODEX/credo/peer-lan/node.json" "$P_SHELL" <<'PYEOF'

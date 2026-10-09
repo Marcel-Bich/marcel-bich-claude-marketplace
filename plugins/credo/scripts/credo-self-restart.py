@@ -1238,6 +1238,14 @@ def relaunch(plan, prompt):
         return True, "still running (terminal window)"
 
 
+def blocked_notify(plan, pane, reason):
+    """One early push while a dialog / permission prompt blocks the wait (the dialog
+    text stays in the local log only)."""
+    log("pane %s blocked by a dialog, user notified, still waiting: %s" % (pane, reason))
+    ntfy("credo self-restart blocked", pane_wake.blocked_text("self-restart", pane),
+         plan["config_dir"], plan["config_explicit"])
+
+
 def wait_idle(plan):
     """tmux method only: wait until the pane is idle with an EMPTY input field and no
     dialog (credo_pane_guard, two probes), so stopping never discards a prompt the
@@ -1265,7 +1273,9 @@ def wait_idle(plan):
         poll=env_float("CREDO_SELF_RESTART_IDLE_POLL", 2.0),
         recheck=env_float("CREDO_SELF_RESTART_IDLE_RECHECK", 1.5),
         should_stop=lambda: bool(owner_fail) or marker_cancelled(plan),
-        on_state=lambda r: log("pane %s: %s" % (pane, r)))
+        on_state=lambda r: log("pane %s: %s" % (pane, r)),
+        on_blocked=lambda r: blocked_notify(plan, pane, r),
+        blocked_after=env_float("CREDO_SELF_RESTART_IDLE_BLOCKED_NOTIFY", 120))
     if owner_fail:
         if not alive(plan["target_pid"], plan["target_start"]):
             return "target gone"

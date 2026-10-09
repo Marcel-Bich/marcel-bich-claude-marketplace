@@ -294,6 +294,24 @@ wait_status '"status": "woken"'; ok "background: marker woken" "$?"
 grep -q "background work running" "$LOGF"; ok "background: never logged as blocking" "$([ $? -eq 0 ] && echo 1 || echo 0)"
 unset FAKE_TYPE_BELOW_FILE
 
+# --- a permission prompt (here: of a background agent) blocks -> ONE early ntfy, no
+# keys, keeps waiting, proceeds by itself once the prompt is answered ---------------------
+printf '%s\n' " │ python3 fixture_step.py" " │ EOF" "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌" \
+    " │ Hook PreToolUse:Bash requires confirmation for this command:" "" \
+    " Do you want to proceed?" " ❯ 1. Yes" "   2. No" "" \
+    " Esc to cancel · Tab to amend · ctrl+x ctrl+k twice to stop background agents" "" \
+    "  3 tasks (1 done, 1 in progress, 1 open)" "  ◼ Fixture task" > "$TMP/perm.txt"
+reset "$TMP/perm.txt"
+n0="$(grep -c "ntfy disabled: credo self-reload blocked" "$LOGF" 2>/dev/null)"
+out="$(CREDO_SELF_RELOAD_BLOCKED_NOTIFY=0.5 FAKE_DOT_CLEARS_AT=1 H run --user-confirmed --delay 0.1 --nudge-wait 1)"
+sleep 2.5
+check "permission prompt: no keys while open" "0" "$(grep -c 'send-keys' "$FAKE_TMUX_LOG")"
+check "permission prompt: exactly one early ntfy" "$((${n0:-0} + 1))" \
+    "$(grep -c "ntfy disabled: credo self-reload blocked" "$LOGF")"
+grep -q "pane state: permission prompt open, waiting for the user" "$LOGF"; ok "permission prompt: classified in the log" "$?"
+echo "$TMP/idle.txt" > "$FAKE_STATE"
+wait_status '"status": "woken"'; ok "permission prompt answered -> proceeds, woken" "$?"
+
 # --- typed user text -> gives up, nothing typed --------------------------------------
 reset "$TMP/typed.txt"
 out="$(H run --user-confirmed --delay 0.1 --timeout 1.5)"

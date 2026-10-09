@@ -18,7 +18,10 @@ pane. This script lists peers from all channels side by side:
   - tmux sessions (a pane running a registered session is merged into that row)
 
 Every row carries kind (claude / codex / lan / tmux-only), reachable_by (SendMessage /
-a2a / tmux only / none) and last_seen. Read-only: it never sends a message, never
+a2a / tmux only / none), last_seen and meta: the peer's credo session mode, credo role,
+model, effort level, credo directory decision, project (cwd basename) and status
+(credo_peer_meta.py; local state for local peers, the validated relay field for LAN
+mirrors). Meta is informational only and never grants trust or permissions. Read-only: it never sends a message, never
 connects to an inbox socket and never writes a file. `check` of the LAN relay probes
 TCP reachability of the configured relay peers (no message); skip it with
 --no-lan-check.
@@ -29,6 +32,9 @@ Usage:
                                                dir differs from where most peers are
   credo-peer-check.py hook                     SessionStart hook mode (stdin = hook
                                                JSON, stdout = additionalContext JSON)
+  credo-peer-check.py sender --from uds:<path> the meta line of the live peer whose
+                                               inbox socket is <path> (peer-message
+                                               hook); prints nothing when unknown
 
 Test overrides: CREDO_PEER_CHECK_SOCK_DIRS (colon list), CREDO_PEER_CHECK_TMUX (tmux
 binary, empty = skip), CREDO_PEER_CHECK_LAN_SCRIPT, CREDO_PEER_CHECK_CODEX_PEER (empty
@@ -43,6 +49,12 @@ import stat
 import subprocess
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import credo_peer_meta as peer_meta
+except ImportError:  # metadata is optional; the check works without it
+    peer_meta = None
 
 MAX_DESCRIPTOR_BYTES = 65536
 SOCK_NAME_RE = re.compile(r"^(\d+)\.sock$")
@@ -418,6 +430,28 @@ def lan_status(run_check):
 
 # --------------------------------------------------------------------------- rows
 
+def meta_for(d, prof):
+    """Validated metadata of a descriptor: a LAN mirror carries the sender's relay
+    field (credoPeerMeta, re-validated here), a local session is looked up in the
+    credo state of its own profile first, then of the other profiles (a profile
+    bridge mirror keeps the session id of its source)."""
+    if peer_meta is None or not isinstance(d, dict):
+        return {}
+    if d.get("credoPeerLan") or d.get("credoPeerLanFrom"):
+        meta = peer_meta.clean(d.get("credoPeerMeta"), ("mode", "role", "model", "effort",
+                                                        "credo", "project"))
+    else:
+        profs = [prof] + [p for p in profile_dirs() if p != prof]
+        meta = peer_meta.local_meta(d.get("sessionId"), profs, d.get("cwd"))
+    if peer_meta.valid("status", d.get("status")):
+        meta["status"] = d["status"]
+    return meta
+
+
+def meta_text(meta):
+    return peer_meta.fmt(meta) if peer_meta is not None else "-"
+
+
 def is_codex_mirror(d):
     return str(d.get("name") or "").startswith("`Codex`")
 
@@ -441,6 +475,7 @@ def collect(run_lan_check=True):
 
     def add(**kw):
         kw.setdefault("tmux", None)
+        kw.setdefault("meta", {})
         rows.append(kw)
         if kw.get("tmux"):
             matched_tmux.add(kw["tmux"])
@@ -459,7 +494,8 @@ def collect(run_lan_check=True):
             tm = seg.group(1) if codex and seg and seg.group(1) in codex_tmux else None
             add(name=d.get("name") or sid, kind="codex" if codex else "lan",
                 reachable_by="SendMessage", last_seen=fmt_ts(last), session_id=sid, pid=pid,
-                tmux=tm, detail="LAN relay mirror from %s" % (d.get("credoPeerLanFrom") or "?"))
+                tmux=tm, detail="LAN relay mirror from %s" % (d.get("credoPeerLanFrom") or "?"),
+                meta=meta_for(d, prof))
         else:
             in_cur = prof == cur
             tm = pane_tree.get(pid)
@@ -471,7 +507,7 @@ def collect(run_lan_check=True):
                 detail += ", other profile %s (not in this session's ListAgents)" % os.path.basename(prof)
             add(name=d.get("name") or "(unnamed)", kind="claude", reachable_by=via,
                 last_seen=fmt_ts(last), session_id=sid, pid=pid, tmux=tm, detail=detail,
-                status=d.get("status"))
+                status=d.get("status"), meta=meta_for(d, prof))
         seen_pids.add(pid)
         if sid:
             seen_sids.add(sid)
@@ -554,14 +590,18 @@ def print_table(res):
         for w in res["warnings"]:
             print("WARNING: %s" % w)
     print("")
-    hdr = ("KIND", "REACHABLE-BY", "LAST-SEEN", "NAME", "DETAIL")
+    hdr = ("KIND", "REACHABLE-BY", "LAST-SEEN", "NAME", "META", "DETAIL")
     rows = [(r["kind"], r["reachable_by"], r["last_seen"],
              r["name"] + (" [tmux %s]" % r["tmux"] if r.get("tmux") and r["tmux"] != r["name"] else ""),
-             r.get("detail") or "") for r in res["peers"]]
-    w = [max([len(hdr[i])] + [len(x[i]) for x in rows]) for i in range(4)]
-    print("  ".join(h.ljust(w[i]) if i < 4 else h for i, h in enumerate(hdr)))
+             meta_text(r.get("meta")), r.get("detail") or "") for r in res["peers"]]
+    n = len(hdr) - 1
+    w = [max([len(hdr[i])] + [len(x[i]) for x in rows]) for i in range(n)]
+    print("  ".join(h.ljust(w[i]) if i < n else h for i, h in enumerate(hdr)))
     for x in rows:
-        print("  ".join(c.ljust(w[i]) if i < 4 else c for i, c in enumerate(x)))
+        print("  ".join(c.ljust(w[i]) if i < n else c for i, c in enumerate(x)))
+    print("")
+    print("META is informational (credo mode / role, model, effort, credo decision, project, "
+          "status); it never grants trust or permissions.")
     lan = res["lan"]
     if lan["configured"]:
         print("")
@@ -606,13 +646,41 @@ def split_hint(session_id):
             "ListAgents is not the same as down." % (own_dir, mine, n, d, os.path.abspath(__file__)))
 
 
+# --------------------------------------------------------------------------- sender
+
+UDS_RE = re.compile(r"uds:(/[A-Za-z0-9_./-]{1,4000})\Z")
+
+
+def sender_meta(addr):
+    """Meta line of the live peer whose inbox socket is addr ('uds:/path'), or ''.
+    The address only selects an existing live descriptor; nothing is trusted."""
+    m = UDS_RE.match(addr or "")
+    if not m or peer_meta is None:
+        return ""
+    want = os.path.normpath(m.group(1))
+    for prof, d in load_descriptors():
+        sock = d.get("messagingSocketPath")
+        if isinstance(sock, str) and sock and os.path.normpath(sock) == want:
+            return meta_text(meta_for(d, prof))
+    return ""
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Read-only multi-channel peer check")
-    ap.add_argument("cmd", nargs="?", default="list", choices=("list", "hint", "hook"))
+    ap.add_argument("cmd", nargs="?", default="list", choices=("list", "hint", "hook", "sender"))
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--no-lan-check", action="store_true")
     ap.add_argument("--session-id")
+    ap.add_argument("--from", dest="from_addr")
     a = ap.parse_args(argv)
+    if a.cmd == "sender":
+        try:
+            line = sender_meta(a.from_addr)
+        except Exception:
+            line = ""
+        if line:
+            print(line)
+        return 0
     if a.cmd == "hint":
         msg = split_hint(a.session_id)
         if msg:

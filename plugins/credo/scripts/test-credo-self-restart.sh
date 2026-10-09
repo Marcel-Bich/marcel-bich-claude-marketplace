@@ -256,6 +256,15 @@ t("version summary changed", m.version_summary(["credo@a", "dogma@a"], {"credo@a
 t("version summary none", m.version_summary(["credo@a"], {"credo@a": "1"}, {"credo@a": "1"}) == "no plugin updates")
 # peer template must carry the 1-minute wait instruction
 t("peer template has 1-minute wait", "WAIT ABOUT 1 MINUTE" in m.PEER_TEMPLATE)
+# a dialog blocking the idle wait: one early push without the dialog text
+_sent = []; _orig = (m.ntfy, m.log)
+m.ntfy = lambda title, body, *a, **k: _sent.append((title, body)); m.log = lambda msg: None
+m.blocked_notify({"config_dir": "/x", "config_explicit": False}, "%9",
+                 "permission prompt open, waiting for the user: secret-cmd --flag")
+m.ntfy, m.log = _orig
+t("blocked notify: one push naming the pane", len(_sent) == 1
+  and _sent[0][0] == "credo self-restart blocked" and "%9" in _sent[0][1])
+t("blocked notify: dialog text not pushed", "secret-cmd" not in _sent[0][1])
 # dialog constants
 t("dialog answer is Escape", m.DIALOG_ANSWER_TMUX_KEYS == ["Escape"] and m.DIALOG_ANSWER_PTY_BYTES == b"\x1b")
 t("dialog pattern", m.DIALOG_RE.search("Resuming the full session will consume a substantial portion of") is not None

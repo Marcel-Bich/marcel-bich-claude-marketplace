@@ -94,7 +94,11 @@ The detached worker (own session, stdio to `<configdir>/credo/self-restart.log`)
    to it) while it waits, the worker stops waiting and aborts: marker `failed: target
    gone` / `failed: pane ownership`, ntfy, nothing stopped and nothing relaunched.
    Timeout `CREDO_SELF_RESTART_IDLE_TIMEOUT` (default 1800 s): it gives up without
-   stopping anything (marker `failed: session not idle`, ntfy). Outside tmux there is no
+   stopping anything (marker `failed: session not idle`, ntfy). A classified dialog or
+   permission prompt (not the generic "no input box" state) blocking the pane for
+   `CREDO_SELF_RESTART_IDLE_BLOCKED_NOTIFY` seconds (default 120, 0 = off) triggers one
+   earlier push per blocked wait ("please answer it", without the dialog text);
+   the wait goes on and continues once the dialog is closed. Outside tmux there is no
    pane to inspect, so this step is skipped,
 3. stops the target Claude: inside tmux it sends `C-c` twice to the pane; otherwise (or if
    that did not work) SIGINT twice, then SIGTERM after a timeout. It NEVER uses SIGKILL. It

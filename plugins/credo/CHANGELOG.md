@@ -4,6 +4,34 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ## v0
 
+### v0.78
+
+#### v0.78.0
+
+##### Added
+
+- Peer metadata for orchestrators: `credo-peer-check.py` shows per peer its credo session mode, credo role, model, effort level, credo directory decision, project (cwd basename) and status (idle / busy / waiting) in a new `META` column (`meta` in `--json`); `-` means unknown
+- `hooks/credo-peer-meta-record.sh` (SessionStart + UserPromptSubmit) records model, effort and the credo directory decision per session; disable with `CREDO_PEER_META_RECORD=0`
+- `credo-peer-check.py sender --from uds:<socket>` prints the metadata of one peer; the peer-message hook adds it to incoming peer messages as one `[credo-peer-sender]` line (`CREDO_PEER_SENDER_META=0` turns it off)
+- LAN relay rosters publish the same metadata per session, read from the sender's own credo state; the receiver stores only whitelisted values in the mirror descriptor (`credoPeerMeta`). The project name is opt-in (`"publish_project": true` or `CREDO_PEER_LAN_META_PROJECT=1`); `"publish_meta": false` or `CREDO_PEER_LAN_META=0` stops LAN metadata publication
+- Tests: `test-credo-peer-meta-record.sh`; metadata cases in `test-credo-peer-check.sh`, `test-credo-peer-message.sh` and the MD block of `test-credo-peer-lan.sh`
+
+##### Changed
+
+- compact-plus and session-autonomous: in autonomous mode the first compact-plus ACTION already leads to compact-plus plus the self-compact (`credo-self-compact.py run --auto`) right after a green report, without asking, unless something important speaks against it; the ACTION is for the main session only, a subagent that sees one ignores it
+- self-reload, self-compact and self-restart: when no input box is visible, the pane guard now names the cause in the log ("permission prompt open, waiting for the user: ..." or "no input box, dialog or menu open: ...") instead of only "no empty prompt input box visible". A permission prompt raised by a background agent replaces the input box in the main pane while the session itself looks idle; this, not the footer layout, made the workers wait until their 1800 s timeout
+- self-reload, self-compact and self-restart: a classified dialog or permission prompt that blocks the pane for 120 s (`CREDO_SELF_RELOAD_BLOCKED_NOTIFY`, `CREDO_SELF_COMPACT_BLOCKED_NOTIFY`, `CREDO_SELF_RESTART_IDLE_BLOCKED_NOTIFY`; 0 = off) now sends one early ntfy push per blocked wait asking to answer it (without the dialog text); the generic "no input box" state (maybe a pane that is not Claude Code) never counts as blocked; the worker keeps waiting and continues by itself once the dialog is closed. Dialogs are still never typed into
+- Peer trust guard is quiet by default: a recognized peer trust grant (Bash or Write/Edit/MultiEdit) no longer returns a permission "ask" - which overrode allow rules and bypass mode and blocked autonomous runs with peers - but a non-blocking reminder that only the user grants trust and that an unrequested grant must be revoked right away (`trust remove`) and reported. Strict mode (confirm every grant) via config `peer.trust_guard.quiet: false` or env `CREDO_PEER_TRUST_GUARD_QUIET=false` (env wins); the key is read from the global and profile layers only, so a repo's `.credo/config` cannot downgrade it; without python3 the config is not read and only the env variable selects strict mode; strict mode also asks on obfuscated forms (arguments from variables or command substitution, `$'...'`, brace expansion, globs, `eval`, `bash -c` with variable code, a trust file name built from variables or string pieces); the guard is documented as a best-effort reminder, not a security boundary; `/credo:setup` Step 12 explains the switch and sets it on request, `check-setup.sh` reports it (`peer_trust_guard`)
+- Sender metadata line of incoming peer messages is labelled self-reported and unverified; each key=value pair is validated on its own (same whitelist as `credo_peer_meta.py`): no brackets except a context suffix like `[1m]` on the model, status only `idle`, `busy` or `waiting`
+
+##### Fixed
+
+- Peer trust guard false positives: a shell-aware parser (`scripts/credo_trust_guard.py`) replaces the text match. It flags a run of `credo-peer-lan.py` with `trust` and later `add` (direct, via python3, wrappers or a variable command word) and writes to the trust file (redirects, cp/mv/tee/ln/install/rsync/dd, sed -i, perl -i, truncate, rm, chmod, interpreter code with the file as a path literal), but no longer mentions: read-only commands (cat, grep, jq, ls), commit messages, echo strings and heredoc bodies such as a python3 heredoc editing another JSON doc. Unparsable commands get a cautious line check; without python3 the old text match applies
+
+##### Security
+
+- Metadata is informational only: every value passes a strict whitelist (enums including status, short fixed charset, model brackets only as a trailing context suffix such as `[1m]`, unknown keys dropped) and it never reaches the message envelope, trust, routing or any permission decision
+
 ### v0.77
 
 #### v0.77.0

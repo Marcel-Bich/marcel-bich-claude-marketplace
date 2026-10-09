@@ -331,7 +331,9 @@ def worker(plan_file):
 
     signal.signal(signal.SIGTERM, on_term)
     pane = wk.Pane(plan, csr.pane_owner_error, lambda: marker_cancelled(plan), log,
-                   wk.timing("CREDO_SELF_RELOAD"))
+                   wk.timing("CREDO_SELF_RELOAD"),
+                   on_blocked=lambda r: ntfy("credo self-reload blocked",
+                                             wk.blocked_text("self-reload", plan["pane"]), plan))
     step_timeout = envf("CREDO_SELF_RELOAD_STEP_TIMEOUT", 300.0)
     result_wait = envf("CREDO_SELF_RELOAD_RESULT_WAIT", 30.0)
 

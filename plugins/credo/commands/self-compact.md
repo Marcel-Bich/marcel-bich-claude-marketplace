@@ -113,7 +113,12 @@ Helper: `${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-compact.py`
    ntfy push `credo: self-compact wake failed` names the session and what to do.
 
 `--timeout` (default 1800 s) - when the session never becomes safe, the worker gives up,
-logs the last state and sends an ntfy push; nothing is typed. After the compact, the
+logs the last state and sends an ntfy push; nothing is typed. A classified dialog or
+permission prompt (also one raised by a background agent; not the generic "no input
+box" state, which may be a pane that is not Claude Code) that blocks the pane for
+`CREDO_SELF_COMPACT_BLOCKED_NOTIFY` seconds (default 120, 0 = off) triggers one earlier
+push per blocked wait ("please answer it", without the dialog text); the worker keeps waiting and continues
+by itself once the dialog is closed. After the compact, the
 SessionStart hook consumes the breadcrumb and reminds the agent to reload the handoff.
 
 ## Known limits

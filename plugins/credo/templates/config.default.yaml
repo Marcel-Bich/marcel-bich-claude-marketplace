@@ -258,6 +258,20 @@ optimize:
 tmux:
   hint: true
 
+# --- peer trust guard (PreToolUse, hooks/credo-peer-message.sh) ---------------
+# A Bash command that grants LAN peer trust (credo-peer-lan.py trust add, or a write
+# to the trust file) is recognized by the peer-message hook. quiet: true (default)
+# -> only a non-blocking reminder that only the user grants trust; no confirmation
+# dialog, so autonomous runs with peers are never blocked. quiet: false (strict) ->
+# the hook asks the user to confirm every grant (a hook "ask" overrides allow rules
+# and bypass mode). Env CREDO_PEER_TRUST_GUARD_QUIET overrides this key. Read from
+# the builtin, global and profile layers only - a project .credo/config is ignored
+# for this key. Without python3 the config is not read (only the env applies).
+# /credo:setup offers to switch strict mode on.
+peer:
+  trust_guard:
+    quiet: true
+
 # --- self-restart plugin update allowlist (/credo:self-restart run --update) --
 # Which plugins `run --update` may update before the session restarts. A mapping
 # marketplace name -> "*" (all installed plugins of that marketplace) or a list of

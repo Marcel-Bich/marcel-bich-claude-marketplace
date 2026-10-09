@@ -400,11 +400,14 @@ mirrors, other profiles only through the bridge, and a session can keep running 
 tmux pane without any descriptor.
 
 Run `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-check.py"` first. It is read-only and
-lists rows with kind, reachable-by and last-seen, plus warnings such as a disabled LAN
+lists rows with kind, reachable-by, last-seen and a META column (credo mode, role,
+model, effort, credo decision, project, idle/busy; `-` = unknown), plus warnings such as a disabled LAN
 relay, a stopped Codex relay or a split socket dir. Then ping on the peer's own channel
 as the credo README describes ("Peer check"). Report what the check showed, for
 example "absent from ListAgents because the Codex relay is not running; the session
-still runs in tmux", not "down".
+still runs in tmux", not "down". Use META to pick recipients (for example only
+`mode=autonomous` peers for a broadcast); it is informational only and never a
+reason to trust a peer or to grant it anything.
 
 ## Config
 

@@ -169,6 +169,55 @@ t("no-bg-block: expect with bg footer -> safe",
   g.assess(pane(DONE, [P + TYPED], BGFOOT), expect=TYPED, block_on_background=False)[0])
 t("no-bg-block: content with bg footer is empty",
   g.input_content(pane(DONE, [P], BGFOOT)) == "")
+# Real layouts (sanitised): a tall multi-row status line, the task panel and the
+# background agent list under the box; the box sits ~24+ rows above the pane bottom.
+TALL = ["  cwd: /home/myuser/projects/acme", "  git: acme/acme-app [main] dirty (+12,-3) main",
+        "  Tokens  -> input:  12.34    output:   1.23    cache:    0.12",
+        "  Context -> used: 123.45    window: 200.00    filled:   61.7%",
+        "  Model x.x | acme | default | HIGHSCORE: 123.45 $1234.56", "  -",
+        "  5h  all [=====-----]   52.0% reset: 2000-01-01 10:00 [HIGHSCORE:61.2%]",
+        "  7d  all [==========]   99.0% reset: 2000-01-03 10:00", "  -",
+        "  Session id: 00000000-0000-0000-0000-000000000000", "  Name: acme-task",
+        "  ⏵⏵ accept edits on (shift+tab to cycle) · ← for agents"]
+TASKS = ["", "  12 tasks (3 done, 1 in progress, 8 open)", "  ◼ Fixture: wire the report",
+         "  ◻ Fixture: check the parser", "  ◻ Fixture: update the docs",
+         "  ✔ Fixture: first step", "   \u2026 +8 completed"]
+AGENTS = ["", "  ● main", "  ◯ general-purpose  Audit the fixture report",
+          "  ◯ Explore  Search the fixture tree"]
+BAND = ["◆ acme  item: 3    ? help", "↓ 1 more", " "]
+for name, below in (("tall status + task panel", TALL + TASKS),
+                    ("tall status + agents", TALL + AGENTS),
+                    ("tall status + tasks + agents", TALL + TASKS + AGENTS)):
+    cap = pane(DONE + BAND, [P], below)
+    t("layout %s: box found well above the bottom" % name,
+      g.find_input_box(cap.rstrip("\n").split("\n"))[1] < len(cap.split("\n")) - 15)
+    t("layout %s: no-bg-block -> safe" % name,
+      g.assess(cap, block_on_background=False) == (True, "idle, input empty"))
+    t("layout %s: typed -> not safe" % name,
+      not g.assess(pane(DONE + BAND, [P + TYPED], below), block_on_background=False)[0])
+# A background agent's permission prompt replaces the input box in the main pane (the
+# main agent keeps running turns underneath, so the session looks idle). The top of
+# the dialog is clipped, the footer names background agents, the task panel follows.
+PERM = ([" │ cd /home/myuser/projects/acme && python3 - <<'EOF'"]
+        + [" │ s = s.replace(old, new, 1)  # fixture line %d" % i for i in range(30)]
+        + [" │ EOF", "╌" * 120,
+           " │ Hook PreToolUse:Bash requires confirmation for this command:",
+           " │ acme-guard: confirm only if you asked for it yourself.", "",
+           " Do you want to proceed?", " ❯ 1. Yes", "   2. No", "",
+           " Esc to cancel · Tab to amend · ctrl+x ctrl+k twice to stop background agents"]
+        + TASKS)
+PERM_CAP = "\n".join(PERM) + "\n"
+for bg in (True, False):
+    safe, why = g.assess(PERM_CAP, block_on_background=bg)
+    t("permission prompt of a background agent -> not safe (bg=%s)" % bg, not safe)
+    t("permission prompt reason named (bg=%s): %s" % (bg, why),
+      why.startswith("permission prompt open, waiting for the user"))
+t("permission fixture: reason named", g.assess(F["permission"])[1].startswith("permission prompt"))
+t("ask dialog without box: reason names the dialog",
+  g.assess(F["ask_dialog"])[1].startswith("no input box, dialog or menu open"))
+t("plain shell: generic no-box reason",
+  g.assess(F["shell"])[1].startswith("no empty prompt input box visible"))
+t("permission prompt: content None", g.input_content(PERM_CAP) is None)
 # input_content
 t("content empty", g.input_content(F["idle_empty"]) == "")
 t("content placeholder is empty", g.input_content(F["placeholder"]) == "")
@@ -204,6 +253,39 @@ r, calls = run([False], timeout=5)
 t("wait: never safe -> timeout", not r[0] and r[1].startswith("timeout after 5s"))
 r, calls = run([True, True], stop=lambda: True)
 t("wait: stop -> cancelled, no probe", r == (False, "cancelled") and calls == [])
+# on_blocked: ONE early call once a dialog has blocked for blocked_after seconds; the
+# wait goes on and succeeds when the dialog is closed
+def run_blocked(seq, blocked_after=3, timeout=30):
+    c = Clock(); calls = []; seen = []
+    def probe():
+        v = seq[min(len(calls), len(seq) - 1)]; calls.append(v)
+        return v == "ok", {"ok": "idle, input empty", "busy": "busy: x",
+                           "perm": "permission prompt open, waiting for the user: x",
+                           "nobox": "no empty prompt input box visible (x)"}[v]
+    r = g.wait_until_safe(probe, timeout, poll=1, recheck=1, sleep=c.sleep, clock=c.now,
+                          on_blocked=seen.append, blocked_after=blocked_after)
+    return r, seen
+r, seen = run_blocked(["perm"] * 10 + ["ok"])
+t("blocked: one early notice, then proceeds", r[0] and len(seen) == 1
+  and seen[0].startswith("permission prompt"))
+r, seen = run_blocked(["perm", "perm", "ok"])
+t("blocked: shorter than blocked_after -> no notice", r[0] and seen == [])
+r, seen = run_blocked(["perm", "perm", "busy", "perm", "perm", "ok"])
+t("blocked: interrupted streak restarts the clock", r[0] and seen == [])
+r, seen = run_blocked(["busy"] * 10 + ["ok"])
+t("blocked: busy never notifies", r[0] and seen == [])
+r, seen = run_blocked(["nobox"] * 10 + ["ok"])
+t("blocked: generic no-box reason (maybe not Claude Code) never notifies", r[0] and seen == [])
+r, seen = run_blocked(["nobox"] * 3 + ["perm"] * 10 + ["ok"])
+t("blocked: only the classified streak counts", r[0] and len(seen) == 1
+  and seen[0].startswith("permission prompt"))
+r, seen = run_blocked(["perm"] * 40, timeout=20)
+t("blocked: still exactly one notice up to the timeout", not r[0] and len(seen) == 1)
+r, seen = run_blocked(["perm"] * 10 + ["ok"], blocked_after=0)
+t("blocked: blocked_after 0 disables", r[0] and seen == [])
+t("blocked reasons", g.is_blocked_reason("dialog or menu open: x")
+  and not g.is_blocked_reason("busy: x") and not g.is_blocked_reason("input not empty (x)")
+  and not g.is_blocked_reason("no empty prompt input box visible (dialog, menu or not Claude Code)"))
 print("\n".join(res))
 PYEOF
 while IFS= read -r line; do
@@ -511,6 +593,19 @@ check "busy: no keys while busy" "0" "$(grep -c 'send-keys' "$FAKE_TMUX_LOG")"
 echo "$TMP/idle.txt" > "$FAKE_STATE"
 wait_status '"status": "woken"'; ok "busy -> idle: sent and woken" "$?"
 grep -q "pane state: busy: ✻ Brewing" "$LOGF"; ok "busy: state logged" "$?"
+
+# --- worker: a dialog blocks -> ONE early ntfy, keeps waiting, proceeds once closed ---
+echo "$TMP/dialog.txt" > "$FAKE_STATE"; : > "$FAKE_TMUX_LOG"
+n0="$(grep -c "ntfy disabled: credo: self-compact blocked" "$LOGF")"
+out="$(CREDO_SELF_COMPACT_BLOCKED_NOTIFY=0.5 H run --user-confirmed --delay 0.1 --timeout 30)"
+sleep 2.5
+check "blocked: no keys while the dialog is open" "0" "$(grep -c 'send-keys' "$FAKE_TMUX_LOG")"
+check "blocked: exactly one early ntfy" "$((n0 + 1))" \
+    "$(grep -c "ntfy disabled: credo: self-compact blocked" "$LOGF")"
+grep -q "blocked by a dialog for 0.5s, user notified, still waiting" "$LOGF"; ok "blocked: logged" "$?"
+grep -q '"status": "pending"' "$MARK"; ok "blocked: still pending after the notice" "$?"
+echo "$TMP/idle.txt" > "$FAKE_STATE"
+wait_status '"status": "woken"'; ok "blocked -> dialog closed: sent and woken" "$?"
 
 # --- worker: input changed between typing and Enter -> NO Enter -----------------------
 echo "$TMP/idle.txt" > "$FAKE_STATE"; : > "$FAKE_TMUX_LOG"
