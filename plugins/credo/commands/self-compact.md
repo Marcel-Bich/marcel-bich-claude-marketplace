@@ -126,6 +126,22 @@ SessionStart hook consumes the breadcrumb and reminds the agent to reload the ha
 - Marker, log and plan file are per session id; the target pane is always resolved from
   THIS Claude process, never taken from a marker.
 - tmux only. Outside tmux there is no own pane to type into; `check` says so.
+- Background daemon (Claude Code moved the session into `claude daemon run` ->
+  `claude bg-pty-host` -> agent, no `TMUX` in the agent): the pane is resolved from the
+  client TUI that spawned the daemon - its parent, or its `--spawned-by` pid only when
+  that is alive, of the same user, a Claude client and older than the daemon - and
+  ownership is verified against that client. The client talks to the daemon's
+  `control.sock`, not to the session's pty socket, so which session it shows cannot be
+  read directly. It fails closed instead: the daemon must host exactly this one session
+  (spares do not count), hold this session's pty socket, and have exactly one client
+  attached - the linked one. A daemon serving a second session or a second TUI is
+  refused. Before typing and again before Enter the worker re-checks that the agent is alive and
+  still linked to the same client.
+- The credo mode of the pre-fork session id (the `--resume <old>.jsonl` of the daemon
+  fork) carries over to the new id - including `autonomous`, so `--auto` stays allowed in
+  an autonomous session that Claude Code moved into the daemon. The compact-plus
+  breadcrumb carries over the same way. A fork started by hand (`--fork-session` without
+  the daemon) is a new session and maps nothing.
 - Detection reads the rendered TUI text, which is undocumented and English-only in Claude
   Code 2.1.x. A layout change makes the guard see "no input box" -> it waits and times
   out (safe direction), it does not type blindly.

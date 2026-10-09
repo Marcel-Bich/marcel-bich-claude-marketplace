@@ -180,6 +180,11 @@ helper restores it:
    `gnome-terminal` or `konsole`: a new terminal window.
 4. none -> refuse: "no way to bring the session back; not restarting" (ntfy).
 
+A session hosted by the Claude Code background daemon (`claude daemon run` /
+`bg-pty-host` in the parent chain) is refused with a clear reason: stopping the pane TUI
+does not reliably end the daemon-hosted agent. Restart it by hand in its pane, or use
+`/credo:self-reload` (which supports the daemon).
+
 All methods run one generated launcher `<configdir>/credo/self-restart-launch.sh` (unsets
 `CLAUDECODE`/`CLAUDE_CODE_*`, sets the profile, `cd`s to the cwd, `exec`s claude). `--method
 tmux|wt|x11` forces a method (mainly for tests).

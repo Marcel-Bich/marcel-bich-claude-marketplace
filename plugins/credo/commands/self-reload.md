@@ -55,6 +55,18 @@ Helper: `${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-reload.py`
   are ignored. (Only `/credo:self-restart` keeps a background gate, because a restart kills
   that work.)
 - tmux only. Outside tmux `check` says so; reload by hand or use `/credo:self-restart`.
+- Background daemon (Claude Code moved the session into `claude daemon run` ->
+  `claude bg-pty-host` -> agent, no `TMUX` in the agent): the pane is resolved from the
+  client TUI that spawned the daemon - its parent, or its `--spawned-by` pid only when
+  that is alive, of the same user, a Claude client and older than the daemon - and
+  ownership is verified against that client. Which session the client shows cannot be
+  read from its sockets (it talks to the daemon's `control.sock`), so it fails closed:
+  the daemon must host exactly this one session (spares do not count), hold its pty
+  socket, and have exactly one attached client - the linked one. Every keystroke is
+  preceded by a re-check that the agent is alive and still linked.
+- The credo mode of the pre-fork session id (the `--resume <old>.jsonl` of the daemon
+  fork) carries over to the new id, including `autonomous` (so `--auto` stays allowed).
+  A fork started by hand maps nothing.
 
 ## What the worker does
 

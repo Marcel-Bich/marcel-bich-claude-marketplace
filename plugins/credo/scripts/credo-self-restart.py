@@ -115,6 +115,9 @@ ENV_KEYS = ("CLAUDE_CONFIG_DIR", "TMUX", "TMUX_PANE", "WSL_DISTRO_NAME",
             "DISPLAY", "WAYLAND_DISPLAY")
 INTERPRETERS = ("node", "nodejs", "bun", "deno")
 X11_TERMINALS = ("x-terminal-emulator", "gnome-terminal", "konsole")
+# Root of the process table. Only the fixture tests point it at a fake tree (module
+# attribute, deliberately no env override).
+PROC_ROOT = "/proc"
 
 # "Resume from summary" (stale resume) dialog. Claude Code 2.1.x only checks for it
 # when there is NO initial message, so the primary fix is that the relaunch ALWAYS
@@ -184,7 +187,7 @@ def env_float(name, default):
 
 def read_cmdline(pid):
     try:
-        with open("/proc/%d/cmdline" % pid, "rb") as fh:
+        with open(PROC_ROOT + "/%d/cmdline" % pid, "rb") as fh:
             raw = fh.read()
     except OSError:
         return []
@@ -194,7 +197,7 @@ def read_cmdline(pid):
 
 def read_exe(pid):
     try:
-        return os.readlink("/proc/%d/exe" % pid)
+        return os.readlink(PROC_ROOT + "/%d/exe" % pid)
     except OSError:
         return ""
 
@@ -207,7 +210,7 @@ def read_ppid(pid):
 def read_stat(pid):
     """Fields of /proc/<pid>/stat after the comm field: [state, ppid, ...]."""
     try:
-        with open("/proc/%d/stat" % pid) as fh:
+        with open(PROC_ROOT + "/%d/stat" % pid) as fh:
             data = fh.read()
     except OSError:
         return None
@@ -223,7 +226,7 @@ def read_environ_keys(pid, keys):
     """Return {key: value} for ONLY the requested keys from /proc/<pid>/environ.
     None when the environ is not readable. Nothing else is kept or logged."""
     try:
-        with open("/proc/%d/environ" % pid, "rb") as fh:
+        with open(PROC_ROOT + "/%d/environ" % pid, "rb") as fh:
             raw = fh.read()
     except OSError:
         return None
@@ -256,6 +259,8 @@ def claude_exe_end(argv, exe=""):
     base0 = os.path.basename(argv[0])
     if base0 == "claude" or "/claude/versions/" in exe:
         return 0
+    if argv[0].split(" ")[0] == "claude" and " " in argv[0]:
+        return 0  # retitled daemon helper, e.g. argv[0] "claude bg-pty-host"
     if len(argv) > 1 and base0.split(".")[0] in INTERPRETERS:
         a1 = argv[1]
         if (os.path.basename(a1) == "claude" or "claude-code" in a1
@@ -297,6 +302,405 @@ def pane_owner_error(pane, socket, target, start):
             return ("another Claude process (pid %d) runs between tmux pane %s and this "
                     "Claude process (pid %d); the pane shows that other session - refusing "
                     "to use it" % (pid, pane, target))
+    return None
+
+
+# --- Claude Code background daemon ---------------------------------------------
+# Claude Code can move a session into its background daemon. The TUI in the tmux
+# pane (`claude --resume <name>`, has TMUX/TMUX_PANE) then spawns
+# `claude daemon run --spawned-by {"pid": <tui pid>, ...}` (parent: the TUI) ->
+# `claude bg-pty-host ... --session-id <new> --fork-session --resume <old>.jsonl` ->
+# the agent process (new session id, NO TMUX env). The pane TUI keeps rendering the
+# session and forwards keystrokes to it, so the pane to verify and type into is the
+# one of that client TUI. The client is taken ONLY from the agent's ancestor chain
+# (the daemon's parent) or, when the daemon was reparented, from its documented
+# --spawned-by link after validating it (alive, same uid, a Claude client, started
+# before the daemon). The pane ownership check then runs against the client.
+#
+# The client TUI does NOT hold a socket to the session's pty socket: it talks to the
+# daemon's <dir>/control.sock, and the daemon holds the peer end of <dir>/pty/<id>.sock
+# (observed on 2.1.296). Which session a client currently shows therefore cannot be
+# read from the socket table. attach_error() fails closed instead: the daemon must
+# host exactly ONE session (bg-pty-host with --session-id; spares excluded), the
+# daemon must hold the peer of this session's pty socket, and exactly one process
+# outside the daemon tree - the linked client - may be attached to control.sock. Any
+# second session or second client (one daemon serving several TUIs) -> refuse.
+
+def daemon_role(argv, exe_end):
+    """"daemon" for `claude daemon run`, "pty-host" for `claude bg-pty-host`, else
+    None (also for a non-Claude argv, exe_end None). Only the subcommand position
+    counts, never a token elsewhere in argv."""
+    if exe_end is None:
+        return None
+    rest = _subcommand_argv(argv, exe_end)
+    if rest[:2] == ["daemon", "run"]:
+        return "daemon"
+    if rest[:1] == ["bg-pty-host"]:
+        return "pty-host"
+    return None
+
+
+def _subcommand_argv(argv, exe_end):
+    """argv after the executable. A daemon helper retitles itself so that argv[0] is
+    the single token "claude bg-pty-host"; its words after "claude" count as argv."""
+    words = argv[exe_end].split(" ")
+    head = words[1:] if len(words) > 1 and words[0] == "claude" else []
+    return [w for w in head if w] + argv[exe_end + 1:]
+
+
+def pty_socket(argv, exe_end):
+    """The pty socket path of a `claude bg-pty-host --bg-pty-host <path>` argv, or None."""
+    rest = _subcommand_argv(argv, exe_end) if exe_end is not None else []
+    if rest[:2] != ["bg-pty-host", "--bg-pty-host"] or len(rest) < 3:
+        return None
+    path = rest[2]
+    if not re.fullmatch(r"/[^\0]*/pty/[^/\0]+\.sock", path) or "/../" in path:
+        return None
+    return path
+
+
+def unix_table():
+    """{inode: (bound path or "", peer inode or 0)} of every unix socket, read through
+    the kernel's sock_diag netlink interface (stdlib only, no external tool). None
+    when it is unavailable. Tests replace this function."""
+    import socket
+    import struct
+    try:
+        sk = socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, 4)  # NETLINK_SOCK_DIAG
+    except (OSError, AttributeError):
+        return None
+    out = {}
+    try:
+        sk.settimeout(5)
+        # unix_diag_req: family, protocol, pad, states (all), ino, show NAME|PEER, cookie
+        req = struct.pack("=BBHIIIII", socket.AF_UNIX, 0, 0, 0xffffffff, 0, 1 | 4,
+                          0xffffffff, 0xffffffff)
+        # nlmsghdr: len, SOCK_DIAG_BY_FAMILY, NLM_F_REQUEST | NLM_F_DUMP, seq, pid
+        sk.sendto(struct.pack("=IHHII", 16 + len(req), 20, 0x301, 1, 0) + req, (0, 0))
+        while True:
+            data = sk.recv(1 << 17)
+            if not data:
+                return None
+            off = 0
+            while off + 16 <= len(data):
+                length, mtype = struct.unpack_from("=IH", data, off)
+                if mtype == 3:  # NLMSG_DONE
+                    return out
+                if mtype == 2 or length < 16:  # NLMSG_ERROR
+                    return None
+                body = data[off + 16:off + length]
+                if len(body) >= 8:
+                    ino = struct.unpack_from("=I", body, 4)[0]
+                    name, peer, a = "", 0, 16
+                    while a + 4 <= len(body):
+                        alen, atype = struct.unpack_from("=HH", body, a)
+                        if alen < 4:
+                            break
+                        val = body[a + 4:a + alen]
+                        if atype == 0 and val[:1] not in (b"", b"\0"):  # UNIX_DIAG_NAME
+                            name = val.split(b"\0")[0].decode("utf-8", "replace")
+                        elif atype == 2 and len(val) >= 4:  # UNIX_DIAG_PEER
+                            peer = struct.unpack_from("=I", val, 0)[0]
+                        a += (alen + 3) & ~3
+                    out[ino] = (name, peer)
+                off += (length + 3) & ~3
+    except (OSError, ValueError):
+        return None
+    finally:
+        sk.close()
+
+
+def socket_inodes(pid):
+    """Inodes of the sockets pid holds open (its fd links "socket:[N]")."""
+    d = PROC_ROOT + "/%d/fd" % pid
+    out = set()
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return out
+    for n in names:
+        try:
+            link = os.readlink(os.path.join(d, n))
+        except OSError:
+            continue
+        m = re.fullmatch(r"socket:\[(\d+)\]", link)
+        if m:
+            out.add(int(m.group(1)))
+    return out
+
+
+def all_pids():
+    try:
+        return [int(e) for e in os.listdir(PROC_ROOT) if e.isdigit()]
+    except OSError:
+        return []
+
+
+def attach_error(daemon_pid, client, host_pid, host_argv, host_end):
+    """None when it is proven that `client` is the only client of the daemon and the
+    daemon hosts only this one session (see the block comment above), else why not."""
+    pty = pty_socket(host_argv, host_end)
+    if not pty:
+        return "its bg-pty-host (pid %d) names no pty socket" % host_pid
+    control = os.path.join(os.path.dirname(os.path.dirname(pty)), "control.sock")
+    pids = all_pids()
+    parents = {p: read_ppid(p) for p in pids}
+    sessions = []
+    for p, pp in parents.items():
+        if pp != daemon_pid:
+            continue
+        argv = read_cmdline(p)
+        end = claude_exe_end(argv, read_exe(p))
+        if daemon_role(argv, end) == "pty-host" and flag_value(argv, "--session-id"):
+            sessions.append(p)
+    if sessions != [host_pid]:
+        return ("the daemon (pid %d) hosts %d sessions (bg-pty-host pids %s); which one the "
+                "pane shows cannot be proven" % (daemon_pid, len(sessions),
+                                                 ", ".join(map(str, sorted(sessions))) or "-"))
+    table = unix_table()
+    if table is None:
+        return "the unix socket table is not readable (sock_diag), cannot prove the link"
+    host_fds, daemon_fds = socket_inodes(host_pid), socket_inodes(daemon_pid)
+    if not any(table.get(i, ("", 0))[0] == pty and table[i][1] in daemon_fds
+               for i in host_fds):
+        return "the daemon (pid %d) is not connected to this session's pty socket" % daemon_pid
+    ctrl = {i for i, (name, peer) in table.items() if name == control and peer}
+    if not ctrl & daemon_fds:
+        return "the daemon (pid %d) does not hold its control socket" % daemon_pid
+    peers = {table[i][1] for i in ctrl}
+    tree, grow = {daemon_pid}, True
+    while grow:
+        grow = False
+        for p, pp in parents.items():
+            if pp in tree and p not in tree:
+                tree.add(p)
+                grow = True
+    attached = sorted(p for p in pids if p not in tree and socket_inodes(p) & peers)
+    if attached != [client]:
+        if client not in attached:
+            return ("the client TUI (pid %d) is not attached to the daemon's control socket"
+                    % client)
+        return ("%d clients are attached to the daemon (pids %s); which pane shows this "
+                "session cannot be proven" % (len(attached), ", ".join(map(str, attached))))
+    return None
+
+
+def flag_value(argv, name):
+    """Value of `name VALUE` or `name=VALUE` in argv, or None."""
+    for i, tok in enumerate(argv):
+        if tok == name and i + 1 < len(argv):
+            return argv[i + 1]
+        if tok.startswith(name + "="):
+            return tok[len(name) + 1:]
+    return None
+
+
+def spawned_by_pid(argv):
+    """pid of the `--spawned-by` JSON object ({"pid": <int>, ...}), or None when the
+    flag is missing, not a JSON object or the pid is not a plain int > 1."""
+    raw = flag_value(argv, "--spawned-by")
+    if raw is None or len(raw) > 4096:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    pid = data.get("pid") if isinstance(data, dict) else None
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 1:
+        return None
+    return pid
+
+
+def read_uid(pid):
+    """Real uid of pid (the Uid: line of its status file), or None."""
+    try:
+        with open(PROC_ROOT + "/%d/status" % pid) as fh:
+            for line in fh:
+                if line.startswith("Uid:"):
+                    parts = line.split()
+                    return int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+    except OSError:
+        return None
+    return None
+
+
+def _start_int(pid):
+    s = proc_start(pid)
+    return int(s) if s.isdigit() else None
+
+
+def spawned_by_error(sb, daemon_pid):
+    """None when the --spawned-by pid `sb` can be the client TUI that spawned the
+    daemon `daemon_pid`, else the reason."""
+    if not alive(sb):
+        return "its --spawned-by pid %d is not running" % sb
+    uid = read_uid(sb)
+    if uid is None or uid != os.getuid() or uid != read_uid(daemon_pid):
+        return "its --spawned-by pid %d belongs to another user" % sb
+    argv = read_cmdline(sb)
+    end = claude_exe_end(argv, read_exe(sb))
+    if end is None or daemon_role(argv, end) is not None:
+        return "its --spawned-by pid %d is not a Claude Code client" % sb
+    s_start, d_start = _start_int(sb), _start_int(daemon_pid)
+    if s_start is None or d_start is None or s_start > d_start:
+        return "its --spawned-by pid %d started after the daemon" % sb
+    return None
+
+
+def fork_source(argvs):
+    """(old sid, new sid) from the argvs with --fork-session and --resume (the agent
+    and its bg-pty-host both carry them), or (None, None) when there is none or they
+    disagree. The old id is the stem of the --resume transcript path (or the plain id),
+    validated like a session id."""
+    found = set()
+    for argv in argvs:
+        if "--fork-session" not in argv:
+            continue
+        val = flag_value(argv, "--resume")
+        if not val:
+            continue
+        stem = os.path.basename(val)
+        if stem.endswith(".jsonl"):
+            stem = stem[:-len(".jsonl")]
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", stem) or stem in (".", ".."):
+            return None, None
+        found.add((stem, flag_value(argv, "--session-id")))
+    return found.pop() if len(found) == 1 else (None, None)
+
+
+def daemon_link(target):
+    """How the Claude process `target` (nearest Claude ancestor) reaches its pane.
+    {"daemon": False} for a plain session (target owns the pane). For a session
+    hosted by the background daemon: {"daemon": True, "client": pid or None,
+    "daemon_pid": pid or None, "fork": (old sid, new sid), "error": None or text}.
+    With an error the client is None and the caller must refuse."""
+    rows = []
+    for pid in ancestors(target):
+        argv = read_cmdline(pid)
+        end = claude_exe_end(argv, read_exe(pid))
+        rows.append((pid, argv, end, daemon_role(argv, end)))
+    hosts = [r for r in rows if r[3]]
+    if not hosts:
+        return {"daemon": False}
+    out = {"daemon": True, "client": None, "daemon_pid": None, "fork": (None, None),
+           "error": None}
+    idx = next((i for i, r in enumerate(rows) if r[3] == "daemon"), None)
+    if idx is None:
+        out["error"] = ("this session runs in the Claude Code background daemon (pid %d) but "
+                        "no `claude daemon run` process is in its parent chain - cannot find "
+                        "the client pane" % hosts[0][0])
+        return out
+    for pid, _, end, role in rows[1:idx]:
+        if end is not None and role is None:
+            out["error"] = ("another Claude process (pid %d) runs between this Claude process "
+                            "and its daemon - refusing" % pid)
+            return out
+    dpid, dargv = rows[idx][0], rows[idx][1]
+    out["daemon_pid"] = dpid
+    host = rows[idx - 1] if idx >= 1 else None
+    if host is None or host[3] != "pty-host":
+        out["error"] = ("the daemon (pid %d) does not host this session through a bg-pty-host "
+                        "child - cannot find the client pane" % dpid)
+        return out
+    out["fork"] = fork_source([r[1] for r in rows[:idx + 1]])
+    sb = spawned_by_pid(dargv)
+    parent = rows[idx + 1] if idx + 1 < len(rows) else None
+    client, err = None, None
+    if parent is not None and parent[2] is not None:
+        if parent[3] is not None:
+            err = "the daemon (pid %d) was started by another daemon process" % dpid
+        elif sb is not None and sb != parent[0]:
+            err = ("the daemon (pid %d) runs under pid %d but its --spawned-by names "
+                   "pid %d - refusing" % (dpid, parent[0], sb))
+        else:
+            client = parent[0]
+    elif sb is None:
+        err = ("the daemon (pid %d) has no Claude client parent and no usable "
+               "--spawned-by link - cannot find the client pane" % dpid)
+    else:
+        serr = spawned_by_error(sb, dpid)
+        if serr:
+            err = "the daemon (pid %d) cannot be linked to a client: %s" % (dpid, serr)
+        else:
+            client = sb
+    if client is not None:
+        aerr = attach_error(dpid, client, host[0], host[1], host[2])
+        if aerr:
+            err = ("not typing into the pane of client pid %d: %s - refusing (fail closed)"
+                   % (client, aerr))
+            client = None
+    out["client"], out["error"] = client, err
+    return out
+
+
+def session_owner_check(plan):
+    """owner_error(pane, socket, target, start) for the workers: for a daemon-hosted
+    session it first re-checks that the agent process is alive and still linked to
+    the same client (daemon_link again, incl. the attach proof), then the pane
+    ownership of the client. Plain sessions: pane_owner_error unchanged."""
+    agent, astart = plan.get("agent_pid"), plan.get("agent_start") or ""
+
+    def check(pane, socket, target, start):
+        if agent and agent != target:
+            if not alive(agent, astart):
+                return "the daemon-hosted Claude process %d is gone" % agent
+            link = daemon_link(agent)
+            if link.get("error"):
+                return link["error"]
+            if link.get("client") != target:
+                return ("the daemon-hosted session is no longer linked to client pid %d"
+                        % target)
+        return pane_owner_error(pane, socket, target, start)
+    return check
+
+
+def daemon_note(link):
+    """One plan line describing a daemon-hosted session, or "" for a plain one."""
+    if not link or not link.get("daemon"):
+        return ""
+    return ("background daemon (daemon pid %s, client TUI pid %s)"
+            % (link.get("daemon_pid") or "-", link.get("client") or "-"))
+
+
+def pane_env(target, link, keys):
+    """{key: value} of `keys` for the pane lookup: from the target, except that for a
+    daemon-hosted session TMUX / TMUX_PANE come from the client TUI only (the agent
+    has none, and a stray value of its own is never used). None when unreadable."""
+    env = read_environ_keys(target, keys)
+    if env is None or not link or not link.get("daemon"):
+        return env
+    for k in ("TMUX", "TMUX_PANE"):
+        env.pop(k, None)
+    if not link.get("client"):
+        return env
+    cenv = read_environ_keys(link["client"], [k for k in ("TMUX", "TMUX_PANE") if k in keys])
+    if cenv is None:
+        return None
+    env.update(cenv)
+    return env
+
+
+def state_sids(sid, link):
+    """Session ids to look per-session credo state up under, in order: `sid`, then
+    for a daemon fork of THIS session (--fork-session --resume <old>.jsonl, and the
+    --session-id there, if any, is `sid`) the pre-fork id, so mode, autonomy and the
+    compact-plus breadcrumb written before the fork carry over. Only for daemon-hosted
+    sessions: a fork the user started by hand is a new session on purpose."""
+    out = [sid] if sid else []
+    if not sid or not link or not link.get("daemon") or link.get("error"):
+        return out
+    old, new = link.get("fork") or (None, None)
+    if old and old != sid and (new is None or new == sid):
+        out.append(old)
+    return out
+
+
+def read_credo_mode_any(config_dir, sids):
+    """read_credo_mode() for the first of `sids` that has a mode, else None."""
+    for s in sids:
+        mode = read_credo_mode(config_dir, s)
+        if mode:
+            return mode
     return None
 
 
@@ -999,6 +1403,17 @@ def gather(args):
         os.path.join(os.path.expanduser("~"), ".claude")
     plan["config_dir"] = config_dir
     plan["credo_mode"] = read_credo_mode(config_dir, sid)
+    link = daemon_link(pid)
+    if link.get("daemon"):
+        # Stopping the pane TUI does not reliably end the daemon-hosted agent, and the
+        # agent's argv / session id are not the client's - a stop + resume could leave
+        # two holders of the session. Refuse with a clear reason instead.
+        plan["credo_mode"] = read_credo_mode_any(config_dir, state_sids(sid, link))
+        errors.append(link.get("error") or (
+            "this session runs in the Claude Code background daemon (%s); self-restart "
+            "cannot stop and resume a daemon-hosted session safely - restart it by hand "
+            "in its pane, or use /credo:self-reload for a plugin reload" % daemon_note(link)))
+        return plan, errors
     try:
         cwd = os.readlink("/proc/%d/cwd" % pid)
     except OSError:

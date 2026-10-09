@@ -217,14 +217,25 @@ def gather(args):
     cfg_env = os.environ.get("CLAUDE_CONFIG_DIR")
     pid, err = find_target()
     tenv = {}
+    link = {"daemon": False}
     if err:
         errors.append(err)
     else:
-        plan["target_pid"] = pid
-        plan["target_start"] = csr.proc_start(pid)
-        tenv = csr.read_environ_keys(pid, ENV_KEYS)
+        # a daemon-hosted session is shown and typed into by its client TUI: the pane,
+        # TMUX / TMUX_PANE and the ownership check belong to that client
+        link = csr.daemon_link(pid)
+        if link.get("error"):
+            errors.append(link["error"])
+            err = link["error"]
+        owner = link.get("client") or pid
+        plan["agent_pid"] = pid
+        plan["agent_start"] = csr.proc_start(pid)
+        plan["target_pid"] = owner
+        plan["target_start"] = csr.proc_start(owner)
+        plan["daemon"] = csr.daemon_note(link)
+        tenv = csr.pane_env(pid, link, ENV_KEYS)
         if tenv is None:
-            errors.append("cannot read the environment of the Claude process %d" % pid)
+            errors.append("cannot read the environment of the Claude process %d" % owner)
             tenv = {}
         else:
             cfg_env = tenv.get("CLAUDE_CONFIG_DIR")
@@ -232,15 +243,19 @@ def gather(args):
         os.path.join(os.path.expanduser("~"), ".claude")
     plan["config_dir"] = config_dir
     plan["config_explicit"] = bool(cfg_env)
-    plan["credo_mode"] = csr.read_credo_mode(config_dir, sid) if sid else None
+    sids = csr.state_sids(sid, link)
+    plan["state_sids"] = sids
+    plan["credo_mode"] = csr.read_credo_mode_any(config_dir, sids)
     state = os.path.join(config_dir, "credo")
     plan["marker"], plan["log"], plan["plan_file"], plan["done_file"], plan["wake_file"] = \
         state_files(state, sid or "none")
     pane = tenv.get("TMUX_PANE") or ""
     if not err:
         if not tenv.get("TMUX") or not pane:
-            errors.append("not running inside tmux (the Claude process has no "
-                          "TMUX/TMUX_PANE); self-compact needs its own tmux pane")
+            errors.append("not running inside tmux (the %s has no TMUX/TMUX_PANE); "
+                          "self-compact needs its own tmux pane"
+                          % ("client TUI of this daemon-hosted session" if link.get("daemon")
+                             else "Claude process"))
         elif not PANE_RE.fullmatch(pane):
             errors.append("TMUX_PANE %r is not a pane id" % pane)
         elif not shutil.which("tmux"):
@@ -248,12 +263,17 @@ def gather(args):
         else:
             plan["pane"] = pane
             plan["socket"] = guard.socket_from_tmux_env(tenv.get("TMUX"))
-            oerr = owner_error(pane, plan["socket"], pid, plan["target_start"])
+            oerr = owner_error(pane, plan["socket"], plan["target_pid"],
+                               plan["target_start"])
             if oerr:
                 errors.append(oerr)
     if args.handoff and not SAFE_PATH_RE.fullmatch(args.handoff):
         errors.append("--handoff must be a plain path (letters, digits, . _ / ~ -)")
-    crumb, age = breadcrumb(config_dir, sid) if sid else (None, None)
+    crumb, age = None, None
+    for s in sids:  # own id first, then the pre-fork id of a daemon fork
+        crumb, age = breadcrumb(config_dir, s)
+        if crumb is not None:
+            break
     # --handoff only replaces the path typed into /compact; a fresh breadcrumb (proof
     # that compact-plus secured this session) is required either way
     handoff = args.handoff or crumb
@@ -275,6 +295,11 @@ def print_plan(plan, errors, live_state=None):
     p("credo self-compact plan (dry run, nothing typed)")
     p("  session id:   %s" % (plan.get("session_id") or "-"))
     p("  target pid:   %s" % plan.get("target_pid", "-"))
+    if plan.get("daemon"):
+        p("  hosted by:    %s; pane checked via the client TUI" % plan["daemon"])
+    if len(plan.get("state_sids") or []) > 1:
+        p("  state ids:    %s (daemon fork: credo state of the pre-fork session carries over)"
+          % ", ".join(plan["state_sids"]))
     p("  config dir:   %s" % plan.get("config_dir"))
     p("  own pane:     %s (tmux socket %s)" % (plan.get("pane") or "-",
                                                plan.get("socket") or "default"))
@@ -344,8 +369,8 @@ def wait_compact_done(plan, since, timeout):
             pass
         if marker_cancelled(plan):
             raise wk.Cancelled()
-        if csr.pane_owner_error(plan["pane"], plan.get("socket"), plan["target_pid"],
-                                plan["target_start"]):
+        if csr.session_owner_check(plan)(plan["pane"], plan.get("socket"),
+                                         plan["target_pid"], plan["target_start"]):
             raise wk.StepFailed("failed: pane ownership", "the Claude process or its pane "
                                 "is gone while waiting for the compact")
         if time.time() >= end:
@@ -404,7 +429,7 @@ def worker(plan_file):
         raise wk.Cancelled()
 
     signal.signal(signal.SIGTERM, on_term)
-    pane = wk.Pane(plan, csr.pane_owner_error, lambda: marker_cancelled(plan), log,
+    pane = wk.Pane(plan, csr.session_owner_check(plan), lambda: marker_cancelled(plan), log,
                    wk.timing("CREDO_SELF_COMPACT"),
                    on_blocked=lambda r: ntfy("credo: self-compact blocked",
                                              wk.blocked_text("self-compact", plan["pane"]), plan))

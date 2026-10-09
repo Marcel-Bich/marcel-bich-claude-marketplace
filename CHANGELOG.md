@@ -8,6 +8,22 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.78
 
+##### v0.78.1
+
+###### Fixed
+
+- `self-compact` and `self-reload` work again when Claude Code moves the session into its
+  background daemon: the tmux pane comes from the client TUI that spawned the daemon (its
+  parent, or a validated `--spawned-by` pid) and pane ownership is verified against that
+  client; a spoofed or inconsistent `--spawned-by` link is refused
+- Fail closed for a daemon that serves more than this one session or more than one
+  client TUI (checked through the kernel's unix socket table, no external tool); the
+  workers re-check before every keystroke that the agent is alive and still linked
+- The credo mode (including `autonomous`) and the compact-plus breadcrumb of the
+  pre-fork session id carry over to the forked id of a daemon-hosted session
+- `self-restart` refuses a daemon-hosted session with a clear reason instead of a
+  misleading "not running inside tmux"
+
 ##### v0.78.0
 
 ###### Added
