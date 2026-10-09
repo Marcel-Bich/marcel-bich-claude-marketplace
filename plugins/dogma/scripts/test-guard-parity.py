@@ -198,6 +198,43 @@ def unit_legacy_cwd():
     return results
 
 
+def long_json():
+    """A minified JSON document of about 37 KB with many braces and commas (a kubectl patch)."""
+    items = [{"name": "c%d" % index, "env": [{"name": "K%d" % index, "value": "v,%d" % index}],
+              "ports": [{"containerPort": 8000 + index, "protocol": "TCP"}]} for index in range(360)]
+    return json.dumps({"spec": {"template": {"spec": {"containers": items}}}}, separators=(",", ":"))
+
+
+def unit_perf():
+    """[(ok, line)]: long and pathological arguments are analysed well below the hook timeout."""
+    import importlib.util
+    import time
+    spec = importlib.util.spec_from_file_location("dogma_bash_guard_perf", HERE / "bash-guard.py")
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    flags = {feature: True for feature in guard.FEATURES}
+    size = 50000
+    texts = {"=": "=" * size, "quote": "'" * size, "paren": "(" * size, "dollar": "!$a" * (size // 3),
+             "slash": "x/" * (size // 2)}
+    results = []
+    for name, text in texts.items():
+        for pattern in ("OPAQUE_RE", "FALLBACK_RE"):
+            started = time.monotonic()
+            getattr(guard, pattern).search(text)
+            took = time.monotonic() - started
+            results.append((took < 1.0, "unit perf %s on 50 KB %s: %.3fs" % (pattern, name, took)))
+    commands = {"json": "kubectl patch deploy web -p '%s'" % long_json(),
+                "=": "foo \"%s\"" % texts["="], "quote": "foo \"%s\"" % texts["quote"],
+                "paren": "foo \"%s\"" % texts["paren"], "dollar": "foo '%s'" % texts["dollar"]}
+    for name, command in commands.items():
+        guard.STARTED[0] = time.monotonic()
+        started = time.monotonic()
+        guard.analyse(command, "/tmp", flags)
+        took = time.monotonic() - started
+        results.append((took < 1.0, "unit perf analyse 50 KB %s argument: %.3fs" % (name, took)))
+    return results
+
+
 def main():
     verbose = "-v" in sys.argv
     only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
@@ -231,7 +268,7 @@ def main():
                     table, number, directory, expected, got,
                     (": " + " | ".join(reasons)) if verbose and reasons else ""))
         if only in (None, "unit"):
-            for ok, line in unit_legacy_cwd():
+            for ok, line in unit_legacy_cwd() + unit_perf():
                 passed, total = counts.get("unit", (0, 0))
                 counts["unit"] = (passed + ok, total + 1)
                 if not ok:

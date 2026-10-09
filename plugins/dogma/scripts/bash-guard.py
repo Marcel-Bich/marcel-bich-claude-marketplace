@@ -55,9 +55,11 @@ from pathlib import Path
 
 PERMISSION_FILE = "DOGMA-PERMISSIONS.md"
 FEATURES = ("token_protection", "file_protection", "git_permissions", "git_add_protection", "dependency_verification")
-# Claude Code treats a timed-out hook as a non-blocking error, so the analysis stops (and
-# denies) well before the hook timeout.
-DEADLINE = 3.5
+# Claude Code treats a timed-out hook (5 s) as a non-blocking error, so the analysis stops
+# (and denies) well before the hook timeout, and the delete-guard phase after it gets the
+# rest of one overall budget (it denies as well when that runs out).
+DEADLINE = 2.5
+HOOK_BUDGET = 4.0
 STARTED = [time.monotonic()]
 
 
@@ -112,6 +114,61 @@ CODE_INSTALL_RE = re.compile(r"install\.packages|remotes::install|devtools::inst
                              r"[\s\S]*\b(exec|eval|system|load|loadstring|require)\b")
 RAW_DESTRUCT_RE = re.compile(r"(?i)\b(rm|rmdir|unlink|shred|mkfs\S*|dd|truncate|wipefs|remove-item|rd|del)\b")
 RAW_PROTECTED_RE = re.compile(r"(^|[\s'\"=(,_:])(~|\$HOME|\$\{HOME|/home\b|/root\b|/mnt\b|/(?=[\s'\"]|$)|\.\.)")
+# a string handed to a program whose semantics are not (fully) known is parsed as shell text
+# when a command word the analyser cares about stands in command position, or it expands
+# (linear: a one-character lookbehind instead of a leading path pattern, bounded repeats only;
+# the word may follow a "/" of a path such as /bin/rm)
+OPAQUE_RE = re.compile(r"(?<![^\s;&|({`'\"!=@/])(?:rm|unlink|rmdir|shred|srm|wipe|del|rd|find|mv|truncate|dd|"
+                       r"mkfs[\w.-]{0,32}|wipefs|git|chmod|chown|rsync|sh|bash|zsh|dash|ksh|mksh|ash|fish|eval|exec|"
+                       r"xargs|sudo|doas|su|runuser|env|tmux|wsl(?:\.exe)?|cd|pushd|source|python[0-9.]{0,8}|perl|"
+                       r"node|ruby|systemd-run|nsenter|unshare|chroot|bwrap|proot|start-stop-daemon)"
+                       r"(?=$|[\s;&|)}`'\"])"
+                       r"|(?<![^\s;&|({`'\"!])\$[\w{][^\s$]{0,256}\s+\S|\$\(|`")
+# fallback when such a string cannot be parsed: a delete-capable verb with any operand
+FALLBACK_RE = re.compile(r"(?<![^\s;&|({`'\"!=@/])(?:rm|unlink|rmdir|shred|srm|wipe|del|rd|truncate|dd|"
+                         r"mkfs[\w.-]{0,32}|wipefs|find|mv|rsync)\s+\S")
+# appended to every refusal of a git hook bypass
+HOOK_HINT = " Make a normal commit (a WIP commit is fine); if a hook fails, fix the cause or report it."
+OPAQUE_MAX = 65536  # longer text is not parsed; it is refused when the fallback pattern matches
+# tmux commands (name: alias) for the unique-prefix lookup of tmux's cmd_find
+TMUX_COMMANDS = {
+    "attach-session": "attach", "bind-key": "bind", "break-pane": "breakp", "capture-pane": "capturep",
+    "choose-buffer": None, "choose-client": None, "choose-tree": None, "clear-history": "clearhist",
+    "clear-prompt-history": "clearphist", "clock-mode": None, "command-prompt": None, "confirm-before": "confirm",
+    "copy-mode": None, "customize-mode": None, "delete-buffer": "deleteb", "detach-client": "detach",
+    "display-menu": "menu", "display-message": "display", "display-panes": "displayp", "display-popup": "popup",
+    "find-window": "findw", "has-session": "has", "if-shell": "if", "join-pane": "joinp", "kill-pane": "killp",
+    "kill-server": None, "kill-session": None, "kill-window": "killw", "last-pane": "lastp", "last-window": "last",
+    "link-window": "linkw", "list-buffers": "lsb", "list-clients": "lsc", "list-commands": "lscm",
+    "list-keys": "lsk", "list-panes": "lsp", "list-sessions": "ls", "list-windows": "lsw", "load-buffer": "loadb",
+    "lock-client": "lockc", "lock-server": "lock", "lock-session": "locks", "move-pane": "movep",
+    "move-window": "movew", "new-session": "new", "new-window": "neww", "next-layout": "nextl",
+    "next-window": "next", "paste-buffer": "pasteb", "pipe-pane": "pipep", "previous-layout": "prevl",
+    "previous-window": "prev", "refresh-client": "refresh", "rename-session": "rename", "rename-window": "renamew",
+    "resize-pane": "resizep", "resize-window": "resizew", "respawn-pane": "respawnp", "respawn-window": "respawnw",
+    "rotate-window": "rotatew", "run-shell": "run", "save-buffer": "saveb", "select-layout": "selectl",
+    "select-pane": "selectp", "select-window": "selectw", "send-keys": "send", "send-prefix": None,
+    "server-access": None, "set-buffer": "setb", "set-environment": "setenv", "set-hook": None,
+    "set-option": "set", "set-window-option": "setw", "show-buffer": "showb", "show-environment": "showenv",
+    "show-hooks": None, "show-messages": "showmsgs", "show-options": "show", "show-prompt-history": "showphist",
+    "show-window-options": "showw", "source-file": "source", "split-window": "splitw", "start-server": "start",
+    "suspend-client": "suspendc", "swap-pane": "swapp", "swap-window": "swapw", "switch-client": "switchc",
+    "unbind-key": "unbind", "unlink-window": "unlinkw", "wait-for": "wait"}
+# tmux commands that run something: (option letters taking a value, kind of the remaining arguments)
+TMUX_RUN = {
+    "new-session": ("cefnstxyFX", "shell"), "new-window": ("cenFt", "shell"), "split-window": ("celtFp", "shell"),
+    "respawn-pane": ("cet", "shell"), "respawn-window": ("cet", "shell"), "run-shell": ("cdt", "shell"),
+    "display-popup": ("bcdehsStTwxy", "shell"), "pipe-pane": ("t", "shell"), "if-shell": ("t", "if"),
+    "confirm-before": ("cpt", "tmux"), "command-prompt": ("IptT", "tmux"), "display-menu": ("bcCHsStTxy", "tmux"),
+    "choose-tree": ("FfKOt", "tmux"), "choose-client": ("FfKOt", "tmux"), "choose-buffer": ("FfKOt", "tmux"),
+    "display-panes": ("dt", "tmux"), "bind-key": ("TN", "argv"), "set-hook": ("t", "hook"),
+    "send-keys": ("cNt", "keys"), "set-option": ("t", "opaque"), "set-window-option": ("t", "opaque"),
+    "set-environment": ("t", "opaque"), "set-buffer": ("bnt", "opaque")}
+TMUX_KEYS = {"enter": "\n", "kpenter": "\n", "c-m": "\n", "c-j": "\n", "^m": "\n", "^j": "\n", "space": " ",
+             "tab": "\t", "c-i": "\t", "^i": "\t"}
+TMUX_KEY_NAME_RE = re.compile(r"(?i)((c|m|s)-|\^).+|f\d{1,2}|up|down|left|right|home|end|npage|pagedown|pgdn|ppage|"
+                              r"pageup|pgup|ic|insert|dc|delete|bspace|btab|escape|kp\w+|any|mouse\w*|wheel\w*|"
+                              r"double\w*|triple\w*|secondclick\w*|paste\w*|focus\w*|user\d+")
 PRIVATE_READABLE = {"credo", "plugins", "skills", "prompts", "rules", "AGENTS.md", "CLAUDE.md", "CLAUDE", "config.toml",
                     "GUIDES", "agents", "commands", "memories"}
 CODE_HOME_RE = re.compile(r"expanduser|Path\.home|homedir\s*\(|\$ENV\{\s*HOME|ENV\[\s*[\"']HOME|"
@@ -370,6 +427,7 @@ class Segment:
         self.text = ""
         self.redirects = []
         self.herestrings = []
+        self.piped_in = []  # literal text an echo, printf or cat before the pipe writes to stdin
 
 
 class Script:
@@ -778,17 +836,33 @@ def _inside(path, root):
     return path == root or path.startswith(root.rstrip("/") + "/")
 
 
-def brace_expand(word, limit=64):
-    match = re.search(r"\{([^{}]*,[^{}]*)\}", word)
-    if not match:
+BRACE_RE = re.compile(r"\{([^{},]*(?:,[^{},]*)+)\}")  # linear: commas only as separators
+BRACE_MAX = 4096
+
+
+def brace_expand(word, limit=64, strict=False):
+    """Brace expansion of one word, at most limit variants and a bounded amount of work.
+
+    A real brace expression sits in a short unquoted word; a longer word (for example a JSON
+    document passed as one argument) is kept as it is, or refused with strict=True (an
+    operand whose targets must be resolved)."""
+    if len(word) > BRACE_MAX:
+        if strict and "{" in word and "," in word:
+            raise Deny("dogma: operand is too long to check its brace expansion; blocked.")
         return [word]
-    results = []
-    for option in match.group(1).split(","):
-        for expanded in brace_expand(word[:match.start()] + option + word[match.end():], limit):
-            results.append(expanded)
-            if len(results) >= limit:
-                return results
-    return results
+    results, pending, steps = [], [word], 0
+    while pending and len(results) < limit and steps < 16 * limit:
+        steps += 1
+        if time_left() < 0:
+            raise Deny("dogma: check ran out of time, command blocked (fail closed).")
+        current = pending.pop(0)
+        match = BRACE_RE.search(current)
+        if not match:
+            results.append(current)
+            continue
+        pending[:0] = [current[:match.start()] + option + current[match.end():]
+                       for option in match.group(1).split(",")]
+    return results or [word]
 
 
 def mount_points():
@@ -939,7 +1013,7 @@ class Analysis:
                 return os.path.realpath(path)
             return os.path.join(os.path.realpath(os.path.dirname(path)), name)
 
-        for variant in brace_expand(word):
+        for variant in brace_expand(word, strict=True):
             trailing = self.expand(variant).endswith("/")
             for directory in directories:
                 path = self.join(directory, variant, physical=True)
@@ -1050,6 +1124,8 @@ class Analysis:
         seen = set(directories)
         segments = script.segments
         for index, segment in enumerate(segments):
+            if time_left() < 0:
+                raise Deny("dogma: check ran out of time, command blocked (fail closed).")
             if segment.connector not in (None, "&&"):
                 current = current | start
                 start = set(current)
@@ -1057,6 +1133,8 @@ class Analysis:
             self.pipe_next = tokenize(following.text)[0] if following is not None and following.connector == "|" \
                 else None
             self.subs = script.subs
+            if segment.connector == "|" and index:
+                segment.piped_in = self.producer(segments[index - 1], script.heredocs)
             current = self.segment(segment, script.heredocs, current, depth)
             seen |= current
         for inner in script.subs:
@@ -1118,6 +1196,8 @@ class Analysis:
             wrapped = True
         if "$" in first or SUB_RE.search(first) or "`" in first or not first:
             self.dynamic(tokens, segment, directories)
+            # what runs is only known at run time: its arguments and input are opaque text
+            self.embedded(tokens[1:], segment, {None}, depth, bodies, executed=True)
             return directories
         if first in self.hashed:
             first = self.hashed[first]
@@ -1154,7 +1234,6 @@ class Analysis:
             self.walk(inner, directories, depth + 1)
         elif verb in getopt.LAUNCHERS or verb in ("tmux", "bwrap"):
             self.launch(verb, args, segment, bodies, directories, depth)
-            self.embedded(args, segment, directories, depth)  # tmux send-keys and other embedded text
         elif verb in ("runuser", "su"):
             self.switch_user(verb, args, segment, bodies, directories, depth, piped)
         elif verb in SHELLS or verb in ("su", "runuser", "script"):
@@ -1284,8 +1363,14 @@ class Analysis:
                     return directories
                 self.deny("token_protection", "dogma: environment dump may expose credentials.")
                 return directories
-        if not rest or verb == "doas" and getopt.has(options, "-C"):
+        if verb == "doas" and getopt.has(options, "-C"):
             return directories  # nothing runs (doas -C only checks a configuration file)
+        if not rest:
+            if verb != "env" and getopt.has(options, "-s", "-i", "--shell", "--login"):
+                # a shell without a command reads its script from stdin, like sh does
+                self.shell("sh", [], segment, bodies, directories, depth,
+                           bool(segment and segment.connector == "|"))
+            return directories
         return self.command(rest, segment, bodies, directories, depth, wrapped=True)
 
     def switch_user(self, verb, args, segment, bodies, directories, depth, piped):
@@ -1299,12 +1384,13 @@ class Analysis:
         shell = getopt.value(options, "-s", "--shell")
         if shell is not None and os.path.basename(shell) not in SHELLS:
             raise Deny("dogma: %s with the program %s as shell cannot be checked; blocked." % (verb, shell[:60]))
-        for name, value in options:
-            if name in ("-c", "--command", "--session-command") and value is not None:
-                if SUB_RE.search(value):
-                    self.deny("dependency_verification",
-                              "dogma: %s runs a script built at run time; it cannot be checked." % verb)
-                self.walk(value, directories, depth + 1)
+        commands = [value for name, value in options
+                    if name in ("-c", "--command", "--session-command") and value is not None]
+        for value in commands:
+            if SUB_RE.search(value):
+                self.deny("dependency_verification",
+                          "dogma: %s runs a script built at run time; it cannot be checked." % verb)
+            self.walk(value, directories, depth + 1)
         if verb == "runuser" and getopt.has(options, "-u", "--user"):
             if operands:
                 self.command(operands, segment, bodies, directories, depth + 1, wrapped=True)
@@ -1313,6 +1399,9 @@ class Analysis:
         if len(rest) > 1:
             # arguments after the user name go to the user's shell (su root -- -c "...")
             self.shell("sh", rest[1:], segment, [], directories, depth, False)
+        elif not commands:
+            # no command: the user's shell reads its script from stdin, like sh does
+            self.shell("sh", [], segment, bodies, directories, depth, piped)
 
     def launch(self, verb, args, segment, bodies, directories, depth):
         """Launchers that run a command in their own working directory or root.
@@ -1340,6 +1429,9 @@ class Analysis:
             return self.launch_bwrap(args, segment, bodies, directories, depth, rooted, workdir)
         options, rest = getopt.parse(verb, args)
         unknown = any(name.startswith("?") for name, _value in options)
+        # option values may hold commands the launcher runs (systemd-run -p ExecStartPre=...)
+        self.opaque([value.split("=", 1)[1] if "=" in value else value for _name, value in options if value],
+                    depth)
         if verb == "systemd-run":
             if getopt.has(options, "-M", "--machine", "-H", "--host", "-C", "--capsule"):
                 directories = {None}  # runs on another machine or in a capsule
@@ -1427,17 +1519,13 @@ class Analysis:
                 rooted(None)
             position += 1 + counts[item]
         rest = args[position:]
+        if rest[:1] and rest[0].startswith("-"):
+            cwd = {None}  # an option this parser does not know
         if rest:
             self.command(rest, segment, bodies, cwd, depth + 1, wrapped=True)
 
     def launch_tmux(self, args, segment, bodies, directories, depth):
-        """tmux commands that run a shell command: new-session, new-window, split-window,
-        respawn-pane/-window, run-shell, display-popup (and tmux -c). The start directory is
-        -c (-d for display-popup); new windows and panes default to the session's directory."""
-        options = {"new-session": "cefnstxyFX", "new": "cefnstxyFX", "new-window": "cenFt", "neww": "cenFt",
-                   "split-window": "celtFp", "splitw": "celtFp", "respawn-pane": "cet", "respawnp": "cet",
-                   "respawn-window": "cet", "respawnw": "cet", "run-shell": "cdt", "run": "cdt",
-                   "display-popup": "bcdehsStTwxy", "popup": "bcdehsStTwxy"}
+        """tmux: global options (-c runs a shell command), then a ";"-separated command list."""
         position = 0
         while position < len(args) and args[position].startswith("-") and args[position] != "--":
             item = args[position]
@@ -1449,42 +1537,120 @@ class Analysis:
                 position += 1
         if args[position:position + 1] == ["--"]:
             position += 1
+        self.tmux_commands(args[position:], directories, depth)
+
+    def tmux_commands(self, words, directories, depth):
+        """A tmux command list: split on ";" (alone or at the end of an argument, "\\;" stays
+        literal), each name resolved like tmux does (exact name or alias, else a unique prefix;
+        an ambiguous prefix is checked as every candidate, an unknown one as opaque text)."""
+        if depth > 8:
+            raise Deny("dogma: tmux command nesting is too deep to check safely.")
         commands, current = [], []
-        for word in args[position:]:
-            if word in (";", "\\;"):
+        for word in words:
+            if word in (";", "{", "}"):
+                commands.append(current)
+                current = []
+            elif word.endswith("\\;"):
+                current.append(word[:-2] + ";")
+            elif word.endswith(";"):
+                current.append(word[:-1])
                 commands.append(current)
                 current = []
             else:
-                current.append(word.rstrip(";") if word.endswith("\\;") else word)
+                current.append(word)
         commands.append(current)
-        for words in commands:
-            if not words or words[0] not in options:
+        for command in commands:
+            if not command:
                 continue
-            name, values, directory, index = words[0], options[words[0]], None, 1
-            dir_flag = "d" if name in ("display-popup", "popup") else "c"
-            while index < len(words) and words[index].startswith("-") and words[index] != "--":
-                item, index = words[index], index + 1
-                for offset, letter in enumerate(item[1:], 1):
-                    if letter in values:
-                        value = item[offset + 1:] or (words[index] if index < len(words) else None)
-                        if not item[offset + 1:]:
-                            index += 1
-                        if letter == dir_flag:
-                            directory = value
-                        break
-            if words[index:index + 1] == ["--"]:
-                index += 1
-            rest = words[index:]
-            if directory is not None:
+            word = command[0]
+            names = [name for name, alias in TMUX_COMMANDS.items() if word in (name, alias)] or \
+                [name for name in TMUX_COMMANDS if name.startswith(word)]
+            if not names:
+                self.opaque(command[1:], depth)
+            for name in names:
+                self.tmux_command(name, command[1:], directories, depth)
+
+    def tmux_string(self, text, directories, depth):
+        """A tmux command given as one string (if-shell, confirm-before, set-hook, ...)."""
+        try:
+            words = shlex.split(text, comments=True)
+        except ValueError:
+            self.opaque([text], depth)
+            self.unclear(text)
+            return
+        self.tmux_commands(words, directories, depth + 1)
+
+    def tmux_command(self, name, args, directories, depth):
+        if name not in TMUX_RUN:
+            return
+        values, kind = TMUX_RUN[name]
+        flags, index = {}, 0
+        while index < len(args) and args[index].startswith("-") and args[index] not in ("-", "--"):
+            item, index = args[index], index + 1
+            for offset, letter in enumerate(item[1:], 1):
+                if letter in values:
+                    flags[letter] = item[offset + 1:] or (args[index] if index < len(args) else None)
+                    if not item[offset + 1:]:
+                        index += 1
+                    break
+                flags[letter] = True
+        if args[index:index + 1] == ["--"]:
+            index += 1
+        rest = args[index:]
+        if kind == "shell" and name == "run-shell" and "C" in flags:
+            kind = "tmux"
+        if kind == "shell":
+            directory = flags.get("d" if name == "display-popup" else "c")
+            if isinstance(directory, str):
                 cwd = {None} if "#{" in directory or directory.startswith("-") else \
                     {self.chdir(base, home() + directory[1:] if directory[:1] == "~" else directory)
                      for base in directories}
             else:
-                cwd = set(directories) if name in ("new-session", "new") else {None}
+                cwd = set(directories) if name == "new-session" else {None}
             if len(rest) == 1:
                 self.walk(rest[0], cwd, depth + 1)
             elif rest:
-                self.command(rest, segment, [], cwd, depth + 1, wrapped=True)
+                self.command(rest, None, [], cwd, depth + 1, wrapped=True)
+        elif kind == "if":
+            if rest:
+                self.walk(rest[0], {None}, depth + 1)
+            for text in rest[1:]:
+                self.tmux_string(text, directories, depth)
+        elif kind == "tmux":
+            for text in rest:
+                self.tmux_string(text, directories, depth)
+        elif kind == "argv":
+            self.tmux_commands(rest[1:], directories, depth + 1)
+        elif kind == "hook":
+            for text in rest[1:]:
+                self.tmux_string(text, directories, depth)
+        elif kind == "keys":
+            self.tmux_keys(flags, rest, depth)
+        else:
+            self.opaque(rest, depth)
+
+    def tmux_keys(self, flags, keys, depth):
+        """send-keys: the keys typed into a pane's shell, whose directory is unknown. -H keys are
+        hex codes, -l sends literal text; a key name is mapped when it only adds text, any other
+        key (cursor, delete, modifiers) or -K makes the result unclear (fail closed)."""
+        text, unclear = "", "K" in flags
+        for key in keys:
+            if "H" in flags:
+                try:
+                    text += chr(int(key, 16))
+                except (ValueError, OverflowError):
+                    unclear = True
+            elif "l" in flags or len(key) == 1:
+                text += key
+            elif key.lower() in TMUX_KEYS:
+                text += TMUX_KEYS[key.lower()]
+            elif TMUX_KEY_NAME_RE.fullmatch(key):
+                unclear = True
+            else:
+                text += key
+        if unclear:
+            self.unclear(text)
+        self.opaque([text], depth)
 
     def run_xargs(self, rest, segment, bodies, directories, depth):
         values = {"-I", "-L", "-n", "-P", "-s", "-d", "-E", "-a", "--arg-file", "--delimiter", "--max-args",
@@ -1543,13 +1709,61 @@ class Analysis:
         if re.search(r"\b(rm|unlink|shred|rmdir|truncate|del|clean)\b", text) or destructive_flags:
             self.deletes.append(("dynamic command", "", set(directories)))
 
-    def embedded(self, args, segment, directories, depth):
-        """Commands hidden in the arguments of an unknown program (wrappers, trap-like strings, system())."""
+    def producer(self, segment, heredocs):
+        """Literal text the segment before a pipe writes (echo, printf, cat with a heredoc or here-string)."""
+        tokens, parsed = tokenize(segment.text)
+        if not parsed or not tokens or os.path.basename(tokens[0]) not in ("echo", "printf", "cat"):
+            return []
+        texts = [heredocs[int(match.group(1))][0] or "" for match in map(HEREDOC_RE.fullmatch, tokens) if match]
+        texts += [_unquote(word) for word in segment.herestrings]
+        if tokens[0] != "cat":
+            words = [word for word in tokens[1:] if not HEREDOC_RE.fullmatch(word) and not word.startswith("-")]
+            texts.append(" ".join(words))
+        return texts
+
+    def opaque(self, texts, depth):
+        """Strings that are executed in a way the analyser cannot follow (a command word chosen at
+        run time, launcher option values, tmux command strings and keys) are parsed as shell
+        text with an unknown working directory, so relative targets fail closed. Text that
+        cannot be parsed (or is too long) is refused when a delete-capable verb with an
+        operand appears in it."""
+        for text in texts:
+            if time_left() < 0:
+                raise Deny("dogma: check ran out of time, command blocked (fail closed).")
+            if len(text or "") > OPAQUE_MAX:
+                self.unclear(text)
+                continue
+            if not text or not OPAQUE_RE.search(text):
+                continue
+            try:
+                self.walk(text, {None}, depth + 1)
+            except (ValueError, RecursionError):
+                self.unclear(text)
+
+    def unclear(self, text):
+        if FALLBACK_RE.search(text):
+            raise Deny("dogma: text run by a program whose handling is not fully known deletes or moves "
+                       "something and cannot be checked; blocked (fail closed).")
+
+    def inputs(self, args, segment, bodies):
+        """Argument strings plus everything the program may read as input."""
+        return list(args) + [_ansi_c(word[2:-1]) if word.startswith("$'") else _unquote(word)
+                             for word in (segment.herestrings if segment else [])] + \
+            [body or "" for body, _quoted in bodies] + (list(segment.piped_in) if segment else [])
+
+    def embedded(self, args, segment, directories, depth, bodies=(), executed=False):
+        """Commands hidden in the arguments of an unknown program (wrappers, trap-like strings, system()).
+
+        executed=True (a command word chosen at run time): the arguments and input are what
+        runs, so every string is also parsed as shell text with an unknown working directory.
+        Plain arguments of an ordinary unknown program (messages, test filters) are not."""
         for index, arg in enumerate(args):
             name = os.path.basename(arg)
             if name in EXEC_VERBS or INTERPRETER_RE.match(name):
                 self.command(list(args[index:]), None, [], directories, depth + 1, wrapped=True)
                 break
+        if executed:
+            self.opaque(self.inputs(args, segment, bodies), depth)
         strings = list(args) + [_ansi_c(word[2:-1]) if word.startswith("$'") else _unquote(word)
                                 for word in (segment.herestrings if segment else [])]
         for text in strings:
@@ -2061,13 +2275,27 @@ class Analysis:
         if windows == "robocopy" and any(arg.upper() in ("/MIR", "/PURGE", "/MOV", "/MOVE") for arg in args):
             raise Deny("dogma: robocopy /MIR or /PURGE deletes files at the destination; blocked.")
         if windows in ("wsl", "wslg") and args:
-            rest = list(args)
-            while rest and rest[0].startswith("-") and rest[0] not in ("-e", "--exec", "--"):
-                rest = rest[2:] if rest[0] in ("-d", "--distribution", "-u", "--user", "--cd") else rest[1:]
+            rest, cwd, shell = list(args), set(directories), True
+            while rest and (rest[0].startswith("-") or rest[0] == "~") and rest[0] not in ("-e", "--exec", "--"):
+                item = rest.pop(0)
+                if item == "--cd" and rest:
+                    value = rest.pop(0)
+                    cwd = {None} if value[:1] == "~" or "\\" in value or ":" in value else \
+                        {self.chdir(directory, value) for directory in directories}
+                elif item in ("-u", "--user") and rest:
+                    rest.pop(0)
+                else:
+                    # ~ (the home), another distribution or an option not known here
+                    cwd = {None}
+                    if item in ("-d", "--distribution", "--distribution-id") and rest:
+                        rest.pop(0)
             if rest and rest[0] in ("-e", "--exec", "--"):
-                rest = rest[1:]
+                shell = rest.pop(0) == "--"
             if rest:
-                self.command(rest, segment, [], directories, depth + 1, wrapped=True)
+                self.command(rest, segment, [], cwd, depth + 1, wrapped=True)
+                if shell:
+                    # without --exec the default shell runs the joined command line
+                    self.walk(" ".join(rest), cwd, depth + 1)
         if lowered == "codex":
             if any(arg.startswith(("--dangerously", "--yolo")) for arg in args) or \
                     "features" in args and any(arg in ("disable", "set") for arg in args):
@@ -2266,7 +2494,7 @@ class Analysis:
         name, _, setting = value.partition("=")
         lowered = name.lower()
         if lowered == "core.hookspath":
-            raise Deny("dogma: overriding core.hooksPath skips git hooks and is never allowed for agents.")
+            raise Deny("dogma: overriding core.hooksPath skips git hooks and is never allowed for agents." + HOOK_HINT)
         if lowered.startswith("include"):
             raise Deny("dogma: git -c include.* loads configuration that cannot be checked safely.")
         if lowered.startswith("alias."):
@@ -2278,20 +2506,21 @@ class Analysis:
         options = [arg for arg in rest if arg.startswith("-")]
         hook_skip = self.assigns.get("HUSKY", "").lower() in ("0", "false") or bool(self.assigns.get("SKIP"))
         if sub in ("commit", "push", "merge", "rebase", "am") and hook_skip:
-            raise Deny("dogma: HUSKY=0 or SKIP= skips git hooks and is never allowed for agents.")
+            raise Deny("dogma: HUSKY=0 or SKIP= skips git hooks and is never allowed for agents." + HOOK_HINT)
         if sub == "config" and any(arg.lower() == "core.hookspath" for arg in rest) and \
                 not any(arg in ("--get", "--get-all", "-l", "--list") for arg in rest) and \
                 len([arg for arg in rest if not arg.startswith("-")]) > 1:
-            raise Deny("dogma: setting core.hooksPath skips git hooks and is never allowed for agents.")
+            raise Deny("dogma: setting core.hooksPath skips git hooks and is never allowed for agents." + HOOK_HINT)
         if sub in GIT_NO_VERIFY and any(long_option(arg, "no-verify", 4) for arg in rest):
-            raise Deny("dogma: --no-verify skips git hooks and is never allowed for agents. Fix the hook finding instead.")
+            raise Deny("dogma: --no-verify skips git hooks and is never allowed for agents." + HOOK_HINT)
         if sub == "commit":
             previous = None
             for arg in rest:
                 if previous not in ("-m", "-F", "-C", "-c", "--author", "--date", "-t", "--template", "--fixup",
                                     "--squash", "--cleanup", "--trailer", "-S"):
                     if re.match(r"^-[a-zA-Z]*n[a-zA-Z]*$", arg) and not arg.startswith("--"):
-                        raise Deny("dogma: git commit -n (--no-verify) skips git hooks and is never allowed for agents.")
+                        raise Deny("dogma: git commit -n (--no-verify) skips git hooks and is never allowed for agents." +
+                                   HOOK_HINT)
                 previous = arg
         if sub in ("add", "stage") and self.flags.get("git_add_protection", True):
             if any(long_option(arg, "force", 2) for arg in options) or \
@@ -2557,7 +2786,12 @@ class Analysis:
                     self.walk(literal.group(1), directories, depth + 1)
                 else:
                     raise Deny("dogma: awk runs a command built at run time; blocked.")
-        self.embedded(args, segment, directories, depth)
+        # the program itself only runs commands through system(), print | and getline (checked
+        # above); its text (patterns such as /mv / or /rm -rf/) is no command line
+        rest = list(args)
+        if programs:
+            rest.remove(programs[0])
+        self.embedded(rest, segment, directories, depth)
 
     def jq(self, args):
         if not self.flags.get("token_protection", True):
@@ -2649,6 +2883,7 @@ def run_delete_guard(batch, cwd, command):
     The legacy text patterns see only the original command: the batch starts with
     "cd <dir>" lines whose own path (any project below /home) would match them."""
     guard = load_delete_guard()
+    guard.DEADLINE_AT[0] = STARTED[0] + HOOK_BUDGET
     try:
         guard.check_legacy(command)
         guard.check_command(batch, guard.Ctx(os.path.realpath(cwd)))
@@ -2731,6 +2966,8 @@ def main():
         json.dump(result, sys.stdout)
         sys.stdout.write("\n")
         return
+    if reason is None and time_left() < 0:
+        reason = "dogma: check ran out of time, command blocked (fail closed)."
     if reason is None:
         reason = run_delete_guard(guard_batch(analysis, command, cwd), cwd, command)
     if reason is None and time_left() < 0:

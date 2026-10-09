@@ -4,6 +4,8 @@ DOGMA-PERMISSIONS.md allows everything, "N" = no permissions file, "W" = like X 
 below a path that contains a /home/<user> segment.
 """
 
+import json
+
 # fmt: off
 EVERYDAY = (
     ("ls -la", "N"),
@@ -121,5 +123,28 @@ EVERYDAY = (
     ("rm -rf build", "W"),
     ("cd sub && rm -rf dist", "W"),
     ("for f in *.pdf; do cp \"$f\" ~/Documents/; done", "N"),
+    # plain arguments and stdin of programs that do not run them as shell text
+    ("awk '$3 ~ /error/' app.log", "N"),
+    ("awk '/mv / {print $2}' app.log", "N"),
+    ("awk '{print $1}' access.log | sort | uniq -c", "N"),
+    ("hg commit -m 'rm -rf build is no longer needed'", "X"),
+    ("jj describe -m 'cd docs && rm old pages'", "X"),
+    ("logger -t deploy 'rm -rf cache done'", "X"),
+    ("notify-send 'build' 'rm -rf dist finished'", "X"),
+    ("pytest -k 'test_rm and not slow'", "N"),
+    ("jest -t 'rm -rf handling'", "X"),
+    ("go test -run 'TestRm' ./...", "N"),
+    ("npm version patch -m 'release: rm stale files %s'", "N"),
+    ("valgrind --leak-check=full ./app rm build", "X"),
+    ("echo 'rm -rf build' | xclip -selection clipboard", "N"),
+    ("printf 'cd src && rm -f a.o\\n' | wl-copy", "N"),
+    ("mysql app <<'EOF'\nDELETE FROM jobs WHERE done = 1;\nEOF", "N"),
+    ("psql -d app <<'EOF'\nDELETE FROM sessions WHERE expired;\nEOF", "N"),
+    ("docker build -t img - <<'EOF'\nFROM alpine\nRUN rm -rf /var/cache/apk/*\nEOF", "N"),
+    ("kubectl patch deploy web -p '%s'" % json.dumps(
+        {"spec": {"template": {"spec": {"containers": [
+            {"name": "c%d" % index, "env": [{"name": "K%d" % index, "value": "v,%d" % index}],
+             "ports": [{"containerPort": 8000 + index, "protocol": "TCP"}]} for index in range(360)]}}}},
+        separators=(",", ":")), "N"),
 )
 # fmt: on

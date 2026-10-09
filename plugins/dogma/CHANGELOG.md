@@ -6,6 +6,19 @@ Changelog of the dogma plugin. Newest first. Months group releases; no day dates
 
 ### v1.45
 
+#### v1.45.1
+
+##### Fixed
+
+- bash-guard: strings that are executed in a way the analyser cannot follow (the arguments and input of a command word chosen at run time, launcher option values, tmux command strings and send-keys text) are parsed as shell text with an unknown working directory, so relative delete targets fail closed; text that cannot be parsed is refused when a delete-capable verb with an operand appears in it. Plain arguments and stdin of ordinary programs (commit messages, test filters, clipboard tools, database clients) are not treated as shell text
+- bash-guard: sudo -s/-i, doas -s, su and runuser without a command are handled like a shell reading its script from stdin
+- bash-guard: tmux command names resolve by alias and unique prefix, ";" at the end of an argument splits commands, nested command strings (if-shell, confirm-before, bind-key, set-hook and similar) go through the same tmux analysis, and send-keys text is checked with an unknown working directory (hex keys decoded, single keys joined, unclear keys fail closed)
+- bash-guard: wsl.exe honours --cd, ~ and other distributions for the working directory and checks the joined command line its shell runs; bwrap with an unknown option runs with an unknown working directory
+- bash-guard: awk programs are only checked through system(), print | and getline, so patterns such as /mv / no longer count as commands
+- bash-guard: brace expansion is bounded (long words such as a JSON document are not expanded), the time budget is checked inside the analysis loops, and long or pathological arguments are analysed in linear time
+- bash-guard: every refusal of a git hook bypass (core.hooksPath, HUSKY=0/SKIP=, --no-verify, commit -n) now ends with the same hint to make a normal commit and to fix or report a failing hook
+- delete-guard: string arguments of a command word chosen at run time that contain a delete command are checked with an unknown working directory
+
 #### v1.45.0
 
 ##### Added

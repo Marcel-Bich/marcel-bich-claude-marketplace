@@ -24,6 +24,7 @@ import re
 import copy
 import shlex
 import sys
+import time
 
 
 def _load_getopt():
@@ -50,6 +51,16 @@ HOME_REF = r"(~|\$HOME|\$\{HOME\}|expanduser|Path\.home|os\.homedir|Dir\.home)"
 
 class Deny(Exception):
     pass
+
+
+# monotonic time after which the check denies (fail closed); bash-guard.py sets it so the
+# whole hook stays below the hook timeout. None = no limit (standalone use).
+DEADLINE_AT = [None]
+
+
+def check_time():
+    if DEADLINE_AT[0] is not None and time.monotonic() > DEADLINE_AT[0]:
+        raise Deny("check ran out of time, command blocked (fail closed)")
 
 
 def home():
@@ -323,6 +334,29 @@ def record_assignments(seg, ctx):
             ctx.safe_vars.discard(name)
 
 
+# a delete command in an argument string (linear: one-character lookbehind, no leading path pattern)
+OPAQUE_DELETE_RE = re.compile(r"(?<![^\s;&|({/])(?:rm|unlink|shred|rmdir)\s+\S")
+
+
+def check_opaque(seg, ctx, nest):
+    """A command word chosen at run time ($CMD, $(...)): its string arguments are what runs,
+    so one that contains a delete command is checked with an unknown working directory and a
+    relative target fails closed (bash-guard.py does the full analysis). Plain arguments of
+    an ordinary program (commit messages, test filters) are not shell text and stay unchecked."""
+    m = re.match(r"^(?:\s*[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*\\?(\S+)", seg)
+    if not m or "$" not in m.group(1) and "`" not in m.group(1) or nest > 3:
+        return
+    if not OPAQUE_DELETE_RE.search(seg):
+        return
+    try:
+        raw_tok = tokens(seg)
+    except Deny:
+        raise Deny("unparseable quoting around a delete command")
+    for arg in raw_tok[1:]:
+        if re.search(r"\s", arg) and OPAQUE_DELETE_RE.search(arg):
+            check_command(arg, Ctx(None), nest + 1)
+
+
 def check_segment(seg, ctx, nest=0):
     if nest > 3:
         raise Deny("too deeply nested shell")
@@ -347,6 +381,7 @@ def check_segment(seg, ctx, nest=0):
     relevant = DELETE_VERBS | {"find", "mv", "ln", "cp", "cd", "pushd", "git", "eval", "xargs"} | SHELLS | \
         set(getopt.WRAPPERS)
     if first not in relevant:
+        check_opaque(seg, ctx, nest)
         return
     try:
         raw_tok = tokens(seg)
@@ -484,7 +519,9 @@ def check_legacy(cmd):
 
 
 def check_command(cmd, ctx, nest=0):
+    check_time()
     for seg in split_segments(cmd):
+        check_time()
         check_segment(seg, ctx, nest)
 
 
