@@ -273,7 +273,13 @@ How it works:
   has passed AND ctx/5h/weekly actually moved, so quiet phases do not grow the context
   with unchanged lines. Each threshold in `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS` fires once
   regardless and adds an action hint to run the skill from `CLAUDE_MB_LIMIT_COMPACT_SKILL`.
-  Thresholds reset after a compact drops the fill.
+  Thresholds reset after a compact drops the fill (the reset is saved right away, even
+  while the throttle suppresses the status line).
+- The action hint goes to the **main session only**. `PostToolUse` also fires for tool
+  calls inside subagents (the hook input carries `agent_id`); those calls may get the
+  plain status line (throttled by a per-agent state file) but never the action, and
+  they never write the main session's state (fired thresholds, throttle), so the main
+  session still gets the action on its next prompt or tool call.
 
 Example injected line (with `CLAUDE_MB_LIMIT_COMPACT_SKILL=/my-skill`):
 

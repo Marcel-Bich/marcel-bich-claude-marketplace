@@ -8,6 +8,17 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v2.36
 
+##### v2.36.1
+
+###### Added
+
+- `scripts/test-inject-status.sh`: fixture test for the main-session-only ACTION, the untouched main state on subagent calls, the reset after a drop (also inside the throttle interval) and malformed input
+
+###### Fixed
+
+- The threshold ACTION line is injected into the main session only: a tool call inside a subagent (`agent_id` in the hook input) no longer receives it and never writes the main session's inject state (fired thresholds, throttle, delta baseline), so the main session still gets the ACTION on its next prompt or tool call; a subagent gets at most the plain status line, throttled by its own per-agent state file
+- A threshold reset (fill dropped back below it, e.g. after a compact) is persisted for the main session even when no status line is written on that call, so the threshold fires again when the fill climbs back before the next line
+
 ##### v2.36.0
 
 ###### Added

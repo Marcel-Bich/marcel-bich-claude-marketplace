@@ -22,7 +22,9 @@
 # by >= CLAUDE_MB_LIMIT_INJECT_DELTA points since the last inject, so quiet phases do
 # not grow the context with unchanged lines. Each threshold in
 # CLAUDE_MB_LIMIT_INJECT_THRESHOLDS fires once regardless and adds an action hint to
-# run CLAUDE_MB_LIMIT_COMPACT_SKILL.
+# run CLAUDE_MB_LIMIT_COMPACT_SKILL - in the main session only: PostToolUse also
+# fires for tool calls inside subagents (input carries agent_id), and those never
+# get the action nor mark a threshold as fired.
 #
 # Failure-safe: any problem -> exit 0 with no output. Never disrupt the session.
 
@@ -40,11 +42,36 @@ event=$(printf '%s' "$INPUT" | jq -r '.hook_event_name // "PostToolUse"' 2>/dev/
 [[ "$session_id" == "null" ]] && session_id=""
 [[ "$event" == "null" ]] && event="PostToolUse"
 [[ -n "$session_id" ]] || exit 0
+# Subagent context: hook calls made inside a subagent carry agent_id (and
+# agent_type) next to the parent's session_id, and their additionalContext lands
+# in the SUBAGENT, not the main session. The threshold ACTION is meant for the
+# main session only, so a subagent call never gets it and never writes the main
+# session's state file (fired thresholds, throttle, delta baseline) - the main
+# session still sees the ACTION on its next prompt or tool call. A subagent gets
+# at most the plain status line, throttled by its own per-agent state file.
+agent_id=$(printf '%s' "$INPUT" | jq -r '.agent_id // ""' 2>/dev/null) || agent_id=""
+[[ "$agent_id" == "null" ]] && agent_id=""
+in_subagent=false
+if [[ -n "$agent_id" ]]; then
+    in_subagent=true
+fi
+# Defensive only: the hook is not registered for these events today.
+case "$event" in
+    SubagentStart|SubagentStop) in_subagent=true ;;
+esac
 # Guard against path tricks in the session_id (must be a plain token) before it is
 # interpolated into the /tmp cache/state paths - mirrors the sibling credo hooks.
 case "$session_id" in
     *[!A-Za-z0-9._-]*) exit 0 ;;
 esac
+# Same guard for agent_id (used in the per-agent state path); a subagent call
+# without a usable agent_id gets nothing.
+if [[ "$in_subagent" == "true" ]]; then
+    [[ -n "$agent_id" ]] || exit 0
+    case "$agent_id" in
+        *[!A-Za-z0-9._-]*) exit 0 ;;
+    esac
+fi
 
 # --- config (env-overridable) ---
 SKILL="${CLAUDE_MB_LIMIT_COMPACT_SKILL:-}"               # skill to run at thresholds (empty = generic hint only)
@@ -113,6 +140,22 @@ if [[ -f "$state_file" ]]; then
     [[ "$last_5h" == "null" ]] && last_5h=""
     [[ "$last_weekly" == "null" ]] && last_weekly=""
 fi
+# A subagent reads the main session's fired list (read-only) but keeps its own
+# throttle + delta baseline, so it never shifts the main session's routine line.
+write_state_file="$state_file"
+if [[ "$in_subagent" == "true" ]]; then
+    write_state_file="/tmp/claude-mb-inject-state_${session_id}_agent_${agent_id}.json"
+    last_ts=0; last_ctx=""; last_5h=""; last_weekly=""
+    if [[ -f "$write_state_file" ]]; then
+        last_ts=$(jq -r '.last_ts // 0' "$write_state_file" 2>/dev/null) || last_ts=0
+        last_ctx=$(jq -r '.last_ctx // ""' "$write_state_file" 2>/dev/null) || last_ctx=""
+        last_5h=$(jq -r '.last_5h // ""' "$write_state_file" 2>/dev/null) || last_5h=""
+        last_weekly=$(jq -r '.last_weekly // ""' "$write_state_file" 2>/dev/null) || last_weekly=""
+        [[ "$last_ctx" == "null" ]] && last_ctx=""
+        [[ "$last_5h" == "null" ]] && last_5h=""
+        [[ "$last_weekly" == "null" ]] && last_weekly=""
+    fi
+fi
 [[ "$last_ts" =~ ^[0-9]+$ ]] || last_ts=0
 
 # Delta-guard helper: prints "1" when a routine inject is warranted - either no
@@ -126,10 +169,15 @@ delta_exceeded() {
 }
 
 # Reset: drop fired thresholds the fill has fallen back below (e.g. after a compact)
+fired_before="$fired_json"
 fired_json=$(printf '%s' "$fired_json" | jq -c --argjson p "${ctx_pct:-0}" '[.[] | select(. <= $p)]' 2>/dev/null) || fired_json='[]'
+reset_changed=false
+[[ "$fired_json" != "$fired_before" ]] && reset_changed=true
 
-# Highest crossed-but-not-yet-fired threshold
-to_fire=$(printf '%s' "$thresh_json" | jq -r --argjson p "${ctx_pct:-0}" --argjson f "$fired_json" \
+# Highest crossed-but-not-yet-fired threshold (main session only; a subagent
+# call leaves it pending and gets at most the routine status line)
+to_fire=""
+[[ "$in_subagent" == "true" ]] || to_fire=$(printf '%s' "$thresh_json" | jq -r --argjson p "${ctx_pct:-0}" --argjson f "$fired_json" \
     '[.[] | select(. <= $p) | select(. as $t | ($f | index($t)) | not)] | max // empty' 2>/dev/null)
 
 # Decide whether and what to inject
@@ -151,15 +199,32 @@ elif [[ $((now - last_ts)) -ge "$INTERVAL" ]]; then
     fi
 fi
 
-[[ "$do_inject" == "true" ]] || exit 0
+if [[ "$do_inject" != "true" ]]; then
+    # No line on this call (throttle still running), but a reset must not be lost:
+    # persist the shrunken fired list for the MAIN session so a threshold re-fires
+    # after a compact even when the fill climbs back before the next status line.
+    # Throttle + delta baseline stay as they were. Subagents never write it.
+    if [[ "$in_subagent" != "true" && "$reset_changed" == "true" ]]; then
+        tmp=$(mktemp 2>/dev/null) && {
+            jq -n --argjson last_ts "${last_ts:-0}" --argjson fired "$fired_json" \
+                --arg last_ctx "${last_ctx:-}" --arg last_5h "${last_5h:-}" --arg last_weekly "${last_weekly:-}" \
+                '{last_ts: $last_ts, fired: $fired, last_ctx: $last_ctx, last_5h: $last_5h, last_weekly: $last_weekly}' > "$tmp" 2>/dev/null \
+                && mv -f "$tmp" "$state_file" 2>/dev/null
+            rm -f "$tmp" 2>/dev/null
+        }
+    fi
+    exit 0
+fi
 
 # Persist state (record the just-injected values so the delta-guard compares
-# against what the model last actually saw)
+# against what the model last actually saw). A subagent writes only its own
+# per-agent file and never a fired list.
+[[ "$in_subagent" == "true" ]] && fired_json='[]'
 tmp=$(mktemp 2>/dev/null) && {
     jq -n --argjson last_ts "${now:-0}" --argjson fired "$fired_json" \
         --arg last_ctx "${ctx_pct:-}" --arg last_5h "${five_h:-}" --arg last_weekly "${weekly:-}" \
         '{last_ts: $last_ts, fired: $fired, last_ctx: $last_ctx, last_5h: $last_5h, last_weekly: $last_weekly}' > "$tmp" 2>/dev/null \
-        && mv -f "$tmp" "$state_file" 2>/dev/null
+        && mv -f "$tmp" "$write_state_file" 2>/dev/null
     rm -f "$tmp" 2>/dev/null
 }
 
