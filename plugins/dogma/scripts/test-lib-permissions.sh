@@ -17,8 +17,7 @@ TESTS_FAILED=0
 TESTS_TOTAL=0
 
 # Temp directory for test files
-TEST_TMP_DIR="/tmp/dogma-test-$$"
-mkdir -p "$TEST_TMP_DIR"
+TEST_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dogma-test-XXXXXX")"
 
 # Cleanup on exit
 cleanup() {

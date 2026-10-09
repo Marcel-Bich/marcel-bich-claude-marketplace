@@ -6,6 +6,12 @@ Changelog of the dogma plugin. Newest first. Months group releases; no day dates
 
 ### v1.45
 
+#### v1.45.2
+
+##### Fixed
+
+- Test suites remove their temp dirs and stop their child processes on exit, including failures and interrupts
+
 #### v1.45.1
 
 ##### Fixed

@@ -23,6 +23,7 @@ Usage: test-guard-parity.py [-v] [--only r1x|r1n|r2|probes|everyday|local|unit]
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -51,7 +52,16 @@ USER = "alice"
 def setup():
     root = Path(tempfile.mkdtemp(prefix="dogma-parity-"))
     if not str(root).startswith(("/tmp/", "/var/tmp/")):
+        os.rmdir(root)  # still empty; nothing else outside /tmp is ever removed
         sys.exit("refusing: temporary directory %s is not below /tmp" % root)
+    try:
+        return (root,) + fill(root)
+    except BaseException:
+        shutil.rmtree(root, ignore_errors=True)
+        raise
+
+
+def fill(root):
     home = root / "home" / USER
     # W: an allow-all project whose path contains a /home/<user> segment (outside the fake home)
     dirs = {"P": root / "perm", "N": root / "noperm", "X": root / "allow" / "proj",
@@ -84,7 +94,7 @@ def setup():
     (worktree / ".git").write_text("gitdir: /nonexistent/.git/worktrees/cx-d1\n", encoding="utf-8")
     plugin = home / ".claude" / "plugins" / "cache" / "test-market" / "dogma" / "0.0.0"
     shutil.copytree(HERE.parent, plugin, ignore=shutil.ignore_patterns("__pycache__", "guard-cases", "TO-DELETE.md"))
-    return root, home, dirs, plugin
+    return home, dirs, plugin
 
 
 class Runner:
@@ -238,6 +248,9 @@ def unit_perf():
 def main():
     verbose = "-v" in sys.argv
     only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
+    # TERM/HUP end via SystemExit, so the finally below still removes the temp root
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    signal.signal(signal.SIGHUP, lambda *_: sys.exit(129))
     root, home, dirs, plugin = setup()
     try:
         runner = Runner(root, home, dirs, plugin)
