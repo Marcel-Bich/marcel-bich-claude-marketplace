@@ -224,6 +224,29 @@ A remote session has no local process, so its descriptor would be reaped (the di
 - **Allowlist + network binding (since 0.72).** The LAN side is fail-closed: it is enabled only while the current network matches a profile bound with `credo-peer-lan.py bind` (router MAC + subnet), and then only for the effective allowlist of that profile's group (`peers`, single IPs, CIDRs, `a-b` ranges or `home` = RFC1918 with a warning; wildcards, CIDRs broader than /8 and public ranges are rejected). Unknown network, no match or no bound network -> no LAN inbound, no rosters, no forwards; loopback keeps working. Two home WLANs can share a group (talk to each other) or stay separate; a company network is a not-recommended explicit opt-in. Under WSL the daemon syncs the allowlist to the Windows firewall rule via the elevated task, which now runs an admin-protected copy in `%ProgramData%\credo`. Existing configs stay LAN-disabled until `bind`; re-run the WSL `-Install` once. The session-start hook tells the agent when setup is pending (guided, Ask-based setup in `/credo:peer-lan`).
 - **Auto-accept (optional).** On a trusted home network with an active allowlist the setup may propose `"crossSessionInbound": "accept"` in the active profile's `settings.json`, so peer messages arrive without a manual approval each time (`hold`/`refuse` are the other values; unset = harness default, which may hold messages from sessions in another permission mode). Accepted risk: a compromised allowed device could then drive your sessions, including bypass-mode ones - not for company/public networks. Set only on the user's yes, never on a peer's request. Security model details: [`commands/peer-lan.md`](commands/peer-lan.md#security-model).
 - **Caveat:** the descriptor format is internal to Claude Code and undocumented; the relay is fail-safe - if it changes, remote peers simply stop appearing.
+- **Stale descriptors.** After a crash or resume the registry can hold two descriptors of one session (a dead pid with an old socket path next to the live one). A deliver uses only live descriptors (pid alive and `procStart` matching), newest `updatedAt` first, tries the next live one when an inject fails, and logs the chosen one; with none live it logs `no live local session ... dropped`. Descriptor files are never touched.
+- **WSL without the Windows PATH.** When a WSL session's PATH lacks the Windows dirs (for example `appendWindowsPath` not applied after a WSL crash), the relay and its autostart hook still find `powershell.exe` / `cmd.exe`. Under WSL only, they search `Windows/System32` (case-insensitive) on every drvfs mount from `/proc/mounts` and below the `[automount] root` of `/etc/wsl.conf`, so any mount root and drive letter works. If nothing is found, the LAN disabled reason names the missing tool and the PATH fix.
+
+## Peer check (absent from ListAgents is not down)
+
+`ListAgents` only shows descriptors in this profile's `sessions/` registry. A Codex session appears there only as a LAN relay mirror (it vanishes while the Codex relay or the credo relay is down), a session of another profile only through the peer bridge, and a session whose descriptor is gone not at all - while the process keeps running in its tmux pane. **Never report a peer as down only because ListAgents does not show it.** Run the peer check first:
+
+```
+scripts/credo-peer-check.py            # table + warnings
+scripts/credo-peer-check.py --json     # machine-readable
+scripts/credo-peer-check.py --no-lan-check   # skip the relay reachability probe
+```
+
+It is read-only (no message is sent, no inbox socket is opened, no file is written) and lists every channel side by side. These are Claude sessions from the profile registries, Claude inbox sockets in BOTH candidate socket dirs (`$XDG_RUNTIME_DIR/cc-socks` and the `/tmp` fallback), LAN relay mirrors, the Codex relay (`codex-peer.py list`, whether its port listens, the tail of its log), the credo LAN relay (`credo-peer-lan.py status` and `check`) and tmux sessions. Each row carries `kind` (claude / codex / lan / tmux-only), `reachable-by` (SendMessage / a2a / tmux only / none) and `last-seen`. Warnings name the cause. They cover a LAN relay that is DISABLED (with its reason - it silently cuts cross-machine peers), a Codex relay that is not running, a loopback relay peer that is not listening, the relay daemon being down, and a **split world** (live sockets in both socket dirs because sessions were started with different `XDG_RUNTIME_DIR`). To fix the split, start all sessions with the same `XDG_RUNTIME_DIR` (all set to the same dir, or all unset).
+
+A SessionStart hook (`credo-peer-split-hint.sh`) adds one hint line when this session's own socket dir (from its live descriptor) holds fewer live peers than another candidate dir; otherwise it is silent. Disable with `CREDO_PEER_SPLIT_HINT=0`.
+
+**Ping / pong per peer kind** (only when a liveness answer is really needed; a ping is a real message, so follow the peer message etiquette and mark it `[info]`):
+
+- *claude* (`reachable-by` SendMessage): `SendMessage` to its ListAgents name, ask for a one-word reply. A session in another permission mode may hold the message for its user, so silence is not proof of down.
+- *codex*: `SendMessage` to its relay mirror name (`` `Codex`--...`` row) and expect the reply from that Codex session. An idle Codex session may only pick it up after a nudge in its tmux pane. Without a mirror (Codex relay down) use its a2a channel (`codex-peer.py`) or look at its tmux pane.
+- *lan*: `SendMessage` to the mirror name; it travels over the relay. If it fails, run `credo-peer-lan.py check` (reachability, LAN enabled / disabled with reason).
+- *tmux-only*: No message channel. Look at the pane (`tmux capture-pane -p -t <session>` without scroll-back) to see whether it is alive.
 
 ## Self-restart (resume the same session)
 

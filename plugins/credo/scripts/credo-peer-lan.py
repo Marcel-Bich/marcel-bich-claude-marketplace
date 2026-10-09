@@ -325,6 +325,143 @@ def is_wsl():
     return bool(os.environ.get("WSL_DISTRO_NAME"))
 
 
+# Path components (below a Windows drive root) of the Windows tools the relay runs
+# under WSL; any other tool is looked up directly in Windows/System32.
+WIN_TOOL_PARTS = {
+    "powershell.exe": ("Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    "cmd.exe": ("Windows", "System32", "cmd.exe"),
+}
+
+
+def wsl_interop_host():
+    """True on WSL by any of its signals: is_wsl() (proc version, WSL_DISTRO_NAME),
+    WSL_INTEROP, or the WSLInterop binfmt entry (path overridable with
+    CREDO_PEER_LAN_WSLINTEROP for deterministic tests)."""
+    if is_wsl() or os.environ.get("WSL_INTEROP"):
+        return True
+    return os.path.exists(
+        os.environ.get("CREDO_PEER_LAN_WSLINTEROP") or "/proc/sys/fs/binfmt_misc/WSLInterop")
+
+
+def _unescape_mount(path):
+    """/proc/mounts escapes space, tab, newline and backslash as octal (\\040 ...)."""
+    return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), path)
+
+
+def windows_drive_roots():
+    """Mount points of the Windows drives, generic: every drvfs mount (or a 9p mount
+    whose options name drvfs) from /proc/mounts, plus the single-letter dirs below the
+    [automount] root of /etc/wsl.conf. Any automount root and drive letter works; no
+    fixed path is assumed. Both files are overridable (CREDO_PEER_LAN_MOUNTS,
+    CREDO_PEER_LAN_WSLCONF) for deterministic tests."""
+    roots = []
+    try:
+        with open(os.environ.get("CREDO_PEER_LAN_MOUNTS") or "/proc/mounts") as fh:
+            for line in fh:
+                f = line.split()
+                if len(f) < 4:
+                    continue
+                if f[2] == "drvfs" or (f[2] == "9p" and "drvfs" in f[3]):
+                    roots.append(_unescape_mount(f[1]))
+    except OSError:
+        pass
+    root = None
+    try:
+        section = ""
+        with open(os.environ.get("CREDO_PEER_LAN_WSLCONF") or "/etc/wsl.conf") as fh:
+            for line in fh:
+                t = line.split("#", 1)[0].strip()
+                if t.startswith("[") and t.endswith("]"):
+                    section = t[1:-1].strip().lower()
+                elif section == "automount" and "=" in t:
+                    k, v = t.split("=", 1)
+                    if k.strip().lower() == "root":
+                        root = v.strip().strip('"')
+    except OSError:
+        pass
+    if root and os.path.isabs(root):
+        try:
+            for name in sorted(os.listdir(root)):
+                if len(name) == 1 and name.isalpha():
+                    roots.append(os.path.join(root, name))
+        except OSError:
+            pass
+    seen, out = set(), []
+    for r in roots:
+        if r not in seen:
+            seen.add(r)
+            out.append(r)
+    # the system drive first: a root that really holds Windows/System32, C: before others
+    out.sort(key=lambda r: (not _has_dir_ci(r, ("Windows", "System32")),
+                            os.path.basename(r.rstrip("/")).lower() != "c"))
+    return out
+
+
+def _has_dir_ci(base, parts):
+    """base/parts... exists as a directory, matched case-insensitively per component."""
+    cur = base
+    for part in parts:
+        if os.path.isdir(os.path.join(cur, part)):
+            cur = os.path.join(cur, part)
+            continue
+        try:
+            hit = next((n for n in os.listdir(cur) if n.lower() == part.lower()), None)
+        except OSError:
+            return False
+        if hit is None or not os.path.isdir(os.path.join(cur, hit)):
+            return False
+        cur = os.path.join(cur, hit)
+    return True
+
+
+def _find_ci(base, parts):
+    """base/parts..., matched case-insensitively per component (an exact-case hit is
+    tried first, so a case-insensitive drvfs never needs a directory scan)."""
+    exact = os.path.join(base, *parts)
+    if os.path.isfile(exact):
+        return exact
+    cur = base
+    for part in parts:
+        try:
+            names = os.listdir(cur)
+        except OSError:
+            return None
+        hit = next((n for n in names if n.lower() == part.lower()), None)
+        if hit is None:
+            return None
+        cur = os.path.join(cur, hit)
+    return cur if os.path.isfile(cur) else None
+
+
+def win_tool(name):
+    """Path of a Windows tool (powershell.exe, cmd.exe), or None. PATH wins. Under WSL
+    only, a tool missing from PATH is searched in Windows/System32 on the mounted
+    Windows drives (windows_drive_roots). After a WSL crash the session PATH can lack
+    the Windows dirs (appendWindowsPath not applied); without this fallback network
+    detection fails and the LAN relay silently disables itself."""
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if d and os.path.exists(os.path.join(d, name)):
+            return os.path.join(d, name)
+    if not wsl_interop_host():
+        return None
+    parts = WIN_TOOL_PARTS.get(name, ("Windows", "System32", name))
+    for root in windows_drive_roots():
+        hit = _find_ci(root, parts)
+        if hit and os.access(hit, os.X_OK):
+            return hit
+    return None
+
+
+def missing_win_tool_hint():
+    """Explanation for a WSL host where powershell.exe cannot be found at all, else ''."""
+    if not wsl_interop_host() or win_tool("powershell.exe"):
+        return ""
+    return ("powershell.exe not found (not on PATH, and no Windows/System32 on a mounted "
+            "Windows drive) - the WSL PATH probably lost the Windows dirs. Open a fresh "
+            "shell, or check appendWindowsPath under [interop] in /etc/wsl.conf and "
+            "restart WSL")
+
+
 def is_lan_ipv4(ip):
     """Reject addresses that are never a LAN-reachable peer address: loopback,
     link-local, the VirtualBox host-only net, and the 172.16-31 range WSL/Docker
@@ -368,7 +505,8 @@ def self_ip_wsl():
     """Windows host LAN IPv4 of the default-route adapter, via powershell.exe -
     the address a LAN peer must use to reach this WSL machine. Read-only; returns
     None (never raises) if powershell.exe is absent or the query fails."""
-    if not have_cmd("powershell.exe"):
+    ps_exe = win_tool("powershell.exe")
+    if not ps_exe:
         return None
     ps = (
         "Get-NetIPConfiguration | Where-Object {$_.IPv4DefaultGateway} | "
@@ -377,7 +515,7 @@ def self_ip_wsl():
     )
     try:
         out = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-Command", ps],
+            [ps_exe, "-NoProfile", "-Command", ps],
             capture_output=True, text=True, timeout=15,
         )
     except Exception:
@@ -664,9 +802,12 @@ def normalize_mac(mac):
 
 
 def _win_cwd():
-    # run Windows tools from a Windows directory so cmd.exe does not warn about a
-    # UNC working directory
-    return "/mnt/c" if os.path.isdir("/mnt/c") else None
+    # run Windows tools from a Windows directory (the system drive first, see
+    # windows_drive_roots) so cmd.exe does not warn about a UNC working directory
+    for root in windows_drive_roots():
+        if os.path.isdir(root):
+            return root
+    return None
 
 
 def _run_out(argv, timeout=5, cwd=None):
@@ -782,10 +923,11 @@ def detect_network_wsl():
     """Under WSL the WSL NAT gateway is not the real router, so ask Windows. Also
     records the WSL-internal NAT gateway (the source IP the daemon sees for every LAN
     connection under NAT) as wsl_nat_gateway."""
-    if not have_cmd("powershell.exe"):
+    ps_exe = win_tool("powershell.exe")
+    if not ps_exe:
         return None
     out = _run_out(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", WSL_NETINFO_PS],
+        [ps_exe, "-NoProfile", "-NonInteractive", "-Command", WSL_NETINFO_PS],
         timeout=25,
         cwd=_win_cwd(),
     )
@@ -913,6 +1055,9 @@ def compute_lan_state(cfg, net, peers, wsl=False):
         return st
     if net is None:
         st["reason"] = "network detection failed (unknown network)"
+        hint = missing_win_tool_hint() if wsl else ""
+        if hint:
+            st["reason"] += ": " + hint
         return st
     name = match_network(networks, net)
     if name is None:
@@ -1018,9 +1163,10 @@ PS_VERSION_RE = re.compile(r'^\$ScriptVersion\s*=\s*"?(\d+)"?', re.M)
 def win_env_dir(var):
     """WSL path of a Windows environment directory (LOCALAPPDATA, ProgramData), or
     None. Read-only: cmd.exe echo + wslpath."""
-    if not (have_cmd("cmd.exe") and have_cmd("wslpath")):
+    cmd_exe = win_tool("cmd.exe")
+    if not (cmd_exe and have_cmd("wslpath")):
         return None
-    out = _run_out(["cmd.exe", "/c", "echo %" + var + "%"], timeout=10, cwd=_win_cwd())
+    out = _run_out([cmd_exe, "/c", "echo %" + var + "%"], timeout=10, cwd=_win_cwd())
     val = out.strip().splitlines()[-1].strip() if out.strip() else ""
     if not val or "%" in val:
         return None
@@ -1100,14 +1246,15 @@ def trigger_win_task():
     task (same pattern as the autostart hook). Honors CREDO_PEER_LAN_WINPROXY=off."""
     if str(os.environ.get("CREDO_PEER_LAN_WINPROXY", "1")).lower() in ("0", "false", "no", "off"):
         return False
-    if not have_cmd("powershell.exe"):
+    ps_exe = win_tool("powershell.exe")
+    if not ps_exe:
         return False
     task = os.environ.get("CREDO_PEER_LAN_WINPROXY_TASK") or DEFAULT_WIN_TASK
     if not re.match(r"^[A-Za-z0-9._ -]+$", task):
         return False
     try:
         subprocess.Popen(
-            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+            [ps_exe, "-NoProfile", "-NonInteractive", "-Command",
              "schtasks /Run /TN '%s'" % task],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -2457,10 +2604,91 @@ def local_real_session_ids(sess_dir):
     return out
 
 
-def resolve_socket(sess_dir, session_id):
+def descriptor_live(d):
+    """True when the descriptor's pid is a live process and, when the descriptor
+    records procStart, that it matches field 22 of /proc/<pid>/stat (pid reuse)."""
+    pid = d.get("pid")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    try:
+        cur = proc_start(pid)
+    except (OSError, ValueError, IndexError):
+        return False
+    want = d.get("procStart")
+    if want not in (None, "") and str(want) != cur:
+        return False
+    # a pid from another pid namespace is not this process (pidDomain ends in pid:[ns])
+    dom = d.get("pidDomain")
+    m = re.search(r"(pid:\[\d+\])$", dom) if isinstance(dom, str) else None
+    if m:
+        try:
+            own = os.readlink("/proc/self/ns/pid")
+        except OSError:
+            own = None
+        if own and own != m.group(1):
+            return False
+    return True
+
+
+class InjectMaybeSent(Exception):
+    """The inject failed after frame bytes may already have reached the inbox; a
+    retry into another descriptor of the same session could deliver it twice."""
+
+
+def _desc_time(d):
+    for k in ("updatedAt", "statusUpdatedAt", "startedAt"):
+        v = d.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return v
+    return 0
+
+
+def resolve_sockets(sess_dir, session_id):
+    """(live candidates, stale count) for a sessionId. After a crash or resume the
+    registry can hold several descriptors of one session: a dead one with an old
+    socket path (e.g. under a vanished runtime dir) next to the live one. Only live
+    descriptors count (descriptor_live); newest updatedAt first. Each candidate is
+    (socket path, pid). Descriptor files are never touched."""
+    live, stale = [], 0
     for d in read_local_sessions(sess_dir):
-        if d.get("sessionId") == session_id:
-            return d.get("messagingSocketPath")
+        if d.get("sessionId") != session_id:
+            continue
+        if descriptor_live(d):
+            live.append(d)
+        else:
+            stale += 1
+    live.sort(key=_desc_time, reverse=True)
+    return [(d.get("messagingSocketPath"), d.get("pid")) for d in live], stale
+
+
+def resolve_socket(sess_dir, session_id):
+    cands, _ = resolve_sockets(sess_dir, session_id)
+    return cands[0][0] if cands else None
+
+
+def deliver_local(sess_dir, session_id, from_name, body, reply, trust=None):
+    """Inject into the live local session: the newest live descriptor first, the
+    next live one when an inject fails. Logs the chosen descriptor. Returns the
+    socket used, or None when nothing was delivered."""
+    cands, stale = resolve_sockets(sess_dir, session_id)
+    if not cands:
+        log("deliver: no live local session %r (%d stale descriptor(s) ignored), dropped"
+            % (session_id, stale))
+        return None
+    for sock, pid in cands:
+        try:
+            inject(sock, from_name, body, reply, trust)
+        except InjectMaybeSent as exc:
+            log("deliver: inject into %s (pid %s) failed after sending, not retried "
+                "(could deliver twice): %s" % (sock, pid, exc))
+            return None
+        except Exception as exc:
+            log("deliver: inject into %s (pid %s) failed: %s" % (sock, pid, exc))
+            continue
+        log("deliver: chose descriptor pid %s socket %s for %s (%d live, %d stale)"
+            % (pid, sock, session_id, len(cands), stale))
+        return sock
+    log("deliver: every live descriptor of %r failed, dropped" % session_id)
     return None
 
 
@@ -2576,8 +2804,14 @@ def inject(target_socket, from_name, body, reply, trust=None):
     s.settimeout(5)
     try:
         s.connect(target_socket)
-        s.sendall(line)
-        s.shutdown(socket.SHUT_WR)
+        try:
+            s.sendall(line)
+        except OSError as exc:
+            raise InjectMaybeSent(str(exc))
+        try:
+            s.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass  # the whole frame was sent; the inbox has it
     finally:
         s.close()
 
@@ -4362,19 +4596,12 @@ class Daemon(object):
                     "or is not text (further rejects from this source not logged)" % src
                 )
             return
-        target_socket = resolve_socket(self.sess_dir, target)
-        if not target_socket:
-            log("deliver: no local session %r, dropped" % target)
-            return
         reply = self._reply_addr_for(payload.get("from_sessionId"), chan)
         from_name = sanitize_from_name(payload.get("from_name", ""))
         trust = self._trust_for(chan, from_name)
-        try:
-            inject(target_socket, from_name, body, reply, trust)
+        if deliver_local(self.sess_dir, target, from_name, body, reply, trust):
             log("deliver: injected into %s (from %r%s)"
                 % (target, from_name, ", trusted peer" if trust else ""))
-        except Exception as exc:
-            log("deliver: inject into %s failed: %s" % (target_socket, exc))
 
     def _trust_for(self, chan, from_name):
         """(key, peer id) when this deliver came over a link authenticated as a paired
@@ -5366,6 +5593,9 @@ def print_bind_suggestion(cfg, net, state):
             "LAN relay DISABLED: the current network could not be detected, so it cannot "
             "be bound. Run 'credo-peer-lan.py netinfo' to inspect detection."
         )
+        hint = missing_win_tool_hint() if is_wsl() else ""
+        if hint:
+            print("Cause: " + hint)
         return
     if state.get("network"):
         print("LAN relay DISABLED on bound network %s: %s" % (state["network"], state["reason"]))

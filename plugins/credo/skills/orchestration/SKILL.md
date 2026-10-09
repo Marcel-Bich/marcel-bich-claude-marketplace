@@ -391,6 +391,21 @@ needed. It preserves the subagent's accumulated context and avoids redoing work.
 NOT apply to fix rounds after a failing audit - those go to a fresh fix agent ("Fix rounds
 after a failing audit" above).
 
+## Peer liveness (absent from ListAgents is not down)
+
+Never report a peer session (another Claude session, a Codex session, a LAN peer) as
+down, stopped or not running only because `ListAgents` does not show it. ListAgents
+reads only one profile's registry. Codex sessions appear there only as LAN relay
+mirrors, other profiles only through the bridge, and a session can keep running in its
+tmux pane without any descriptor.
+
+Run `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-check.py"` first. It is read-only and
+lists rows with kind, reachable-by and last-seen, plus warnings such as a disabled LAN
+relay, a stopped Codex relay or a split socket dir. Then ping on the peer's own channel
+as the credo README describes ("Peer check"). Report what the check showed, for
+example "absent from ListAgents because the Codex relay is not running; the session
+still runs in tmux", not "down".
+
 ## Config
 
 Any environment-specific values relevant to delegated work live in the credo config

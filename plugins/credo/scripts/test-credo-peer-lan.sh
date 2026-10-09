@@ -53,6 +53,10 @@ export CREDO_PEER_LAN_NETINFO='{"ip":"127.0.0.1"}'
 export CREDO_PEER_LAN_WINALLOW_FILE=/nonexistent-credo-test/peer-lan-allow.json
 export CREDO_PEER_LAN_WINPROGRAMDATA=/nonexistent-credo-test/programdata
 export CREDO_PEER_LAN_WINPROXY=0
+# never find the real Windows tools through the drvfs-mount fallback
+export CREDO_PEER_LAN_MOUNTS=/nonexistent-credo-test/mounts
+export CREDO_PEER_LAN_WSLCONF=/nonexistent-credo-test/wsl.conf
+export CREDO_PEER_LAN_WSLINTEROP=/nonexistent-credo-test/WSLInterop
 # never consult the real ufw/firewalld of the test host (empty = inactive)
 export CREDO_PEER_LAN_UFW_STATUS=''
 export CREDO_PEER_LAN_FIREWALLD_STATE=none
@@ -135,13 +139,13 @@ procstart() { # pid -> field 22 of /proc/pid/stat
 
 write_descriptor() { # file pid sid socketpath name
     "$PY" - "$1" "$2" "$3" "$4" "$5" "$(procstart "$2")" <<'PYEOF'
-import json, sys
+import json, os, sys
 path, pid, sid, sock, name, pstart = sys.argv[1:7]
 d = {
     "pid": int(pid), "sessionId": sid, "cwd": "/tmp", "startedAt": 1,
     "procStart": pstart, "version": "2.1.293", "peerProtocol": 1,
     "peerFeatures": ["notify_idle"], "kind": "interactive", "entrypoint": "cli",
-    "pidDomain": "linux:testhost0000000000000000000000:pid:[1]",
+    "pidDomain": "linux:testhost0000000000000000000000:" + os.readlink("/proc/self/ns/pid"),
     "messagingSocketPath": sock, "name": name, "nameSource": "user",
     "updatedAt": 1, "status": "idle", "statusUpdatedAt": 1,
 }
@@ -1716,7 +1720,7 @@ def serve():
 threading.Thread(target=serve, daemon=True).start()
 sess = os.path.join(root, "cfg", "sessions")
 with open(os.path.join(sess, "4242.json"), "w") as fh:
-    json.dump({"pid": 4242, "sessionId": "sid-local", "messagingSocketPath": inbox,
+    json.dump({"pid": os.getpid(), "sessionId": "sid-local", "messagingSocketPath": inbox,
                "pidDomain": "linux:x"}, fh)
 d = mod.Daemon({"token": "t", "this_machine": "EH"})
 
@@ -1837,7 +1841,7 @@ def serve():
         got.append(buf.decode("utf-8"))
 threading.Thread(target=serve, daemon=True).start()
 with open(os.path.join(root, "cfg", "sessions", "4242.json"), "w") as fh:
-    json.dump({"pid": 4242, "sessionId": "sid-local", "messagingSocketPath": inbox,
+    json.dump({"pid": os.getpid(), "sessionId": "sid-local", "messagingSocketPath": inbox,
                "pidDomain": "linux:x"}, fh)
 d = mod.Daemon({"token": "t", "this_machine": "EI"})
 
@@ -4583,7 +4587,7 @@ def serve():
         got.append(json.loads(data.decode())["message"]["content"])
 threading.Thread(target=serve, daemon=True).start()
 with open(os.path.join(cfgdir, "sessions", "4242.json"), "w") as fh:
-    json.dump({"sessionId": "sid-r", "messagingSocketPath": inbox_path}, fh)
+    json.dump({"pid": os.getpid(), "sessionId": "sid-r", "messagingSocketPath": inbox_path}, fh)
 
 d = mod.Daemon(mod.load_config())
 class Chan(object):
@@ -4713,6 +4717,196 @@ while IFS= read -r line; do
 done <<< "$TR_OUT"
 case "$TR_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL TR: traceback\n%s\n' "$TR_OUT" ;; esac
 check "TR: expected number of trust results" "49" "$(printf '%s\n' "$TR_OUT" | grep -cE '^(PASS|FAIL) ')"
+
+# --- WT: Windows tool resolution when the WSL PATH lost the Windows dirs -----------
+# After a WSL crash appendWindowsPath may not be applied: powershell.exe / cmd.exe are
+# missing from PATH although Windows is mounted. win_tool() must find them generically
+# (drvfs / 9p-drvfs mounts from a fake /proc/mounts with an escaped space, any casing
+# below the root, the [automount] root of a fake wsl.conf), under WSL only; PATH wins.
+WTD="$TMP/WT/drives here"
+mkdir -p "$WTD/k/WINDOWS/system32/windowspowershell/V1.0" "$TMP/WT/bin" "$TMP/WT/auto/m/Windows/System32"
+printf '#!/bin/sh\n' > "$WTD/k/WINDOWS/system32/windowspowershell/V1.0/PowerShell.exe"
+printf '#!/bin/sh\n' > "$TMP/WT/auto/m/Windows/System32/cmd.exe"
+printf '#!/bin/sh\n' > "$TMP/WT/bin/powershell.exe"
+chmod +x "$WTD/k/WINDOWS/system32/windowspowershell/V1.0/PowerShell.exe" "$TMP/WT/auto/m/Windows/System32/cmd.exe" "$TMP/WT/bin/powershell.exe"
+printf 'Linux version 6.6.0-microsoft-standard-WSL2\n' > "$TMP/WT/procversion-wsl"
+printf 'Linux version 6.1.0-generic\n' > "$TMP/WT/procversion-linux"
+printf 'none / ext4 rw 0 0\nK: %s/k drvfs rw,noatime 0 0\n' "$(printf '%s' "$WTD" | sed 's/ /\\040/g')" > "$TMP/WT/mounts"
+printf '[automount]\nroot = "%s/WT/auto/"  # comment\n' "$TMP" > "$TMP/WT/wsl.conf"
+cat > "$TMP/WT/wt.py" <<'PYEOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("credo_peer_lan", sys.argv[1])
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+if sys.argv[2] == "--hint":
+    print(mod.missing_win_tool_hint() or "NOHINT")
+else:
+    print(mod.win_tool(sys.argv[2]) or "NONE")
+PYEOF
+wt() { # path-dir procversion tool [mounts] [wslconf]
+    PATH="$1:/usr/bin:/bin" WSL_DISTRO_NAME= WSL_INTEROP= CREDO_PEER_LAN_PROCVERSION="$2" \
+        CREDO_PEER_LAN_WSLINTEROP=/nonexistent-credo-test/WSLInterop \
+        CREDO_PEER_LAN_MOUNTS="${4:-$TMP/WT/mounts}" CREDO_PEER_LAN_WSLCONF="${5:-$TMP/WT/wsl.conf}" \
+        "$PY" "$TMP/WT/wt.py" "$DAEMON" "$3" 2>/dev/null
+}
+check "WT: WSL, powershell.exe missing from PATH -> drvfs mount, case-insensitive" \
+    "$WTD/k/WINDOWS/system32/windowspowershell/V1.0/PowerShell.exe" "$(wt /nonexistent "$TMP/WT/procversion-wsl" powershell.exe)"
+check "WT: WSL, cmd.exe missing from PATH -> wsl.conf automount root" \
+    "$TMP/WT/auto/m/Windows/System32/cmd.exe" "$(wt /nonexistent "$TMP/WT/procversion-wsl" cmd.exe)"
+check "WT: PATH entry wins over the fallback" \
+    "$TMP/WT/bin/powershell.exe" "$(wt "$TMP/WT/bin" "$TMP/WT/procversion-wsl" powershell.exe)"
+check "WT: non-WSL never uses the fallback" \
+    "NONE" "$(wt /nonexistent "$TMP/WT/procversion-linux" powershell.exe)"
+check "WT: WSL, tool absent everywhere -> None" \
+    "NONE" "$(wt /nonexistent "$TMP/WT/procversion-wsl" wsl.exe)"
+# drive order: the root that holds Windows/System32 comes first, C: before others
+mkdir -p "$TMP/WT/order/d" "$TMP/WT/order/c/windows/system32" "$TMP/WT/order/e/Windows/System32"
+printf 'D: %s/d drvfs rw 0 0\nE: %s/e drvfs rw 0 0\nC: %s/c drvfs rw 0 0\n' "$TMP/WT/order" "$TMP/WT/order" "$TMP/WT/order" > "$TMP/WT/mounts-order"
+cat > "$TMP/WT/roots.py" <<'PYEOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("credo_peer_lan", sys.argv[1])
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+print(",".join(r.rsplit("/", 1)[-1] for r in mod.windows_drive_roots()), mod._win_cwd().rsplit("/", 1)[-1])
+PYEOF
+check "WT: system drive first (C: with System32, then E:, then D:), _win_cwd uses it" "c,e,d c" \
+    "$(CREDO_PEER_LAN_MOUNTS="$TMP/WT/mounts-order" CREDO_PEER_LAN_WSLCONF=/nonexistent-credo-test/c "$PY" "$TMP/WT/roots.py" "$DAEMON" 2>/dev/null)"
+WTH="$(wt /nonexistent "$TMP/WT/procversion-wsl" --hint /nonexistent-credo-test/m /nonexistent-credo-test/c)"
+case "$WTH" in *powershell.exe*appendWindowsPath*) r=0 ;; *) r=1 ;; esac
+ok "WT: missing powershell.exe under WSL yields a reason naming the tool and the PATH fix" "$r"
+check "WT: no hint when powershell.exe is found" "NOHINT" "$(wt /nonexistent "$TMP/WT/procversion-wsl" --hint)"
+
+# --- SD: deliver by sessionId picks only LIVE descriptors -----------------------------
+# After a crash/resume the registry can hold two descriptors of one session: a dead pid
+# with an old socket path next to the live one. Deliver must use only live descriptors
+# (pid alive + procStart match), newest updatedAt first, fall back to the next live one
+# when an inject fails, log the chosen one, and drop with a clear log when none is
+# live. Descriptor files are never touched.
+mkdir -p "$TMP/SD/sessions"
+cat > "$TMP/SD/sd.py" <<'PYEOF'
+import importlib.util, json, os, socket, subprocess, sys, threading, time
+daemon_path, root = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+logs = []
+mod.log = lambda m: logs.append(m)
+sess = os.path.join(root, "sessions")
+def res(name, cond, extra=""):
+    print("%s SD %s%s" % ("PASS" if cond else "FAIL", name, (" " + repr(extra)) if not cond else ""))
+
+def inbox(path, got):
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(path); srv.listen(4)
+    def serve():
+        while True:
+            try:
+                c, _ = srv.accept()
+            except OSError:
+                return
+            buf = b""
+            while True:
+                ch = c.recv(65536)
+                if not ch:
+                    break
+                buf += ch
+            c.close(); got.append(buf.decode())
+    threading.Thread(target=serve, daemon=True).start()
+
+def desc(name, d):
+    with open(os.path.join(sess, name), "w") as fh:
+        json.dump(d, fh)
+
+def dead_pid():
+    p = subprocess.Popen(["true"]); p.wait()
+    return p.pid
+D1, D2, D3 = dead_pid(), dead_pid(), dead_pid()
+
+live = subprocess.Popen(["sleep", "60"])
+live2 = subprocess.Popen(["sleep", "60"])
+pst = mod.proc_start(live.pid)
+got = []
+inbox(os.path.join(root, "live.sock"), got)
+# stale: dead pid, old socket dir, NEWER updatedAt (must still lose)
+desc("%d.json" % D1, {"pid": D1, "sessionId": "sid-x", "procStart": "1",
+                     "messagingSocketPath": os.path.join(root, "gone", "old.sock"), "updatedAt": 9e12})
+# reused pid: alive but procStart mismatch -> stale
+desc("%d.json" % live2.pid, {"pid": live2.pid, "sessionId": "sid-x", "procStart": "0",
+                             "messagingSocketPath": os.path.join(root, "gone", "reuse.sock"), "updatedAt": 8e12})
+desc("%d.json" % live.pid, {"pid": live.pid, "sessionId": "sid-x", "procStart": pst,
+                            "messagingSocketPath": os.path.join(root, "live.sock"), "updatedAt": 1})
+before = sorted(os.listdir(sess))
+
+cands, stale = mod.resolve_sockets(sess, "sid-x")
+res("only the live descriptor is a candidate", cands == [(os.path.join(root, "live.sock"), live.pid)], cands)
+res("dead and pid-reused descriptors counted stale", stale == 2, stale)
+res("resolve_socket returns the live socket", mod.resolve_socket(sess, "sid-x") == os.path.join(root, "live.sock"))
+
+used = mod.deliver_local(sess, "sid-x", "peer", "hello live", None)
+for _ in range(40):
+    if got:
+        break
+    time.sleep(0.05)
+res("deliver reaches the live inbox", used == os.path.join(root, "live.sock") and any("hello live" in g for g in got), (used, got))
+res("chosen descriptor is logged", any("chose descriptor pid %d" % live.pid in m for m in logs), logs)
+
+# two live descriptors: the newer one's socket is broken -> fall back to the older one
+live3 = subprocess.Popen(["sleep", "60"])
+desc("%d.json" % live3.pid, {"pid": live3.pid, "sessionId": "sid-x", "procStart": mod.proc_start(live3.pid),
+                             "messagingSocketPath": os.path.join(root, "gone", "broken.sock"), "updatedAt": 5})
+got.clear(); logs.clear()
+used = mod.deliver_local(sess, "sid-x", "peer", "hello fallback", None)
+for _ in range(40):
+    if got:
+        break
+    time.sleep(0.05)
+res("inject failure falls back to the next live descriptor",
+    used == os.path.join(root, "live.sock") and any("hello fallback" in g for g in got), (used, got, logs))
+res("the failed candidate is logged", any("broken.sock" in m and "failed" in m for m in logs), logs)
+
+# both dead -> clear error, nothing delivered
+desc("%d.json" % D2, {"pid": D2, "sessionId": "sid-y", "messagingSocketPath": os.path.join(root, "live.sock")})
+desc("%d.json" % D3, {"pid": D3, "sessionId": "sid-y", "messagingSocketPath": os.path.join(root, "live.sock")})
+got.clear(); logs.clear()
+used = mod.deliver_local(sess, "sid-y", "peer", "never", None)
+time.sleep(0.2)
+res("all dead -> nothing delivered", used is None and not got, (used, got))
+res("all dead -> clear log naming the stale count",
+    any("no live local session" in m and "2 stale" in m for m in logs), logs)
+res("descriptor files are never touched", sorted(os.listdir(sess)) == sorted(before + ["%d.json" % live3.pid, "%d.json" % D2, "%d.json" % D3]))
+
+# a live pid from ANOTHER pid namespace (pidDomain suffix differs) is not this session
+live4 = subprocess.Popen(["sleep", "60"])
+desc("%d.json" % live4.pid, {"pid": live4.pid, "sessionId": "sid-z", "procStart": mod.proc_start(live4.pid),
+                             "pidDomain": "linux:other:pid:[1]", "messagingSocketPath": os.path.join(root, "live.sock")})
+res("pidDomain of another pid namespace is stale", mod.resolve_sockets(sess, "sid-z") == ([], 1), mod.resolve_sockets(sess, "sid-z"))
+desc("%d.json" % live4.pid, {"pid": live4.pid, "sessionId": "sid-z", "procStart": mod.proc_start(live4.pid),
+                             "pidDomain": "linux:any:" + os.readlink("/proc/self/ns/pid"),
+                             "messagingSocketPath": os.path.join(root, "live.sock")})
+res("pidDomain of this pid namespace is live", len(mod.resolve_sockets(sess, "sid-z")[0]) == 1)
+
+# a failure after bytes may have been sent is never retried into another descriptor
+calls = []
+real_inject = mod.inject
+def fake_inject(sock, *a, **k):
+    calls.append(sock)
+    raise mod.InjectMaybeSent("broken pipe")
+mod.inject = fake_inject
+logs.clear()
+used = mod.deliver_local(sess, "sid-x", "peer", "maybe twice", None)
+mod.inject = real_inject
+res("no fallback after a send-phase failure", used is None and len(calls) == 1, (used, calls))
+res("send-phase failure is logged as not retried", any("not retried" in m for m in logs), logs)
+live4.kill(); live4.wait()
+for pr in (live, live2, live3):
+    pr.kill(); pr.wait()
+PYEOF
+SD_OUT="$("$PY" "$TMP/SD/sd.py" "$DAEMON" "$TMP/SD" 2>&1)"
+while IFS= read -r line; do
+    case "$line" in
+        PASS\ *) PASS=$((PASS + 1)) ;;
+        FAIL\ *) FAIL=$((FAIL + 1)); printf '%s\n' "$line" ;;
+    esac
+done <<< "$SD_OUT"
+case "$SD_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL SD: traceback\n%s\n' "$SD_OUT" ;; esac
+check "SD: expected number of results" "14" "$(printf '%s\n' "$SD_OUT" | grep -cE '^(PASS|FAIL) ')"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

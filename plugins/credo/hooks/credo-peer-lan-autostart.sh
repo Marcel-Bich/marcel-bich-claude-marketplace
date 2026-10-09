@@ -89,6 +89,56 @@ disown 2>/dev/null || true
 # triggers an already-registered scheduled task; it never changes the firewall or the
 # portproxy itself (that is the user's one-time elevated -Install step). On native Linux
 # this block is skipped (no NAT -> the daemon already listens on the LAN directly).
+# powershell.exe when the WSL session PATH lost the Windows dirs (appendWindowsPath not
+# applied, e.g. after a WSL crash). Generic, no fixed path: every drvfs mount (or 9p
+# mount naming drvfs) in /proc/mounts plus the single-letter dirs below the
+# [automount] root of /etc/wsl.conf are tried as Windows drive roots; the path below a
+# root is matched case-insensitively. Both files are overridable for tests
+# (CREDO_PEER_LAN_MOUNTS, CREDO_PEER_LAN_WSLCONF). Prints the path, or returns 1.
+find_win_powershell() {
+  local mounts conf roots root mp fstype opts cur part hit e
+  mounts="${CREDO_PEER_LAN_MOUNTS:-/proc/mounts}"
+  conf="${CREDO_PEER_LAN_WSLCONF:-/etc/wsl.conf}"
+  roots=()
+  if [ -r "$mounts" ]; then
+    while read -r _ mp fstype opts _; do
+      case "$fstype" in
+        drvfs) ;;
+        9p) case "$opts" in *drvfs*) ;; *) continue ;; esac ;;
+        *) continue ;;
+      esac
+      # /proc/mounts escapes space/tab/backslash as \NNN octal
+      roots+=("$(printf '%b' "$(printf '%s' "$mp" | sed 's/\\\([0-7][0-7][0-7]\)/\\0\1/g')")")
+    done < "$mounts"
+  fi
+  if [ -r "$conf" ]; then
+    root="$(awk '
+      /^[[:space:]]*\[/ { sec = tolower($0); gsub(/[[:space:]\[\]]/, "", sec); next }
+      sec == "automount" && tolower($0) ~ /^[[:space:]]*root[[:space:]]*=/ {
+        sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*(#.*)?$/, ""); gsub(/"/, ""); print; exit }
+    ' "$conf" 2>/dev/null)"
+    if [ -n "$root" ] && [ -d "$root" ]; then
+      for e in "$root"/?; do [ -d "$e" ] && roots+=("$e"); done
+    fi
+  fi
+  for root in "${roots[@]}"; do
+    if [ -x "$root/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" ]; then
+      printf '%s\n' "$root/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"; return 0
+    fi
+    cur="$root"
+    for part in windows system32 windowspowershell v1.0 powershell.exe; do
+      hit=""
+      for e in "$cur"/*; do
+        [ "$(printf '%s' "${e##*/}" | tr '[:upper:]' '[:lower:]')" = "$part" ] && { hit="$e"; break; }
+      done
+      [ -n "$hit" ] || { cur=""; break; }
+      cur="$hit"
+    done
+    if [ -n "$cur" ] && [ -f "$cur" ] && [ -x "$cur" ]; then printf '%s\n' "$cur"; return 0; fi
+  done
+  return 1
+}
+
 case "${CREDO_PEER_LAN_WINPROXY:-1}" in
   0|false|no|off) : ;;   # proxy-trigger opt-out: the daemon was still started above
   *)
@@ -97,16 +147,19 @@ case "${CREDO_PEER_LAN_WINPROXY:-1}" in
     # WSL machine. In production it is unset and the real file is read.
     procver="${CREDO_PEER_LAN_PROCVERSION:-/proc/version}"
     if grep -qi microsoft "$procver" 2>/dev/null || [ -n "${WSL_DISTRO_NAME:-}" ]; then
-      if command -v powershell.exe >/dev/null 2>&1; then
-        task="${CREDO_PEER_LAN_WINPROXY_TASK:-credo-peer-lan-proxy}"
-        # Cap the call with timeout when available so a slow/hung powershell cannot
-        # linger; it is backgrounded and disowned either way, so the hook never blocks.
-        to=""
-        command -v timeout >/dev/null 2>&1 && to="timeout 15"
+      task="${CREDO_PEER_LAN_WINPROXY_TASK:-credo-peer-lan-proxy}"
+      # Cap the call with timeout when available so a slow/hung powershell cannot
+      # linger. Resolution and call run backgrounded and disowned, so the hook never
+      # blocks; a missing powershell.exe simply means no trigger.
+      to=""
+      command -v timeout >/dev/null 2>&1 && to="timeout 15"
+      (
+        ps_exe="$(command -v powershell.exe 2>/dev/null || find_win_powershell || true)"
         # shellcheck disable=SC2086  # $to is an intentional optional command prefix
-        ( $to powershell.exe -NoProfile -Command "schtasks /Run /TN $task" >/dev/null 2>&1 || true ) &
-        disown 2>/dev/null || true
-      fi
+        [ -n "$ps_exe" ] && $to "$ps_exe" -NoProfile -Command "schtasks /Run /TN $task" >/dev/null 2>&1
+        true
+      ) &
+      disown 2>/dev/null || true
     fi
     ;;
 esac

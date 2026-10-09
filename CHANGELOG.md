@@ -6,6 +6,22 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 ### v0
 
+#### v0.77
+
+##### v0.77.0
+
+###### Added
+
+- `scripts/credo-peer-check.py`: read-only peer check across every channel (profile registries, Claude sockets in both candidate socket dirs, LAN relay mirrors, Codex relay via `codex-peer.py list` plus port and log, `credo-peer-lan.py status` and `check`, tmux sessions); each row has kind, reachable-by and last-seen, warnings name a disabled LAN relay with its reason, a stopped Codex relay, a loopback relay peer that is not listening and a split socket dir with the `XDG_RUNTIME_DIR` fix
+- SessionStart hook `credo-peer-split-hint.sh`: one hint line when this session's socket dir holds fewer live peers than another candidate dir (toggle `CREDO_PEER_SPLIT_HINT=0`)
+- Docs: "absent from ListAgents is not down" rule in the orchestration skill and a README "Peer check" section with a ping / pong procedure per peer kind
+- Tests: `test-credo-peer-check.sh`; stale-descriptor deliver (SD) and Windows tool lookup (WT) cases in `test-credo-peer-lan.sh`; drvfs and wsl.conf fallback cases in `test-credo-peer-lan-autostart.sh`
+
+###### Fixed
+
+- LAN relay deliver by sessionId used a stale descriptor (dead pid, old socket path) left behind after a crash or resume and dropped the message; it now uses only live descriptors (pid alive and `procStart` matching), newest first, falls back to the next live one when an inject fails and logs the chosen descriptor; a descriptor whose `pidDomain` names another pid namespace counts as stale, and an inject that fails after the frame may already have been sent is not retried into another descriptor (no double delivery)
+- Under WSL a session PATH without the Windows dirs made network detection fail and the LAN relay disable itself; `powershell.exe` and `cmd.exe` are now also found in `Windows/System32` on the drvfs mounts from `/proc/mounts` and below the `/etc/wsl.conf` automount root (relay and autostart hook), and the disabled reason names a tool that cannot be found at all; the system drive (the root holding `Windows/System32`, C: first) is preferred, also as the working directory of Windows tools
+
 #### v0.76
 
 ##### v0.76.0

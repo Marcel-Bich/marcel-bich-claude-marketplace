@@ -114,6 +114,8 @@ run_hook() { # extra env assignments passed as KEY=VAL ...
         CLAUDE_PLUGIN_ROOT="$FAKE_ROOT" CLAUDE_CONFIG_DIR="$CFGDIR" \
         CREDO_PEER_LAN_CONFIG="$CFG" \
         CREDO_PEER_LAN_PROCVERSION="$PROCVER_LINUX" \
+        CREDO_PEER_LAN_MOUNTS="$TMP/no-mounts" CREDO_PEER_LAN_WSLCONF="$TMP/no-wslconf" \
+        CREDO_PEER_LAN_WSLINTEROP="$TMP/no-wslinterop" \
         "$@" bash "$HOOK" </dev/null
 }
 
@@ -211,6 +213,31 @@ ok "WSL without powershell.exe still starts the daemon" "$(wait_sentinel && echo
 sleep 0.4
 ok "WSL without powershell.exe makes no trigger" "$([ ! -f "$PSLOG" ] && echo 0 || echo 1)"
 
+# --- proxy trigger, WSL host whose PATH lost the Windows dirs ----------------------------
+# After a WSL crash appendWindowsPath may not be applied, so powershell.exe is not on
+# PATH although Windows is mounted. The hook must find it generically: drvfs / 9p-drvfs
+# mounts from /proc/mounts (any mount root, escaped spaces, any letter casing below the
+# root) and the [automount] root of /etc/wsl.conf. Fake mounts + fake dirs only.
+FAKEDRV="$TMP/fake drives"
+mkdir -p "$FAKEDRV/x/windows/SYSTEM32/WindowsPowerShell/V1.0" "$TMP/autoroot/q/Windows/System32/WindowsPowerShell/v1.0"
+cp "$PSBIN/powershell.exe" "$FAKEDRV/x/windows/SYSTEM32/WindowsPowerShell/V1.0/PowerShell.exe"
+cp "$PSBIN/powershell.exe" "$TMP/autoroot/q/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+ESC_DRV="$(printf '%s' "$FAKEDRV" | sed 's/ /\\040/g')"
+printf 'proc /proc proc rw 0 0\nX:\\134 %s/x 9p rw,aname=drvfs;path=X:\\;uid=1000 0 0\n' "$ESC_DRV" > "$TMP/mounts-drvfs"
+printf '[interop]\nappendWindowsPath = true\n[automount]\nroot = %s/autoroot/\n' "$TMP" > "$TMP/wslconf-root"
+printf '{"this_machine":"X","token":"t","peers":[]}\n' > "$CFG"
+rm -f "$SENTINEL" "$PSLOG"
+run_hook PATH="$BIN:/usr/bin:/bin" CREDO_PEER_LAN_PROCVERSION="$PROCVER_WSL" CREDO_PEER_LAN_MOUNTS="$TMP/mounts-drvfs"; rc=$?
+ok "WSL PATH without Windows dirs exits 0" "$rc"
+ok "WSL PATH without Windows dirs triggers via a drvfs mount (escaped space, mixed case)" "$(wait_file "$PSLOG" && echo 0 || echo 1)"
+rm -f "$SENTINEL" "$PSLOG"
+run_hook PATH="$BIN:/usr/bin:/bin" CREDO_PEER_LAN_PROCVERSION="$PROCVER_WSL" CREDO_PEER_LAN_WSLCONF="$TMP/wslconf-root"; rc=$?
+ok "WSL PATH without Windows dirs triggers via the wsl.conf automount root" "$(wait_file "$PSLOG" && echo 0 || echo 1)"
+rm -f "$SENTINEL" "$PSLOG"
+run_hook PATH="$BIN:/usr/bin:/bin" CREDO_PEER_LAN_PROCVERSION="$PROCVER_LINUX" CREDO_PEER_LAN_MOUNTS="$TMP/mounts-drvfs"; rc=$?
+sleep 0.4
+ok "non-WSL never uses the mount fallback" "$([ ! -f "$PSLOG" ] && echo 0 || echo 1)"
+
 # --- onboarding context (SessionStart stdout = injected agent context) -----------
 # no config, not declined -> one-time setup offer; declined -> silent; config with no
 # bound network -> DISABLED note; bound (matching or not) -> silent. CREDO_PEER_LAN=0
@@ -262,10 +289,16 @@ EOF
     rd_pid() { "$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("pid",""))' "$1" 2>/dev/null; }
     rd_ver() { "$PY" -c 'import json,sys;print(json.load(open(sys.argv[1])).get("version",""))' "$1" 2>/dev/null; }
 
+    # Real daemons must never reach real Windows tools: a non-WSL proc version, no
+    # mount / wsl.conf / WSLInterop fallback, a fake netinfo and no proxy trigger.
+    RD_SAFE=(CREDO_PEER_LAN_PROCVERSION="$PROCVER_LINUX" CREDO_PEER_LAN_MOUNTS="$TMP/no-mounts"
+             CREDO_PEER_LAN_WSLCONF="$TMP/no-wslconf" CREDO_PEER_LAN_WSLINTEROP="$TMP/no-wslinterop"
+             CREDO_PEER_LAN_NETINFO='{"ip":"127.0.0.1"}' CREDO_PEER_LAN_WINPROXY=0
+             CREDO_PEER_LAN_WINALLOW_FILE="$TMP/no-winallow/allow.json")
     # start a real incumbent daemon directly (not via hook) with a chosen version
     start_incumbent() { # version
         rm -f "$RD_PIDFILE"
-        env -i PATH="/usr/bin:/bin" HOME="$TMP/home" \
+        env -i PATH="/usr/bin:/bin" HOME="$TMP/home" "${RD_SAFE[@]}" \
             CLAUDE_CONFIG_DIR="$RD_CFGDIR" CREDO_PEER_LAN_CONFIG="$RD_CFG" \
             CREDO_PEER_LAN_SOCKDIR="$TMP/rdsock" CREDO_PEER_LAN_VERSION="$1" \
             "$PY" "$REAL_DAEMON" daemon >>"$RD_CFGDIR/incumbent.log" 2>&1 &
@@ -275,10 +308,10 @@ EOF
     }
     # run the hook against the real daemon with a chosen current plugin version
     run_hook_real() { # version
-        env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP/home" \
+        env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP/home" "${RD_SAFE[@]}" \
             CLAUDE_PLUGIN_ROOT="$REAL_ROOT" CLAUDE_CONFIG_DIR="$RD_CFGDIR" \
             CREDO_PEER_LAN_CONFIG="$RD_CFG" CREDO_PEER_LAN_SOCKDIR="$TMP/rdsock" \
-            CREDO_PEER_LAN_PROCVERSION="$PROCVER_LINUX" CREDO_PEER_LAN_VERSION="$1" \
+            CREDO_PEER_LAN_VERSION="$1" \
             bash "$HOOK" </dev/null
     }
 

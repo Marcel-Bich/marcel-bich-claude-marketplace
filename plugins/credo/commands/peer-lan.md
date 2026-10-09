@@ -323,6 +323,14 @@ reaches it depends on the platform. In every case `-Port` / the firewall port MU
 
 ### WSL2 (default NAT mode)
 
+Windows tools (`powershell.exe`, `cmd.exe`) are taken from PATH first. When the WSL
+session's PATH lacks the Windows dirs (for example `appendWindowsPath` not applied after
+a WSL crash), the relay and its autostart hook look them up generically under WSL only:
+`Windows/System32` (case-insensitive) on every drvfs mount from `/proc/mounts` and
+below the `[automount] root` of `/etc/wsl.conf`. Without this, network detection would
+fail and the relay would disable the LAN side; if the tool cannot be found at all, the
+disabled reason names it and the PATH fix.
+
 In WSL2 NAT mode a LAN machine cannot reach the WSL daemon directly: the WSL instance is
 behind a NAT only the Windows host sees, and its IP changes on every WSL restart. The
 Windows host must forward its own LAN-IP:PORT to the current WSL IP:PORT (a `netsh`
