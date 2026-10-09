@@ -695,3 +695,66 @@ Checkbox states: [x]=auto, [?]=ask, [ ]=deny, [1]=one, [a]=all, [0]=deny
 The (§xxxx) ids are stable; the text after them may be reworded freely.
 EOF
 }
+
+# --- Shell-aware command findings (bash-guard.py) ------------------------------
+# bash-guard.py normalises a Bash command like a shell (quoting, variables, wrappers,
+# nested shells, substitutions, heredocs, cd tracking) and reports the deletes,
+# package installs and git add/commit/push it contains, each with the directories it
+# runs in. Hooks use these findings instead of text patterns when python3 exists.
+
+# Print the findings JSON for a hook input; returns 1 (prints nothing) without python3
+# or when the analysis failed (callers then fall back to their text patterns).
+# Usage: dogma_bash_findings "$INPUT"
+dogma_bash_findings() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    local here out
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    out="$(printf '%s' "$1" | python3 -I "$here/bash-guard.py" --findings 2>/dev/null)" || return 1
+    [ -n "$out" ] || return 1
+    printf '%s\n' "$out"
+}
+
+# The deny reason when the analysis refused the command or ran out of time (prints
+# nothing otherwise); quotes and backslashes are dropped so it fits the hook JSON.
+# Without jq the findings cannot be read: any refusal or finding then denies (fail closed).
+# Usage: dogma_findings_blocked "$FINDINGS"
+dogma_findings_blocked() {
+    if ! command -v jq >/dev/null 2>&1; then
+        if printf '%s' "$1" | grep -qE '"blocked"|"label"|"op"|"installs": \["'; then
+            echo "dogma: jq is missing, the command cannot be checked against the settings (fail closed)."
+        fi
+        return 0
+    fi
+    printf '%s' "$1" | jq -r '.blocked // empty' 2>/dev/null | tr -d '"\\' | tr '\n' ' ' | cut -c1-300
+}
+
+# Strictest mode of one setting over several directories (deny > ask > auto). An empty
+# directory means "no explicit target": the default lookup applies (credo pinned
+# project, current dir, session folder).
+# Sets DOGMA_STRICT_MODE and DOGMA_STRICT_SRC (the defining file, empty when none).
+# Usage: dogma_strictest_mode <spec> <mode when no file applies> <dir>...
+dogma_strictest_mode() {
+    local spec="$1" missing="$2" dir mode src rank best=-1
+    shift 2
+    DOGMA_STRICT_MODE="auto"
+    DOGMA_STRICT_SRC=""
+    for dir in "$@"; do
+        if load_permissions "$dir"; then
+            mode="$(get_permission_mode "$PERMS_SECTION" "$spec")"
+            src="$(perm_defining_file "$spec")"
+        else
+            mode="$missing"
+            src=""
+        fi
+        case "$mode" in
+            deny) rank=2 ;;
+            ask) rank=1 ;;
+            *) rank=0; mode="auto" ;;
+        esac
+        if [ "$rank" -gt "$best" ]; then
+            best="$rank"
+            DOGMA_STRICT_MODE="$mode"
+            DOGMA_STRICT_SRC="$src"
+        fi
+    done
+}

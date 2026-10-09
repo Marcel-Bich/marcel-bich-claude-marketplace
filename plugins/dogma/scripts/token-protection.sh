@@ -290,6 +290,17 @@ if [ -z "$COMMAND" ]; then
     exit 0
 fi
 
+# Shell-aware check: with python3 the Bash rules below run in bash-guard.py (called by
+# the always-on delete-guard.sh hook, behind CLAUDE_MB_DOGMA_TOKEN_PROTECTION, honouring
+# CLAUDE_MB_DOGMA_TOKEN_STRICT and the allowlist). It sees through quoting, variables,
+# wrappers and nested shells and does not match words inside messages or patterns.
+# The text patterns below are the fallback without python3.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if command -v python3 >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/bash-guard.py" ]; then
+    log_debug "Bash command checked by bash-guard.py"
+    exit 0
+fi
+
 # =============================================================================
 # DANGEROUS COMMANDS - Commands that could expose tokens in output
 # =============================================================================

@@ -4,6 +4,25 @@ Changelog of the dogma plugin. Newest first. Months group releases; no day dates
 
 ## v1
 
+### v1.45
+
+#### v1.45.0
+
+##### Added
+
+- `scripts/bash-guard.py`: shell-aware analysis of Bash commands for the guard hooks (quoting, variables, wrappers, nested shells, substitutions, heredocs, `cd` tracking, abbreviated long options); every simple command is checked on its own
+- Protected paths now also cover mount points, devices, the working directory and its parents, and whole repositories or worktrees; `CLAUDE_MB_DOGMA_PROTECTED_MOUNTS` adds mount points
+- `scripts/test-guard-parity.py` with shared case tables in `scripts/guard-cases/` (review rounds, audit probes, everyday commands that must pass)
+
+##### Changed
+
+- Hardened the delete guard: commands whose command word is only known at run time, archive/sync tools that delete their sources, data-destroying git commands with a redirected work tree or git dir, filesystem wipe tools and Windows-side deletion from WSL are blocked; inline interpreter code is checked for deletes near protected paths
+- File protection, git permissions, token protection and dependency verification use the shell-aware analysis when python3 exists (text patterns remain the fallback); data-destroying git commands follow the delete setting, and words inside commit messages or search patterns no longer trigger the guards
+- Git hook bypasses (`--no-verify`, also abbreviated, hook path overrides, hook-skipping variables) are blocked
+- Both guards share one option parser (`scripts/dogma_getopt.py`) for cp, mv, install, ln, rm, unlink, rmdir, rsync, su, runuser and the env, sudo and doas wrappers: bundled short options, abbreviated long options (exact match for rsync, unknown rsync options are blocked), and both the GNU and the `POSIXLY_CORRECT` reading of the arguments are checked; an `env -S` string is split by the GNU env rules and refused when it uses an escape or expansion those rules do not allow; unknown wrapper options make relative targets fail closed
+- Commands that start in another working directory are checked there (`env -C`, `sudo -D`, systemd-run, tmux, bwrap, nsenter, unshare, start-stop-daemon); where it is not known before running (a login with `sudo -i` or `su -`, a systemd service, a new tmux window) relative targets fail closed, and a command run below another root or mount namespace (chroot, nsenter/unshare with a root or mount namespace, bwrap with remapped paths) is blocked
+- `rm`, `unlink`, `rmdir` and `mv` of a symlink act on the link itself and are no longer blocked when it points at a protected path; `..` after a symlink component is resolved against the link target, as the kernel does, and a path whose component before `..` does not exist yet is blocked
+
 ### v1.44
 
 #### v1.44.4

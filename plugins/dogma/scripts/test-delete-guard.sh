@@ -53,10 +53,42 @@ expect allow "$T/plain" "rm -rf dir"
 expect deny  "$T" "rm -rf $T/lnk/"
 expect deny  "$T" "rm -rf $T/lnk/*"
 expect deny  "$T" "rm -rf $T/lnk/proj"
-expect deny  "$T" "rm -rf $T/lnk"
+expect allow "$T" "rm -rf $T/lnk"          # rm removes only the link itself
+expect allow "$T" "unlink $T/lnk"
+expect deny  "$T" "shred -u $T/lnk"        # shred writes through the link
+expect allow "$T" "mv $T/lnk $T/plain/moved-link"
 expect deny  "$T" "rm -rf lnk/proj"
 expect deny  "$T/plain" "cd $T && rm -rf lnk/proj"
 expect allow "$T" "rm -rf $T/oklnk/dir"
+# ".." after a link component resolves against the link target (lnk/.. is $T/home)
+expect deny  "$T" "rm -rf $T/lnk/../u"
+expect deny  "$T" "rm -rf lnk/../u"
+expect deny  "$T" "unlink $T/lnk/../u/.bashrc"
+expect deny  "$T" "mv $T/lnk/../u $T/plain/x"
+expect allow "$T" "rm -rf $T/oklnk/../plain/dir"
+# a component before ".." that does not exist yet: where ".." leads is unknown
+expect deny  "$T" "mv $T/lnk $T/later && rm -rf $T/later/../u"
+expect deny  "$T" "rm -rf $T/nope/../plain/dir"
+# env/sudo/doas options by the shared parser (working directory of the wrapped command)
+expect deny  "$T" "env --chdir=$FH rm -rf proj"
+expect deny  "$T" "env -iC $FH rm -rf proj"
+expect deny  "$T" "env -S '-C $FH' rm -rf proj"
+expect deny  "$T" "sudo -D$FH rm -rf proj"
+expect deny  "$T" "sudo --chd $FH rm -rf proj"
+expect deny  "$T" "env --frobnicate x rm -rf proj"
+expect allow "$T" "env -C $T/plain rm -rf dir"
+expect allow "$T" "sudo -u root rm -rf $T/plain/dir"
+expect allow "$T" "env -C $FH true; rm -rf $T/plain/dir"
+# env -S is split like GNU env (\_ separates words); a login starts in the target home
+expect deny  "$T" "env -S 'rm\\_-rf\\_$FH'"
+expect deny  "$T" "env -S '-C\\_$FH rm -rf proj'"
+expect deny  "$T" "env -S 'rm\\_-rf\\_\\q$FH'"
+expect deny  "$T" "sudo -i rm -rf proj"
+expect deny  "$T" "sudo -iu root rm -rf proj"
+expect allow "$T" "env -S 'rm\\_-rf\\_$T/plain/dir'"
+# POSIXLY_CORRECT: the options end at the first operand, so "-t ~" are sources
+expect deny  "$T" "POSIXLY_CORRECT=1 mv $T/plain/a -t ~ $T/plain/b"
+expect deny  "$T" "mv $T/plain/a -t ~ $T/plain/b"
 expect deny  "$FH/proj" "rm -rf ../.."
 expect deny  "$FH" "rm -rf proj"
 

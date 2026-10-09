@@ -17,11 +17,25 @@ or re-assigned variable, eval, xargs) is blocked: deletion errs on the strict si
 Variables assigned from mktemp in the same command are known-safe.
 """
 
+import importlib.util
 import json
 import os
 import re
+import copy
 import shlex
 import sys
+
+
+def _load_getopt():
+    """GNU option parsing shared with bash-guard.py (dogma_getopt.py next to this file)."""
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "dogma_getopt.py")
+    spec = importlib.util.spec_from_file_location("dogma_getopt", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+getopt = _load_getopt()
 
 DELETE_VERBS = {"rm", "unlink", "shred", "rmdir"}
 SHELLS = {"sh", "bash", "zsh", "dash"}
@@ -170,8 +184,26 @@ def expand(arg, ctx):
     return out, safe
 
 
-def resolve(arg, ctx, dot_ok=False):
-    """Absolute, symlink-resolved path for a target (glob -> its base directory + child)."""
+def missing_before_dotdot(path):
+    """The first path prefix before a ".." that does not exist (or is a dangling link), else None.
+
+    The kernel resolves ".." against what that prefix is at run time (it may be a symlink
+    created earlier in the same command); realpath can only collapse it textually."""
+    parts = path.split("/")
+    for index, part in enumerate(parts):
+        if part == ".." and index:
+            prefix = "/".join(parts[:index]) or "/"
+            if not os.path.exists(prefix):
+                return prefix
+    return None
+
+
+def resolve(arg, ctx, dot_ok=False, follow=True):
+    """Absolute, symlink-resolved path for a target (glob -> its base directory + child).
+
+    follow=False (rm, unlink, rmdir, mv sources): a symlink named as the last component is
+    the target itself (only the link is removed or moved), so only its directory is
+    resolved; a trailing slash still follows it."""
     path, safe = expand(arg, ctx)
     if safe:
         return None  # inside a fresh mktemp directory
@@ -187,14 +219,24 @@ def resolve(arg, ctx, dot_ok=False):
         if ctx.cwd is None:
             raise Deny("relative target with an unknown working directory: %s" % arg)
         path = os.path.join(ctx.cwd, path)
+    missing = missing_before_dotdot(path)
+    if missing:
+        raise Deny("target %s cannot be checked: %s does not exist yet, so where the following \"..\" "
+                   "leads is unknown" % (arg, missing))
+    if not follow and not child and not path.endswith("/"):
+        # the kernel resolves a symlink before a following "..": the parent is resolved
+        # physically and only the final component stays unresolved (never normpath here)
+        name = os.path.basename(path)
+        if name not in ("", ".", ".."):
+            return os.path.join(os.path.realpath(os.path.dirname(path)), name)
     real = os.path.realpath(path)
     return os.path.join(real, "x") if child else real
 
 
-def check_targets(args, ctx, label, dot_ok=False):
+def check_targets(args, ctx, label, dot_ok=False, follow=True):
     for a in args:
         lit = a
-        r = resolve(a, ctx, dot_ok)
+        r = resolve(a, ctx, dot_ok, follow)
         if r is None:
             continue
         if is_dangerous(r):
@@ -215,6 +257,40 @@ def nonopts(args):
     return out
 
 
+def strip_wrapper(verb, args, ctx):
+    """env, sudo, doas by the shared option parser: the wrapped command's words.
+
+    env -C/sudo -D change ctx.cwd (callers pass a copy: it only applies to this command);
+    an unknown option or sudo --chroot make it unknown, so relative targets fail closed.
+    env -S splits its string and goes on parsing options from the words."""
+    options, rest, split = getopt.scan_wrapper(verb, args)
+    for _ in range(9):
+        if split is None:
+            break
+        try:
+            words = getopt.env_split(split)  # GNU env -S rules (\_, \c, #, ${NAME})
+        except ValueError as error:
+            raise Deny("env -S string cannot be checked (%s)" % error)
+        more, rest, split = getopt.scan_wrapper(verb, words + rest)
+        options += more
+    else:
+        raise Deny("env -S nesting is too deep")
+    for name, value in options:
+        if name.startswith("?") or verb == "sudo" and name in ("-R", "--chroot", "-i", "--login"):
+            ctx.cwd = None  # unknown option, another root, or a login shell in the target home
+        elif (verb, name) in (("env", "-C"), ("env", "--chdir"), ("sudo", "-D"), ("sudo", "--chdir")):
+            if value is None or ctx.cwd is None and not value.startswith("/"):
+                ctx.cwd = None
+                continue
+            path = os.path.join(ctx.cwd or "/", value)
+            ctx.cwd = None if missing_before_dotdot(path) else os.path.realpath(path)
+    if verb == "doas" and getopt.has(options, "-C"):
+        return []  # only checks a configuration file
+    if verb == "env" and rest[:1] == ["-"]:
+        rest = rest[1:]
+    return rest
+
+
 def strip_prefix(tok, ctx):
     """Drop wrappers and leading VAR=value assignments; record assignments."""
     i = 0
@@ -222,6 +298,9 @@ def strip_prefix(tok, ctx):
         m = ASSIGN_RE.match(tok[i])
         if m:
             i += 1
+            continue
+        if tok[i] in getopt.WRAPPERS:
+            tok, i = strip_wrapper(tok[i], tok[i + 1:], ctx), 0
             continue
         if tok[i] in WRAPPERS:
             i += 1
@@ -261,22 +340,30 @@ def check_segment(seg, ctx, nest=0):
     # appears in an argument (a file named CLAUDE.git.md, a grep pattern) is not
     m = re.match(r"^(?:\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*|sudo|command|nice|nohup|time|env)(?:\s+-\S+)*\s+)*\\?(\S+)", seg)
     first = os.path.basename(m.group(1)) if m else ""
-    relevant = DELETE_VERBS | {"find", "mv", "ln", "cp", "cd", "pushd", "git", "eval", "xargs"} | SHELLS
+    # env, sudo and doas options may take values (env -C DIR rm ...): always tokenized
+    m = re.match(r"^(?:\s*[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*\\?(\S+)", seg)
+    if m and os.path.basename(m.group(1)) in getopt.WRAPPERS:
+        first = os.path.basename(m.group(1))
+    relevant = DELETE_VERBS | {"find", "mv", "ln", "cp", "cd", "pushd", "git", "eval", "xargs"} | SHELLS | \
+        set(getopt.WRAPPERS)
     if first not in relevant:
         return
     try:
         raw_tok = tokens(seg)
     except Deny:
         # unparseable quoting only blocks a segment that can itself destroy data
-        if first in DELETE_VERBS | {"find", "mv", "ln", "eval", "xargs"} | SHELLS:
+        if first in DELETE_VERBS | {"find", "mv", "ln", "eval", "xargs"} | SHELLS | set(getopt.WRAPPERS):
             raise
         return
+    # a wrapper's working directory (env -C, sudo -D) only applies to this command
+    outer, ctx = ctx, copy.copy(ctx)
     tok = strip_prefix(raw_tok, ctx)
     if not tok:
         return
     verb = os.path.basename(tok[0])
     args = tok[1:]
     if verb in ("cd", "pushd"):
+        ctx = outer  # the shell's own working directory changes
         dest = (nonopts(args) or ["~"])[0]
         try:
             d, safe = expand(dest, ctx)
@@ -311,7 +398,10 @@ def check_segment(seg, ctx, nest=0):
             raise Deny("xargs feeds unknown targets to %s" % rest[0])
         return
     if verb in DELETE_VERBS:
-        check_targets(nonopts(args), ctx, "deletion")
+        # GNU and POSIXLY_CORRECT readings; rm, unlink and rmdir remove a symlink itself,
+        # shred writes through it
+        for _options, targets in getopt.parse_modes(verb, args) or [(None, nonopts(args))]:
+            check_targets(targets, ctx, "deletion", follow=verb == "shred")
         return
     if verb == "find":
         paths = []
@@ -329,29 +419,25 @@ def check_segment(seg, ctx, nest=0):
             check_targets(paths or ["."], ctx, "find deletion", dot_ok=True)
         return
     if verb == "mv":
-        srcs = nonopts(args)
-        if "-t" in args or any(a.startswith("--target-directory") for a in args):
-            pass
-        elif len(srcs) > 1:
-            srcs = srcs[:-1]
-        else:
-            srcs = []
-        check_targets(srcs, ctx, "move")
+        # sources by GNU option parsing (bundles, -t/--target-directory in every spelling)
+        # both the GNU and the POSIXLY_CORRECT reading are checked
+        for options, sources, destination, into, _no_target in getopt.copy_layouts("mv", args):
+            check_targets(sources if destination is not None else [], ctx, "move", follow=False)
         return
-    if verb == "ln" or (verb == "cp" and any(a in ("-s", "--symbolic-link") or (re.match(r"^-[a-zA-Z]*s", a) and not a.startswith("--")) for a in args)):
-        if verb == "ln" and not any(a == "--symbolic" or (re.match(r"^-[a-zA-Z]*s", a) and not a.startswith("--")) for a in args):
-            return
-        targets = nonopts(args)
-        if not targets:
-            return
-        src = targets[0]
-        p, safe = expand(src, ctx)
-        if safe:
-            return
-        if not p.startswith("/"):
-            p = os.path.join(ctx.cwd or "/", p)
-        if is_protected_link_target(os.path.realpath(p)):
-            raise Deny("symlink onto a protected path: %s" % src)
+    if verb in ("ln", "cp"):
+        for options, sources, destination, into, _no_target in getopt.copy_layouts(verb, args):
+            if not getopt.has(options, "-s", "--symbolic" if verb == "ln" else "--symbolic-link"):
+                continue
+            if verb == "ln" and destination is None:
+                sources = sources[:1]
+            for src in sources:
+                p, safe = expand(src, ctx)
+                if safe:
+                    continue
+                if not p.startswith("/"):
+                    p = os.path.join(ctx.cwd or "/", p)
+                if is_protected_link_target(os.path.realpath(p)):
+                    raise Deny("symlink onto a protected path: %s" % src)
         return
 
 

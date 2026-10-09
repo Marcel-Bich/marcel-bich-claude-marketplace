@@ -124,7 +124,7 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/delete-guard.sh",
             "timeout": 5,
-            "description": "Always-on guard: block deleting, moving or symlinking onto protected paths (targets resolved, symlinks followed)"
+            "description": "Always-on guard: shell-aware check (bash-guard.py) that blocks deleting, moving, emptying or symlinking onto protected paths (targets resolved, symlinks followed), plus the setting-independent token, git-add and download-and-run rules"
           }
         ]
       },

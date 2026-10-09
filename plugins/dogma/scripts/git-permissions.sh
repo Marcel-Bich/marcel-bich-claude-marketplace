@@ -77,9 +77,70 @@ if [ "$TOOL_NAME" != "Bash" ]; then
     exit 0
 fi
 
+dogma_session_from_input "$INPUT"
+
+git_spec() {
+    case "$1" in
+        add) echo "§6gpt|git add" ;;
+        commit) echo "§2w1t|git commit" ;;
+        push) echo "§bww9|git push" ;;
+    esac
+}
+
+# === SHELL-AWARE CHECK (python3) ===
+# bash-guard.py finds git add/commit/push however they are written (wrappers, paths,
+# aliases, variables, nested shells, eval, xargs, -C and cd targets) with the
+# directories they run in, plus indirect forms that may run them (evasions). The
+# strictest setting over those directories applies; without any file git is allowed.
+# Without findings (no python3) the text patterns below decide.
+if FINDINGS="$(dogma_bash_findings "$INPUT")"; then
+    # The analysis refused the command (or ran out of time): deny here too, so a
+    # finding is never silently skipped.
+    BLOCKED_REASON="$(dogma_findings_blocked "$FINDINGS")"
+    if [ -n "$BLOCKED_REASON" ]; then
+        output_deny "$BLOCKED_REASON"
+    fi
+    COUNT="$(printf '%s' "$FINDINGS" | jq '.git | length')"
+    for ((i = 0; i < COUNT; i++)); do
+        OP="$(printf '%s' "$FINDINGS" | jq -r ".git[$i].op")"
+        if [ "$(printf '%s' "$FINDINGS" | jq -r ".git[$i].unknown")" = "true" ]; then
+            output_deny "BLOCKED by dogma: git $OP target (work tree, git dir or directory) cannot be determined safely. Run it as a plain git command or let the user run it."
+        fi
+        mapfile -t DIRS < <(printf '%s' "$FINDINGS" | jq -r ".git[$i].dirs[]")
+        [ "${#DIRS[@]}" -gt 0 ] || DIRS=("")
+        dogma_strictest_mode "$(git_spec "$OP")" auto "${DIRS[@]}"
+        case "$DOGMA_STRICT_MODE" in
+            deny)
+                output_deny "BLOCKED by dogma: git $OP not permitted. Change [ ] to [x] or [?] for git $OP in $DOGMA_STRICT_SRC or run manually."
+                ;;
+            ask)
+                output_ask "dogma: git $OP requires confirmation. Change [?] to [x] in $DOGMA_STRICT_SRC to allow automatically."
+                ;;
+        esac
+    done
+    COUNT="$(printf '%s' "$FINDINGS" | jq '.evasions | length')"
+    for ((i = 0; i < COUNT; i++)); do
+        LABEL="$(printf '%s' "$FINDINGS" | jq -r ".evasions[$i].label")"
+        mapfile -t DIRS < <(printf '%s' "$FINDINGS" | jq -r ".evasions[$i].dirs[]")
+        [ "${#DIRS[@]}" -gt 0 ] || DIRS=("")
+        for OP in add commit push; do
+            dogma_strictest_mode "$(git_spec "$OP")" auto "${DIRS[@]}"
+            case "$DOGMA_STRICT_MODE" in
+                deny)
+                    output_deny "BLOCKED by dogma: $LABEL may run git $OP, which is not permitted ($DOGMA_STRICT_SRC). Run it as a plain git command or let the user run it."
+                    ;;
+                ask)
+                    output_ask "dogma: $LABEL may run git $OP (indirect command), which requires confirmation ($DOGMA_STRICT_SRC). Confirm?"
+                    ;;
+            esac
+        done
+    done
+    exit 0
+fi
+
+# === TEXT FALLBACK (no python3) ===
 # Find the applicable permissions (target of the command > pinned project > $PWD,
 # plus inheritance from the session folder's file)
-dogma_session_from_input "$INPUT"
 TARGET_DIR=$(dogma_target_from_command "$TOOL_INPUT") || TARGET_DIR=""
 if ! load_permissions "$TARGET_DIR"; then
     # No permissions file - allow all by default

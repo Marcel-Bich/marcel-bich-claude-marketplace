@@ -68,10 +68,68 @@ fi
 # Read JSON input from stdin
 INPUT=$(cat 2>/dev/null || true)
 
-# === CHECK PERMISSIONS ===
+# Block (ask or deny + TO-DELETE.md) per DELETE_MODE; BLOCKED/TARGET/REASON describe it.
+report_delete() {
+    if [ "$DELETE_MODE" = "ask" ]; then
+        # Ask mode: Prompt user for confirmation
+        REASON_MSG="dogma: $BLOCKED ${TARGET:-command} requires confirmation. Change [?] to [x] in ${DELETE_SRC:-$PERMS_FILE} to allow automatically."
+        REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
+        output_ask "$REASON_MSG"
+    fi
+    # Deny mode: Write to TO-DELETE.md and deny
+    TO_DELETE_FILE="$PWD/TO-DELETE.md"
+    TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+
+    # Create file with header if it doesn't exist
+    if [ ! -f "$TO_DELETE_FILE" ]; then
+        cat > "$TO_DELETE_FILE" << 'HEADER'
+# Files to Delete
+
+These files were blocked from deletion by dogma. Delete them manually if needed.
+Check off items after manual deletion.
+
+HEADER
+    fi
+
+    # Append as checklist item (so checklist-tracking picks it up)
+    echo "- [ ] \`$BLOCKED ${TARGET:-unknown}\` - $REASON ($TIMESTAMP)" >> "$TO_DELETE_FILE"
+
+    # Deny with info message
+    REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} logged to TO-DELETE.md. Change [ ] to [x] or [?] in ${DELETE_SRC:-${PERMS_FILE:-a DOGMA-PERMISSIONS.md (none found)}}."
+    REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
+    output_deny "$REASON_MSG"
+}
+
+# === SHELL-AWARE CHECK (python3) ===
+# bash-guard.py finds deletes and data-destroying commands however they are written
+# (wrappers, quoting, nested shells, git reset --hard, archive/sync source deletion,
+# inline interpreter code ...) together with the directories they run in; the
+# strictest delete setting over those directories applies.
+dogma_session_from_input "$INPUT"
+if [ "$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)" = "Bash" ] && \
+    FINDINGS="$(dogma_bash_findings "$INPUT")"; then
+    # The analysis refused the command (or ran out of time): deny here too, so a
+    # finding is never silently skipped.
+    BLOCKED_REASON="$(dogma_findings_blocked "$FINDINGS")"
+    if [ -n "$BLOCKED_REASON" ]; then
+        output_deny "$BLOCKED_REASON"
+    fi
+    [ "$(printf '%s' "$FINDINGS" | jq '.deletes | length')" -gt 0 ] || exit 0
+    mapfile -t DIRS < <(printf '%s' "$FINDINGS" | jq -r '[.deletes[].dirs[]] | unique | .[]')
+    [ "${#DIRS[@]}" -gt 0 ] || DIRS=("")
+    dogma_strictest_mode "§0lgy|delete files" deny "${DIRS[@]}"
+    DELETE_MODE="$DOGMA_STRICT_MODE"
+    DELETE_SRC="$DOGMA_STRICT_SRC"
+    [ "$DELETE_MODE" = "auto" ] && exit 0
+    BLOCKED="$(printf '%s' "$FINDINGS" | jq -r '.deletes[0].label')"
+    TARGET="$(printf '%s' "$FINDINGS" | jq -r '.deletes[0].target')"
+    REASON="Deletes files permanently"
+    report_delete
+fi
+
+# === CHECK PERMISSIONS (text fallback without python3) ===
 # Target of the command (`cd <dir> && rm ...`, `git -C <dir> clean`) > credo pinned
 # project > $PWD; missing settings inherited from the session folder's file
-dogma_session_from_input "$INPUT"
 TARGET_DIR=$(dogma_target_from_command "$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)") || TARGET_DIR=""
 DELETE_MODE="deny"  # Default: deny (log to TO-DELETE.md)
 
@@ -165,35 +223,7 @@ if [ -n "$BLOCKED" ]; then
             ;;
     esac
 
-    if [ "$DELETE_MODE" = "ask" ]; then
-        # Ask mode: Prompt user for confirmation
-        REASON_MSG="dogma: $BLOCKED ${TARGET:-command} requires confirmation. Change [?] to [x] in ${DELETE_SRC:-$PERMS_FILE} to allow automatically."
-        REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
-        output_ask "$REASON_MSG"
-    else
-        # Deny mode: Write to TO-DELETE.md and deny
-        TO_DELETE_FILE="$PWD/TO-DELETE.md"
-        TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
-
-        # Create file with header if it doesn't exist
-        if [ ! -f "$TO_DELETE_FILE" ]; then
-            cat > "$TO_DELETE_FILE" << 'HEADER'
-# Files to Delete
-
-These files were blocked from deletion by dogma. Delete them manually if needed.
-Check off items after manual deletion.
-
-HEADER
-        fi
-
-        # Append as checklist item (so checklist-tracking picks it up)
-        echo "- [ ] \`$BLOCKED ${TARGET:-unknown}\` - $REASON ($TIMESTAMP)" >> "$TO_DELETE_FILE"
-
-        # Deny with info message
-        REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} logged to TO-DELETE.md. Change [ ] to [x] or [?] in ${DELETE_SRC:-$PERMS_FILE}."
-        REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
-        output_deny "$REASON_MSG"
-    fi
+    report_delete
 fi
 
 dogma_debug_log "=== file-protection.sh END ==="

@@ -144,13 +144,15 @@ When dogma runs inside Claude Code with mods support, `hooks/band.tsx` (listed u
 
 ### Delete Guard (always on)
 
-`scripts/delete-guard.sh` (core: `delete-guard.py`, python3) blocks Bash commands that would delete, move away or symlink onto protected paths: `/`, every first-level directory, `/home` down to depth 2, the home directory and its direct children, and every absolute path outside `/tmp/X+` and `/var/tmp/X+`. Unlike file protection it ignores DOGMA-PERMISSIONS.md, has no per-hook switch and no worktree exemption; only `CLAUDE_MB_DOGMA_ENABLED=false` turns it off.
+`scripts/delete-guard.sh` (core: `bash-guard.py` + `delete-guard.py`, python3) blocks Bash commands that would delete, move away or symlink onto protected paths: `/`, every first-level directory, `/home` down to depth 2, the home directory and its direct children, mount points, devices, the working directory and its parents, whole repositories and worktrees, and every absolute path outside `/tmp/X+` and `/var/tmp/X+`. Unlike file protection it ignores DOGMA-PERMISSIONS.md, has no per-hook switch and no worktree exemption; only `CLAUDE_MB_DOGMA_ENABLED=false` turns it off. `CLAUDE_MB_DOGMA_PROTECTED_MOUNTS` (colon separated) adds mount points to the ones found in `/proc/self/mounts`.
+
+- **Shell-aware:** `bash-guard.py` reads the command like a shell (quoting, variables, wrappers such as `sudo`/`env`/`xargs`, nested shells, substitutions, heredocs, `cd` tracking, abbreviated long options) and checks every simple command on its own. File protection, git permissions, token protection and dependency verification use the same analysis when python3 exists, so a delete, `git commit` or install is found however it is written, and words inside commit messages or search patterns no longer trigger them.
+- **Data-destroying commands:** archive and sync tools that delete their sources, data-destroying git commands (`git reset --hard`, `git checkout -- .`, `git clean`, ...) follow the delete setting; with a redirected work tree or git dir they are blocked. Filesystem and disk wipe tools, mount/unmount and Windows-side deletion from WSL are always blocked.
 
 - **Targets are resolved before the check:** `~` and `$HOME` are expanded, relative paths are joined to the working directory (including a preceding `cd`), symlinks are followed, and for a glob the directory before the wildcard is checked. A symlink in `/tmp` pointing at the home therefore cannot smuggle `rm -rf /tmp/link/*` through.
 - **Strict when unsure:** a target that cannot be resolved for sure (command substitution, an unset or re-assigned variable, `eval`, `xargs rm`, `find -L ... -delete`) is blocked. Variables assigned from `mktemp` in the same command are known-safe.
 - **Symlink creation:** `ln -s`, `cp -s` and interpreter `symlink` calls onto protected paths are blocked as an extra hurdle.
 - **Fail closed:** without python3, or on an internal error, a destructive-looking command is denied.
-- Limits: the guard reads the command text before it runs. A script file that deletes on its own, or a symlink swapped between check and execution, is outside what a hook can see.
 
 ### Usage Warning
 

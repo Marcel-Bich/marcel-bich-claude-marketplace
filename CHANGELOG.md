@@ -2,6 +2,139 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-10
 
+## dogma
+
+### v1
+
+#### v1.45
+
+##### v1.45.0
+
+###### Added
+
+- `scripts/bash-guard.py`: shell-aware analysis of Bash commands for the guard hooks (quoting, variables, wrappers, nested shells, substitutions, heredocs, `cd` tracking, abbreviated long options); every simple command is checked on its own
+- Protected paths now also cover mount points, devices, the working directory and its parents, and whole repositories or worktrees; `CLAUDE_MB_DOGMA_PROTECTED_MOUNTS` adds mount points
+- `scripts/test-guard-parity.py` with shared case tables in `scripts/guard-cases/` (review rounds, audit probes, everyday commands that must pass)
+
+###### Changed
+
+- Hardened the delete guard: commands whose command word is only known at run time, archive/sync tools that delete their sources, data-destroying git commands with a redirected work tree or git dir, filesystem wipe tools and Windows-side deletion from WSL are blocked; inline interpreter code is checked for deletes near protected paths
+- File protection, git permissions, token protection and dependency verification use the shell-aware analysis when python3 exists (text patterns remain the fallback); data-destroying git commands follow the delete setting, and words inside commit messages or search patterns no longer trigger the guards
+- Git hook bypasses (`--no-verify`, also abbreviated, hook path overrides, hook-skipping variables) are blocked
+- Both guards share one option parser (`scripts/dogma_getopt.py`) for cp, mv, install, ln, rm, unlink, rmdir, rsync, su, runuser and the env, sudo and doas wrappers: bundled short options, abbreviated long options (exact match for rsync, unknown rsync options are blocked), and both the GNU and the `POSIXLY_CORRECT` reading of the arguments are checked; an `env -S` string is split by the GNU env rules and refused when it uses an escape or expansion those rules do not allow; unknown wrapper options make relative targets fail closed
+- Commands that start in another working directory are checked there (`env -C`, `sudo -D`, systemd-run, tmux, bwrap, nsenter, unshare, start-stop-daemon); where it is not known before running (a login with `sudo -i` or `su -`, a systemd service, a new tmux window) relative targets fail closed, and a command run below another root or mount namespace (chroot, nsenter/unshare with a root or mount namespace, bwrap with remapped paths) is blocked
+- `rm`, `unlink`, `rmdir` and `mv` of a symlink act on the link itself and are no longer blocked when it points at a protected path; `..` after a symlink component is resolved against the link target, as the kernel does, and a path whose component before `..` does not exist yet is blocked
+
+#### v1.44
+
+##### v1.44.4
+
+###### Fixed
+
+- German-only language rules now fire on German text only: the write reminder's "Keep it in
+  German" note and the post-write ASCII umlaut check (fuer -> für) use a stricter shared
+  detection (`lib-german.sh`) instead of substring matches that also hit English or other
+  languages. Quoted text and code are ignored, and German function words must be a
+  meaningful share of all words and clearly outweigh English ones
+- An English file that quotes German examples is no longer reported as German, and a
+  bilingual file gets no language note instead of a wrong one
+- A German file is no longer reported as English because German prose contains "in" / "is"
+- `/dogma:force` examples show the real umlauts again (they had been stripped to "fur",
+  "konnen"); `/dogma:cleanup` and the prompt reminder state the umlaut rule is German text only
+- New `scripts/test-german-detection.sh` checks German, English, French, Spanish, Dutch and
+  Portuguese samples, English text with German quotes and code, and a bilingual document
+  against the detection and both hooks
+
+##### v1.44.3
+
+###### Fixed
+
+- dogma band no longer shows a "blocked" line forever: the notice is time-stamped and hidden after 15 s even when a plugin reload cut its timer short, and a new session starts without it
+
+##### v1.44.2
+
+###### Fixed
+
+- Delete guard only analyzes a segment whose command word can delete, move or link; a verb inside an argument (a file name, a grep pattern with <...>) no longer blocks harmless commands
+
+##### v1.44.1
+
+###### Changed
+
+- Notice tests use an invented project name instead of a real one
+
+##### v1.44.0
+
+###### Added
+
+- Always-on delete guard: blocks deleting, moving or symlinking onto protected paths (/, first-level dirs, /home depth 0-2, the home and its children); targets are resolved first (~, $HOME, cwd and cd, symlinks, glob base), unresolvable targets are blocked, fails closed without python3
+
+###### Security
+
+- A symlink under /tmp pointing at a protected directory can no longer route a recursive delete past the /tmp allowance
+
+#### v1.43
+
+##### Added
+
+- DOGMA-PERMISSIONS.md is picked by action target, pinned project, then session folder, with per-id inheritance (default on)
+- Notices also show in non-git folders and for pinned projects that inherit permissions
+
+#### v1.42
+
+##### Added
+
+- Source broadcasts via NOTICES.md
+- `CLAUDE_MB_DOGMA_SOURCE` for sync and recommended setup
+- Per-folder git identity for the source fetch
+
+#### v1.41
+
+##### Added
+
+- Stable setting ids (`§xxxx`) matched first with a text fallback, plus an id registry
+- changelog.d assembly in `/dogma:versioning`
+
+#### v1.40
+
+##### Added
+
+- Worktree files list (link or copy, `.credo/` included by default) and a cleanup-merged-worktrees checkbox
+
+##### Changed
+
+- Subagents may commit in their own worktree, never push or merge
+
+#### v1.39
+
+##### Added
+
+- One-time per-repo update notices for updates that need user action (Run/Later/Never), with an optional band toast
+
+#### v1.38
+
+##### Added
+
+- Final Verification option to run all tests only at release
+
+#### v1.37
+
+##### Added
+
+- Optional per-stage test commands (commit, push, relevant, build, all) with branch filters
+
+#### v1.36
+
+##### Added
+
+- Optional Claude Code band showing restricting permissions with change highlights
+
+#### v1.35
+
+##### Added
+
+- `permissions-summary.sh` listing only the restricting DOGMA-PERMISSIONS entries
+
 ## limit
 
 ### v2
@@ -666,120 +799,6 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 ##### Added
 
 - Budget read-back shows the active profile, config layers and the source of each cap
-
-## dogma
-
-### v1
-
-#### v1.44
-
-##### v1.44.4
-
-###### Fixed
-
-- German-only language rules now fire on German text only: the write reminder's "Keep it in
-  German" note and the post-write ASCII umlaut check (fuer -> für) use a stricter shared
-  detection (`lib-german.sh`) instead of substring matches that also hit English or other
-  languages. Quoted text and code are ignored, and German function words must be a
-  meaningful share of all words and clearly outweigh English ones
-- An English file that quotes German examples is no longer reported as German, and a
-  bilingual file gets no language note instead of a wrong one
-- A German file is no longer reported as English because German prose contains "in" / "is"
-- `/dogma:force` examples show the real umlauts again (they had been stripped to "fur",
-  "konnen"); `/dogma:cleanup` and the prompt reminder state the umlaut rule is German text only
-- New `scripts/test-german-detection.sh` checks German, English, French, Spanish, Dutch and
-  Portuguese samples, English text with German quotes and code, and a bilingual document
-  against the detection and both hooks
-
-##### v1.44.3
-
-###### Fixed
-
-- dogma band no longer shows a "blocked" line forever: the notice is time-stamped and hidden after 15 s even when a plugin reload cut its timer short, and a new session starts without it
-
-##### v1.44.2
-
-###### Fixed
-
-- Delete guard only analyzes a segment whose command word can delete, move or link; a verb inside an argument (a file name, a grep pattern with <...>) no longer blocks harmless commands
-
-##### v1.44.1
-
-###### Changed
-
-- Notice tests use an invented project name instead of a real one
-
-##### v1.44.0
-
-###### Added
-
-- Always-on delete guard: blocks deleting, moving or symlinking onto protected paths (/, first-level dirs, /home depth 0-2, the home and its children); targets are resolved first (~, $HOME, cwd and cd, symlinks, glob base), unresolvable targets are blocked, fails closed without python3
-
-###### Security
-
-- A symlink under /tmp pointing at a protected directory can no longer route a recursive delete past the /tmp allowance
-
-#### v1.43
-
-##### Added
-
-- DOGMA-PERMISSIONS.md is picked by action target, pinned project, then session folder, with per-id inheritance (default on)
-- Notices also show in non-git folders and for pinned projects that inherit permissions
-
-#### v1.42
-
-##### Added
-
-- Source broadcasts via NOTICES.md
-- `CLAUDE_MB_DOGMA_SOURCE` for sync and recommended setup
-- Per-folder git identity for the source fetch
-
-#### v1.41
-
-##### Added
-
-- Stable setting ids (`§xxxx`) matched first with a text fallback, plus an id registry
-- changelog.d assembly in `/dogma:versioning`
-
-#### v1.40
-
-##### Added
-
-- Worktree files list (link or copy, `.credo/` included by default) and a cleanup-merged-worktrees checkbox
-
-##### Changed
-
-- Subagents may commit in their own worktree, never push or merge
-
-#### v1.39
-
-##### Added
-
-- One-time per-repo update notices for updates that need user action (Run/Later/Never), with an optional band toast
-
-#### v1.38
-
-##### Added
-
-- Final Verification option to run all tests only at release
-
-#### v1.37
-
-##### Added
-
-- Optional per-stage test commands (commit, push, relevant, build, all) with branch filters
-
-#### v1.36
-
-##### Added
-
-- Optional Claude Code band showing restricting permissions with change highlights
-
-#### v1.35
-
-##### Added
-
-- `permissions-summary.sh` listing only the restricting DOGMA-PERMISSIONS entries
 
 ## signal
 

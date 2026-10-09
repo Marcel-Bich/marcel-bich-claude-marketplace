@@ -63,6 +63,22 @@ if [ "$TOOL_NAME" != "Bash" ]; then
     exit 0
 fi
 
+# === SHELL-AWARE CHECK (python3) ===
+# bash-guard.py finds installs and download-and-run tools however they are written
+# (wrappers, nested shells, python -m pip, npx/uvx/dlx, system package managers ...).
+# Without findings (no python3) the text patterns below decide alone.
+SHELL_INSTALL=""
+if type dogma_bash_findings &>/dev/null && FINDINGS="$(dogma_bash_findings "$INPUT")"; then
+    # The analysis refused the command (or ran out of time): deny here too, so a
+    # finding is never silently skipped.
+    BLOCKED_REASON="$(dogma_findings_blocked "$FINDINGS")"
+    if [ -n "$BLOCKED_REASON" ]; then
+        output_deny "$BLOCKED_REASON"
+    fi
+    SHELL_INSTALL="$(printf '%s' "$FINDINGS" | jq -r '.installs[0] // empty')"
+    [ -n "$SHELL_INSTALL" ] || exit 0
+fi
+
 # Check for package installation commands
 # Pattern matches: start, chained (&&, ;, ||, |), subshells ($(), (), ``), xargs
 # CMD_PREFIX covers: ^, &&, ;, ||, |, $(, (, `, xargs
@@ -102,6 +118,10 @@ fi
 
 # If no package manager detected or no packages, exit
 if [ -z "$PACKAGE_MANAGER" ] || [ -z "$(echo "$PACKAGES" | tr -d '[:space:]')" ]; then
+    if [ -n "$SHELL_INSTALL" ]; then
+        SAFE_CMD=$(printf '%s' "$TOOL_INPUT" | sed 's/"/\\"/g' | tr '\n' ' ')
+        output_deny "BLOCKED: Package installation or download-and-run detected ($SHELL_INSTALL). Ask the user first: Do you want me to search the web for security risks or vulnerabilities for this package first? Supply chain attacks often target specific package versions. If the user wants to skip the security check and install directly, show this command: $SAFE_CMD"
+    fi
     exit 0
 fi
 
