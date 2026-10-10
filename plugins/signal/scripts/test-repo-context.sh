@@ -44,6 +44,8 @@ SID_SHORT="a-e-7-8-08"
 CFG="$TMP/cfg"
 mkdir -p "$CFG/sessions"
 export CLAUDE_CONFIG_DIR="$CFG"
+# powershell.exe caching and warnings of wsl-utils.sh go below the temp root, never to the real state dir
+export CLAUDE_MB_SIGNAL_STATE_DIR="$TMP/sigstate"
 
 # Fake tmux and no-op sound/powershell helpers first in PATH
 BIN="$TMP/bin"

@@ -5,6 +5,7 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/wsl-utils.sh"
 source "$SCRIPT_DIR/repo-context.sh"
+source "$SCRIPT_DIR/toast-preflight.sh"
 
 PROJECT=$(basename "$PWD" 2>/dev/null || echo "claude")
 
@@ -22,10 +23,15 @@ touch "/tmp/claude-mb-first-event-pending-$(signal_notify_key "$SID" "$PROJECT" 
 
 if is_wsl; then
     # Windows: Clear only ClaudeCode group notifications from Action Center
-    powershell.exe -NoProfile -NonInteractive -Command "
+    # (toast history; skipped with the toast switch off or when powershell.exe is missing, the
+    # missing case is reported once a day by the preflight below)
+    if signal_toast_enabled && SIGNAL_PS="$(resolve_powershell)"; then
+        signal_ps_bg remove-group "$SIGNAL_PS" "
         [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
         [Windows.UI.Notifications.ToastNotificationManager]::History.RemoveGroup('ClaudeCode', '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe')
-    " 2>/dev/null &
+    "
+    fi
+    unset SIGNAL_PS
 else
     # Linux: Close all tracked notifications and clean up ID files
     if command -v gdbus &> /dev/null; then
@@ -45,6 +51,11 @@ else
     rm -f /tmp/claude-mb-notify-id-project-${PROJECT}-* 2>/dev/null
     [ -n "$SID" ] && rm -f /tmp/claude-mb-notify-id-session-${SID}-* 2>/dev/null
 fi
+
+# --- Toast preflight: at most once a day, only with the toast switch on. Prints at most one
+# context line (the agent tells the user); read-only, never changes a setting. ---
+
+signal_preflight
 
 # --- Kitty tab: clean up stale prefix and start exit monitor ---
 

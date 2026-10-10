@@ -27,7 +27,7 @@ Desktop notifications showing what Claude Code is working on - stay informed eve
 - "Tool waiting" hints are skipped in bypass permissions mode (no tool ever waits there, switch: `CLAUDE_MB_NOTIFY_BYPASS_TOOLS`); real permission prompts are still notified
 - Non-stacking notifications: one slot per session and hook type; each new notification replaces the previous one of the same session (previous one is closed first to prevent Linux tray stacking). Hooks firing at the same moment (parallel tool calls) are serialized with `flock`, so they no longer leave several notifications behind
 - Kitty terminal tab indicator for active Claude sessions
-- Cross-platform: Linux and WSL2 (Windows 10/11)
+- Cross-platform: Linux and WSL2 (Windows 10/11); `powershell.exe` is found even when it is not on `PATH`, failed deliveries are logged and warned about once a day, and a once-a-day preflight tells you when toasts are switched off (see "Delivery and preflight")
 
 ## Requirements
 
@@ -51,6 +51,15 @@ If none is installed, notifications still work; only the sound is skipped. On WS
 | `CLAUDE_MB_NOTIFY_SOUND_COMPLETE` | volume `0.0`-`1.0`, `0` disables (permission prompts) | `0.4` |
 | `CLAUDE_MB_NOTIFY_SUBAGENT_TOOLS` | `true` / `false` - `false` silences "Tool waiting" hints for subagent tool calls | `true` |
 | `CLAUDE_MB_NOTIFY_BYPASS_TOOLS` | `true` / `false` - `true` shows "Tool waiting" hints in bypass permissions mode too | `false` |
+| `CLAUDE_MB_NOTIFY_TOAST` | `true` / `false` - `false` (also `off`, `no`, `0`, `disabled`; any case, surrounding spaces ignored) skips every toast and desktop notification attempt and the preflight; sounds are unaffected | `true` |
+| `CLAUDE_MB_SIGNAL_STATE_DIR` | state dir (cached `powershell.exe` path, log, once-a-day markers; mode 0700, parents checked (not world-writable, group-writable only for your own groups), never written through a symlink) | `${XDG_STATE_HOME:-$HOME/.local/state}/claude-mb-signal` |
+
+## Delivery and preflight
+
+- **WSL2:** `powershell.exe` is looked up on `PATH`, then in the Windows drive mounts of `/proc/mounts` (`Windows/System32/WindowsPowerShell/v1.0/powershell.exe` below a 9p/drvfs mount with a drive letter; no drive is hardcoded). The found path is cached in the state dir and re-checked before use. If it cannot be found, toasts and sounds are skipped with one warning per day (stderr and `signal.log` in the state dir)
+- **Exit codes** of `powershell.exe` runs (killed after 20 s) and of gdbus/notify-send are evaluated; a failure is logged, and when no channel worked one warning per day is emitted. Hooks never block on it
+- **Preflight** (SessionStart, at most once a day, only with `CLAUDE_MB_NOTIFY_TOAST` on): on WSL a read-only registry check whether Windows toasts are enabled (absent value = enabled, Focus Assist is not checked); on native Linux only whether `gdbus` or `notify-send` exists. The WSL check runs detached in the background (a cold `powershell.exe` can be slower than the SessionStart timeout), so it is reported by the NEXT session start; a failed check (or a `powershell.exe` that cannot be found) is retried at most once per hour (`CLAUDE_MB_SIGNAL_PREFLIGHT_TIMEOUT`, default 20 s). If something is off, one short context line asks Claude to tell you once and ask whether it should open the notification settings (it never does that on its own). Nothing is changed automatically; you switch it on yourself (Settings > System > Notifications > "Get notifications from apps and other senders"). No other fallback is used
+- **Stop the hints or start over:** `bash <plugin>/scripts/toast-preflight.sh decline` (no further hints), `... reset` (hints and warnings come back), `... open-settings` (opens `ms-settings:notifications`)
 
 ## Kitty Tab Indicator
 
