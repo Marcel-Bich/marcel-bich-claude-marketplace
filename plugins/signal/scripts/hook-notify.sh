@@ -21,6 +21,8 @@ source "$PLUGIN_ROOT/scripts/wsl-utils.sh"
 source "$PLUGIN_ROOT/scripts/kitty-tab.sh"
 source "$PLUGIN_ROOT/scripts/repo-context.sh"
 HOOK_TYPE="${1:-notification}"
+# Daemon-hosted sessions have no TMUX_PANE of their own: take the client pane
+signal_adopt_client_tmux
 PROJECT=$(basename "$PWD" 2>/dev/null || echo "claude")
 
 # Read JSON input
@@ -31,8 +33,6 @@ INPUT=""
 HOOK_CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 [ -z "$HOOK_CWD" ] && HOOK_CWD="$PWD"
 HOOK_SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
-HOOK_TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)
-HOOK_SESSION_NAME=$(echo "$INPUT" | jq -r '.session_name // empty' 2>/dev/null)
 
 # Replacement key: one notification slot per session and hook type
 # (falls back to the directory name when the hook input has no session id)
@@ -71,7 +71,6 @@ case "$HOOK_TYPE" in
         exit 0
         ;;
     notification|Notification)
-        TITLE=$(signal_caption "$HOOK_SESSION_ID" "$HOOK_TRANSCRIPT" "$HOOK_SESSION_NAME")
         ICON="dialog-information"
         URGENCY=2
         SOUND_TYPE="attention"
@@ -101,7 +100,6 @@ case "$HOOK_TYPE" in
         fi
         ;;
     PreToolUse|pretooluse)
-        TITLE="Tool waiting"
         ICON="dialog-warning"
         URGENCY=2
         if [ -n "$INPUT" ]; then
@@ -136,16 +134,17 @@ case "$HOOK_TYPE" in
         fi
         ;;
     *)
-        TITLE=$(signal_caption "$HOOK_SESSION_ID" "$HOOK_TRANSCRIPT" "$HOOK_SESSION_NAME")
         MESSAGE="Activity: $HOOK_TYPE"
         ICON="dialog-information"
         URGENCY=1
         ;;
 esac
 
-# Title: "<title> | cwd: .../<parent>/<base>"
+# Title (every hook type): "<name> | cwd: .../<parent>/<base>", name = user-set caption
+# (session descriptor with nameSource user only), else kitty tab, else tmux
+# session, else short session id (signal_toast_name)
 # Body: "git: <parent>/<repo>" first, then the message, then "tmux: ... | kitty: ..." (each only if present)
-TITLE=$(signal_title "$TITLE" "$HOOK_CWD")
+TITLE=$(signal_title "$(signal_toast_name "$HOOK_SESSION_ID")" "$HOOK_CWD")
 MESSAGE=$(signal_body "$(signal_git_label "$HOOK_CWD" "$HOOK_SESSION_ID")" "$MESSAGE" "$(signal_session_label)")
 
 # Set [ask] prefix on kitty tab (all hooks here are user-waiting scenarios)

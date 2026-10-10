@@ -6,8 +6,14 @@ Desktop notifications showing what Claude Code is working on - stay informed eve
 
 - Live status updates via desktop notifications
 - Location context in every notification:
-  - Title: `<event> | cwd: .../<parent>/<dir>` (short paths like `/tmp` are shown as is), e.g. `Tool waiting | cwd: .../marcel/workstation`
-  - General notifications (permission prompt, waiting for input) use the session caption as `<event>`: the `/rename` title, else the limit statusline caption, else the kitty tab title, else the tmux session, else `Claude Code`
+  - Title (every toast: done, tool waiting, permission prompt, waiting for input): `<name> | cwd: .../<parent>/<dir>` (short paths like `/tmp` are shown as is), e.g. `alice-task | cwd: .../alice/workstation`. What the toast is about is in the body; the Done toast keeps its sparkle in front as the only event marker
+  - `<name>` uses one order everywhere, first hit wins, every name has control characters removed and is cut to 20 characters:
+    - the session name set by the user (the session file of Claude Code marks it `nameSource: user`; the transcript is not used); a name Claude Code or a tool derived on its own never counts
+    - the kitty tab title
+    - the tmux session of the session's pane
+    - the short session id: first character of each dash group joined by `-`, plus the last character, e.g. `a1b2c3d4-e5f6-7890-8bcd-0123456789d8` becomes `a-e-7-8-08`
+    - `Claude Code` when no session id is known
+  - For sessions hosted by the Claude Code background daemon, or when `TMUX_PANE` is missing in the hook environment, the tmux pane is taken from the client terminal process (`TMUX` and `TMUX_PANE` read from its environment, nothing else); a client that cannot be verified is ignored, so the tmux parts are then simply omitted
   - Body, first line: `git: <parent>/<repo>` of the repo the session works in - resolved from the limit plugin's per-session work-repo state, then git discovery from the cwd, then the credo session pin (limit and credo are optional); omitted when no repo resolves
   - Body, last line (after an empty line): `tmux: <session> | kitty: <tab>` with only the parts that exist; omitted outside tmux/kitty. tmux is the session of the current pane; kitty is the tab title without `[ai...]`/`[ask]`/`[fin]` prefixes, taken from the tab indicator's saved title or, if the indicator is disabled or has no saved title, read live via `kitty @ ls` (needs the kitty socket)
   - On WSL2 the body lines are joined with ` | ` because the toast shows the body as a single text field

@@ -2,6 +2,34 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-10
 
+## signal
+
+### v1
+
+#### v1.5
+
+##### v1.5.3
+
+###### Changed
+
+- Every toast title (Done, Tool waiting, permission prompt, waiting for input) uses one name order:
+  the session name set by the user (a derived name never counts), else the kitty tab title, else the tmux session, else the short session id
+- Every name in the title (user name, kitty label, tmux label) has control characters removed and is cut to 20 characters
+- The user name comes from the session file (`nameSource: user`, a file without a matching session id is skipped), and only that; checked on a live setup, a manual `/rename` sets `nameSource: user` in the session file. The transcript `custom-title` is not used
+- The `session_name` hook field and the Limit statusline caption are no longer used as title sources (the caption could be a name Claude Code derived on its own)
+- The Done toast title uses that name instead of the fixed "Done" text and keeps its sparkle in front as the only event marker; the body is unchanged
+
+###### Fixed
+
+- The tmux part of the body and of the title fallback is found in daemon-hosted sessions and when `TMUX_PANE` is missing, by taking the pane of the client terminal
+- The Done toast resolves the kitty tab title like the other toasts
+
+##### v1.5.2
+
+###### Changed
+
+- Code comment uses a neutral example home path
+
 ## dogma
 
 ### v1
@@ -868,18 +896,6 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 - Main-agent window tokens measured context growth and re-added the full context on almost every other turn
 - Mid-window drops caused by empty reads of non-atomically written state files (subagent baseline reset)
 - `test-local-tracking.sh` deleted and rewrote the real state file; it now runs in a temp profile
-
-## signal
-
-### v1
-
-#### v1.5
-
-##### v1.5.2
-
-###### Changed
-
-- Code comment uses a neutral example home path
 
 ## hydra
 

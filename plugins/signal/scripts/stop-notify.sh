@@ -14,7 +14,11 @@ PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Load WSL utilities
 source "$PLUGIN_ROOT/scripts/wsl-utils.sh"
+source "$PLUGIN_ROOT/scripts/kitty-tab.sh"
 source "$PLUGIN_ROOT/scripts/repo-context.sh"
+
+# Daemon-hosted sessions have no TMUX_PANE of their own: take the client pane
+signal_adopt_client_tmux
 
 # Read JSON input
 INPUT=$(cat)
@@ -48,7 +52,6 @@ fi
 PROJECT=$(basename "$CWD" 2>/dev/null || echo "claude")
 
 # Kitty tab indicator: restore original title
-source "$PLUGIN_ROOT/scripts/kitty-tab.sh"
 kitty_tab_restore "$PROJECT"
 DEBOUNCE_FILE="/tmp/claude-mb-notify-${PROJECT}"
 NOW=$(date +%s)
@@ -127,9 +130,11 @@ if [ -z "$SUMMARY" ] || [ ${#SUMMARY} -lt 10 ]; then
 fi
 
 # Send notification
-# Title: "Done | cwd: .../<parent>/<base>"
+# Title: "✨ <name> | cwd: .../<parent>/<base>", name = user-set caption (session descriptor
+# with nameSource user only), else kitty tab, else tmux session, else short
+# session id (signal_toast_name, same as every other toast); the sparkle marks "done"
 # Body: "git: <parent>/<repo>" first, then the summary, then "tmux: ... | kitty: ..." (each only if present)
-TITLE=$(signal_title "✨ Done" "$CWD")
+TITLE=$(signal_title "✨ $(signal_toast_name "$SESSION_ID")" "$CWD")
 BODY=$(signal_body "$(signal_git_label "$CWD" "$SESSION_ID")" "$SUMMARY" "$(signal_session_label)")
 "$PLUGIN_ROOT/scripts/notify-replace.sh" "$(signal_notify_key "$SESSION_ID" "$PROJECT" stop)" "$TITLE" "$BODY" "dialog-information" 1
 
