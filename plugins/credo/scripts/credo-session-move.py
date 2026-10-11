@@ -44,37 +44,35 @@ Subcommands (every one re-plans from scratch, nothing is cached between calls)
           item is part of the fresh plan of this session, that no live holder exists
           in any profile other than the target (liveness that cannot be determined
           refuses), and that every path is inside the source profile and names THIS
-          session's id. A source file is left out of the script (reported as KEPT)
-          unless its target counterpart still exists as a regular file, not through a
-          symlink, and is intact. Intact means, per file kind:
-            - the session's main transcript projects/<slug>/<id>.jsonl (append-only):
-              at least as large as at the verify and still starting with the verified
-              content (sha256 of the first <verified size> bytes); it may have grown;
-            - every other file: EXACTLY the verified size and sha256 (a state file that
-              the resumed session rewrote or appended to is kept, even if the verified
-              bytes are still a prefix).
+          session's id. The rule is decided by the SOURCE. A source file goes into the
+          script while the source is unchanged since the verify (a changed source refuses
+          the whole cleanup, nothing is written) and its target counterpart exists as a
+          regular file, not through a symlink, and is not empty while the source is not.
+          A target that changed after the copy does not keep the source, for every file
+          kind including the session's transcript (a resumed session that rewrote,
+          appended to or grew a file is normal). A source file whose target counterpart
+          is missing, a symlink, not a regular file or empty while the source is not, is
+          left out of the script (reported as KEPT).
           Writes a POSIX sh script with literal paths only (no variables except its own
           two counters) to a new mktemp dir (mode 0700, file 0600, written under a temp
           name and renamed; on a write failure only that own temp file is removed and
           the dir is reported) under /tmp. At run time a file is removed only while it
           is still a regular file with the recorded sha256, its target counterpart is a
-          regular file that is not the same file ([ ! src -ef dst ]) and is intact by
-          the same rule (transcript: the first <verified size> bytes (head -c) hash to
-          the verified target sha256 and the size is at least the verified one; any
-          other file: wc -c equals the verified size and the whole file hashes to the
-          verified sha256), and both directories (source and target) still resolve
-          (pwd -P) to the recorded physical directories; directories only with rmdir
-          (empty only). At the end the script prints "removed N, kept M" (files left
-          out at generation count as kept) and exits 1 when anything was kept. Needs
-          sha256sum or shasum. Shared items are never in it. The script is not removed
-          automatically.
+          regular file that is not the same file ([ ! src -ef dst ]), is not a symlink
+          and is not empty while the source is not, and both directories (source and
+          target) still resolve (pwd -P) to the recorded physical directories; directories
+          only with rmdir (empty only). At the end the script prints "removed N, kept M"
+          (files left out at generation count as kept) and exits 1 when anything was
+          kept. Needs sha256sum or shasum. Shared items are never in it. The script is
+          not removed automatically.
 
-          Known limits of the cleanup. A transcript that the resumed session rewrote in
-          place while keeping the verified bytes as a prefix cannot be told from growth
-          (append-only is assumed for that one file). One path with a control character
-          in its name refuses the whole script (all or nothing, no partial script). The
-          verify manifest must have target size/sha256 equal to the source size/sha256
-          per file, otherwise it is rejected as malformed.
+          Known limits of the cleanup. A target that changed after the copy counts as the
+          continuation of the session, so the source copy goes even when the resumed
+          session lost content in the target; only an empty target against a non-empty
+          source is kept (the copy's bytes would be gone entirely). One path with a
+          control character in its name refuses the whole script (all or nothing, no
+          partial script). The verify manifest must have target size/sha256 equal to the
+          source size/sha256 per file, otherwise it is rejected as malformed.
 
 Refusals (exit 1, nothing copied): a session that is the current session
 (CLAUDE_CODE_SESSION_ID); a live session: a Claude process whose argv names the id
@@ -235,16 +233,6 @@ def sha256(path):
         os.close(fd)
 
 
-def prefix_sha256(path, size):
-    """sha256 of the first size bytes (None when shorter), never through a final symlink."""
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    try:
-        n, h = read_hash(fd, size)
-    finally:
-        os.close(fd)
-    return h if n == size else None
-
-
 def safe_title(t):
     return re.sub(r"[^A-Za-z0-9 ._-]", "", t or "")[:60]
 
@@ -281,13 +269,6 @@ def scrub(o):
     if isinstance(o, dict):
         return {(show(k) if isinstance(k, str) else k): scrub(v) for k, v in o.items()}
     return o
-
-
-def is_transcript(rel, sid):
-    """True only for the session's main transcript projects/<slug>/<sid>.jsonl, the one
-    append-only file a resumed session grows; every other file must stay byte-identical."""
-    parts = rel.split(os.sep)
-    return len(parts) == 3 and parts[0] == "projects" and parts[2] == sid + ".jsonl"
 
 
 def sq(p):
@@ -1191,11 +1172,13 @@ def under_items(source, path, items):
     return any(rel == i or rel.startswith(i + os.sep) for i in items)
 
 
-def target_problem(source, target, f, sid):
-    """Why the source file must be kept (its target counterpart is not what was
-    verified), or None. The session's main transcript (append-only) may have grown but
-    must still start with the verified bytes; every other file must have exactly the
-    verified size and sha256."""
+def target_problem(source, target, f):
+    """Why the source file must be kept because its target counterpart does not exist as
+    a copy of it, or None. The decision is made by the SOURCE (unchanged since the verify,
+    checked in make_cleanup); the target only has to be a regular file that is not a
+    symlink. A target changed after the copy is normal and does not keep the source. An
+    empty target counts as existing only when the source is empty too. A target truncated
+    to zero bytes holds none of the copied content."""
     rel = os.path.relpath(f["path"], source)
     dst = os.path.join(target, rel)
     link = symlink_component(target, rel)
@@ -1207,26 +1190,8 @@ def target_problem(source, target, f, sid):
         return "the target copy %s is missing" % dst
     if not stat.S_ISREG(st.st_mode):
         return "the target copy %s is not a regular file" % dst
-    if is_transcript(rel, sid):
-        if st.st_size < f["dst_size"]:
-            return "the target copy is smaller than at the verify (%d < %d bytes)" % (
-                st.st_size, f["dst_size"])
-        try:
-            h = prefix_sha256(dst, f["dst_size"])
-        except OSError as e:
-            return "the target copy cannot be read (%s)" % e
-        if h != f["dst_sha256"]:
-            return "the target copy no longer starts with the verified content"
-        return None
-    if st.st_size != f["dst_size"]:
-        return ("the target copy has another size than at the verify (%d != %d bytes); "
-                "only the transcript may grow" % (st.st_size, f["dst_size"]))
-    try:
-        h = sha256(dst)
-    except OSError as e:
-        return "the target copy cannot be read (%s)" % e
-    if h != f["dst_sha256"]:
-        return "the target copy is no longer identical to the verified content"
+    if st.st_size == 0 and f["size"] > 0:
+        return "the target copy %s is empty while the source is not" % dst
     return None
 
 
@@ -1256,25 +1221,13 @@ def cleanup_lines(source, target, pairs):
             rtdir = os.path.realpath(tdir)
             for x in (dst, rdir, rtdir):
                 check_literal(x)
-            n = f["dst_size"]
             p, t = sq(f["path"]), sq(dst)
-            # Every check below is re-done when the script runs: source and target are
-            # regular files, not symlinks, not the same file, both directories still
-            # resolve to the recorded physical directories, the source still has its
-            # verified checksum and the target still starts with the verified content
-            # (at least dst_size bytes whose first dst_size bytes hash to dst_sha256) for
-            # the append-only transcript; EXACTLY dst_size bytes with sha256 dst_sha256
-            # for every other file.
-            if is_transcript(os.path.relpath(f["path"], source), sid):
-                tgt_conds = [
-                    "head -c %d %s | wc -c | grep -qxE '[ ]*%d'" % (n, t, n),
-                    "head -c %d %s | csm_sum | grep -qxF '%s  -'" % (n, t, f["dst_sha256"]),
-                ]
-            else:
-                tgt_conds = [
-                    "wc -c < %s | grep -qxE '[ ]*%d'" % (t, n),
-                    "printf '%%s  %%s\\n' '%s' %s | csm_sum_ok" % (f["dst_sha256"], t),
-                ]
+            # Every check below is re-done when the script runs. The source must still be a
+            # regular file with the verified checksum. The target counterpart must still be
+            # a regular file that is not a symlink and not the source file itself, and not
+            # empty while the source is not. Its content is not compared. A target changed
+            # after the copy does not keep the source. Both directories must still resolve
+            # to the recorded physical directories.
             conds = [
                 "[ -f %s ]" % p, "[ ! -L %s ]" % p,
                 "[ -f %s ]" % t, "[ ! -L %s ]" % t,
@@ -1282,15 +1235,17 @@ def cleanup_lines(source, target, pairs):
                 "( cd %s 2>/dev/null && pwd -P ) | grep -qxF %s" % (sq(pdir), sq(rdir)),
                 "( cd %s 2>/dev/null && pwd -P ) | grep -qxF %s" % (sq(tdir), sq(rtdir)),
                 "printf '%%s  %%s\\n' '%s' %s | csm_sum_ok" % (f["sha256"], p),
-            ] + tgt_conds
+            ]
+            if f["size"] > 0:
+                conds.append("[ -s %s ]" % t)
             lines.append(
                 "if %s; then if rm -f -- %s; then csm_removed=$((csm_removed + 1)); "
                 "else echo %s >&2; csm_kept=$((csm_kept + 1)); fi; "
                 "else echo %s >&2; csm_kept=$((csm_kept + 1)); fi" % (
                     " && ".join(conds), p,
                     sq("kept (rm failed): " + f["path"]),
-                    sq("kept (changed, missing, a symlink, moved directory or no intact "
-                       "target copy): " + f["path"])))
+                    sq("kept (source changed or missing, a symlink, moved directory or no "
+                       "usable target copy): " + f["path"])))
         for d in sorted(man["dirs"], key=lambda x: x.count(os.sep), reverse=True):
             check_deletable(source, d, sid)
             parent = os.path.dirname(d)
@@ -1391,10 +1346,11 @@ def make_cleanup(source, target, plan):
                 problems.append("%s: gone from the source since the verify" % rel)
             elif now[p] != recorded[p]["size"] or sha256(p) != recorded[p]["sha256"]:
                 problems.append("%s: changed in the source since the verify" % rel)
-        # a source file goes into the script only while its target copy is intact
+        # a source file (unchanged, checked above) goes into the script only while its target
+        # counterpart exists as a usable copy; a changed target does not keep it
         files = []
         for f in man["files"]:
-            why = target_problem(source, target, f, s["id"])
+            why = target_problem(source, target, f)
             if why:
                 kept.append({"session": s["id"], "path": f["path"], "reason": why})
             else:
@@ -1415,16 +1371,14 @@ def make_cleanup(source, target, plan):
         "# Source profile: %s" % sq(source),
         "# Target profile: %s" % sq(target),
         "# A file is removed only while it is a regular file (not a symlink) with the",
-        "# checksum recorded by the verify, its target copy is a different regular file",
-        "# that is still intact and both directories still resolve to the recorded",
-        "# physical directories. Intact means: exactly the verified size and sha256 for",
-        "# every file except the session transcript (projects/<slug>/<id>.jsonl), which",
-        "# may have grown but must still start with the verified content. A directory",
-        "# is removed only with rmdir (when",
-        "# empty). Items shared with the target through a symlink are not listed; source",
-        "# files whose target copy changed or vanished before the script was written are",
-        "# not listed, they count as kept. At the end it prints how many items were",
-        "# removed and kept and exits 1 when anything was kept.",
+        "# checksum recorded by the verify, and its target copy is a different regular file",
+        "# that is not a symlink and, unless the source is empty, not empty. A target that",
+        "# changed after the copy does not keep the source. Both directories still resolve",
+        "# to the recorded physical directories. A directory is removed only with rmdir",
+        "# (when empty). Items shared with the target through a symlink are not listed;",
+        "# source files whose target copy is missing or unusable before the script was",
+        "# written are not listed, they count as kept. At the end it prints how many items",
+        "# were removed and kept and exits 1 when anything was kept.",
         "set -u",
         "command -v %s >/dev/null 2>&1 || { echo 'credo session-move cleanup: %s not "
         "found - nothing removed' >&2; exit 1; }" % (tool, tool),

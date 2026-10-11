@@ -98,33 +98,32 @@ subcommand re-plans from scratch; nothing is cached between calls.
    manifest exists, when a manifest item is not part of this session's fresh plan, when any
    source file changed, appeared or vanished since the verify, or when neither `sha256sum`
    nor `shasum` exists; a manifest whose target size / sha256 differs from the source
-   size / sha256 is rejected as malformed. A source file whose target copy is missing, not a
-   regular file, or not intact is left out and reported as KEPT - report those to the user.
-   Intact: the session's main transcript (`projects/<slug>/<id>.jsonl`, append-only) may
-   have grown but must be at least as large as at the verify and still start with the
-   verified content; every other file must have EXACTLY the verified size and sha256. The
-   script lands in a new
+   size / sha256 is rejected as malformed. The rule is decided by the SOURCE. A source file
+   is removed while it is unchanged since the verify and its target copy exists as a regular
+   file, not a symlink, and is not empty while the source is not. A target that changed after
+   the copy (also the session's transcript) does NOT keep the source. A source file whose
+   target copy is missing or emptied is left out and reported as KEPT - report those to the
+   user. A target that is a symlink out of the source blocks the whole cleanup (plan rule).
+   The script lands in a new
    `mktemp` dir under `/tmp` (dir 0700, file 0600; written under a temp name and renamed, on
    a write failure only that temp file is removed and the dir is reported), holds only
    literal paths inside the source profile that name the session id (no shell variables
    except its own removed / kept counters), and at run time removes each file only while it
    still has the recorded checksum, is not a symlink, its target copy is a regular file that
-   is not the same file as the source and is intact by the rule above (transcript: at least
-   as large as at the verify and `head -c <size>` hashes to the verified value; any other
-   file: `wc -c` equals the verified size and the whole file hashes to the verified
-   sha256), and both its directory and the target's directory still resolve (`pwd -P`) to
-   the recorded physical directories; directories only with `rmdir` (when empty). At the end the script
+   is not the same file as the source, is not a symlink and is not empty while the source is
+   not (the target's content is not compared), and both its directory and the target's
+   directory still resolve (`pwd -P`) to the recorded physical directories; directories only
+   with `rmdir` (when empty). At the end the script
    prints `removed N, kept M` and exits 1 when anything was kept (files left out at
    generation count as kept). The USER runs it: `! sh '<script>'`. It is not removed
    automatically; tell the user the remove command from the helper output
    (`rm -f -- '<dir>/cleanup.sh' && rmdir -- '<dir>'`).
 
-   Known limits to tell the user when relevant: the prefix rule applies to the transcript
-   only and assumes it is append-only (a transcript rewritten in place that keeps the
-   verified bytes as a prefix is not told apart from growth); every other file that the
-   resumed session changed in any way (also by appending) is KEPT, so after a resume
-   expect some state files in the KEPT list - that is intended, the user removes those
-   source copies by hand if wanted; one path with a control character in its name refuses the whole script
+   Known limits to tell the user when relevant. A target that changed after the copy counts
+   as the continuation of the session, so its source copy goes even when the resume lost
+   content in the target (only an empty target against a non-empty source is KEPT); a source
+   changed since the verify refuses the whole cleanup; one path with a control character in
+   its name refuses the whole script
    (all or nothing, no partial script); a transcript cwd with control characters is not
    shown (the plan prints a warning and `<cwd>` in the resume command - read the cwd from
    the transcript yourself).

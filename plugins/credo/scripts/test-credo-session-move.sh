@@ -31,9 +31,10 @@
 #     is refused; a dry run of the script with a logging rm only removes the listed
 #     source paths and keeps a changed one; the generator refuses paths outside the
 #     source profile and paths through a symlink
-#   - non-transcript files (anything but the session's main .jsonl transcript) need EXACT
-#     size + sha256 equality with the verified target copy, at generation and in the
-#     script; only the append-only transcript may have grown (prefix rule)
+#   - source-based cleanup rule. A source file is removed while the SOURCE is unchanged
+#     since the verify and its target counterpart exists (regular file, not a symlink, not
+#     empty while the source is not); a target changed after the copy (any file, also the
+#     transcript) does not keep the source; a missing, symlinked or emptied target does
 #   - control characters in a custom title or a slug are never printed raw in the text
 #     plan (escaped, with a warning)
 #   - liveness details: credoPeerBridge pid files are holders, credoPeerLan mirrors are
@@ -602,20 +603,20 @@ PYEOF
     cp -p "$TMP/keep-manifest" "$MAN"
 done
 
-# non-transcript file: a target copy that only GREW (verified bytes still a prefix) is not
-# intact - exact size + sha256 equality is required, only the transcript may grow
+# The target changed after the copy is normal. A grown non-transcript state file does not
+# keep its source (the source rule); only a missing target counterpart is kept
 TS="$DSTA/credo/self-compact-$S1.json"
 cp -p "$TS" "$TMP/keep-ts"
 printf 'grown' >> "$TS"
 run cleanup-script --source "$SRC" --target "$DSTA" credo-bugs --user-confirmed --json
-jck "any('self-compact' in k['path'] for k in d['kept']) and not any(k['path'].endswith('$S1.jsonl') for k in d['kept'])"
-ok "non-transcript target grown (prefix intact) -> source kept at generation, grown transcript still listed (rc $RC)" $?
+jck "not any('self-compact' in k['path'] for k in d['kept'])"
+ok "non-transcript target grown -> source not kept (rc $RC)" $?
 cp -p "$TMP/keep-ts" "$TS"
 
 run cleanup-script --source "$SRC" --target "$DSTA" credo-bugs --user-confirmed --json
 ok "cleanup-script after resume exit 0 (got $RC: $OUT)" "$([ "$RC" = 0 ] && echo 0 || echo 1)"
-jck "any('session-modes' in k['path'] for k in d['kept']) and any('r1.txt' in k['path'] for k in d['kept']) and any('tasks/' in k['path'] for k in d['kept'])"
-ok "target counterpart shrunk / missing / changed -> source file kept (reported)" $?
+jck "len(d['kept']) == 1 and d['kept'][0]['path'].endswith('/r1.txt') and 'missing' in d['kept'][0]['reason']"
+ok "changed targets (transcript, session-modes, tasks) not kept; only the missing r1.txt is" $?
 ok "remove hint uses rm -f + rmdir, no recursive rm" "$(has "$OUT" "rm -f -- '" && has "$OUT" "/cleanup.sh' && rmdir -- '" && ! has "$OUT" "rm -r" && echo 0 || echo 1)"
 CS="$(printf '%s' "$OUT" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["script"])' 2>/dev/null)"
 ok "script under the temp base" "$(case "$CS" in "$TMP/cleanup-base/"*) echo 0 ;; *) echo 1 ;; esac)"
@@ -634,7 +635,8 @@ ok "every deletion target in the script is inside the source profile" "$bad"
 ok "script has deletion targets at all" "$(printf '%s\n' "$BODY" | grep -qE "rm -f -- '/" && echo 0 || echo 1)"
 ok "script lists transcript + state, not the short-id dir" "$(has "$BODY" "$SRC/$P/$S1.jsonl" && has "$BODY" "$SRC/credo/session-meta/$S1.json" && ! has "$BODY" "jobs/" && echo 0 || echo 1)"
 ok "report tells how to remove the script" "$(has "$OUT" "$(dirname "$CS")" && echo 0 || echo 1)"
-ok "kept files are not in the script" "$(has "$BODY" "session-modes/$S1" || has "$BODY" "r1.txt" || has "$BODY" "tasks/$S1/1.json" && echo 1 || echo 0)"
+ok "the kept file (missing target) is not in the script" "$(has "$BODY" "r1.txt" && echo 1 || echo 0)"
+ok "changed targets stay in the script (session-modes, tasks)" "$(has "$BODY" "$SRC/credo/session-modes/$S1" && has "$BODY" "$SRC/tasks/$S1/1.json" && echo 0 || echo 1)"
 ok "script checks the parent directory at run time (pwd -P)" "$(has "$BODY" "pwd -P" && echo 0 || echo 1)"
 ok "script checks the target counterpart at run time" "$(has "$BODY" "[ -f '$DSTA/$P/$S1.jsonl' ]" && echo 0 || echo 1)"
 mv "$TMP/keep-r1" "$DSTA/$P/$S1/tool-results/r1.txt"
@@ -658,25 +660,27 @@ ok "dry run rmdirs only inside the source" "$(printf '%s\n' "$LOG" | grep '^rmdi
 printf 'v1' > "$SRC/file-history/$S1/abc@v1"
 touch -d '2001-02-03 04:05:06' "$SRC/file-history/$S1/abc@v1"
 
-# run time: the target counterpart is no longer what was verified -> the source file is kept
+# Run time, source rule. A target that changed (other content, grown) does NOT keep the
+# source; a target emptied while the source is not empty, a target that is the source file
+# itself (hard link) and a directory swapped for a symlink DO keep it
 TP="$DSTA/credo/session-meta/$S1.json"      # different content
-TQ="$DSTA/dogma/session-dirs/$S1"           # truncated
+TQ="$DSTA/dogma/session-dirs/$S1"           # truncated to zero bytes (source not empty)
 TH="$DSTA/.caveman-sessions/$S1.mode"       # hard link to the source file itself
 TD="$DSTA/credo/autonomy/$S1"               # directory swapped for a symlink
 mv "$TP" "$TMP/keep-tp"; printf '{"sid":"changed"}' > "$TP"
 mv "$TQ" "$TMP/keep-tq"; : > "$TQ"
 mv "$TH" "$TMP/keep-th"; ln "$SRC/.caveman-sessions/$S1.mode" "$TH"
 mv "$TD" "$TMP/keep-td"; ln -s "$TMP/keep-td" "$TD"
-cp -p "$TS" "$TMP/keep-ts"; printf 'grown' >> "$TS"     # non-transcript grown, prefix intact
+cp -p "$TS" "$TMP/keep-ts"; printf 'grown' >> "$TS"     # non-transcript grown
 : > "$TMP/rm.log"
 PATH="$TMP/fakebin:$PATH" sh "$CS" > "$TMP/cs.out" 2> "$TMP/cs.err"
 LOG="$(cat "$TMP/rm.log")"
-ok "run time: target with different content -> source kept" "$(has "$LOG" "$SRC/credo/session-meta/$S1.json" && echo 1 || echo 0)"
-ok "run time: truncated target -> source kept" "$(has "$LOG" "$SRC/dogma/session-dirs/$S1" && echo 1 || echo 0)"
+ok "run time: target with different content -> source removed" "$(has "$LOG" "rm -f -- $SRC/credo/session-meta/$S1.json" && echo 0 || echo 1)"
+ok "run time: target emptied to zero bytes, source not empty -> source kept" "$(has "$LOG" "$SRC/dogma/session-dirs/$S1" && echo 1 || echo 0)"
 ok "run time: target that is the source file itself (hard link) -> source kept" "$(has "$LOG" "$SRC/.caveman-sessions/$S1.mode" && echo 1 || echo 0)"
 ok "run time: target dir swapped for a symlink -> source kept" "$(has "$LOG" "$SRC/credo/autonomy/$S1/active" && echo 1 || echo 0)"
-ok "run time: non-transcript target grown with the verified bytes as prefix -> source kept" "$(has "$LOG" "$SRC/credo/self-compact-$S1.json" && echo 1 || echo 0)"
-ok "run time: intact target (grown transcript) -> still removed" "$(has "$LOG" "rm -f -- $SRC/$P/$S1.jsonl" && echo 0 || echo 1)"
+ok "run time: non-transcript target grown -> source removed" "$(has "$LOG" "rm -f -- $SRC/credo/self-compact-$S1.json" && echo 0 || echo 1)"
+ok "run time: grown transcript -> still removed" "$(has "$LOG" "rm -f -- $SRC/$P/$S1.jsonl" && echo 0 || echo 1)"
 mv "$TMP/keep-tp" "$TP"; mv "$TMP/keep-tq" "$TQ"; mv "$TMP/keep-th" "$TH"
 unlink "$TD"; mv "$TMP/keep-td" "$TD"; cp -p "$TMP/keep-ts" "$TS"
 : > "$TMP/rm.log"
@@ -684,8 +688,9 @@ PATH="$TMP/fakebin:$PATH" sh "$CS" > "$TMP/cs.out" 2> "$TMP/cs.err"
 LOG="$(cat "$TMP/rm.log")"
 ok "run time: restored targets -> all four removed again (control)" "$(has "$LOG" "rm -f -- $SRC/credo/session-meta/$S1.json" && has "$LOG" "rm -f -- $SRC/dogma/session-dirs/$S1" && has "$LOG" "rm -f -- $SRC/.caveman-sessions/$S1.mode" && has "$LOG" "rm -f -- $SRC/credo/autonomy/$S1/active" && echo 0 || echo 1)"
 ok "run time: untouched self-compact state removed again (control)" "$(has "$LOG" "rm -f -- $SRC/credo/self-compact-$S1.json" && echo 0 || echo 1)"
-ok "script checks size, prefix hash, same-file and the target directory" "$(has "$BODY" "head -c" && has "$BODY" "-ef" && has "$BODY" "'$DSTA/credo/session-meta'" && echo 0 || echo 1)"
-ok "script: non-transcript gets an exact size + full sha256 check, transcript only the prefix" "$(printf '%s\n' "$BODY" | grep "self-compact" | grep -q 'wc -c <' && ! printf '%s\n' "$BODY" | grep "self-compact" | grep -q 'head -c' && printf '%s\n' "$BODY" | grep "$S1.jsonl" | grep -q 'head -c' && ! printf '%s\n' "$BODY" | grep "$S1.jsonl'" | grep -q 'wc -c <' && echo 0 || echo 1)"
+ok "script checks same-file and the target directory at run time" "$(has "$BODY" "-ef" && has "$BODY" "'$DSTA/credo/session-meta'" && echo 0 || echo 1)"
+ok "script: a non-empty target is required where the source is not empty" "$(has "$BODY" "[ -s '$DSTA/credo/session-meta/$S1.json' ]" && echo 0 || echo 1)"
+ok "script: no content check on the target (no head -c, no wc -c)" "$(has "$BODY" "head -c" || has "$BODY" "wc -c" && echo 1 || echo 0)"
 
 # run time: a parent directory swapped for a symlink after generation -> file kept
 mv "$SRC/credo/session-meta" "$TMP/moved-meta"
@@ -891,6 +896,63 @@ printf 'stale' > "$DST_M/credo/session-move/$S1.json.tmp"
 run verify --source "$SRC_M" --target "$DST_M" "$S1"
 ok "stale <id>.json.tmp: verify refused with the file named (got $RC: $OUT)" "$([ "$RC" = 1 ] && has "$OUT" "$S1.json.tmp" && echo 0 || echo 1)"
 ok "stale <id>.json.tmp is not truncated" "$([ "$(cat "$DST_M/credo/session-move/$S1.json.tmp")" = stale ] && echo 0 || echo 1)"
+
+# ---------------------------------------------------------------------------
+# 7. source-based cleanup rule, focused. The SOURCE decides, the target only has to exist
+#    (regular file, not a symlink, not empty while the source is not)
+# ---------------------------------------------------------------------------
+mk_mini "$TMP/mini-rule"
+MINI_T="$SRC_M/projects/-home-myuser-proj-m/$S1.jsonl"
+mkdir -p "$SRC_M/credo/session-modes" "$SRC_M/credo/session-meta" "$SRC_M/dogma/session-dirs" \
+    "$SRC_M/tasks" "$SRC_M/todos"
+printf 'active' > "$SRC_M/credo/session-modes/$S1"
+printf '{"sid":"x"}' > "$SRC_M/credo/session-meta/$S1.json"
+printf 'dirstate' > "$SRC_M/dogma/session-dirs/$S1"
+printf '[1]' > "$SRC_M/tasks/$S1.json"
+: > "$SRC_M/todos/$S1.json"
+find "$SRC_M" -exec touch -h -d '2001-02-03 04:05:06' {} +
+run copy --source "$SRC_M" --target "$DST_M" "$S1"
+ok "rule: copy + verify green (got $RC: $OUT)" "$([ "$RC" = 0 ] && echo 0 || echo 1)"
+
+# The resumed session changed session-modes, grew the transcript and changed the dogma state with the
+# same size. Tasks emptied, todos empty on both sides, session-meta gone (target missing)
+printf 'resumed' > "$DST_M/credo/session-modes/$S1"
+printf '\n{"type":"user"}' >> "$DST_M/projects/-home-myuser-proj-m/$S1.jsonl"
+printf 'DIRSTATE' > "$DST_M/dogma/session-dirs/$S1"
+: > "$DST_M/tasks/$S1.json"
+mv "$DST_M/credo/session-meta/$S1.json" "$TMP/rule-keep-meta"
+run cleanup-script --source "$SRC_M" --target "$DST_M" "$S1" --user-confirmed --json
+ok "rule: cleanup generated with kept items (got $RC: $OUT)" "$([ "$RC" = 0 ] && echo 0 || echo 1)"
+jck "sorted(k['path'][len('$SRC_M/'):] for k in d['kept']) == sorted(['credo/session-meta/$S1.json', 'tasks/$S1.json'])"
+ok "rule: only the missing and the emptied target counterparts are kept" $?
+jck "any('missing' in k['reason'] for k in d['kept'] if k['path'].endswith('session-meta/$S1.json')) and any('empty' in k['reason'] for k in d['kept'] if k['path'].endswith('tasks/$S1.json'))"
+ok "rule: kept reasons name the missing and the emptied target" $?
+CSR="$(printf '%s' "$OUT" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["script"])' 2>/dev/null)"
+BODYR="$(cat "$CSR" 2>/dev/null)"
+ok "rule: script lists the changed session-modes, the grown transcript, the changed dogma state and the empty todos" "$(has "$BODYR" "$SRC_M/credo/session-modes/$S1" && has "$BODYR" "$MINI_T" && has "$BODYR" "$SRC_M/dogma/session-dirs/$S1" && has "$BODYR" "$SRC_M/todos/$S1.json" && echo 0 || echo 1)"
+ok "rule: script does not list the kept items" "$(has "$BODYR" "$SRC_M/tasks/$S1.json" || has "$BODYR" "session-meta/$S1.json" && echo 1 || echo 0)"
+: > "$TMP/rm.log"
+PATH="$TMP/fakebin:$PATH" sh "$CSR" > "$TMP/cs.out" 2> "$TMP/cs.err"
+CSRR=$?
+LOGR="$(cat "$TMP/rm.log")"
+ok "rule: dry run removes session-modes, the grown transcript, the changed dogma state and the empty-source todos" "$(has "$LOGR" "$SRC_M/credo/session-modes/$S1" && has "$LOGR" "$MINI_T" && has "$LOGR" "$SRC_M/dogma/session-dirs/$S1" && has "$LOGR" "$SRC_M/todos/$S1.json" && echo 0 || echo 1)"
+ok "rule: dry run keeps the emptied and the missing target counterparts" "$(has "$LOGR" "$SRC_M/tasks/$S1.json" || has "$LOGR" "session-meta/$S1.json" && echo 1 || echo 0)"
+ok "rule: dry run exits 1 because items were kept (got $CSRR)" "$([ "$CSRR" = 1 ] && echo 0 || echo 1)"
+
+# The source changed after the verify. The cleanup is refused, nothing is listed for removal
+printf 'changed' >> "$SRC_M/credo/session-modes/$S1"
+run cleanup-script --source "$SRC_M" --target "$DST_M" "$S1" --user-confirmed
+ok "rule: source changed after the verify -> cleanup refused (got $RC: $OUT)" "$([ "$RC" = 1 ] && has "$OUT" "credo/session-modes/$S1" && echo 0 || echo 1)"
+printf 'active' > "$SRC_M/credo/session-modes/$S1"
+run cleanup-script --source "$SRC_M" --target "$DST_M" "$S1" --user-confirmed
+ok "rule: source restored -> cleanup generated again (got $RC)" "$([ "$RC" = 0 ] && echo 0 || echo 1)"
+
+# A target replaced by a symlink to a file outside the source. The fresh plan marks the item
+# BLOCKED (existing plan rule), so the whole cleanup is refused and the source stays
+mv "$DST_M/dogma/session-dirs/$S1" "$TMP/rule-keep-dogma"
+ln -s "$TMP/rule-keep-dogma" "$DST_M/dogma/session-dirs/$S1"
+run cleanup-script --source "$SRC_M" --target "$DST_M" "$S1" --user-confirmed
+ok "rule: target replaced by a symlink outside the source -> cleanup refused, source stays (got $RC: $OUT)" "$([ "$RC" = 1 ] && has "$OUT" "dogma/session-dirs/$S1" && echo 0 || echo 1)"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
