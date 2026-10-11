@@ -53,16 +53,23 @@ check() { # name expected actual
 }
 
 # fake plugin root with a fake daemon script that records it was started, then exits.
+# The onboarding query (config only, no network) is answered by the REAL daemon, so the
+# state the hook sees is the real one, unless FAKE_ONB_STATE forces a state (the forced
+# answer prints the state word, plus the machine dir FAKE_ONB_DIR for --dir).
 FAKE_ROOT="$TMP/plugin"
 mkdir -p "$FAKE_ROOT/scripts"
 SENTINEL="$TMP/started"
+PY_BIN="$(command -v python3 || echo python3)"
+REAL_DAEMON="$SCRIPT_DIR/credo-peer-lan.py"
 cat > "$FAKE_ROOT/scripts/credo-peer-lan.py" <<EOF
 #!/usr/bin/env bash
 # fake daemon: record the subcommand it was invoked with and exit at once (never
-# lingers, never binds a port). The hook must invoke it as "ensure". The cheap
-# "onboarding --state" query answers with FAKE_ONB_STATE (default bound) and is not
-# recorded as a start.
-if [ "\$1" = onboarding ]; then echo "\${FAKE_ONB_STATE:-bound}"; exit 0; fi
+# lingers, never binds a port). The hook must invoke it as "ensure".
+if [ "\$1" = onboarding ]; then
+    if [ -z "\${FAKE_ONB_STATE:-}" ]; then exec "$PY_BIN" "$REAL_DAEMON" "\$@"; fi
+    case " \$* " in *" --dir "*) echo "\$FAKE_ONB_STATE \${FAKE_ONB_DIR:-$TMP/cfg/credo}" ;; *) echo "\$FAKE_ONB_STATE" ;; esac
+    exit 0
+fi
 echo "started \$*" >> "$SENTINEL"
 exit 0
 EOF
@@ -268,6 +275,49 @@ printf '[]\n' > "$CFGDIR/credo/peer-lan-keys/pending-repair.json"
 OUT="$(run_hook FAKE_ONB_STATE=bound)"
 check "pairing: no pending repair -> no injection" "" "$OUT"
 
+# --- served sibling profiles (profiles list, real onboarding state) ------------------
+# One machine relay: its config lives in the machine profile (here .claude) and may name
+# the profiles it serves. A session in a SERVED sibling starts that one relay from the
+# machine config; a session in a profile that is NOT served gets the add-profile note
+# and starts nothing. Neither creates a second config.
+SIB="$TMP/sib"
+SIBHOME="$SIB/home"
+mkdir -p "$SIBHOME/.claude/credo" "$SIBHOME/.claude/sessions" "$SIBHOME/.claude-work/sessions" \
+    "$SIBHOME/.claude-extra/sessions"
+echo '{"this_machine":"SIB","peers":[],"networks":{"home":{"fingerprint":{}}},"profiles":[".claude-work"]}' \
+    > "$SIBHOME/.claude/credo/peer-lan.json"
+run_sib() { # CLAUDE_CONFIG_DIR of the session; fake daemon, real onboarding state
+    env -i PATH="$BIN:/usr/bin:/bin" HOME="$SIBHOME" CLAUDE_PLUGIN_ROOT="$FAKE_ROOT" \
+        CLAUDE_CONFIG_DIR="$1" CREDO_PEER_LAN_PROCVERSION="$PROCVER_LINUX" \
+        CREDO_PEER_LAN_MOUNTS="$TMP/no-mounts" CREDO_PEER_LAN_WSLCONF="$TMP/no-wslconf" \
+        CREDO_PEER_LAN_WSLINTEROP="$TMP/no-wslinterop" bash "$HOOK" </dev/null
+}
+rm -f "$SENTINEL"
+OUT_W="$(run_sib "$SIBHOME/.claude-work")"
+ok "served sibling starts the machine relay (ensure)" "$(wait_sentinel && echo 0 || echo 1)"
+check "served sibling: no onboarding offer or note" "" "$OUT_W"
+ok "served sibling: no second config in the sibling profile" "$([ ! -e "$SIBHOME/.claude-work/credo/peer-lan.json" ] && echo 0 || echo 1)"
+# a served sibling whose machine config is not bound yet: the relay still starts, and the
+# setup is NOT offered again here (informational note only; the holder profile offers it)
+echo '{"this_machine":"SIB","peers":[],"profiles":[".claude-work"]}' > "$SIBHOME/.claude/credo/peer-lan.json"
+rm -f "$SENTINEL"
+OUT_U="$(run_sib "$SIBHOME/.claude-work")"
+ok "served sibling with an unbound machine config still starts the machine relay" "$(wait_sentinel && echo 0 || echo 1)"
+case "$OUT_U" in *"The machine LAN relay is DISABLED"*"Do not offer the LAN setup in this profile"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL served sibling, unbound: informational note missing: %s\n' "$OUT_U" ;; esac
+case "$OUT_U" in *"guided setup"*) FAIL=$((FAIL + 1)); printf 'FAIL served sibling, unbound: setup offered again: %s\n' "$OUT_U" ;; *) PASS=$((PASS + 1)) ;; esac
+echo '{"this_machine":"SIB","peers":[],"networks":{"home":{"fingerprint":{}}},"profiles":[".claude-work"]}' > "$SIBHOME/.claude/credo/peer-lan.json"
+rm -f "$SENTINEL"
+OUT_X="$(run_sib "$SIBHOME/.claude-extra")"
+sleep 0.4
+ok "unserved sibling starts nothing" "$([ ! -f "$SENTINEL" ] && echo 0 || echo 1)"
+case "$OUT_X" in *"is not served by the LAN relay of this machine"*"profiles add .claude-extra"*"in the user's language (the language of the conversation); fall back to English if unknown or unsure.") PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL unserved sibling: add-profile note missing: %s\n' "$OUT_X" ;; esac
+ok "unserved sibling: no second config in the sibling profile" "$([ ! -e "$SIBHOME/.claude-extra/credo/peer-lan.json" ] && echo 0 || echo 1)"
+mkdir -p "$SIBHOME/.claude-extra/credo"
+: > "$SIBHOME/.claude-extra/credo/peer-lan-onboarding-declined"
+OUT_D="$(run_sib "$SIBHOME/.claude-extra")"
+check "unserved sibling declined before: silent" "" "$OUT_D"
+rm -f "$SIBHOME/.claude-extra/credo/peer-lan-onboarding-declined"
+
 # --- ensure via the hook: older running daemon replaced, same/newer left untouched ---
 # Drives the REAL daemon through the hook, loopback only, ephemeral port. ensure reads the
 # running daemon's pidfile (pid + version) and either replaces an older one or no-ops.
@@ -347,6 +397,27 @@ EOF
     else
         FAIL=$((FAIL + 1)); printf 'FAIL hook ensure replace: incumbent did not come up\n'
     fi
+
+    # served sibling, REAL daemon: the hook run from .claude-work (served by the config in
+    # the machine profile .claude) starts the ONE relay with the machine config; its state
+    # lands in the machine profile and the sibling gets neither a config nor a pidfile.
+    SIB_PORT="$("$PY" -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
+    printf '{"this_machine":"SIB","listen_host":"127.0.0.1","listen_port":%s,"roster_interval":60,"machine_timeout":600,"bind_retry_total":3,"bind_retry_interval":0.2,"peers":[],"networks":{"home":{"fingerprint":{}}},"profiles":[".claude-work"]}\n' \
+        "$SIB_PORT" > "$SIBHOME/.claude/credo/peer-lan.json"
+    SIB_PIDFILE="$SIBHOME/.claude/credo/peer-lan.pid"
+    env -i PATH="$BIN:/usr/bin:/bin" HOME="$SIBHOME" "${RD_SAFE[@]}" \
+        CLAUDE_PLUGIN_ROOT="$REAL_ROOT" CLAUDE_CONFIG_DIR="$SIBHOME/.claude-work" \
+        CREDO_PEER_LAN_SOCKDIR="$TMP/rdsock" bash "$HOOK" </dev/null
+    for _ in $(seq 1 60); do [ -f "$SIB_PIDFILE" ] && break; sleep 0.1; done
+    SIB_PID="$(rd_pid "$SIB_PIDFILE")"
+    PIDS="$PIDS $SIB_PID"
+    ok "served sibling (real daemon): the machine relay runs, pidfile in the machine profile" \
+        "$([ -n "$SIB_PID" ] && kill -0 "$SIB_PID" 2>/dev/null && echo 0 || echo 1)"
+    ok "served sibling (real daemon): no second config in the sibling profile" \
+        "$([ ! -e "$SIBHOME/.claude-work/credo/peer-lan.json" ] && echo 0 || echo 1)"
+    ok "served sibling (real daemon): no second pidfile in the sibling profile" \
+        "$([ ! -e "$SIBHOME/.claude-work/credo/peer-lan.pid" ] && echo 0 || echo 1)"
+    [ -n "$SIB_PID" ] && kill -KILL "$SIB_PID" 2>/dev/null || true
 fi
 
 echo "passed: $PASS, failed: $FAIL"

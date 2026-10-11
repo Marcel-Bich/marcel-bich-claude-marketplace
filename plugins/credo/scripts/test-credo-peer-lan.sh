@@ -40,7 +40,10 @@
 #     mirror descriptor (credoPeerMeta), never in the envelope,
 #   - all local profiles (AP): one relay serves every ~/.claude* profile of the machine:
 #     roster with per-session profile, one mirror per profile, delivery into a sibling
-#     profile, trust checked only in the target's own profile.
+#     profile, trust checked only in the target's own profile,
+#   - served profiles (AQ): the machine config's profiles list selects which profiles
+#     the one relay serves (absent = all), the state and the profiles subcommand, and a
+#     sibling profile never creates a second config.
 #
 # Usage: bash test-credo-peer-lan.sh
 
@@ -5809,6 +5812,157 @@ while IFS= read -r line; do
 done <<< "$AS_OUT"
 case "$AS_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL AS: traceback\n%s\n' "$AS_OUT" ;; esac
 check "AS: expected number of results" "3" "$(printf '%s\n' "$AS_OUT" | grep -cE '^(PASS|FAIL) ')"
+
+# --- AQ: served profiles (profiles list) -------------------------------------------
+# The machine config may name the profiles its one relay serves ("profiles": [basenames]).
+# Absent = every discovered profile (backward compatible); the profile that holds the
+# config is always served. Checks: the discovery filter, the served set the relay uses,
+# the pairing copies, the per-profile trust file, the onboarding states, the profiles
+# subcommand, and that a sibling profile never creates a second config.
+mkdir -p "$TMP/AQ/home/.claude/sessions" "$TMP/AQ/home/.claude/credo" \
+    "$TMP/AQ/home/.claude-work/sessions" "$TMP/AQ/home/.claude-extra/sessions" \
+    "$TMP/AQ/home/.claude-nosess"
+AQ_BASE='{"this_machine":"box-q","listen_port":48610,"peers":[],"networks":{"home":{"fingerprint":{}}}}'
+AQ_CFG="$TMP/AQ/home/.claude/credo/peer-lan.json"
+echo "$AQ_BASE" > "$AQ_CFG"
+aq() { # aq <profile dir name> <daemon args...>: run the CLI as that profile
+    local prof="$1"; shift
+    env -u CREDO_PEER_LAN_CONFIG -u CREDO_PEER_LAN_SOCKDIR HOME="$TMP/AQ/home" \
+        CLAUDE_CONFIG_DIR="$TMP/AQ/home/$prof" "$PY" "$DAEMON" "$@"
+}
+AQ_OUT="$(env -u CREDO_PEER_LAN_SOCKDIR HOME="$TMP/AQ/home" CLAUDE_CONFIG_DIR="$TMP/AQ/home/.claude" \
+    CREDO_PEER_LAN_CONFIG="$AQ_CFG" CREDO_PEER_LAN_SOCKDIR="$TMP/AQ/sock" \
+    "$PY" - "$DAEMON" "$TMP/AQ" "$AQ_CFG" <<'PYEOF'
+import importlib.util, json, os, sys
+daemon_path, root, cfg_path = sys.argv[1:4]
+home = os.path.join(root, "home")
+own = os.path.join(home, ".claude")
+work = os.path.join(home, ".claude-work")
+extra = os.path.join(home, ".claude-extra")
+spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.log = lambda m: None
+import credo_profiles as cp
+def res(name, cond, detail=""):
+    print(("PASS " if cond else "FAIL ") + name + ("" if cond else " %r" % (detail,)))
+BASE = {"this_machine": "box-q", "listen_port": 48610, "peers": [],
+        "networks": {"home": {"fingerprint": {}}}}
+def write_cfg(obj):
+    with open(cfg_path, "w") as fh:
+        json.dump(obj, fh)
+def names(paths):
+    return [os.path.basename(p) for p in paths]
+def sess_profiles():
+    return sorted(os.path.basename(os.path.dirname(p)) for p in mod.profile_sessions_dirs())
+ALL = [".claude", ".claude-extra", ".claude-work"]
+# the discovery filter itself (credo_profiles)
+got = names(cp.profile_dirs(own=own, home=home))
+res("q1: no allowed list keeps every discovered sibling (backward compatible)", got == ALL, got)
+got = names(cp.profile_dirs(own=own, home=home, allowed=[".claude-work"]))
+res("q2: an allowed list keeps the own profile and the listed siblings only",
+    got == [".claude", ".claude-work"], got)
+got = names(cp.profile_dirs(own=own, home=home, allowed=[]))
+res("q3: an empty allowed list serves the own profile only", got == [".claude"], got)
+res("q4: a profile without sessions/ is never discovered",
+    ".claude-nosess" not in names(cp.profile_dirs(own=own, home=home)))
+# the served set the relay uses (profiles key of the machine config)
+write_cfg(BASE)
+res("q5: no profiles key -> served names is None (all)", mod.served_profile_names() is None,
+    mod.served_profile_names())
+res("q6: no profiles key -> the relay serves every discovered profile", sess_profiles() == ALL,
+    sess_profiles())
+write_cfg(dict(BASE, profiles=[".claude-work"]))
+res("q7: a profiles list -> the relay serves the own profile and the listed sibling only",
+    sess_profiles() == [".claude", ".claude-work"], sess_profiles())
+write_cfg(dict(BASE, profiles="bogus"))
+res("q8: a malformed profiles key fails closed (own profile only)", sess_profiles() == [".claude"],
+    sess_profiles())
+write_cfg(dict(BASE, profiles=[".claude-work", ".claude-extra"]))
+res("q9: a profile added to the list is served from then on", sess_profiles() == ALL, sess_profiles())
+write_cfg(dict(BASE, profiles=[".claude-work"]))
+pc = sorted(os.path.dirname(os.path.dirname(p)) for p in mod.pair_copy_dirs(mod.default_keys_dir()))
+res("q10: a pairing is copied only into the keystores of served profiles", pc == [work], pc)
+ps = sorted(os.path.dirname(os.path.dirname(p)) for p in mod.pair_store_dirs(dict(BASE, profiles=[".claude-work"])))
+res("q11: pair-reset cleans every discovered keystore, served or not", set(ps) >= {own, work, extra}, ps)
+# the trust file stays per profile: a served sibling never uses the machine trust file
+os.environ["CLAUDE_CONFIG_DIR"] = work
+res("q12: trust file of a served sibling profile is its own file",
+    mod.trust_path() == os.path.join(work, "credo", "peer-lan-trust.json"), mod.trust_path())
+os.environ["CLAUDE_CONFIG_DIR"] = own
+res("q13: trust file of the machine profile is the machine trust file",
+    mod.trust_path() == os.path.join(own, "credo", "peer-lan-trust.json"), mod.trust_path())
+# onboarding state seen from the profile the session runs in
+os.environ["CLAUDE_CONFIG_DIR"] = extra
+write_cfg(dict(BASE, profiles=[".claude-work"]))
+res("q14: a profile the machine config does not serve reads unserved",
+    mod.onboarding_state() == "unserved", mod.onboarding_state())
+os.environ["CLAUDE_CONFIG_DIR"] = work
+res("q15: a served sibling reads the state of the machine config",
+    mod.onboarding_state() == "bound", mod.onboarding_state())
+os.environ["CLAUDE_CONFIG_DIR"] = own
+write_cfg(BASE)
+print("DONE")
+PYEOF
+)"
+while IFS= read -r line; do
+    case "$line" in
+        PASS\ *) PASS=$((PASS + 1)) ;;
+        FAIL\ *) FAIL=$((FAIL + 1)); printf '%s\n' "$line" ;;
+    esac
+done <<< "$AQ_OUT"
+case "$AQ_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL AQ: traceback\n%s\n' "$AQ_OUT" ;; esac
+check "AQ: python checks ran to the end" "DONE" "$(printf '%s\n' "$AQ_OUT" | tail -n1)"
+
+# CLI: state with and without the machine dir, the profiles subcommand, init from a sibling
+echo "$AQ_BASE" > "$AQ_CFG"
+check "aq: no list -> a sibling reads the machine config state" "bound" "$(aq .claude-work onboarding --state | tail -n1)"
+check "aq: the machine dir is the directory of the machine config" \
+    "bound $TMP/AQ/home/.claude/credo" "$(aq .claude-work onboarding --state --dir | tail -n1)"
+echo '{"this_machine":"box-q","listen_port":48610,"peers":[],"networks":{"home":{"fingerprint":{}}},"profiles":[".claude-work"]}' > "$AQ_CFG"
+check "aq: a sibling missing from the profiles list is unserved" \
+    "unserved $TMP/AQ/home/.claude/credo" "$(aq .claude-extra onboarding --state --dir | tail -n1)"
+check "aq: a listed sibling reads bound" "bound" "$(aq .claude-work onboarding --state | tail -n1)"
+check "aq: the own profile is always served" "bound" "$(aq .claude onboarding --state | tail -n1)"
+aq .claude-extra onboarding --decline >/dev/null
+check "aq: a declined unserved profile reads declined" "declined" "$(aq .claude-extra onboarding --state | tail -n1)"
+ok "aq: the decline marker lives in the declining profile only" \
+    "$([ -e "$TMP/AQ/home/.claude-extra/credo/peer-lan-onboarding-declined" ] && [ ! -e "$TMP/AQ/home/.claude/credo/peer-lan-onboarding-declined" ] && echo 0 || echo 1)"
+aq .claude-extra onboarding --reset >/dev/null
+check "aq: reset makes an unserved profile unserved again" "unserved" "$(aq .claude-extra onboarding --state | tail -n1)"
+PROF_OUT="$(aq .claude-work profiles 2>&1)"
+ok "profiles: a sibling lists the unserved profile as not served" \
+    "$(printf '%s\n' "$PROF_OUT" | grep -qE '\.claude-extra +not served' && echo 0 || echo 1)"
+ok "profiles: the list names the machine config it reads" \
+    "$(printf '%s\n' "$PROF_OUT" | grep -qF "$AQ_CFG" && echo 0 || echo 1)"
+aq .claude-work profiles set .claude .claude-extra >/dev/null 2>&1
+check "profiles set from a served sibling writes the machine config" '[".claude",".claude-extra"]' \
+    "$("$PY" -c 'import json,sys;print(json.dumps(json.load(open(sys.argv[1]))["profiles"],separators=(",",":")))' "$AQ_CFG")"
+ok "profiles set keeps the other config keys" \
+    "$("$PY" -c 'import json,sys;print(0 if "networks" in json.load(open(sys.argv[1])) else 1)' "$AQ_CFG")"
+ok "profiles set creates no config in the sibling profile" \
+    "$([ ! -e "$TMP/AQ/home/.claude-work/credo/peer-lan.json" ] && echo 0 || echo 1)"
+if aq .claude profiles set .claude-nope >/dev/null 2>&1; then rc=0; else rc=$?; fi
+ok "profiles set rejects an unknown profile name (exit 1)" "$([ "$rc" = 1 ] && echo 0 || echo 1)"
+check "profiles set rejects: the config is unchanged" '[".claude",".claude-extra"]' \
+    "$("$PY" -c 'import json,sys;print(json.dumps(json.load(open(sys.argv[1]))["profiles"],separators=(",",":")))' "$AQ_CFG")"
+aq .claude profiles all >/dev/null 2>&1
+check "profiles all removes the list (all profiles served again)" "absent" \
+    "$("$PY" -c 'import json,sys;print("present" if "profiles" in json.load(open(sys.argv[1])) else "absent")' "$AQ_CFG")"
+aq .claude-work profiles add .claude-extra >/dev/null 2>&1
+check "profiles add without a list keeps every profile served" "absent" \
+    "$("$PY" -c 'import json,sys;print("present" if "profiles" in json.load(open(sys.argv[1])) else "absent")' "$AQ_CFG")"
+echo '{"this_machine":"box-q","listen_port":48610,"peers":[],"networks":{"home":{"fingerprint":{}}},"profiles":[".claude-work"]}' > "$AQ_CFG"
+aq .claude-work profiles add .claude-extra >/dev/null 2>&1
+aq .claude-work profiles add .claude-extra >/dev/null 2>&1
+check "profiles add appends once to the list" '[".claude-work",".claude-extra"]' \
+    "$("$PY" -c 'import json,sys;print(json.dumps(json.load(open(sys.argv[1]))["profiles"],separators=(",",":")))' "$AQ_CFG")"
+echo '{"this_machine":"box-q","listen_port":48610,"peers":[],"networks":{"home":{"fingerprint":{}}},"profiles":[".claude-work"]}' > "$AQ_CFG"
+aq .claude-extra init 192.0.2.42 >/dev/null 2>&1
+ok "init from an unserved profile creates no second config" \
+    "$([ ! -e "$TMP/AQ/home/.claude-extra/credo/peer-lan.json" ] && echo 0 || echo 1)"
+check "init from an unserved profile adds the peer to the machine config" "1" \
+    "$(grep -c '192.0.2.42' "$AQ_CFG")"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

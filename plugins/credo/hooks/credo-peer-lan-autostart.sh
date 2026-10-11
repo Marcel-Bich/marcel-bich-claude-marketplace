@@ -7,8 +7,12 @@
 # /credo:peer-lan start. The daemon is started DETACHED, so this hook returns
 # immediately and never blocks session start.
 #
-# It also prints one onboarding line for the agent (no config yet / no network bound;
-# see the onboarding block below). No-op unless a config file exists (the relay itself is a no-op without one). This hook
+# There is ONE relay per machine with ONE machine config (see credo-peer-lan.py
+# config_path). The hook starts it only from a profile that this config serves (the
+# profile holding it, or a sibling profile the config lists or every sibling when it
+# names no list); from any other profile it prints the add-profile note instead and
+# never creates a second config. It also prints one onboarding line for the agent (no
+# config yet / profile not served / no network bound; see the onboarding block below). This hook
 # delegates all run/replace/start decisions to the daemon's `ensure` subcommand: ensure
 # leaves a current/newer running daemon untouched, self-heals an OLDER one after a plugin
 # update (cc-up), and otherwise starts fresh. The daemon's bind-retry makes a concurrent
@@ -38,50 +42,72 @@ esac
 cfgdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 cfgdir="${cfgdir%/}"
 
-# config path: CREDO_PEER_LAN_CONFIG wins, else <configdir>/credo/peer-lan.json
-cfg="${CREDO_PEER_LAN_CONFIG:-$cfgdir/credo/peer-lan.json}"
-
-# Onboarding context for the AGENT (SessionStart stdout = injected context; this hook
-# never prompts). The lines stay English (agent-facing) but tell the agent to talk to
-# the user in the user's language, English fallback. Cheap: reads only files, never runs network detection.
-#   no config, not declined -> offer the guided setup once (decline writes a marker)
-#   config but no network bound (legacy / after the 0.72 upgrade) -> relay DISABLED note
-#   bound (matching or not) / declined -> say nothing
-if [ ! -f "$cfg" ]; then
-  if [ ! -f "$(dirname "$cfg")/peer-lan-onboarding-declined" ]; then
-    echo "[credo-peer-lan] credo can now connect Claude Code sessions across your machines on the home LAN (no cloud). In an interactive session ask the user once (Ask tool) whether to set it up (guided, /credo:peer-lan Setup flow); if they decline, run \`\${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py onboarding --decline\` so this is never offered again. In autonomous mode do not ask. Ask and explain in the user's language (the language of the conversation); fall back to English if unknown or unsure."
-  fi
-  exit 0                         # no config -> the relay is a no-op, start nothing
-fi
-
 script="${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py"
 [ -f "$script" ] || exit 0
 
 to5=""
 command -v timeout >/dev/null 2>&1 && to5="timeout 5"
+
+# Onboarding context for the AGENT (SessionStart stdout = injected context; this hook
+# never prompts). The lines stay English (agent-facing) but tell the agent to talk to
+# the user in the user's language, English fallback. Cheap: one config-only daemon call,
+# never network detection. The daemon resolves THE machine config (one relay per machine)
+# and says whether this profile is served by it; the second field is that config's
+# directory, where the relay state (pidfile, log, pairing keys) lives.
+#   not-configured  no machine config, not declined -> offer the guided setup once
+#   unserved        a machine config exists, this profile is not served -> offer to add
+#                   this profile to it (never a second config or relay in this profile)
+#   unbound         served, no network bound (legacy / after the 0.72 upgrade) -> DISABLED note
+#   bound           served and bound -> say nothing
+#   declined        this profile declined the offer -> say nothing
 # shellcheck disable=SC2086  # $to5 is an intentional optional command prefix
-state="$($to5 "$script" onboarding --state 2>/dev/null | tail -n1)"
-if [ "$state" = "unbound" ]; then
+out="$($to5 "$script" onboarding --state --dir 2>/dev/null | tail -n1)"
+state="${out%% *}"
+mdir="${out#* }"
+[ "$mdir" = "$out" ] && mdir=""
+profile="$(basename "$cfgdir")"
+if [ "$state" = "not-configured" ]; then
+  echo "[credo-peer-lan] credo can now connect Claude Code sessions across your machines on the home LAN (no cloud). One relay serves every Claude Code profile of this machine, so the setup asks which profiles to serve (default: all found). In an interactive session ask the user once (Ask tool) whether to set it up (guided, /credo:peer-lan Setup flow); if they decline, run \`\${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py onboarding --decline\` so this is never offered again. In autonomous mode do not ask. Ask and explain in the user's language (the language of the conversation); fall back to English if unknown or unsure."
+fi
+if [ "$state" = "unserved" ]; then
+  echo "[credo-peer-lan] This Claude Code profile ($profile) is not served by the LAN relay of this machine (one relay per machine; its config lives in $mdir). Do not set up a second config or relay here. In an interactive session ask the user once (Ask tool) whether this profile should be served too; if yes, run \`\${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py profiles add $profile\`; if no, run \`\${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py onboarding --decline\` so this is never offered again. In autonomous mode do not ask. Ask and explain in the user's language (the language of the conversation); fall back to English if unknown or unsure."
+fi
+if [ "$state" = "unbound" ] && { [ -z "$mdir" ] || [ "$mdir" = "$cfgdir/credo" ]; }; then
   echo "[credo-peer-lan] The LAN relay is DISABLED: no network is bound yet (new allowlist + network binding since credo 0.72). In an interactive session offer the user the guided setup from /credo:peer-lan (Setup flow) via the Ask tool; in autonomous mode do not ask, just mention it in the next report. Ask and explain in the user's language (the language of the conversation); fall back to English if unknown or unsure."
 fi
+
+# A served profile that does not hold the machine config is never offered the setup again:
+# the holder profile offers it. Only an informational note here.
+if [ "$state" = "unbound" ] && [ -n "$mdir" ] && [ "$mdir" != "$cfgdir/credo" ]; then
+  echo "[credo-peer-lan] The machine LAN relay is DISABLED: no network is bound yet. Its config lives in another profile ($mdir), where the setup belongs. Do not offer the LAN setup in this profile; mention the state only when the user asks about LAN peers. Explain in the user's language (the language of the conversation); fall back to English if unknown or unsure."
+fi
+
+# Only a SERVED profile (unbound or bound) starts the machine relay here; anything else
+# (declined, unserved, not configured) ends the hook. The fallback dir only matters when
+# the daemon did not answer at all.
+case "$state" in
+  unbound|bound) ;;
+  *) exit 0 ;;
+esac
+[ -n "$mdir" ] || mdir="$cfgdir/credo"
 
 # Pairing repair pending (the relay refused a new peer id at the address of a paired
 # peer, a paired peer at another address, or a relay without pairing support at a
 # paired address, and recorded it): tell the agent, never accept it on its own.
 # Reads one file.
-pending="$(dirname "$cfg")/peer-lan-keys/pending-repair.json"
+pending="$mdir/peer-lan-keys/pending-repair.json"
 if [ -s "$pending" ] && grep -q '"slot"' "$pending" 2>/dev/null; then
   echo "[credo-peer-lan] A LAN peer pairing repair is pending: the relay saw an unexpected key or address change (a new id at the address of a paired peer, a paired peer at another address, or a relay without pairing support at a paired address) and refused it. Run \`\${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py pairs\` and tell the user; run the pair-reset command it prints only after the user confirmed (Ask tool) that this peer really was reinstalled, reset or moved (or that the older relay really lives at that address). In autonomous mode never run it, just mention it in the next report. Explain in the user's language (the language of the conversation); fall back to English if unknown or unsure."
 fi
 
-mkdir -p "$cfgdir/credo" 2>/dev/null || true
+mkdir -p "$mdir" 2>/dev/null || true
 
 # Start detached via `ensure` so the hook returns at once and never blocks session
 # start. ensure itself decides running/replace/start (reading the daemon's pidfile) and
 # the daemon's bind-retry guards concurrent starts, so no pgrep pre-check is needed: a
 # current/newer daemon is left alone, an older one (after cc-up) is replaced, and a
 # losing racer exits 0 without disturbing the incumbent.
-nohup "$script" ensure >>"$cfgdir/credo/peer-lan.log" 2>&1 &
+nohup "$script" ensure >>"$mdir/peer-lan.log" 2>&1 &
 disown 2>/dev/null || true
 
 # WSL only: refresh the Windows portproxy so the just-started daemon is reachable from

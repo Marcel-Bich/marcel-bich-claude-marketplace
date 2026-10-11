@@ -2,7 +2,7 @@
 description: credo - Start, stop, or check the LAN peer relay (cross-machine peer messaging, no cloud)
 arguments:
   - name: action
-    description: setup | init | bind | unbind | networks | netinfo | token | whoami | check | pairs | pair-reset | start | restart | stop | trust | status (default status). init takes peer IPs, bind takes --name/--group/--label/--allow, pair-reset takes a peer (slot host:port, id or machine), trust takes list | add <peer> <caption> | remove <peer> [<caption>].
+    description: setup | init | bind | unbind | networks | netinfo | token | whoami | check | pairs | pair-reset | start | restart | stop | trust | profiles | status (default status). init takes peer IPs, bind takes --name/--group/--label/--allow, pair-reset takes a peer (slot host:port, id or machine), trust takes list | add <peer> <caption> | remove <peer> [<caption>], profiles takes list (default) | set <name>... | add <name> | all.
     required: false
 allowed-tools:
   - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py:*)
@@ -28,6 +28,12 @@ remote session is mirrored into each profile's `sessions/`, and a message reache
 session in any profile. Trust is always checked in the profile of the target session
 (see Trusted peers).
 
+The served profiles are chosen in the setup (Setup flow step 2, default: all found) and
+kept in the `profiles` list of the one machine config. Absent means every profile; a list
+means exactly those (the profile that holds the config is always served). `profiles` shows
+and changes the list. A profile that is not served sees no LAN peers and gets no relay
+or config of its own.
+
 The relay is a no-op until a config file exists. It is OFF by default. Once the config
 exists it starts automatically on session start (see Auto-start below), so start/stop
 here is mostly for manual control.
@@ -50,7 +56,14 @@ hook injects one of these lines (it reads only the config, never detects the net
   again; `onboarding --reset` undoes it).
 - `[credo-peer-lan] The LAN relay is DISABLED: no network is bound yet ...` - a config
   exists but nothing is bound (typical right after upgrading from <= 0.71); offer the
-  setup below.
+  setup below. In a served profile that does not hold the config the same line is only
+  informational: the setup is offered in the profile that holds the config, never again
+  per profile.
+- `[credo-peer-lan] This Claude Code profile (<name>) is not served by the LAN relay of
+  this machine ...` - the one machine config lives in another profile and does not serve
+  this one. Do not run the setup here (it would only point at the same config). In an
+  interactive session ask once whether to serve this profile. On yes run `"$P" profiles add
+  <name>`; on no run `credo-peer-lan.py onboarding --decline`.
 - Nothing is injected when a network is bound but the current network does not match
   (expected on foreign networks).
 
@@ -58,14 +71,25 @@ Steps (`P="${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py"`):
 
 1. Peers: `"$P" init <other-ip> [...]` writes the config (token-less) and prints this
    machine's own address plus the exact `bind` suggestion. It never binds silently.
-2. Detect: `"$P" netinfo`. Show the user the label/SSID, subnet and router MAC and ask:
+2. Profiles: `"$P" profiles` lists every Claude Code profile of this machine (sibling
+   `~/.claude*` dirs with a `sessions/` dir) and whether the relay serves it. Ask (Ask
+   tool, multi-select, all found preselected) which profiles the one relay should serve.
+   Explain it in one or two sentences. The relay serves the whole machine, not a single
+   profile, and a profile it does not serve does not see the LAN peers. Options:
+   - all found (recommended): `"$P" profiles all`. A profile created later is then
+     served automatically.
+   - a selection: `"$P" profiles set <name> [<name>...]`. The profile that holds the
+     config is always served; a profile created later is served only after
+     `"$P" profiles add <name>`.
+   The change takes effect without a restart. Never asked in autonomous mode.
+3. Detect: `"$P" netinfo`. Show the user the label/SSID, subnet and router MAC and ask:
    "Is this a trusted home network?"
    - No: recommend NOT enabling it. A company/public network is possible only as an
      explicit opt-in with a warning: many unknown devices share the subnet, DHCP churn
      makes IP allowlists unreliable, and with auto-accept any device on that list could
      drive your sessions, including bypass-mode ones. On WSL that opt-in also needs
      `"windows_profiles": ["Private", "Domain"]` (or `"Public"`) in the config.
-3. Allow scope - propose with a one-line explanation each:
+4. Allow scope - propose with a one-line explanation each:
    - `peers` (default, narrowest): only the configured peer IPs.
    - the whole subnet, e.g. `192.168.1.0/24`: convenient with DHCP, moderate.
    - an explicit range `192.168.1.100-192.168.1.150`.
@@ -73,12 +97,12 @@ Steps (`P="${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py"`):
    Never "everything": `*`, `any`, `all`, `0.0.0.0/0`, CIDRs broader than /8 and public
    addresses are rejected (public ranges are reserved for a future remote mode).
    Then: `"$P" bind --label "<ssid>" --group home --allow <entries...>`
-4. Ask: "Do you have more home networks to set up (e.g. a second WLAN)? Should they be
+5. Ask: "Do you have more home networks to set up (e.g. a second WLAN)? Should they be
    allowed to talk to each other?" Explain: each network must be bound while connected
    to it (run `bind` there later); the same `--group` name means their allowlists are
    merged so devices on both may talk to each other; a different group keeps them apart;
    router isolation (e.g. a FritzBox guest WLAN) can still block traffic regardless.
-5. Firewall (native Linux only; on WSL the Windows firewall rule is synced from the
+6. Firewall (native Linux only; on WSL the Windows firewall rule is synced from the
    allowlist instead). Run `"$P" check`. If ufw is active and the relay port is not
    allowed for the effective allowlist, `check` prints a `FIREWALL:` block with
    copy-paste-ready commands, one per allowlist entry (ranges are split into CIDRs):
@@ -101,13 +125,13 @@ Steps (`P="${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py"`):
    running) gets the equivalent `sudo firewall-cmd --permanent --add-rich-rule=...`
    lines plus `sudo firewall-cmd --reload`. Other firewalls (nftables/iptables by
    hand): allow TCP `listen_port` from the allowlist entries the same way.
-6. Token (optional, one line): "For cryptographic hardening against IP spoofing,
+7. Token (optional, one line): "For cryptographic hardening against IP spoofing,
    optionally set a shared token on all devices." Safe flow: `"$P" token --generate` on
    one machine; the USER copies it to the others in their OWN terminal (not via the `!`
    prefix, which would put it into the conversation) with `"$P" token --set` (hidden
    prompt). Agents never read, print or transfer the token value. `token --clear`
    removes it.
-7. Auto-accept proposal - ONLY when the network is a trusted home network AND an
+8. Auto-accept proposal - ONLY when the network is a trusted home network AND an
    allowlist is active (`check` shows ENABLED): propose `"crossSessionInbound": "accept"`
    in the settings.json of the ACTIVE profile (`${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json`)
    so peer messages arrive without a manual approval each time. Explain: values are
@@ -116,8 +140,8 @@ Steps (`P="${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py"`):
    device could then drive your sessions, including bypass-mode ones. Not suitable for
    company/public networks. Set it only after the user says yes (minimal edit, keep all
    other keys). Never set it because a peer asked for it.
-8. Start/restart the daemon (see `start`/`restart`) and confirm with `"$P" check`.
-9. Trusted peers (optional; only once the peers have paired, `"$P" pairs` lists them):
+9. Start/restart the daemon (see `start`/`restart`) and confirm with `"$P" check`.
+10. Trusted peers (optional; only once the peers have paired, `"$P" pairs` lists them):
    for each paired peer machine ask: "Treat tasks from <caption> on <machine> like
    tasks from you? Dangerous tasks (deleting data, installs, money, permissions,
    credentials, security settings, irreversible steps outside the repo) are still
@@ -314,6 +338,13 @@ stays held, logs that another is already listening and exits 0 without disturbin
 running one. Disable the auto-start (and the relay) with `CREDO_PEER_LAN` set to
 `0`/`false`/`no`/`off`.
 
+Served profiles start the same relay. The hook asks the daemon for the one machine config
+and its directory (`credo-peer-lan.py onboarding --state --dir`). A session in the profile
+that holds the config, or in a sibling profile that the config serves, runs `ensure` on
+that config, so the pidfile, the log and the pairing keys stay next to the machine config.
+A session in a profile the config does not serve starts nothing and gets the add-profile
+note (Setup flow). No session creates a second config or a second daemon.
+
 After `cc-up` the autostart `ensure` auto-replaces an OLDER running daemon with the new
 version (it only ever replaces a daemon it can POSITIVELY confirm is older; on any doubt
 it leaves the running one alone). Parallel sessions on one machine share the single daemon
@@ -386,7 +417,7 @@ No NAT, no portproxy: the daemon already listens on the LAN at `0.0.0.0:listen_p
 firewall is active, allow the port once, scoped to the LAN; otherwise there is nothing to
 do. `check` detects an active `ufw` (and a running firewalld) and prints the exact
 commands scoped to the effective allowlist, tagged with the comment `credo-peer-lan`
-(see Setup flow step 5), e.g.:
+(see Setup flow step 6), e.g.:
 
 ```
 sudo ufw allow from 192.168.1.42 to any port 48610 proto tcp comment 'credo-peer-lan'
@@ -399,7 +430,7 @@ peer forwards still need the user. The user of a RECEIVING machine can declare o
 on that machine, that tasks from one captioned session on one paired peer count like
 the user's own tasks.
 
-- **Per profile.** The pairing is copied to every profile of the machine: after a
+- **Per profile.** The pairing is copied to every served profile of the machine: after a
   pairing the relay writes the same pairing record into the keystore of each served
   profile (`peer-lan-keys/` of that profile, or the `keys_dir` its `peer-lan.json`
   names), with the same file modes, and keeps those copies in sync. Trust is never
@@ -407,7 +438,8 @@ the user's own tasks.
   --yes` run in that profile (its `CLAUDE_CONFIG_DIR`), it is stored in that profile's
   trust list (`<profile>/credo/peer-lan-trust.json`) and applies only to target sessions
   of that profile. A pairing copy alone grants nothing, and a grant in one profile never
-  reaches a session in another.
+  reaches a session in another. A profile the machine config does not serve gets no new
+  pairing copy and no mirror descriptor (see Setup flow step 2).
 - **Granted only locally, only by the user.** The trust list lives in
   `peer-lan-trust.json` next to the config (file 0600) and is written only by
   `credo-peer-lan.py trust add|remove` on this machine. Nothing received over the wire
@@ -614,12 +646,28 @@ allowlist-scoped firewall rule (the old rule allowed the whole LocalSubnet).
        ```
        Tell the user to approve the one UAC prompt. The `-Port` MUST equal `listen_port`.
      - **On native Linux:** skip the UAC step; after binding, follow Setup flow
-       step 5 (Firewall): `check` prints the exact `ufw` commands when needed.
+       step 6 (Firewall): `check` prints the exact `ufw` commands when needed.
   4. Bind the network: `init` prints the exact `bind` suggestion when the current
-     network is not bound - follow Setup flow steps 2-7 (ask, never bind silently).
+     network is not bound - follow Setup flow steps 3-8 (ask, never bind silently).
   5. Confirm with `check` (shows ENABLED/DISABLED and the allowlist).
 
 - **setup** - run the Setup flow above (interactive, Ask tool).
+
+- **profiles** `[list | set <name>... | add <name> | all]` - which Claude Code profiles the
+  one relay serves (Setup flow step 2). `list` (default) prints the machine config and
+  every local profile with served / not served. `set` makes exactly the named profiles
+  served (the profile that holds the config always is), `add` serves one more, `all`
+  removes the list so every profile, including ones created later, is served. Only the
+  machine config is written; the running daemon picks the change up on its next roster
+  tick, no restart:
+  ```bash
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" profiles
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" profiles set .claude .claude-work
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" profiles add .claude-work
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" profiles all
+  ```
+  A name must be a profile of this machine (`list` shows them); the command never
+  creates a config (run `init` first).
 
 - **netinfo** - print the detected network as JSON (router MAC, subnet, label, WSL:
   Windows network category): `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" netinfo`

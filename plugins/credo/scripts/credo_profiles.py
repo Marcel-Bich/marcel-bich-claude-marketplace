@@ -56,9 +56,11 @@ def _sessions_ok(cfg, home_real, uid):
     return real is not None and _inside(real, home_real)
 
 
-def profile_dirs(own=None, home=None, uid=None):
+def profile_dirs(own=None, home=None, uid=None, allowed=None):
     """Config dirs of every local profile: the own dir first (always, as given), then
     the sibling ~/.claude* profiles in home that pass the rule in the module docstring.
+    allowed, when given, is the list of sibling basenames to keep (the relay's profiles
+    list); None keeps every discovered sibling. The own dir is always kept.
     A profile is listed once: a config dir with the same real path as one already
     listed is skipped, and so is one whose sessions/ dir has the same real path as the
     sessions/ dir of a profile already listed (the own sessions/ may be a symlink to a
@@ -77,6 +79,8 @@ def profile_dirs(own=None, home=None, uid=None):
     for name in names:
         if not name.startswith(".claude"):
             continue
+        if allowed is not None and name not in allowed:
+            continue
         cand = os.path.join(home_real, name)
         real = _owned_real_dir(cand, uid)
         if real is None or not _inside(real, home_real) or real in seen:
@@ -92,6 +96,6 @@ def profile_dirs(own=None, home=None, uid=None):
     return out
 
 
-def sessions_dirs(own=None, home=None, uid=None):
+def sessions_dirs(own=None, home=None, uid=None, allowed=None):
     """The sessions/ dir of every profile from profile_dirs(), same order."""
-    return [os.path.join(p, "sessions") for p in profile_dirs(own, home, uid)]
+    return [os.path.join(p, "sessions") for p in profile_dirs(own, home, uid, allowed)]
