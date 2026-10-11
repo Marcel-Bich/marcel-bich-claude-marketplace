@@ -28,8 +28,8 @@ A PreToolUse hook (`hooks/hooks.json`, logic in `scripts/worktree-guard.py`) kee
 
 - The Agent (or Task) tool with `isolation: "worktree"` is denied.
 - `EnterWorktree` without a `path` is denied (it creates a worktree). With a `path` it enters an existing worktree and creates nothing, so it is allowed.
-- `git worktree add` in command position (also after `cd`, with `git -C`, after `NAME=value` assignments or in a `&&`, `;` or `|` chain) is denied unless the destination is `../<repo>-worktrees/<name>` next to the main checkout. Shell variables and globs in the destination are denied too, and so is an unparseable command (unbalanced quotes) that still contains `git ... worktree add` after heredoc bodies are removed; write the path literally.
-- Comments, heredoc bodies and quoted text are not commands and are not checked, so `echo "git worktree add ..."`, a commit message passed by heredoc or a `# git worktree add ...` comment are allowed.
+- `git worktree add` in command position (also after `cd`, with `git -C`, after `NAME=value` assignments or in a `&&`, `;` or `|` chain) is denied unless the destination is `../<repo>-worktrees/<name>` next to the main checkout. Shell variables and globs in the destination are denied too; write the path literally. Redirects around the destination are skipped, and a command that cannot be parsed (unbalanced quotes) is allowed.
+- Only `git` in command position counts. Text in comments, in `echo` arguments and in a `git commit -F -` heredoc message is not checked, so `echo "git worktree add ..."` and a `# git worktree add ...` comment are allowed.
 
 The deny message names the flow to use: `/hydra:create <name>`, or `git worktree add -b hydra/<name> ../<repo>-worktrees/<name>` followed by `scripts/worktree-setup.sh`. The guard fails open (an internal error allows the call), needs python3 and makes no network calls.
 

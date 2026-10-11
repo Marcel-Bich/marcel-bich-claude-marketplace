@@ -146,6 +146,14 @@ check "orphan with sibling path denied" deny \
 check "no destination allowed" allow "$(bash_v "$PROJ" 'git worktree add -b hydra/x')"
 check "redirects after the path allowed" allow \
     "$(bash_v "$PROJ" 'git worktree add ../proj-worktrees/r > /dev/null 2>&1')"
+check "fd redirect before the destination allowed" allow \
+    "$(bash_v "$PROJ" 'git worktree add 2>/dev/null ../proj-worktrees/x')"
+check "fd dup before the destination allowed" allow \
+    "$(bash_v "$PROJ" 'git worktree add 2>&1 ../proj-worktrees/y')"
+check "stdout redirect before the destination allowed" allow \
+    "$(bash_v "$PROJ" 'git worktree add >/dev/null ../proj-worktrees/z')"
+check "fd redirect before a sibling destination denied" deny \
+    "$(bash_v "$PROJ" 'git worktree add 2>/dev/null ../other/x')"
 check "sibling after echo in a chain denied" deny \
     "$(bash_v "$PROJ" 'echo ok && git worktree add ../other/y')"
 check "second worktree add in a chain denied" deny \
@@ -160,7 +168,7 @@ check "variable in git -C denied" deny \
     "$(bash_v "$PROJ" 'git -C "$REPO" worktree add ../proj-worktrees/x')"
 check "variable in cd denied" deny \
     "$(bash_v "$PROJ" 'cd "$WD" && git worktree add ../proj-worktrees/x')"
-check "unbalanced quote denied" deny "$(bash_v "$PROJ" 'git worktree add "../x')"
+check "unbalanced quote allowed (fail-open, bash does not run it either)" allow "$(bash_v "$PROJ" 'git worktree add "../x')"
 check "cd into a repo subfolder resolves the real destination" deny \
     "$(bash_v "$TMP" 'cd proj/sub && git worktree add ../proj-worktrees/d')"
 check "cd inside a subshell does not leak" allow \
@@ -195,6 +203,8 @@ check "commit message heredoc with apostrophe allowed" allow \
     "$(bash_v "$PROJ" $'git commit -F - <<\'EOF\'\nfix: don\'t drop git worktree add guard\nEOF')"
 check "unbalanced quote in heredoc body allowed" allow \
     "$(bash_v "$PROJ" $'git commit -F - <<\'EOF\'\nit\'s done\nEOF')"
+check "commit heredoc in double quotes, odd quote count, worktree add text allowed" allow \
+    "$(bash_v "$PROJ" $'git commit -m "$(cat <<\'EOF\'\nfix: say "git worktree add ../other/x" was denied, then "quote\nEOF\n)"')"
 check "comment with git worktree add allowed" allow \
     "$(bash_v "$PROJ" '# example: git worktree add ../other/x')"
 check "echo of git worktree add allowed" allow "$(bash_v "$PROJ" 'echo git worktree add ../other/x')"
@@ -210,7 +220,7 @@ check "wrapper word before git denied" deny "$(bash_v "$PROJ" 'env git worktree 
 check "pipe into git worktree add denied" deny "$(bash_v "$PROJ" 'echo x | git worktree add ../other/x')"
 check "if-wrapped git worktree add denied" deny \
     "$(bash_v "$PROJ" 'if git worktree add ../other/x; then :; fi')"
-check "unparseable text with git worktree add denied" deny \
+check "unparseable text with git worktree add allowed (fail-open)" allow \
     "$(bash_v "$PROJ" 'echo "oops" ; git worktree add ../other/x ; echo "unclosed')"
 check "unparseable text without git worktree add allowed" allow \
     "$(bash_v "$PROJ" 'echo "unclosed worktree add')"

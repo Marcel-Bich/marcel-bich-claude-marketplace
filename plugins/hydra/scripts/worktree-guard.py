@@ -41,7 +41,6 @@ GIT_VALUE_OPTS = {"-c", "--git-dir", "--work-tree", "--namespace", "--config-env
 NON_LITERAL = re.compile(r"[$`*?\[\]{}]")
 ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 COMMENT_START = " \t\n;&|()"
-UNPARSED_GIT = re.compile(r"\bgit\b.*\bworktree\s+add\b", re.S)
 
 PREFIX = ("hydra: every worktree goes through hydra while hydra is installed and the Hydra "
           "checkbox in DOGMA-PERMISSIONS.md is on (default). ")
@@ -58,8 +57,6 @@ REASON_NON_LITERAL = (PREFIX + "git worktree add with a destination that uses sh
                       "or expansions cannot be checked. " + HOW)
 REASON_UNKNOWN_DIR = (PREFIX + "git worktree add runs in a directory that cannot be resolved literally "
                       "(cd or git -C with a variable). Run it from the repo root without variables. " + HOW)
-REASON_UNPARSED = (PREFIX + "git worktree add could not be parsed (unbalanced quotes?). "
-                   "Write the command plainly. " + HOW)
 
 
 def deny(reason):
@@ -349,6 +346,9 @@ def add_path(args):
     positionals, has_branch, orphan, opts_done, k = [], False, False, False, 0
     while k < len(args):
         tok = args[k]
+        if tok.isdigit() and k + 1 < len(args) and args[k + 1] in REDIRECTS:
+            k += 1  # fd number of a redirect (2>/dev/null), the redirect itself is skipped next
+            continue
         if tok in REDIRECTS:
             k += 2
             continue
@@ -390,9 +390,7 @@ def check_bash(command, cwd):
     try:
         tokens = tokenize(code)
     except ValueError:
-        if UNPARSED_GIT.search(code) and hydra_on(cwd):
-            return deny(REASON_UNPARSED)
-        return None
+        return None  # fail open: bash refuses an unterminated quote as well
     for dest, args in scan(tokens, cwd):
         path = add_path(args)
         if path is None:
