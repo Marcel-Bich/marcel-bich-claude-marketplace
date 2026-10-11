@@ -8,9 +8,11 @@ Protected (never deletable, moved away or symlinked onto):
   - /, every first-level directory, /tmp itself
   - /home, /home/X, /home/X/Y          (depth 0-2 below /home)
   - $HOME, its parent, $HOME/X         (depth 0-1 below the home)
-  - /mnt and /media: the mount point, the drive and the first level below it, a Windows user profile
-    root and its first level, Windows system/persistence/profile paths and declared mounts; deeper
-    files there are ordinary (file-protection.sh and the permissions decide)
+  - /mnt and /media, whatever the filesystem (Windows drive, network share, USB stick): every path down
+    to depth 3 (/mnt, /mnt/d, /mnt/d/data, /mnt/nas/share, /media/usb/folder), a Windows user profile root
+    and its first level, Windows system/persistence/profile paths and declared mounts (whole subtree);
+    deeper files there are ordinary (file-protection.sh and the permissions decide). bash-guard.py also
+    refuses a mount point at any depth, from /proc/self/mounts
   - every other absolute path outside the temp roots (/tmp/X+, /var/tmp/X+, $TMPDIR/X+, the Windows temp folders)
 Every target is RESOLVED before the check: ~ and $HOME are expanded, relative paths
 are joined to the working directory (including a preceding `cd`), symlinks are
@@ -113,10 +115,11 @@ def temp_root_of(path):
 def mount_path_dangerous(p):
     """True when a path below /mnt or /media (WSL drives, shares, removable media) must never be deleted.
 
-    Protected: the mount point, the drive and the first level below it (/mnt/d, /mnt/d/data, /media/usb/x),
-    a Windows user profile root and its first level (/mnt/c/Users/<name>[/<x>], the /home rule), the Windows
-    system, persistence and profile paths (windows_critical) and anything inside a declared mount. Deeper
-    files are ordinary: file-protection.sh and the permissions decide."""
+    The same rule for every filesystem type: protected are the paths down to depth 3 (/mnt/d, /mnt/d/data,
+    /mnt/nas/share, /media/usb/folder), a Windows user profile root and its first level
+    (/mnt/c/Users/<name>[/<x>], the /home rule), the Windows system, persistence and profile paths
+    (windows_critical) and anything inside a declared mount. Deeper files are ordinary: file-protection.sh
+    and the permissions decide."""
     parts = p.split("/")[1:]
     if len(parts) <= 3 or declared_mount(p):
         return True

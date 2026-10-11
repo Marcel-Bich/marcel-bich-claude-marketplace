@@ -114,7 +114,7 @@ CASES = (
     (100, 'BYPASS', 'deny', 'X', 'Bash', 'umount -l /mnt/nas/share'),
     (101, 'BYPASS', 'deny', 'X', 'Bash', 'rm -rf ~/clouddrive/Sync'),
     (102, 'BYPASS', 'deny', 'X', 'Bash', 'rm -rf {H}/clouddrive/Sync/Notes'),
-    (103, 'BYPASS', 'deny', 'X', 'Bash', 'rm -rf /mnt/nas/share/backup'),
+    (103, 'MOUNT', 'allow', 'X', 'Bash', 'rm -rf /mnt/nas/share/backup'),
     (104, 'BYPASS', 'deny', 'X', 'Bash', 'rm -rf /mnt/c/Users/{U}'),
     (105, 'BYPASS', 'deny', 'X', 'Bash', 'rm -rf /mnt/c/Users/{U}/Documents'),
     (106, 'BYPASS', 'deny', 'X', 'Bash', 'rm -rf {H}/workspace/worktrees/cx-d1'),

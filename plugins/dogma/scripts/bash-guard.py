@@ -1195,34 +1195,41 @@ def brace_expand(word, limit=64, strict=False):
     return results or [word]
 
 
-def windows_drive(fields):
-    """A Windows drive of WSL (drvfs over 9p) mounted below /mnt or /media, given its /proc/self/mounts fields."""
-    return len(fields) > 2 and fields[2] in ("9p", "drvfs") and fields[1].startswith(("/mnt/", "/media/"))
-
-
 def mount_points():
-    """Mount points below the home, /mnt and /media (their subtrees are protected from deletes), and the
-    declared mounts. Windows drives below /mnt are left out: delete-guard.py protects them by depth, Windows
-    paths and declared mounts (is_dangerous), so project files on a drive stay deletable like any other file.
-    Network shares and other mounts keep their subtree protection."""
-    points = []
+    """Mounts that protect deletes, as (point, whole) pairs.
+
+    A mount below the home and a declared mount (CLAUDE_MB_DOGMA_PROTECTED_MOUNTS) protect their whole
+    subtree (whole=True). A mount below /mnt or /media protects only its mount point (whole=False), whatever
+    its filesystem: a Windows drive over 9p, a network share or a USB stick. The levels above it are refused by
+    the depth rule of delete-guard.py, and the files deeper inside are ordinary project files."""
+    found = []
     try:
         with open("/proc/self/mounts", encoding="utf-8", errors="replace") as handle:
             for line in itertools.islice(handle, 4096):
                 fields = line.split()
-                if len(fields) > 1 and not windows_drive(fields):
-                    points.append(fields[1].replace("\\040", " "))
+                if len(fields) > 1:
+                    found.append(fields[1].replace("\\040", " "))
     except OSError:
-        points = []
-    extra = os.environ.get("CLAUDE_MB_DOGMA_PROTECTED_MOUNTS") or ""
-    points += [os.path.normpath(point) for point in extra.split(":") if point.startswith("/")]
+        found = []
     user_home = home()
-    return [point for point in points if point.startswith(("/mnt/", "/media/"))
-            or (_inside(point, user_home) and point != user_home)]
+    points = []
+    for point in found:
+        if _inside(point, user_home) and point != user_home:
+            points.append((point, True))  # below the home, also when the home itself sits below /mnt or /media
+        elif point.startswith(("/mnt/", "/media/")):
+            points.append((point, False))
+    extra = os.environ.get("CLAUDE_MB_DOGMA_PROTECTED_MOUNTS") or ""
+    for point in extra.split(":"):
+        if point.startswith("/"):
+            point = os.path.normpath(point)
+            if point.startswith(("/mnt/", "/media/")) or (_inside(point, user_home) and point != user_home):
+                points.append((point, True))
+    return points
 
 
 def mounted(path):
-    return any(_inside(path, point) for point in mount_points())
+    """True when path is a protected mount point, or lies inside a mount whose whole subtree is protected."""
+    return any(_inside(path, point) if whole else path == point for point, whole in mount_points())
 
 
 def repository_root(path):

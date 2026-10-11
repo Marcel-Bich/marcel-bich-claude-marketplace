@@ -17,7 +17,9 @@ A unit table ("unit") runs the bash-guard -> delete-guard hand-over in process w
 literal working directory below /home/ (no directory is created), so the legacy text
 patterns are proven to see only the command, never the generated "cd <dir>" lines. The
 same table checks that remote URL denials name the installed git-scope.sh, both in
-bash-guard.py and in the token-protection.sh fallback that runs without python3.
+bash-guard.py and in the token-protection.sh fallback that runs without python3. The mount table
+(MOUNT_CASES) runs the bash-guard hook in process with MOUNTS_FIXTURE in place of /proc/self/mounts,
+so network shares, USB sticks and mounts below the home are decided the same on every machine.
 
 The fp table holds false positives (must pass) next to the protection that must
 stay (must be blocked), plus Edit/Write inputs that no Edit/Write hook may treat as a deletion.
@@ -116,7 +118,7 @@ class Runner:
         self.root, self.home, self.dirs = root, home, dirs
         self.scripts = plugin / "scripts"
         self.codex_home = home / ".codex"
-        mounts = [str(home / "clouddrive"), "/mnt/nas/share", "/mnt/c"]
+        mounts = [str(home / "clouddrive"), "/mnt/vault", "/mnt/c"]
         env = {key: value for key, value in os.environ.items()
                if not key.startswith(("CLAUDE_MB_DOGMA", "DOGMA_", "CLAUDE_CODE_SESSION", "GIT_"))}
         env.update({"HOME": str(home), "CODEX_HOME": str(self.codex_home), "USER": USER,
@@ -341,6 +343,89 @@ def unit_perf():
     return results
 
 
+# /proc/self/mounts as bash-guard.py reads it. The real table differs per machine, so the hook
+# reads this fixture instead (HOMEDIR is the fake home). Invented names only.
+MOUNTS_FIXTURE = (
+    "proc /proc proc rw,nosuid 0 0\n"
+    "//fileserver/share /mnt/nas/share cifs rw,relatime 0 0\n"
+    "//fileserver/deep /mnt/nas/deep/share cifs rw,relatime 0 0\n"
+    "/dev/sdb1 /media/usb vfat rw,nosuid 0 0\n"
+    "drvfs /mnt/c 9p rw,noatime,aname=drvfs;path=C:;uid=1000 0 0\n"
+    "rclone:gdrive HOMEDIR/gdrive fuse.rclone rw,nosuid 0 0\n"
+)
+# (expected, command, CLAUDE_MB_DOGMA_PROTECTED_MOUNTS) run through the bash-guard hook in process;
+# {H} is the fake home. A network share or USB stick below /mnt or /media protects its mount point
+# (at any depth) and the levels down to depth 3; deeper files are ordinary. A mount below the home
+# and a declared mount protect their whole subtree.
+MOUNT_CASES = (
+    ("allow", "rm /mnt/nas/share/old/x.bin", ""),
+    ("allow", "rm -r /mnt/nas/share/tmpdir", ""),
+    ("allow", "rm -rf /media/usb/folder/x", ""),
+    ("deny", "rm -rf /mnt/nas", ""),
+    ("deny", "rm -rf /mnt/nas/share", ""),
+    ("deny", "rm -rf /media/usb", ""),
+    ("deny", "rm -rf /media/usb/folder", ""),
+    ("deny", "rm -rf /mnt/nas/deep/share", ""),
+    ("allow", "rm -r /mnt/nas/deep/share/old", ""),
+    ("allow", "rm -rf /mnt/c/Users/alice/workspace/proj/old", ""),
+    ("deny", "rm -rf /mnt/c", ""),
+    ("deny", "rm -rf {H}/gdrive", ""),
+    ("deny", "rm -rf {H}/gdrive/old/x.bin", ""),
+    ("deny", "rm -rf /mnt/vault/a/b/c/x", "/mnt/vault"),
+    ("allow", "rm -rf /mnt/vault2/a/b/c/x", "/mnt/vault"),
+    ("deny", "rm -rf /mnt/nas/share/old/x.bin", "/mnt/nas/share"),
+)
+
+
+def unit_mounts(runner):
+    """[(ok, line)]: the bash-guard hook with MOUNTS_FIXTURE in place of /proc/self/mounts."""
+    import contextlib
+    import importlib.util
+    import io
+    import time
+    spec = importlib.util.spec_from_file_location("dogma_bash_guard_mounts", HERE / "bash-guard.py")
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    fixture = MOUNTS_FIXTURE.replace("HOMEDIR", os.path.realpath(str(runner.home)))
+    real_open = open
+
+    def fake_open(path, *args, **kwargs):
+        if path == "/proc/self/mounts":
+            return io.StringIO(fixture)
+        return real_open(path, *args, **kwargs)
+
+    cwd = str(runner.dirs["X"])
+    keys = ("HOME", "CLAUDE_MB_DOGMA_PROTECTED_MOUNTS")
+    saved = {key: os.environ.get(key) for key in keys}
+    saved_stdin = sys.stdin
+    results = []
+    guard.open = fake_open
+    try:
+        os.environ["HOME"] = str(runner.home)
+        for expected, command, declared in MOUNT_CASES:
+            command = command.replace("{H}", str(runner.home))
+            os.environ["CLAUDE_MB_DOGMA_PROTECTED_MOUNTS"] = declared
+            event = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": cwd})
+            sys.stdin = io.StringIO(event)
+            out = io.StringIO()
+            guard.STARTED[0] = time.monotonic()
+            with contextlib.redirect_stdout(out):
+                guard.main()
+            reason = out.getvalue().strip()
+            got = "deny" if reason else "allow"
+            results.append((got == expected, "unit mounts (want %s got %s): %s%s" % (
+                expected, got, command, (" - " + reason) if reason else "")))
+    finally:
+        del guard.open
+        sys.stdin = saved_stdin
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    return results
+
+
 def main():
     verbose = "-v" in sys.argv
     only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
@@ -383,7 +468,8 @@ def main():
                 if not ok:
                     failed.append("FAIL " + line)
         if only in (None, "unit"):
-            for ok, line in unit_legacy_cwd() + unit_perf() + unit_scope_hint(runner) + unit_read_content(runner):
+            for ok, line in (unit_legacy_cwd() + unit_perf() + unit_scope_hint(runner) + unit_read_content(runner)
+                             + unit_mounts(runner)):
                 passed, total = counts.get("unit", (0, 0))
                 counts["unit"] = (passed + ok, total + 1)
                 if not ok:

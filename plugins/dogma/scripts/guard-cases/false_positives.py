@@ -503,12 +503,14 @@ CASES = (
     ("allow", "N", "echo x > /mnt/c/Users/me/Downloads/a/b.txt"),
     ("allow", "N", "echo x > /mnt/d/Windows-notes/a/b/c.txt"),
     # a mount that the user declares (CLAUDE_MB_DOGMA_PROTECTED_MOUNTS) is protected for redirects, at any depth
-    ("deny", "N", "echo x > /mnt/nas/share/a/b/c/x.txt"),
-    ("deny", "N", "echo x >> /mnt/nas/share/a/b/c/x.txt"),
-    ("deny", "N", "echo x | tee /mnt/nas/share/a/b/c/x.txt"),
-    ("deny", "N", "echo x | tee -a /mnt/nas/share/a/b/c/x.txt"),
+    ("deny", "N", "echo x > /mnt/vault/a/b/c/x.txt"),
+    ("deny", "N", "echo x >> /mnt/vault/a/b/c/x.txt"),
+    ("deny", "N", "echo x | tee /mnt/vault/a/b/c/x.txt"),
+    ("deny", "N", "echo x | tee -a /mnt/vault/a/b/c/x.txt"),
     ("deny", "N", "echo x > {H}/clouddrive/a/b/c/x.txt"),
-    ("deny", "N", "cat > /mnt/nas/share/a/b/c/x.txt " + HD + "\nnew\nEOF"),
+    ("deny", "N", "cat > /mnt/vault/a/b/c/x.txt " + HD + "\nnew\nEOF"),
+    # a network share that is not declared: redirects below it stay ordinary, its delete floor is separate
+    ("allow", "N", "echo x > /mnt/nas/share/a/b/c/x.txt"),
     ("allow", "N", "echo x > /mnt/nas/share2/a/b/c/x.txt"),
     ("allow", "N", "echo x > /mnt/nas/other/a/b/c/x.txt"),
     # python code that truncates or writes a startup file, from a heredoc like from -c
@@ -741,15 +743,24 @@ CASES = (
     # its first level, Windows system and profile paths and declared mounts stay refused
     ("allow", "X", "rm /mnt/d/data/proj/models/x.gguf"),
     ("allow", "X", "rm -r /mnt/d/data/proj/old"),
+    # a network share or USB stick (any filesystem, not declared here) is treated like a Windows drive: the
+    # mount point and the levels down to depth 3 stay refused, deeper files are ordinary
+    ("allow", "X", "rm /mnt/nas/share/old/x.bin"),
+    ("allow", "X", "rm -r /mnt/nas/share/tmpdir"),
+    ("allow", "X", "rm -rf /media/usb/folder/x"),
     ("deny", "X", "rm -rf /mnt/d/data"),
     ("deny", "X", "rm -rf /mnt/d"),
     ("deny", "X", "rm -rf /mnt"),
+    ("deny", "X", "rm -rf /mnt/nas"),
+    ("deny", "X", "rm -rf /mnt/nas/share"),
     ("deny", "X", "rm -rf /media/usb"),
+    ("deny", "X", "rm -rf /media/usb/folder"),
     ("deny", "X", "rm -rf /mnt/c/Windows/x"),
     ("deny", "X", "rm -rf /mnt/c/Users/alice/AppData/x"),
     ("deny", "X", "rm -rf /mnt/c/Users/alice/.ssh/x"),
     ("deny", "X", "rm -rf /mnt/c/Users/alice/Documents"),
-    ("deny", "X", "rm -rf /mnt/nas/share/a/b/c/x"),
+    # a declared mount (CLAUDE_MB_DOGMA_PROTECTED_MOUNTS) stays protected as a whole subtree
+    ("deny", "X", "rm -rf /mnt/vault/a/b/c/x"),
     ("deny", "X", "rm -rf /etc/x"),
     ("deny", "X", "rm -rf /opt/x/y/z"),
     ("deny", "N", "rm -rf /tmp/../home"),
