@@ -88,9 +88,13 @@ the security block):
   edge cases, bad input, failure paths, a second run) and lists in its report what it
   tried; for a tricky item it also measures against the acceptance measurement in the DoD
   and reports the value (credo `items`, Build-completion gate).
+- A builder receives only the universal-prompt and its stage's subagent-prompt, not the
+  mainagent-prompt. When it may decide agent-owned questions, the main agent appends the
+  output of `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-preset.sh" mainagent --field prompt` to the
+  brief (a repeated universal-prompt is harmless).
 - Questions that come up during the build follow the agent decision rule (credo `items`,
   "Clarify owner and the agent decision rule"): the builder decides uncritical ones itself
-  per the active mainagent-prompt and logs them in the item History; it returns
+  per the mainagent-prompt in its brief and logs them in the item History; it returns
   `{status: needs_decision, question}` only for the escalated ones (the user's taste or
   preference, deleting user data, installs, money, safety, a change to the verbatim
   requirement, and points the preset says to note and present). Items it creates (slices,
@@ -411,8 +415,9 @@ finding) in its brief. Then follow `next`:
 same failure twice without progress hands the item back.
 
 Back-to-human: move the item to `1_clarify` (`credo-item-move.sh <id> clarify`), put a
-`> URGENT: <blocker>` note at the top of its History, and send an ntfy push
-(`credo-ntfy-send.sh`, high priority). In an autonomous run, continue with the other items.
+`> URGENT: <blocker>` note at the top of its History, and send an ntfy push:
+`CREDO_NTFY_PRIORITY=high "${CLAUDE_PLUGIN_ROOT}/scripts/credo-ntfy-send.sh" -t "Back to human" "<id>: <blocker>"`.
+In an autonomous run, continue with the other items.
 In an attended session, surface it with the Ask tool as well.
 
 The main agent's own model is a recommendation only (`mainagent` in the preset); the user sets

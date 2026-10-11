@@ -34,7 +34,9 @@ task_backend: credo
 # templates/presets.default.yaml; show them with scripts/credo-preset.sh show.
 # The mainagent model and effort in a preset are a recommendation only; they do
 # not change your own /model and /effort.
-preset: balanced
+# The line stays commented out: no preset line means balanced, and a fresh global
+# config then shows the setup preset menu. /credo:setup writes the line once you choose.
+# preset: balanced
 # presets:            # custom preset example (same schema as the built-in ones)
 #   my-mix:
 #     mainagent: {model: claude-opus-5-5, effort: medium}

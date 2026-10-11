@@ -148,11 +148,11 @@ or `... optin no`. On Yes, run `/credo:optimize` once the remaining setup steps 
 
 ## Step 2d: Model Preset (Recommended)
 
-credo chooses the model and effort for every subagent from a model preset. Skip this step when `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" source preset` reports `global:` or `project:` (a preset is already chosen; offer a change only if the user asks). `builtin:` means nothing is chosen yet, so balanced applies.
+credo chooses the model and effort for every subagent from a model preset. Skip this step when `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" source preset` prints `global:` or `project:` (a preset is already chosen; offer a change only if the user asks). An empty result (exit 3, the key is unset) means nothing is chosen yet, so balanced applies and the menu is shown.
 
 1. Present the setup text below to the user, in the user's configured language (German when the user's language is German). Keep the preset names, model ids, effort values, YAML keys, command names and the author's experience quotes exactly as written; translate only the surrounding prose.
 2. Ask the choice with AskUserQuestion: `quality`, `balanced` (recommended), `budget`, or `custom` (the user describes it). In the same round ask where it applies: `global` (all projects, `~/.claude/credo/config`) or `this project only` (`.credo/config`).
-3. For a built-in preset, write `preset: <name>` into the chosen config file: replace the existing `preset:` line (the template has one) or append it. For a custom preset, first confirm the description with the user, then write it under `presets:` in the chosen file (insert it below an existing `presets:` line, or append a `presets:` block). Use the flow or block syntax of the built-in presets (`templates/presets.default.yaml`); never duplicate a top-level key.
+3. For a built-in preset, write `preset: <name>` into the chosen config file: replace an existing `preset:` line or append it (the shipped template has none). For a custom preset, first confirm the description with the user, then write it under `presets:` in the chosen file (insert it below an existing `presets:` line, or append a `presets:` block). Use the flow or block syntax of the built-in presets (`templates/presets.default.yaml`); never duplicate a top-level key.
 4. Verify with `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-preset.sh" show <name>`. Show any warning to the user and fix the entry until the helper reports none. Then `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-preset.sh" active` must print the chosen name.
 5. Tell the user that the main-agent prompt reaches the main agent at the next SessionStart or after `/compact`; subagents use the preset right away.
 
@@ -210,14 +210,12 @@ gets before the next stage takes over; "until-done" means no limit,
 What else you can do (examples)
 -------------------------------
 a) Your own instructions for the main agent and for every agent:
-   mainagent: {model: claude-opus-5-5, effort: medium,
-               mainagent-prompt: "KISS: simplest working solution, effort counts."}
+   mainagent: {model: claude-opus-5-5, effort: medium, mainagent-prompt: "KISS: simplest working solution, effort counts."}
    universal-prompt: "Answer in short sentences."
 
 b) A quick first check, then a thorough one (subagent-prompt per stage):
    review:
-     - {model: claude-haiku-5-5, effort: low, attempts: 1,
-        subagent-prompt: "Check only the surface and report back fast."}
+     - {model: claude-haiku-5-5, effort: low, attempts: 1, subagent-prompt: "Check only the surface and report back fast."}
      - {model: claude-haiku-5-5, effort: xhigh, attempts: 2}
 
 c) Escalate only the effort, not the model:
@@ -228,7 +226,8 @@ c) Escalate only the effort, not the model:
 
 d) No attempt limit (until-done; budget caps still stop, repeated
    failure without progress goes back to you):
-   hard: [{model: claude-opus-5-5, effort: medium, attempts: until-done}]
+   hard:
+     - {model: claude-opus-5-5, effort: medium, attempts: until-done}
 
 e) A different preset per project: put "preset: budget" into the
    project's .credo/config, keep "preset: balanced" globally.

@@ -58,7 +58,7 @@ err() { cat "$TMP/err" 2>/dev/null; }
 reset_cfg
 check "list builtins" "balanced budget quality" "$("$SUT" list 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
 check "active default is balanced" "balanced" "$("$SUT" active 2>/dev/null)"
-check "config get preset" "balanced" "$("$CFG" get preset 2>/dev/null)"
+check "config get preset: unset in the shipped template" "" "$("$CFG" get preset 2>/dev/null)"
 check "config get builtin preset model" "claude-opus-5-5" "$("$CFG" get presets.quality.hard.model 2>/dev/null)"
 contains "config paths lists presets builtin" "presets" "$("$CFG" paths 2>/dev/null)"
 
@@ -404,6 +404,59 @@ contains "setup: presets helper referenced" "credo-preset.sh\" show" "$(cat "$PL
 contains "session-init: mainagent comparison" "credo-preset.sh\" mainagent" "$(cat "$PLUGIN_DIR/commands/session-init.md")"
 contains "guide: presets documented" "credo-preset.sh" "$(cat "$PLUGIN_DIR/docs/credo-guide.md")"
 contains "README: presets documented" "## Model presets" "$(cat "$PLUGIN_DIR/README.md")"
+contains "orchestration: back-to-human push is high priority" 'CREDO_NTFY_PRIORITY=high "${CLAUDE_PLUGIN_ROOT}/scripts/credo-ntfy-send.sh"' "$(cat "$SKILLS/orchestration/SKILL.md")"
+contains "orchestration: builder brief carries the mainagent prompt" 'credo-preset.sh" mainagent --field prompt' "$(cat "$SKILLS/orchestration/SKILL.md")"
+contains "session-active: prints the mainagent prompt once" 'credo-preset.sh" mainagent --field prompt' "$(cat "$PLUGIN_DIR/commands/session-active.md")"
+contains "session-active: preset helper allowed" 'Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-preset.sh:*)' "$(cat "$PLUGIN_DIR/commands/session-active.md")"
+contains "session-init: prints the mainagent prompt" 'credo-preset.sh" mainagent --field prompt' "$(cat "$PLUGIN_DIR/commands/session-init.md")"
+contains "session-init: preset helper allowed" 'Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-preset.sh:*)' "$(cat "$PLUGIN_DIR/commands/session-init.md")"
+contains "setup: unset preset (exit 3) reads as nothing chosen" "exit 3, the key is unset" "$(cat "$PLUGIN_DIR/commands/setup.md")"
+lacks "setup: no builtin source wording" '`builtin:` means nothing' "$(cat "$PLUGIN_DIR/commands/setup.md")"
+
+# --- 12. fresh install: no preset line in the shipped template -> setup shows the menu
+reset_cfg
+"$CFG" ensure-global >/dev/null 2>&1
+check "fresh global has no preset line" "" "$(grep '^preset:' "$CREDO_GLOBAL" 2>/dev/null)"
+check "fresh install: preset source is unset" "" "$("$CFG" source preset 2>/dev/null)"
+check "fresh install: active is balanced" "balanced" "$("$SUT" active 2>/dev/null)"
+reset_cfg
+
+# --- 13. setup examples a) to d) parse with the stdlib YAML parser (no PyYAML) ---
+# Each example body becomes preset ex-<letter> and is shown with CREDO_CONFIG_STDLIB_YAML=1.
+ex_body() { # letter -> the YAML lines of example <letter>, 3-space indent removed
+    awk -v L="$1" '
+        /^What else you can do/ { on = 1 }
+        /^Which preset do you want/ { on = 0 }
+        on && $0 ~ ("^" L "\\) ") { inex = 1; body = 0; next }
+        /^[a-f]\) / { inex = 0 }
+        inex && !body && /^   [a-z-]+:/ { body = 1 }
+        inex && body && /^$/ { inex = 0; body = 0 }
+        inex && body { sub(/^   /, ""); print }
+    ' "$PLUGIN_DIR/commands/setup.md"
+}
+ex_show() { # letter -> readable dump of the example preset (stderr in $TMP/err)
+    mkdir -p "$(dirname "$CREDO_GLOBAL")"
+    {
+        printf 'preset: ex-%s\npresets:\n  ex-%s:\n' "$1" "$1"
+        ex_body "$1" | sed 's/^/    /'
+    } > "$CREDO_GLOBAL"
+    CREDO_CONFIG_STDLIB_YAML=1 "$SUT" show 2>"$TMP/err"
+}
+ex_out="$(ex_show a)"; check "setup example a: no invalid value" "" "$(grep -v 'not set in preset' "$TMP/err")"
+contains "setup example a: mainagent recommendation" "mainagent: claude-opus-5-5 / medium" "$ex_out"
+contains "setup example a: mainagent prompt read" "mainagent-prompt: KISS: simplest working solution, effort counts." "$ex_out"
+contains "setup example a: universal prompt read" "universal-prompt: Answer in short sentences." "$ex_out"
+ex_out="$(ex_show b)"; check "setup example b: no invalid value" "" "$(grep -v 'not set in preset' "$TMP/err")"
+contains "setup example b: quick first stage" "1. claude-haiku-5-5 / low, attempts 1" "$ex_out"
+contains "setup example b: thorough second stage" "2. claude-haiku-5-5 / xhigh, attempts 2" "$ex_out"
+contains "setup example b: stage prompt read" "subagent-prompt: Check only the surface and report back fast." "$ex_out"
+ex_out="$(ex_show c)"; check "setup example c: no invalid value" "" "$(grep -v 'not set in preset' "$TMP/err")"
+contains "setup example c: low effort stage" "1. claude-haiku-5-5 / low, attempts 2" "$ex_out"
+contains "setup example c: xhigh effort stage" "2. claude-haiku-5-5 / xhigh, attempts 2" "$ex_out"
+contains "setup example c: back-to-human" "3. back-to-human" "$ex_out"
+ex_out="$(ex_show d)"; check "setup example d: no invalid value" "" "$(grep -v 'not set in preset' "$TMP/err")"
+contains "setup example d: until-done stage" "1. claude-opus-5-5 / medium, attempts until-done" "$ex_out"
+reset_cfg
 
 printf 'test-credo-preset: %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

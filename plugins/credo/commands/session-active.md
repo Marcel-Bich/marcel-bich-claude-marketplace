@@ -5,6 +5,7 @@ allowed-tools:
   - Bash(${CLAUDE_PLUGIN_ROOT}/hooks/session-mode-set.sh:*)
   - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-decision-set.sh:*)
   - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-dir-decision.sh:*)
+  - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-preset.sh:*)
   - Skill
 ---
 
@@ -31,4 +32,5 @@ Set the persistent, per-session credo mode to **active**.
    (ScheduleWakeup), call ScheduleWakeup with `stop: true` now, and CronDelete any
    CronCreate job it set for the run. A wake that still fires later is dropped by the
    credo-autonomy-clear hook (backstop), but do not rely on it.
-7. Confirm briefly: mode active, keep-alive off.
+7. Apply the main-agent prompt of the active preset once: run `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-preset.sh" mainagent --field prompt` and follow its output for the rest of this session. The SessionStart hook injects the same text only at a fresh start, not when the mode is switched mid-session. Empty output means the preset has no main-agent instruction.
+8. Confirm briefly: mode active, keep-alive off.
