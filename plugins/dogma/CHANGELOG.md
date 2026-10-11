@@ -6,6 +6,16 @@ Changelog of the dogma plugin. Newest first. Months group releases; no day dates
 
 ### v1.45
 
+#### v1.45.6
+
+##### Changed
+
+- The per-prompt orchestration inject says that while hydra is installed every worktree is created via hydra, also for a single isolated track; the Agent tool with `isolation: "worktree"` and a bare `git worktree add` outside `../<repo>-worktrees` are named as not allowed
+
+##### Fixed
+
+- A lone PEM private-key header line (in docs, grep patterns, commit text, prose) is no longer denied by the Read guard and the Bash command scan; a key block (header followed by base64 body, on the same line or on the next line after PEM header fields and a blank line) is still denied
+
 #### v1.45.5
 
 ##### Added
