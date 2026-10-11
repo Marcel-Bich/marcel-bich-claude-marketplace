@@ -1,8 +1,9 @@
 #!/bin/bash
 # Tests for hooks/worktree-guard.sh and scripts/worktree-guard.py. Temp dirs only (removed
-# on exit). Covers the Agent / Task isolation and EnterWorktree calls, git worktree add
-# destinations (literal paths, cd, git -C, variables), the DOGMA-PERMISSIONS checkbox
-# states, the main checkout fallback, the output format and the fail-open cases.
+# on exit). Covers the Agent / Task isolation and EnterWorktree calls (with and without a
+# path), git worktree add destinations (literal paths, cd, git -C, variables), comments,
+# heredoc bodies and command position, the DOGMA-PERMISSIONS checkbox states, the main
+# checkout fallback, the output format and the fail-open cases.
 # Usage: bash test-worktree-guard.sh
 
 set -uo pipefail
@@ -81,8 +82,12 @@ check "agent isolation worktree denied" deny "$(tool_v Agent "$PROJ" worktree)"
 check "task isolation worktree denied" deny "$(tool_v Task "$PROJ" worktree)"
 check "agent without isolation allowed" allow "$(tool_v Agent "$PROJ" "")"
 check "agent isolation none allowed" allow "$(tool_v Agent "$PROJ" none)"
-check "EnterWorktree name denied" deny "$(tool_v EnterWorktree "$PROJ" "")"
-check "EnterWorktree path denied" deny \
+check "EnterWorktree without path denied" deny "$(tool_v EnterWorktree "$PROJ" "")"
+check "EnterWorktree name without path denied" deny \
+    "$(verdict "{\"tool_name\":\"EnterWorktree\",\"cwd\":\"$PROJ\",\"tool_input\":{\"name\":\"new-one\"}}")"
+check "EnterWorktree empty path denied" deny \
+    "$(verdict "{\"tool_name\":\"EnterWorktree\",\"cwd\":\"$PROJ\",\"tool_input\":{\"path\":\"\"}}")"
+check "EnterWorktree path allowed (existing worktree, creates nothing)" allow \
     "$(verdict "{\"tool_name\":\"EnterWorktree\",\"cwd\":\"$PROJ\",\"tool_input\":{\"path\":\"$HYD/w1\"}}")"
 check "unrelated tool allowed" allow "$(tool_v Read "$PROJ" "")"
 
@@ -180,6 +185,35 @@ check "git worktree prune allowed" allow "$(bash_v "$PROJ" 'git worktree prune')
 check "quoted text mentioning worktree add allowed" allow \
     "$(bash_v "$PROJ" 'echo "git worktree add ../other/x"')"
 check "grep for worktree allowed" allow "$(bash_v "$PROJ" 'grep -rn worktree plugins')"
+
+# 5b. heredoc bodies, comments and command position (only `git` as a command counts)
+check "heredoc body with git worktree add allowed" allow \
+    "$(bash_v "$PROJ" $'cat > notes.md <<\'EOF\'\ngit worktree add ../other/x\nEOF')"
+check "tab-stripped heredoc body allowed" allow \
+    "$(bash_v "$PROJ" $'cat <<-EOF\n\tgit worktree add ../other/x\n\tEOF')"
+check "commit message heredoc with apostrophe allowed" allow \
+    "$(bash_v "$PROJ" $'git commit -F - <<\'EOF\'\nfix: don\'t drop git worktree add guard\nEOF')"
+check "unbalanced quote in heredoc body allowed" allow \
+    "$(bash_v "$PROJ" $'git commit -F - <<\'EOF\'\nit\'s done\nEOF')"
+check "comment with git worktree add allowed" allow \
+    "$(bash_v "$PROJ" '# example: git worktree add ../other/x')"
+check "echo of git worktree add allowed" allow "$(bash_v "$PROJ" 'echo git worktree add ../other/x')"
+check "git worktree add after heredoc denied" deny \
+    "$(bash_v "$PROJ" $'cat > notes.md <<\'EOF\'\nbody\nEOF\ngit worktree add ../other/x')"
+check "git worktree add after a comment line denied" deny \
+    "$(bash_v "$PROJ" $'# note\ngit worktree add ../other/x')"
+check "hash inside quotes is no comment" deny "$(bash_v "$PROJ" "echo '# x'; git worktree add ../other/x")"
+check "hash inside a word is no comment" deny "$(bash_v "$PROJ" 'echo a#b; git worktree add ../other/x')"
+check "quoted << is no heredoc" deny "$(bash_v "$PROJ" $'echo "<<EOF"\ngit worktree add ../other/x')"
+check "env assignment before git denied" deny "$(bash_v "$PROJ" 'FOO=1 git worktree add ../other/x')"
+check "wrapper word before git denied" deny "$(bash_v "$PROJ" 'env git worktree add ../other/x')"
+check "pipe into git worktree add denied" deny "$(bash_v "$PROJ" 'echo x | git worktree add ../other/x')"
+check "if-wrapped git worktree add denied" deny \
+    "$(bash_v "$PROJ" 'if git worktree add ../other/x; then :; fi')"
+check "unparseable text with git worktree add denied" deny \
+    "$(bash_v "$PROJ" 'echo "oops" ; git worktree add ../other/x ; echo "unclosed')"
+check "unparseable text without git worktree add allowed" allow \
+    "$(bash_v "$PROJ" 'echo "unclosed worktree add')"
 
 # 6. fail open and output format
 check "invalid json allowed" allow "$(verdict 'not json')"

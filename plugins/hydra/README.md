@@ -27,8 +27,9 @@ Git Worktree management for parallel agent execution - isolated working director
 A PreToolUse hook (`hooks/hooks.json`, logic in `scripts/worktree-guard.py`) keeps every worktree on hydra's flow while hydra is installed and the `Hydra` checkbox `use Hydra for 2+ independent tasks` in DOGMA-PERMISSIONS.md is on. A missing checkbox or file counts as on. With `[ ]` or `[0]` the guard is off; with `[?]` (ask) it lets the calls through as well.
 
 - The Agent (or Task) tool with `isolation: "worktree"` is denied.
-- `EnterWorktree` is denied.
-- `git worktree add` (also after `cd` or with `git -C`) is denied unless the destination is `../<repo>-worktrees/<name>` next to the main checkout. Shell variables, globs and unparseable commands in the destination are denied too; write the path literally.
+- `EnterWorktree` without a `path` is denied (it creates a worktree). With a `path` it enters an existing worktree and creates nothing, so it is allowed.
+- `git worktree add` in command position (also after `cd`, with `git -C`, after `NAME=value` assignments or in a `&&`, `;` or `|` chain) is denied unless the destination is `../<repo>-worktrees/<name>` next to the main checkout. Shell variables and globs in the destination are denied too, and so is an unparseable command (unbalanced quotes) that still contains `git ... worktree add` after heredoc bodies are removed; write the path literally.
+- Comments, heredoc bodies and quoted text are not commands and are not checked, so `echo "git worktree add ..."`, a commit message passed by heredoc or a `# git worktree add ...` comment are allowed.
 
 The deny message names the flow to use: `/hydra:create <name>`, or `git worktree add -b hydra/<name> ../<repo>-worktrees/<name>` followed by `scripts/worktree-setup.sh`. The guard fails open (an internal error allows the call), needs python3 and makes no network calls.
 

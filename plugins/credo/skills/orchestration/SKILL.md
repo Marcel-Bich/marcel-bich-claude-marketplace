@@ -203,8 +203,9 @@ DOGMA-PERMISSIONS.md and everything unversioned under .credo/ by default, or the
 overwrites an existing path, skips versioned paths and untracked paths that are not
 ignored (a `git add -A` in the worktree would commit them; builders read them in the
 main checkout), and prints `main=<main checkout>`.
-When the harness created the worktree itself (Agent tool `isolation: worktree`), the
-builder runs the setup on its own worktree root as its first step.
+When the harness created the worktree itself (Agent tool `isolation: worktree`, only when
+hydra is off or its worktree setting is off), the builder runs the setup on its own
+worktree root as its first step.
 
 Every worktree builder brief names the ABSOLUTE main-checkout path (the `main=` line) with
 this rule: when something important is missing in the worktree (neither checked out,

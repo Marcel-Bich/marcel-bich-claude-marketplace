@@ -5,10 +5,12 @@
 # "### Hydra" subsection of DOGMA-PERMISSIONS.md is on (a missing checkbox or file counts
 # as on), every worktree goes through hydra's create flow. Denied:
 #   - Agent / Task tool calls with tool_input.isolation == "worktree"
-#   - EnterWorktree calls (they create a worktree under .claude/worktrees/)
-#   - Bash `git worktree add` whose destination is not <repo-parent>/<repo>-worktrees/<name>
-#     next to the main checkout. The destination is resolved the way git resolves it: from
-#     the directory the command runs in (cd and git -C are followed).
+#   - EnterWorktree calls without a path (they create a worktree under .claude/worktrees/;
+#     with a path they enter an existing worktree and create nothing)
+#   - Bash `git worktree add` in command position whose destination is not
+#     <repo-parent>/<repo>-worktrees/<name> next to the main checkout. The destination is
+#     resolved the way git resolves it: from the directory the command runs in (cd and git -C
+#     are followed). Comments, heredoc bodies and quoted text are not commands and are skipped.
 # Checkbox "[?]" (ask), "[ ]" and "[0]" (off) allow every call.
 #
 # Reads the hook JSON on stdin. Prints a PreToolUse deny decision as one JSON line, or
@@ -32,10 +34,14 @@ ON_STATES = ("auto", "missing")
 
 SEPARATORS = {"&&", "||", ";", ";;", "|", "|&", "&", "\n"}
 STOP = SEPARATORS | {"(", ")"}
-CMD_START = SEPARATORS | {"(", "{", "then", "do", "else", "!"}
+CMD_START = SEPARATORS | {"(", "{", "then", "do", "else", "!", "if", "elif", "while", "until"}
+WRAPPERS = {"command", "exec", "env", "sudo", "nohup", "time"}
 REDIRECTS = {">", ">>", "<", "<<", "<<<", ">&", "<&", "&>", "&>>", ">|", "<>"}
 GIT_VALUE_OPTS = {"-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix"}
 NON_LITERAL = re.compile(r"[$`*?\[\]{}]")
+ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+COMMENT_START = " \t\n;&|()"
+UNPARSED_GIT = re.compile(r"\bgit\b.*\bworktree\s+add\b", re.S)
 
 PREFIX = ("hydra: every worktree goes through hydra while hydra is installed and the Hydra "
           "checkbox in DOGMA-PERMISSIONS.md is on (default). ")
@@ -45,7 +51,8 @@ HOW = ("Create it with /hydra:create <name>, or run from the repo root: "
        "Write the path literally, without shell variables.")
 REASON_AGENT = (PREFIX + "Agent with isolation worktree is blocked. " + HOW
                 + " Then start the agent in that worktree path without the isolation parameter.")
-REASON_ENTER = (PREFIX + "EnterWorktree is blocked (it creates a worktree outside the hydra flow). "
+REASON_ENTER = (PREFIX + "EnterWorktree without a path is blocked (it creates a worktree outside the "
+                "hydra flow). "
                 + HOW + " To work in an existing hydra worktree, cd into its path or use /hydra:spawn.")
 REASON_NON_LITERAL = (PREFIX + "git worktree add with a destination that uses shell variables, globs "
                       "or expansions cannot be checked. " + HOW)
@@ -177,11 +184,98 @@ def resolve(base, arg):
     return os.path.normpath(os.path.join(base, path))
 
 
+def heredoc_word(text, i):
+    """Delimiter of a heredoc whose operator ends at i, quotes removed."""
+    while i < len(text) and text[i] in " \t":
+        i += 1
+    word, quote = [], None
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == quote:
+                quote = None
+            else:
+                word.append(ch)
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "\\" and i + 1 < len(text):
+            i += 1
+            word.append(text[i])
+        elif ch.isspace() or ch in ";&|()<>":
+            break
+        else:
+            word.append(ch)
+        i += 1
+    return "".join(word)
+
+
+def body_end(text, i, word, strip_tabs):
+    """Index after the terminator line of a heredoc body starting at i, None if unterminated."""
+    while i < len(text):
+        end = text.find("\n", i)
+        end = len(text) if end < 0 else end
+        line = text[i:end]
+        i = end + 1
+        if (line.lstrip("\t") if strip_tabs else line) == word:
+            return min(i, len(text))
+    return None
+
+
+def skip_bodies(text, start, pending):
+    """Index after all heredoc bodies starting at start; start itself if one is unterminated."""
+    i = start
+    for word, strip_tabs in pending:
+        i = body_end(text, i, word, strip_tabs)
+        if i is None:
+            return start
+    return i
+
+
+def strip_code(command):
+    """The command without comments and heredoc bodies. Quotes and escapes are kept as typed."""
+    out, pending, quote, i = [], [], None, 0
+    while i < len(command):
+        ch = command[i]
+        if ch == "\\" and quote != "'":
+            out.append(command[i:i + 2])
+            i += 2
+            continue
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "#" and (i == 0 or command[i - 1] in COMMENT_START):
+            end = command.find("\n", i)
+            i = len(command) if end < 0 else end
+            continue
+        elif command.startswith("<<<", i):
+            out.append("<<<")
+            i += 3
+            continue
+        elif command.startswith("<<", i):
+            k = i + 2
+            strip_tabs = command[k:k + 1] == "-"
+            k += 1 if strip_tabs else 0
+            pending.append((heredoc_word(command, k), strip_tabs))
+            out.append(command[i:k])
+            i = k
+            continue
+        elif ch == "\n" and pending:
+            out.append(ch)
+            i = skip_bodies(command, i + 1, pending)
+            pending = []
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def tokenize(command):
     text = command.replace("\\\n", " ").replace("\n", " ; ")
     lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
-    lexer.commenters = ""
+    lexer.commenters = ""  # comments are already removed by strip_code
     return list(lexer)
 
 
@@ -221,21 +315,30 @@ def git_add(tokens, i, cur):
     return [(d, take_args(tokens, i + 2))]
 
 
+def command_start(tokens, i):
+    """True when tokens[i] starts a simple command: after a separator or an opening word, with
+    NAME=value assignments and wrapper words (env, sudo, ...) skipped. Wrapper options are not
+    skipped, so `sudo -u x git` is not seen."""
+    j = i - 1
+    while j >= 0 and (ASSIGN.match(tokens[j]) or tokens[j] in WRAPPERS):
+        j -= 1
+    return j < 0 or tokens[j] in CMD_START
+
+
 def scan(tokens, cwd):
     """Every git worktree add as (destination dir or None, argument tokens)."""
     found, stack, cur, i = [], [], cwd, 0
     while i < len(tokens):
         tok = tokens[i]
-        prev = tokens[i - 1] if i else None
         if tok == "(":
             stack.append(cur)
         elif tok == ")":
             if stack:
                 cur = stack.pop()
-        elif tok == "cd" and (prev is None or prev in CMD_START):
+        elif tok == "cd" and command_start(tokens, i):
             cur, i = apply_cd(tokens, i + 1, cur)
             continue
-        elif tok == "git":
+        elif tok == "git" and command_start(tokens, i):
             found.extend(git_add(tokens, i + 1, cur))
         i += 1
     return found
@@ -283,10 +386,11 @@ def inside_hydra(target, root):
 
 
 def check_bash(command, cwd):
+    code = strip_code(command)
     try:
-        tokens = tokenize(command)
+        tokens = tokenize(code)
     except ValueError:
-        if re.search(r"\bworktree\s+add\b", command) and hydra_on(cwd):
+        if UNPARSED_GIT.search(code) and hydra_on(cwd):
             return deny(REASON_UNPARSED)
         return None
     for dest, args in scan(tokens, cwd):
@@ -324,7 +428,9 @@ def decide(payload):
             return None
         return deny(REASON_AGENT)
     if tool == "EnterWorktree":
-        return deny(REASON_ENTER) if hydra_on(cwd) else None
+        path = tin.get("path")
+        has_path = isinstance(path, str) and path.strip() != ""
+        return None if has_path or not hydra_on(cwd) else deny(REASON_ENTER)
     if tool == "Bash":
         command = tin.get("command")
         if isinstance(command, str) and "worktree" in command:
