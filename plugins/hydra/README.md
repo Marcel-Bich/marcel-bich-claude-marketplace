@@ -22,6 +22,17 @@ Git Worktree management for parallel agent execution - isolated working director
 - `scripts/worktree-setup.sh <worktree-path> [main-checkout]` runs right after `git worktree add` (in `/hydra:create` and `/hydra:parallel`). A fresh worktree only has versioned files; the setup links (relative symlinks) or copies the excluded ones agents need - the "Worktree files" list in the `### Hydra` subsection of DOGMA-PERMISSIONS.md (read via dogma when installed), else CLAUDE.md, CLAUDE/, GUIDES/, DOGMA-PERMISSIONS.md and everything unversioned under `.credo/`. Versioned paths are skipped, existing paths are never overwritten, and untracked paths that are not ignored (e.g. a new uncommitted item file) are skipped with a hint instead of linked or copied - a `git add -A` in the worktree would commit the link. It prints the main checkout path, which spawned agents get for read-only lookups.
 - `/hydra:cleanup` removes only worktrees whose branch is fully merged and that have no changes to tracked files. With credo installed this happens automatically at item close, controlled by `[x] clean up merged worktrees automatically` in DOGMA-PERMISSIONS.md.
 
+### Worktree Guard
+
+A PreToolUse hook (`hooks/hooks.json`, logic in `scripts/worktree-guard.py`) keeps every worktree on hydra's flow while hydra is installed and the `Hydra` checkbox `use Hydra for 2+ independent tasks` in DOGMA-PERMISSIONS.md is on. A missing checkbox or file counts as on. With `[ ]` or `[0]` the guard is off; with `[?]` (ask) it lets the calls through as well.
+
+- The Agent (or Task) tool with `isolation: "worktree"` is denied.
+- `EnterWorktree` without a `path` is denied (it creates a worktree). With a `path` it enters an existing worktree and creates nothing, so it is allowed.
+- `git worktree add` in command position (also after `cd`, with `git -C`, after `NAME=value` assignments or in a `&&`, `;` or `|` chain) is denied unless the destination is `../<repo>-worktrees/<name>` next to the main checkout. Shell variables and globs in the destination are denied too; write the path literally. Redirects around the destination are skipped, and a command that cannot be parsed (unbalanced quotes) is allowed.
+- Only `git` in command position counts. Text in comments, in `echo` arguments and in a `git commit -F -` heredoc message is not checked, so `echo "git worktree add ..."` and a `# git worktree add ...` comment are allowed.
+
+The deny message names the flow to use: `/hydra:create <name>`, or `git worktree add -b hydra/<name> ../<repo>-worktrees/<name>` followed by `scripts/worktree-setup.sh`. The guard fails open (an internal error allows the call), needs python3 and makes no network calls.
+
 ### Typical Workflow
 
 ```bash

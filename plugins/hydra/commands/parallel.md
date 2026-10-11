@@ -62,17 +62,21 @@ Should I create them? (Branches will be forked from main)
 
 If yes, create missing worktrees:
 
-```bash
-# Determine paths (always relative to repo root, not CWD)
-REPO_ROOT=$(git rev-parse --show-toplevel)
-REPO_NAME=$(basename "$REPO_ROOT")
-WORKTREES_DIR="$(dirname "$REPO_ROOT")/${REPO_NAME}-worktrees"
+Run from the repo root, with the repo name and each worktree name written literally (no shell
+variables; the worktree guard checks the literal destination path):
 
-for WT in feature-x feature-y; do
-  git worktree add -b "hydra/$WT" "$WORKTREES_DIR/$WT"
-  # bring excluded files (rules, .credo/, ...) into the fresh worktree
-  "${CLAUDE_PLUGIN_ROOT}/scripts/worktree-setup.sh" "$WORKTREES_DIR/$WT"
-done
+```bash
+# Repo name (read-only lookup, use the printed name below)
+basename "$(git rev-parse --show-toplevel)"
+
+mkdir -p ../<repo>-worktrees
+
+git worktree add -b hydra/feature-x ../<repo>-worktrees/feature-x
+# bring excluded files (rules, .credo/, ...) into the fresh worktree
+"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-setup.sh" ../<repo>-worktrees/feature-x
+
+git worktree add -b hydra/feature-y ../<repo>-worktrees/feature-y
+"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-setup.sh" ../<repo>-worktrees/feature-y
 ```
 
 Run `worktree-setup.sh` right after every `git worktree add` (see `/hydra:create`).
