@@ -217,42 +217,112 @@ def disabled():
     )
 
 
+def own_profile_dir():
+    """The Claude Code profile this process runs in (CLAUDE_CONFIG_DIR, default ~/.claude)."""
+    return profiles.own_config_dir()
+
+
+def _sibling_machine_config():
+    """The machine config of a sibling profile, or None. A sibling config that serves
+    this profile wins; otherwise the first sibling config is returned anyway, so this
+    profile is reported as unserved and never gets a config of its own (one relay per
+    machine)."""
+    own = own_profile_dir()
+    found = []
+    for cfg_dir in profiles.profile_dirs(own=own)[1:]:
+        cand = os.path.join(cfg_dir, "credo", "peer-lan.json")
+        if os.path.isfile(cand):
+            found.append(cand)
+    for cand in found:
+        cand_cfg = load_config(cand)
+        if cand_cfg is not None and _serves_profile(cand_cfg, os.path.dirname(os.path.dirname(cand)), own):
+            return cand
+    return found[0] if found else None
+
+
 def config_path():
+    """The ONE machine config of this machine. CREDO_PEER_LAN_CONFIG wins; else the own
+    profile's credo/peer-lan.json when it exists; else the machine config of a sibling
+    profile (see _sibling_machine_config); else the own default path (no config anywhere:
+    the relay is a no-op)."""
     p = os.environ.get("CREDO_PEER_LAN_CONFIG")
     if p:
         return p
-    cfg = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(
-        os.path.expanduser("~"), ".claude"
-    )
-    return os.path.join(cfg, "credo", "peer-lan.json")
+    own_cfg = os.path.join(own_profile_dir(), "credo", "peer-lan.json")
+    if os.path.exists(own_cfg):
+        return own_cfg
+    return _sibling_machine_config() or own_cfg
+
+
+def machine_profile_dir():
+    """The profile that holds the machine config (the parent of its credo/ dir). The
+    relay state (pidfile, log, keys, trust file, sockets) lives next to that config, so
+    it is the same whichever served profile a session runs in. A config path outside a
+    credo/ dir belongs to the own profile."""
+    cfg = config_path()
+    if os.path.basename(os.path.dirname(cfg)) == "credo":
+        return os.path.dirname(os.path.dirname(cfg))
+    return own_profile_dir()
 
 
 def sessions_dir():
-    cfg = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(
-        os.path.expanduser("~"), ".claude"
-    )
-    return os.path.join(cfg, "sessions")
+    return os.path.join(machine_profile_dir(), "sessions")
+
+
+def served_profile_names(cfg=None):
+    """The profiles list of the machine config: None when it names none (every
+    discovered profile is served), else the basenames it lists. A malformed value serves
+    no sibling at all (fail closed); the machine profile is always served."""
+    if cfg is None:
+        cfg = load_config() or {}
+    if cfg.get("profiles") is None:
+        return None
+    raw = cfg["profiles"]
+    if isinstance(raw, list) and all(isinstance(x, str) for x in raw):
+        return list(raw)
+    return []
+
+
+def _same_dir(a, b):
+    return os.path.realpath(a) == os.path.realpath(b)
+
+
+def _serves_profile(cfg, machine_dir, prof):
+    """True when the machine config cfg (held in machine_dir) serves profile prof."""
+    if _same_dir(prof, machine_dir):
+        return True
+    names = served_profile_names(cfg)
+    return names is None or profiles.profile_name(prof) in names
+
+
+def profile_served(cfg=None):
+    """True when the machine config serves the profile this process runs in."""
+    return _serves_profile(load_config() if cfg is None else cfg, machine_profile_dir(),
+                           own_profile_dir())
+
+
+def served_profile_dirs():
+    """Config dirs the one relay serves: the machine profile always, plus every sibling
+    the machine config lists (every discovered sibling when it lists none)."""
+    return profiles.profile_dirs(own=machine_profile_dir(), allowed=served_profile_names())
 
 
 def profile_sessions_dirs():
-    """sessions/ dir of every local Claude Code profile (credo_profiles rule), the
-    daemon's own profile first. One relay serves all of them."""
-    return profiles.sessions_dirs()
+    """sessions/ dir of every profile the relay serves, the machine profile first."""
+    return [os.path.join(p, "sessions") for p in served_profile_dirs()]
 
 
 def is_own_profile(cfg_dir):
-    """True when cfg_dir is the profile this process runs in (the daemon's own)."""
-    return os.path.realpath(cfg_dir) == os.path.realpath(profiles.own_config_dir())
+    """True when cfg_dir is the machine profile (the one whose credo/ dir holds the
+    machine config, the daemon's own profile)."""
+    return _same_dir(cfg_dir, machine_profile_dir())
 
 
 def sock_dir():
     p = os.environ.get("CREDO_PEER_LAN_SOCKDIR")
     if p:
         return p
-    cfg = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(
-        os.path.expanduser("~"), ".claude"
-    )
-    return os.path.join(cfg, "credo", "peer-lan-sock")
+    return os.path.join(os.path.dirname(config_path()), "peer-lan-sock")
 
 
 def pidfile_path():
@@ -3004,17 +3074,19 @@ TRUST_ENVELOPE_RE = re.compile(
 TRUST_TAG_MARK_RE = re.compile(r"<\s*cross-session-message[^>]*credo-trust", re.I)
 
 
-def trust_path():
-    return os.path.join(os.path.dirname(config_path()), TRUST_FILE)
-
-
 def trust_path_for(cfg_dir):
-    """Trust list of profile cfg_dir. The daemon's own profile keeps its configured
-    location (trust_path); any other profile uses its own credo/ dir, the file its
+    """Trust list of profile cfg_dir. The machine profile keeps the machine location (next
+    to the machine config); any other profile uses its own credo/ dir, the file its
     peer-message hook verifies against."""
     if is_own_profile(cfg_dir):
-        return trust_path()
+        return os.path.join(os.path.dirname(config_path()), TRUST_FILE)
     return os.path.join(cfg_dir, "credo", TRUST_FILE)
+
+
+def trust_path():
+    """Trust list of the profile this process runs in (`trust` and `trust verify` act on
+    the session's own profile, never on the machine config's profile)."""
+    return trust_path_for(own_profile_dir())
 
 
 def profile_keys_dir(cfg_dir):
@@ -3030,7 +3102,8 @@ def pair_store_dirs(cfg):
     keystore of every served profile. The daemon's machine store is one of them (its
     own profile's keystore, or a keys_dir the profiles name). Each real path once."""
     out, seen = [], set()
-    for kdir in [keys_dir_for(cfg)] + [profile_keys_dir(p) for p in profiles.profile_dirs()]:
+    everyone = profiles.profile_dirs(own=machine_profile_dir())
+    for kdir in [keys_dir_for(cfg)] + [profile_keys_dir(p) for p in everyone]:
         real = os.path.realpath(kdir)
         if real not in seen:
             seen.add(real)
@@ -3043,7 +3116,7 @@ def pair_copy_dirs(machine_dir):
     profile except the daemon's own profile, whose keystore is the machine store
     (machine_dir). Each real path once."""
     out, seen = [], {os.path.realpath(machine_dir)}
-    for cfg_dir in profiles.profile_dirs():
+    for cfg_dir in served_profile_dirs():
         if is_own_profile(cfg_dir):
             continue
         kdir = profile_keys_dir(cfg_dir)
@@ -5804,6 +5877,9 @@ def _serve(cfg):
     bind-retries on EADDRINUSE), run until stopped, and always shut down in finally.
     Shared by run_daemon / run_ensure (restart spawns a detached `daemon`). Returns 0 normally, 0 on a clean
     AlreadyRunning give-up, 1 on an unexpected start failure."""
+    # pin the machine config this daemon runs with: a profile config created later must
+    # not move the state dirs (pidfile, keys, trust, sockets) of a running relay
+    os.environ["CREDO_PEER_LAN_CONFIG"] = config_path()
     daemon = Daemon(cfg)
 
     def _sig(_signo, _frame):
@@ -6273,7 +6349,7 @@ def run_pair_reset(args):
         print("cleared pending repair at %s (peer id %s)" % (e["slot"], e["new_id"][:8]))
     # a trust grant binds to the pairing: a reset pairing never keeps it in any profile
     # (whoever pairs at that id next must be trusted again by the user there)
-    for cfg_dir in profiles.profile_dirs():
+    for cfg_dir in profiles.profile_dirs(own=machine_profile_dir()):
         path = trust_path_for(cfg_dir)
         if not os.path.exists(path):
             continue
@@ -6602,17 +6678,25 @@ def run_token(args):
 
 
 def onboarding_marker():
-    return os.path.join(os.path.dirname(config_path()), "peer-lan-onboarding-declined")
+    """Decline marker of THIS profile. Never the machine config's directory: declining in
+    a sibling profile must not write into the machine config's directory."""
+    p = os.environ.get("CREDO_PEER_LAN_CONFIG")
+    base = os.path.dirname(p) if p else os.path.join(own_profile_dir(), "credo")
+    return os.path.join(base, "peer-lan-onboarding-declined")
 
 
 def onboarding_state():
     """Cheap, config-only (NO network detection): not-configured | declined |
-    unbound | bound. Used by the SessionStart hook."""
+    unserved | unbound | bound. Used by the SessionStart hook. unserved means the machine
+    config exists but does not serve this profile (declined when this profile already
+    declined it)."""
     cfg = load_config()
     if cfg is None:
         if os.path.exists(config_path()):
             return "unbound"  # present but unreadable: treat like unbound, never offer setup
         return "declined" if os.path.exists(onboarding_marker()) else "not-configured"
+    if not profile_served(cfg):
+        return "declined" if os.path.exists(onboarding_marker()) else "unserved"
     nets = cfg.get("networks")
     return "bound" if isinstance(nets, dict) and nets else "unbound"
 
@@ -6632,7 +6716,82 @@ def run_onboarding(args):
             pass
         print("LAN relay onboarding reset - it will be offered again on the next session start.")
         return 0
-    print(onboarding_state())
+    state = onboarding_state()
+    if args.dir:
+        print("%s %s" % (state, os.path.dirname(config_path())))
+    else:
+        print(state)
+    return 0
+
+
+def _write_profiles_list(cfg, path, names):
+    """Set (names given) or drop (names None) the profiles list of the machine config."""
+    if names is None:
+        cfg.pop("profiles", None)
+    else:
+        cfg["profiles"] = names
+    try:
+        write_config(cfg, path)
+    except Exception as exc:
+        sys.stderr.write("Could not write %s: %s\n" % (path, exc))
+        return 1
+    return 0
+
+
+def run_profiles(args):
+    """Which Claude Code profiles the one relay serves: the profiles list of the machine
+    config. The machine profile is always served; with no list every discovered profile
+    is served (and profiles created later too)."""
+    path = config_path()
+    cfg = load_config()
+    machine = machine_profile_dir()
+    known = [profiles.profile_name(d) for d in profiles.profile_dirs(own=machine)]
+    if args.action == "list":
+        if cfg is None:
+            print("no machine config at %s (run 'credo-peer-lan.py init <peer-ip>' first)" % path)
+            return 0
+        names = served_profile_names(cfg)
+        print("machine config: %s" % path)
+        for d in profiles.profile_dirs(own=machine):
+            name = profiles.profile_name(d)
+            if _same_dir(d, machine):
+                state = "served (holds the config)"
+            elif names is None or name in names:
+                state = "served"
+            else:
+                state = "not served"
+            print("  %-16s %s" % (name, state))
+        if names is None:
+            print("  (no profiles list: every discovered profile is served)")
+        return 0
+    if cfg is None:
+        sys.stderr.write("No machine config at %s - run 'credo-peer-lan.py init <peer-ip>' first.\n" % path)
+        return 1
+    if args.action == "all":
+        if _write_profiles_list(cfg, path, None):
+            return 1
+        print("every discovered profile is served again (no profiles list)")
+        return 0
+    bad = [n for n in args.names if n not in known]
+    if bad or (args.action == "add" and len(args.names) != 1) or (args.action == "set" and not args.names):
+        sys.stderr.write("profiles %s needs %s (found: %s)\n" % (
+            args.action, "profile names such as .claude-work" if args.action == "set" else "one profile name",
+            ", ".join(known)))
+        return 1
+    current = served_profile_names(cfg)
+    if args.action == "set":
+        wanted = list(dict.fromkeys(args.names))
+    elif current is None:
+        print("every discovered profile is served already (no profiles list)")
+        return 0
+    elif args.names[0] in current:
+        print("already served: %s" % args.names[0])
+        return 0
+    else:
+        wanted = current + [args.names[0]]
+    if _write_profiles_list(cfg, path, wanted):
+        return 1
+    print("served profiles: %s (the machine profile %s always)" % (", ".join(wanted), profiles.profile_name(machine)))
     return 0
 
 
@@ -6777,7 +6936,19 @@ def main(argv=None):
     g_onb.add_argument("--state", action="store_true", help="print not-configured|declined|unbound|bound")
     g_onb.add_argument("--decline", action="store_true", help="never offer the setup again")
     g_onb.add_argument("--reset", action="store_true", help="offer the setup again")
+    p_onb.add_argument("--dir", action="store_true",
+                       help="with --state, also print the directory of the machine config")
     p_onb.set_defaults(func=run_onboarding)
+
+    p_profiles = sub.add_parser(
+        "profiles",
+        help="which Claude Code profiles the one relay serves - list (default), "
+        "set NAME..., add NAME, all",
+    )
+    p_profiles.add_argument("action", nargs="?", default="list",
+                            choices=("list", "set", "add", "all"))
+    p_profiles.add_argument("names", nargs="*", help="profile dir names, e.g. .claude-work")
+    p_profiles.set_defaults(func=run_profiles)
 
     p_holder = sub.add_parser("holder", help="internal: per-remote-session holder")
     p_holder.add_argument("--proxy", required=True)
