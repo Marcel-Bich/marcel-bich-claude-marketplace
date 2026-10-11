@@ -696,7 +696,9 @@ allowlist-scoped firewall rule (the old rule allowed the whole LocalSubnet).
   its pending repair, and remove its trust entries from every profile, so the next link
   pairs again (trust on first use). Only for a reinstalled peer or lost keys,
   and only after the user confirmed it (Ask tool; never in autonomous mode). A running
-  daemon applies it at once; no restart. Exits 1 when nothing matches.
+  daemon applies it at once; no restart. Exits 1 when nothing matches. The trust entries
+  are removed first: when a trust list cannot be read or an entry cannot be removed, the
+  reset exits 1 with the reason and the pairing stays in place.
 
 - **disconnect-all `[--full]`** - the reset: set this machine's relay back to "no other
   device known", so pairing can be set up cleanly again. In every profile the relay
