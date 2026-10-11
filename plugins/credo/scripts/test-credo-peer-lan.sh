@@ -5435,11 +5435,12 @@ mkdir -p "$TMP/AP/home/.claude-symsess"
 ln -s "$TMP/AP/home/.claude/sessions" "$TMP/AP/home/.claude-symsess/sessions"
 : > "$TMP/AP/home/.claude.json"
 echo '{"this_machine":"box-b","listen_port":48610,"peers":[]}' > "$TMP/AP/home/.claude/credo/peer-lan.json"
+echo '{"this_machine":"box-b","listen_port":48610,"peers":[]}' > "$TMP/AP/home/.claude-work/credo/peer-lan.json"
 AP_OUT="$(env -u CREDO_SESSION_MODES_DIR -u CREDO_SESSION_ROLES_DIR -u CREDO_SESSION_META_DIR \
     HOME="$TMP/AP/home" CLAUDE_CONFIG_DIR="$TMP/AP/home/.claude" \
     CREDO_PEER_LAN_SOCKDIR="$TMP/AP/sock" CREDO_PEER_LAN_CONFIG="$TMP/AP/home/.claude/credo/peer-lan.json" \
     "$PY" - "$DAEMON" "$TMP/AP" <<'PYEOF'
-import importlib.util, json, os, socket, sys, threading, time
+import importlib.util, json, os, socket, subprocess, sys, threading, time
 daemon_path, root = sys.argv[1:3]
 home = os.path.join(root, "home")
 own = os.path.join(home, ".claude")
@@ -5495,8 +5496,9 @@ got_work = []
 inbox_srv = inbox(work_sock, got_work)
 real_desc(own_sess, "sid-own", "/nonexistent/own-inbox.sock")
 real_desc(work_sess, "sid-work", work_sock)
-d = mod.Daemon({"this_machine": "box-b", "peers": ["127.0.0.1:41001"], "listen_port": 41002,
-                "keys_dir": os.path.join(root, "keys-own")})
+# no keys_dir: the daemon's pairing store is the default one of its own profile, the
+# store the CLI commands of that profile see
+d = mod.Daemon({"this_machine": "box-b", "peers": ["127.0.0.1:41001"], "listen_port": 41002})
 
 # b: roster
 prof = dict((e["sessionId"], e.get("profile")) for e in d._roster_sessions())
@@ -5536,27 +5538,66 @@ for _ in range(50):
 res("deliver: a session in the sibling profile receives the message",
     sock == work_sock and any("hello work profile" in g for g in got_work), (sock, got_work))
 
-# e: trust is per profile, looked up in the target session's own profile. Only the
-# daemon profile's pairing store is pinned here: a sibling profile has no pairing
-# record of its own. The sibling case below therefore documents the CURRENT behaviour,
-# a fail-closed "no trust" for a non-daemon target. Whether pairing becomes per profile
-# is an open owner decision (MAJOR-2); when it changes, this check changes with it.
+# e: pairing is copied into every served profile (owner decision, option 2); trust is
+# still granted per profile, by `trust add` run in that profile, and pair-reset removes
+# the pairing and the grants from every profile. The keystores are the default ones
+# under the fake HOME of this section, never a real one.
+def run_cli(cfg_dir, *cli):
+    env = dict(os.environ)
+    env["CLAUDE_CONFIG_DIR"] = cfg_dir
+    env["CREDO_PEER_LAN_CONFIG"] = os.path.join(cfg_dir, "credo", "peer-lan.json")
+    return subprocess.run([sys.executable, daemon_path] + list(cli), env=env,
+                          capture_output=True, text=True, timeout=60)
+class Pair(object):
+    pass
 S = mod.PairStore(os.path.join(root, "keys-peer")).identity()
-own_pairs = mod.PairStore(os.path.join(root, "keys-own"))
-own_pairs.identity()
-own_pairs.pin(S["id"], S["pub"], "ab" * 32, "192.168.1.42:48610", "box-p")
-mod.TrustStore(mod.trust_path_for(own)).add(S["id"], S["pub"], "alice", "box-p")
-mod.TrustStore(mod.trust_path_for(work)).add(S["id"], S["pub"], "bob", "box-p")
+pair = Pair()
+pair.to_pin = (S["id"], S["pub"], "ab" * 32, "192.168.1.42:48610", "box-p")
+res("e: the daemon stores a new pairing", d._pair_store(pair) is True)
+machine_rec = mod.PairStore(mod.default_keys_dir()).get(S["id"])
+work_keys = mod.profile_keys_dir(work)
+copy_rec = mod.PairStore(work_keys).get(S["id"])
+res("e: the pairing record is copied into the sibling keystore (same record)",
+    machine_rec is not None and copy_rec == machine_rec, (machine_rec, copy_rec))
+copy_file = os.path.join(work_keys, "peer-%s.json" % S["id"])
+copy_modes = (oct(os.stat(copy_file).st_mode & 0o777) if os.path.exists(copy_file) else "none",
+              oct(os.stat(work_keys).st_mode & 0o777) if os.path.isdir(work_keys) else "none")
+res("e: copied keystore files and dirs keep the machine modes (0600 / 0700)",
+    copy_modes == ("0o600", "0o700"), copy_modes)
 ch = Chan(S["id"])
-res("trust: grant of the daemon profile applies to a target in the daemon profile",
-    d._trust_for(ch, "alice", own) is not None)
-res("trust: grant of the daemon profile never applies to a target in the sibling profile",
-    d._trust_for(ch, "alice", work) is None)
-res("trust: grant of the sibling profile never applies to a target in the daemon profile",
-    d._trust_for(ch, "bob", own) is None)
-res("trust: a grant in a sibling profile is not honoured without that profile's own pairing "
-    "record (fail closed, current behaviour)",
+res("e: a pairing copy alone grants no trust in the sibling profile",
     d._trust_for(ch, "bob", work) is None)
+# a profile that appears after the pairing gets the record on the next roster tick
+fresh_home = os.path.join(home, ".claude-fresh")
+os.makedirs(os.path.join(fresh_home, "sessions"))
+real_send = mod.send_to_peer
+mod.send_to_peer = lambda *a, **k: None
+try:
+    d.roster_tick()
+finally:
+    mod.send_to_peer = real_send
+fresh_rec = mod.PairStore(mod.profile_keys_dir(fresh_home)).get(S["id"])
+res("e: a profile that appears later gets the pairing on the next roster tick",
+    fresh_rec == machine_rec, fresh_rec)
+pair.to_pin = (S["id"], S["pub"], "ab" * 32, "192.168.1.42:48610", "box-q")
+res("e: a re-pin with a changed machine label is stored and copied to the sibling keystore",
+    d._pair_store(pair) is True
+    and (mod.PairStore(work_keys).get(S["id"]) or {}).get("machine") == "box-q",
+    mod.PairStore(work_keys).get(S["id"]))
+sib_cli = run_cli(work, "trust", "add", S["id"], "bob", "--yes")
+res("e: trust add run in the sibling profile is accepted", sib_cli.returncode == 0,
+    sib_cli.stdout + sib_cli.stderr)
+own_cli = run_cli(own, "trust", "add", S["id"], "alice", "--yes")
+res("e: trust add run in the daemon profile is accepted", own_cli.returncode == 0,
+    own_cli.stdout + own_cli.stderr)
+res("e: a grant made in the sibling profile is honoured for a sibling target",
+    d._trust_for(ch, "bob", work) is not None)
+res("e: a grant made in the sibling profile is never honoured for a daemon-profile target",
+    d._trust_for(ch, "bob", own) is None)
+res("e: a grant made in the daemon profile is honoured for a daemon-profile target",
+    d._trust_for(ch, "alice", own) is not None)
+res("e: a grant made in the daemon profile is never honoured for a sibling target",
+    d._trust_for(ch, "alice", work) is None)
 before_probe = len(got_work)
 sock = mod.deliver_local(mod.profile_sessions_dirs(), "sid-work", "peer-probe", "trust probe body",
                          None, lambda cfg_dir: d._trust_for(ch, "bob", cfg_dir))
@@ -5565,9 +5606,23 @@ for _ in range(50):
         break
     time.sleep(0.05)
 probe = got_work[before_probe:]
-res("trust: the message to the sibling session is delivered without a trust marker",
+res("e: a message to the sibling session carries the sibling profile's marker",
     sock == work_sock and len(probe) == 1 and "trust probe body" in probe[0]
-    and "credo-trust" not in probe[0], probe)
+    and "credo-trust" in probe[0], probe)
+reset_cli = run_cli(work, "pair-reset", S["id"])
+res("e: pair-reset run in the sibling profile is accepted", reset_cli.returncode == 0,
+    reset_cli.stdout + reset_cli.stderr)
+res("e: pair-reset removes the pairing from the daemon keystore",
+    mod.PairStore(mod.default_keys_dir()).get(S["id"]) is None)
+res("e: pair-reset removes the pairing copy from every served profile keystore",
+    all(mod.PairStore(mod.profile_keys_dir(p)).get(S["id"]) is None
+        for p in mod.profiles.profile_dirs()))
+res("e: pair-reset removes the trust grants of that peer from every profile",
+    not any(e["peer_id"] == S["id"]
+            for p in mod.profiles.profile_dirs()
+            for e in mod.TrustStore(mod.trust_path_for(p)).read()["trusted"]))
+res("e: after pair-reset no profile honours a grant for that peer",
+    d._trust_for(ch, "bob", work) is None and d._trust_for(ch, "alice", own) is None)
 
 # g: a profile that stops being served loses its copy; a profile served again gets one
 real_profiles = mod.profile_sessions_dirs
@@ -5621,7 +5676,7 @@ while IFS= read -r line; do
     esac
 done <<< "$AP_OUT"
 case "$AP_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL AP: traceback\n%s\n' "$AP_OUT" ;; esac
-check "AP: expected number of results" "19" "$(printf '%s\n' "$AP_OUT" | grep -cE '^(PASS|FAIL) ')"
+check "AP: expected number of results" "32" "$(printf '%s\n' "$AP_OUT" | grep -cE '^(PASS|FAIL) ')"
 
 # --- AR: a sessions/ dir reached through two profiles is one profile ----------
 # The daemon's own sessions/ may be a symlink to a sibling's sessions/ dir. The same

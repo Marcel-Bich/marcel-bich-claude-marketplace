@@ -3025,6 +3025,59 @@ def profile_keys_dir(cfg_dir):
     return d if isinstance(d, str) and d else os.path.join(cfg_dir, "credo", "peer-lan-keys")
 
 
+def pair_store_dirs(cfg):
+    """Keystores that pair-reset cleans: the one the CLI's own config names, plus the
+    keystore of every served profile. The daemon's machine store is one of them (its
+    own profile's keystore, or a keys_dir the profiles name). Each real path once."""
+    out, seen = [], set()
+    for kdir in [keys_dir_for(cfg)] + [profile_keys_dir(p) for p in profiles.profile_dirs()]:
+        real = os.path.realpath(kdir)
+        if real not in seen:
+            seen.add(real)
+            out.append(kdir)
+    return out
+
+
+def pair_copy_dirs(machine_dir):
+    """Keystores that receive a copy of every pairing record: the keystore of each served
+    profile except the daemon's own profile, whose keystore is the machine store
+    (machine_dir). Each real path once."""
+    out, seen = [], {os.path.realpath(machine_dir)}
+    for cfg_dir in profiles.profile_dirs():
+        if is_own_profile(cfg_dir):
+            continue
+        kdir = profile_keys_dir(cfg_dir)
+        real = os.path.realpath(kdir)
+        if real not in seen:
+            seen.add(real)
+            out.append(kdir)
+    return out
+
+
+def sync_pair_copy_dir(kdir, want):
+    """Make the keystore kdir hold exactly the pairing records in want ({peer id: record}).
+    A missing, corrupt or different copy is written through the store's own atomic
+    writer (0600 files in a 0700 dir, the machine store's modes and locking); a copy
+    whose peer is no longer in want is removed. Returns how many files changed. Never
+    touches anything but peer-<id>.json files."""
+    copy = PairStore(kdir)
+    changed = 0
+    with copy.lock:
+        for pid, rec in want.items():
+            if copy.get(pid) != rec:
+                copy._write("peer-%s.json" % pid, rec)
+                changed += 1
+        try:
+            names = os.listdir(kdir)
+        except FileNotFoundError:
+            names = []
+        for name in names:
+            if name.startswith("peer-") and name.endswith(".json") and name[5:-5] not in want:
+                copy._unlink_quiet(os.path.join(kdir, name))
+                changed += 1
+    return changed
+
+
 def _trust_entry(e):
     """A stored trust entry in canonical form, or None when it is not valid.
     {"peer_id", "pub", "caption", "machine"}; an entry of the old format (keyed on
@@ -3724,6 +3777,7 @@ class Daemon(object):
                 time.sleep(self.bind_retry_interval)
         self._cleanup_stale_descriptors()
         self._cleanup_stale_sockets()
+        self._sync_pair_copies()
         self.srv.listen(32)
         self._write_pidfile()
         log(
@@ -4294,9 +4348,36 @@ class Daemon(object):
                 self._pair_conflict(slot, other, pid, machine, "a new peer id")
             return False
         pair.to_pin = None
+        self._sync_pair_copies()
         if new:
             log("paired with peer %s (%r) at %s: pairing key stored" % (pid[:8], machine, slot))
         return True
+
+    def _sync_pair_copies(self):
+        """Keep the machine's pairing records in the keystore of every served profile
+        (owner decision, option 2): a profile can then grant trust to that peer with
+        `trust add` run in that profile, and only there. A copy carries the pairing
+        record, never a trust grant. Idempotent: a copy is written only when it differs.
+        Runs after every new pairing, on each roster tick (a profile that appears later
+        gets the record) and at start. The machine store is never changed here; an
+        unreadable store or copy is skipped (fail closed: nothing is copied from a store
+        that cannot be read). Returns how many copy files changed."""
+        try:
+            want = dict((r["id"], r) for r in self.pairs.records())
+        except PairStoreUnreadable as exc:
+            self._pair_log("copy-machine", "pairing copies not synced: %s" % exc)
+            return 0
+        changed = 0
+        for kdir in pair_copy_dirs(self.pairs.path):
+            try:
+                n = sync_pair_copy_dir(kdir, want)
+            except (OSError, PairStoreUnreadable) as exc:
+                self._pair_log(("copy", kdir), "pairing copy in %s not synced: %s" % (kdir, exc))
+                continue
+            if n:
+                log("pairing copies in %s updated (%d file(s))" % (kdir, n))
+            changed += n
+        return changed
 
     def _pair_open(self, sock, key, c_open, msg, expected):
         """Pairing step of our own outbound link to key, after the acceptor's
@@ -5038,6 +5119,7 @@ class Daemon(object):
         """Send one roster to every peer the outbound gate allows. While LAN is
         disabled no LAN peer gets anything (no session names leak on a foreign
         network); loopback peers are unaffected."""
+        self._sync_pair_copies()   # idempotent; a profile that appeared since the last tick
         with self.lock:
             state = self.lan_state
         targets = []
@@ -6157,32 +6239,53 @@ def run_pairs(_args):
 
 def run_pair_reset(args):
     """Forget a peer's pairing so its next link pairs again (trust on first use).
-    The only manual pairing step, for a reinstalled peer or lost keys."""
-    store = PairStore(keys_dir_for(load_config() or {}))
+    The only manual pairing step, for a reinstalled peer or lost keys. The pairing is
+    removed from every keystore (the machine store and each served profile's copy),
+    and the peer's trust grants from every served profile: no profile keeps the peer."""
+    stores = [PairStore(d) for d in pair_store_dirs(load_config() or {})]
     try:
-        gone, drop = store.reset(args.peer)
+        for store in stores:   # read every keystore first: an unreadable one changes nothing
+            store.records()
+            store.pending(strict=True)
     except PairStoreUnreadable as exc:
         print("pair-reset: %s; nothing changed" % exc)
         return 1
-    if not gone and not drop:
+    gone, drop = [], []
+    for store in stores:
+        try:
+            g, dr = store.reset(args.peer)
+        except PairStoreUnreadable as exc:
+            print("pair-reset: %s; the keystores after it are not changed" % exc)
+            return 1
+        gone += g
+        drop += dr
+    removed, seen = [], set()
+    for r in gone:
+        if r["id"] not in seen:   # the machine store and its copies hold the same record
+            seen.add(r["id"])
+            removed.append(r)
+    if not removed and not drop:
         print("no pairing or pending repair matches %r (see: credo-peer-lan.py pairs)" % args.peer)
         return 1
-    for r in gone:
+    for r in removed:
         print("removed pairing with %s (machine %r, slot %s)" % (r["id"], r["machine"], r["slot"]))
     for e in drop:
         print("cleared pending repair at %s (peer id %s)" % (e["slot"], e["new_id"][:8]))
-    # a trust grant binds to the pairing: a reset pairing never keeps it (whoever
-    # pairs at that id next must be trusted again by the user)
-    ids = set(r["id"] for r in gone)
-    try:
-        dropped = TrustStore(trust_path()).remove(lambda e: e["peer_id"] in ids)
-    except OSError as exc:
-        dropped = []
-        print("could not update the trust list %s: %s (its entries no longer match the "
-              "reset pairing anyway)" % (trust_path(), exc))
-    for e in dropped:
-        print("removed trust for session %r on machine %r (peer %s)"
-              % (trust_label(e), e["machine"], e["peer_id"][:8]))
+    # a trust grant binds to the pairing: a reset pairing never keeps it in any profile
+    # (whoever pairs at that id next must be trusted again by the user there)
+    for cfg_dir in profiles.profile_dirs():
+        path = trust_path_for(cfg_dir)
+        if not os.path.exists(path):
+            continue
+        try:
+            dropped = TrustStore(path).remove(lambda e: e["peer_id"] in seen)
+        except (OSError, TrustFileError) as exc:
+            print("could not update the trust list %s: %s (its entries no longer match the "
+                  "reset pairing anyway)" % (path, exc))
+            continue
+        for e in dropped:
+            print("removed trust for session %r on machine %r (peer %s) in profile %s"
+                  % (trust_label(e), e["machine"], e["peer_id"][:8], profiles.profile_name(cfg_dir)))
     print("the next link from that peer pairs again automatically")
     return 0
 
