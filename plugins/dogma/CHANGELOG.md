@@ -6,6 +6,21 @@ Changelog of the dogma plugin. Newest first. Months group releases; no day dates
 
 ### v1.45
 
+#### v1.45.5
+
+##### Added
+
+- `scripts/git-scope.sh [dir]` prints the owner/repo scope (`<host>/<owner>/<repo>`) of the `origin` remote without showing the remote URL, so agents can tell repositories of different owners apart while `git remote -v` and `git remote get-url` stay blocked
+
+##### Changed
+
+- The block message for remote URL output (`git remote -v`, `git remote show`, `git remote get-url`, `git config` on remote URLs, `git ls-remote --get-url`) names the absolute path of `git-scope.sh`
+
+##### Fixed
+
+- `git-remote-safe.sh url` no longer prints userinfo (`user:token@`), query string or fragment of the remote URL; a URL whose userinfo cannot be told apart is refused
+- `git-remote-safe.sh` reads the remote with git (origin, fallback: the first remote), so it works in worktrees; `host`, `owner`, `repo` and `owner-repo` come from `git-scope.sh`
+
 #### v1.45.4
 
 ##### Fixed
