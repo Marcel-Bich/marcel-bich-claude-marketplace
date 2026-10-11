@@ -2033,11 +2033,10 @@ class PairStore(object):
 
     # -- files ----------------------------------------------------------------
     def _ensure_dir(self):
-        old = os.umask(0o077)
-        try:
-            os.makedirs(self.path, mode=0o700, exist_ok=True)
-        finally:
-            os.umask(old)
+        # no os.umask here: it is process-wide and would change the modes of files other
+        # threads create meanwhile. makedirs applies the process umask, which can only
+        # clear bits, so the chmod below sets exactly 0700 when it cleared some
+        os.makedirs(self.path, mode=0o700, exist_ok=True)
         st = os.stat(self.path)
         if st.st_uid == os.getuid() and (st.st_mode & 0o777) != 0o700:
             os.chmod(self.path, 0o700)
@@ -2240,6 +2239,15 @@ class PairStore(object):
             self._write(self.PENDING, cur[-PENDING_REPAIR_MAX:])
             return True
 
+    def plan_reset(self, selector):
+        """(records, pending entries) that reset(selector) would remove. Changes nothing."""
+        sel = str(selector or "").strip()
+        if not sel:
+            return [], []
+        with self.lock:
+            gone, drop, _cur = self._plan(sel)
+        return gone, drop
+
     def reset(self, selector):
         """Forget the pairing(s) matching selector (peer id or an 8+ char prefix of it,
         slot host:port, host, or machine label) and the pending repairs for them, so
@@ -2247,27 +2255,32 @@ class PairStore(object):
         sel = str(selector or "").strip()
         if not sel:
             return [], []
+        with self.lock:
+            gone, drop, cur = self._plan(sel)
+            for r in gone:
+                self._unlink_quiet(os.path.join(self.path, "peer-%s.json" % r["id"]))
+            if drop:
+                self._write(self.PENDING, [e for e in cur if e not in drop])
+            return gone, drop
 
+    def _plan(self, sel):
+        """(records, pending entries, all pending) for the non-empty selector sel. Reads
+        only; the pending file is read strictly before anything is removed."""
         def hit_id(pid):
             return bool(pid) and (pid == sel or (len(sel) >= 8 and pid.startswith(sel)))
 
         def hit_slot(slot):
             return bool(slot) and (slot == sel or slot.rsplit(":", 1)[0] == sel)
 
-        with self.lock:
-            gone = [r for r in self.records()
-                    if hit_id(r["id"]) or hit_slot(r["slot"]) or (r["machine"] and r["machine"] == sel)]
-            cur = self.pending(strict=True)   # read before anything is removed
-            for r in gone:
-                self._unlink_quiet(os.path.join(self.path, "peer-%s.json" % r["id"]))
-            slots = set(r["slot"] for r in gone)
-            ids = set(r["id"] for r in gone)
-            drop = [e for e in cur if e["slot"] in slots or e["old_id"] in ids or e["new_id"] in ids
-                    or hit_slot(e["slot"])
-                    or hit_id(e["new_id"]) or hit_id(e["old_id"]) or (e["machine"] and e["machine"] == sel)]
-            if drop:
-                self._write(self.PENDING, [e for e in cur if e not in drop])
-            return gone, drop
+        gone = [r for r in self.records()
+                if hit_id(r["id"]) or hit_slot(r["slot"]) or (r["machine"] and r["machine"] == sel)]
+        cur = self.pending(strict=True)   # read before anything is removed
+        slots = set(r["slot"] for r in gone)
+        ids = set(r["id"] for r in gone)
+        drop = [e for e in cur if e["slot"] in slots or e["old_id"] in ids or e["new_id"] in ids
+                or hit_slot(e["slot"])
+                or hit_id(e["new_id"]) or hit_id(e["old_id"]) or (e["machine"] and e["machine"] == sel)]
+        return gone, drop, cur
 
     def forget_all(self):
         """Forget every pairing (corrupt records too) and every pending repair. The
@@ -3228,6 +3241,10 @@ class TrustStore(object):
             return self._load(strict=False)
         except Exception:
             return {"key": "", "trusted": []}
+
+    def check(self):
+        """Raise TrustFileError when the file exists but cannot be used. Changes nothing."""
+        self._load(strict=True)
 
     def _load(self, strict):
         empty = {"key": "", "trusted": []}
@@ -5063,22 +5080,18 @@ class Daemon(object):
     # -- holder relay (local unix socket) -----------------------------------
     def _start_relay(self):
         """Unix socket the holders hand their delivers to, so they leave over the
-        return channel. Bound under umask 077 inside the 0700 sock dir (never a
-        moment with loose permissions), then chmod 0600. On failure normal holders
-        keep sending directly; via-inbound holders are then not created at all."""
+        return channel. Bound inside the sock dir, which the daemon sets to 0700 when it
+        owns it, so the default mode before the chmod is not reachable by other users;
+        then chmod 0600. No umask change (os.umask is process-wide). On failure normal
+        holders keep sending directly; via-inbound holders are then not created at all."""
         path = os.path.join(self.sock_dir, "relay-%d.sock" % self.listen_port)
-        old_umask = None
         try:
             try:
                 os.unlink(path)
             except OSError:
                 pass
             srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            old_umask = os.umask(0o077)
-            try:
-                srv.bind(path)
-            finally:
-                os.umask(old_umask)
+            srv.bind(path)
             os.chmod(path, 0o600)
             srv.listen(min(RELAY_BACKLOG, socket.SOMAXCONN))
         except OSError as exc:
@@ -6344,17 +6357,29 @@ def run_pairs(_args):
 
 def run_pair_reset(args):
     """Forget a peer's pairing so its next link pairs again (trust on first use).
-    The only manual pairing step, for a reinstalled peer or lost keys. The pairing is
-    removed from every keystore (the machine store and each served profile's copy),
-    and the peer's trust grants from every served profile: no profile keeps the peer."""
+    The only manual pairing step, for a reinstalled peer or lost keys. The peer's trust
+    grants are removed from every served profile FIRST, then the pairing from every
+    keystore (the machine store and each served profile's copy). A grant binds to the
+    pairing and DH keys are static, so a re-pair must never find an old grant: when the
+    trust cannot be removed the reset is refused and the pairing stays as it is."""
     stores = [PairStore(d) for d in pair_store_dirs(load_config() or {})]
     try:
         for store in stores:   # read every keystore first: an unreadable one changes nothing
             store.records()
             store.pending(strict=True)
+        plans = [store.plan_reset(args.peer) for store in stores]
     except PairStoreUnreadable as exc:
         print("pair-reset: %s; nothing changed" % exc)
         return 1
+    ids = set(r["id"] for gone, _drop in plans for r in gone)
+    if not ids and not any(drop for _gone, drop in plans):
+        print("no pairing or pending repair matches %r (see: credo-peer-lan.py pairs)" % args.peer)
+        return 1
+    if ids:
+        err = _remove_bound_trust(ids)
+        if err:
+            print("pair-reset: %s" % err)
+            return 1
     gone, drop = [], []
     for store in stores:
         try:
@@ -6376,23 +6401,37 @@ def run_pair_reset(args):
         print("removed pairing with %s (machine %r, slot %s)" % (r["id"], r["machine"], r["slot"]))
     for e in drop:
         print("cleared pending repair at %s (peer id %s)" % (e["slot"], e["new_id"][:8]))
-    # a trust grant binds to the pairing: a reset pairing never keeps it in any profile
-    # (whoever pairs at that id next must be trusted again by the user there)
-    for cfg_dir in profiles.profile_dirs(own=machine_profile_dir()):
-        path = trust_path_for(cfg_dir)
-        if not os.path.exists(path):
-            continue
-        try:
-            dropped = TrustStore(path).remove(lambda e: e["peer_id"] in seen)
-        except (OSError, TrustFileError) as exc:
-            print("could not update the trust list %s: %s (its entries no longer match the "
-                  "reset pairing anyway)" % (path, exc))
-            continue
-        for e in dropped:
-            print("removed trust for session %r on machine %r (peer %s) in profile %s"
-                  % (trust_label(e), e["machine"], e["peer_id"][:8], profiles.profile_name(cfg_dir)))
     print("the next link from that peer pairs again automatically")
     return 0
+
+
+def _remove_bound_trust(ids):
+    """Remove the trust grants of the paired ids from every served profile's trust list,
+    before the pairing is reset. Every list is checked first, so one that cannot be used
+    stops the reset before any file changes. Returns an error text, or None when done."""
+    found = []
+    for cfg_dir in profiles.profile_dirs(own=machine_profile_dir()):
+        path = trust_path_for(cfg_dir)
+        if os.path.exists(path):
+            found.append((cfg_dir, path))
+    try:
+        for _cfg_dir, path in found:
+            TrustStore(path).check()
+    except (OSError, TrustFileError) as exc:
+        return "cannot read a trust list (%s); nothing changed, the pairing is kept" % exc
+    done = []
+    for cfg_dir, path in found:
+        name = profiles.profile_name(cfg_dir)
+        try:
+            dropped = TrustStore(path).remove(lambda e: e["peer_id"] in ids)
+        except (OSError, TrustFileError) as exc:
+            return ("could not update the trust list %s in profile %s (%s); the pairing is kept "
+                    "(trust already removed in: %s)" % (path, name, exc, ", ".join(done) or "none"))
+        done.append(name)
+        for e in dropped:
+            print("removed trust for session %r on machine %r (peer %s) in profile %s"
+                  % (trust_label(e), e["machine"], e["peer_id"][:8], name))
+    return None
 
 
 def _pair_matches(recs, sel):

@@ -2373,7 +2373,7 @@ case "$RG_OUT" in *RG_OK*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf '
 #   m2  inbound links are capped per source IP and in total.
 #   m3  a random nonce breaks a tie between identical machine names and ports
 #       (between two links proven to come from the same peer).
-#   m5  the relay socket is created under umask 077 in a 0700 sock dir.
+#   m5  the relay socket is created in a 0700 sock dir, ends 0600, no umask change.
 #   m6  the relay socket rejects non-deliver frames.
 #   MR  a sender re-announcing a session under a new machine name renames the mirror.
 #   H1  a gateway/loopback link naming a reachable peer's machine leaves our outbound
@@ -2759,19 +2759,21 @@ guard("m3 nonce", m3_nonce)
 # ---- m5: relay socket permissions --------------------------------------------------
 def m5_perms():
     sd = os.path.join(root, "sockperm")
-    real_chmod = mod.os.chmod
-    mod.os.chmod = lambda *a, **k: None   # prove the mode comes from creation, not a later chmod
+    umask_calls = []   # the bind must not change the process-wide umask (no os.umask call)
+    real_umask = mod.os.umask
+    mod.os.umask = lambda *a: umask_calls.append(a) or real_umask(*a)
     try:
         d = new_daemon()
         d.sock_dir = sd
         d._ensure_sock_dir()
         d._start_relay()
     finally:
-        mod.os.chmod = real_chmod
+        mod.os.umask = real_umask
     dmode = stat.S_IMODE(os.stat(sd).st_mode)
     res("m5: sock dir is created 0700", dmode == 0o700, "mode=%o" % dmode)
     smode = stat.S_IMODE(os.stat(d.relay_path).st_mode) if d.relay_path else 0o777
-    res("m5: relay socket is bound under umask 077 (no group/other bits)", smode & 0o077 == 0, "mode=%o" % smode)
+    res("m5: relay socket ends 0600 (no group/other bits)", smode == 0o600, "mode=%o" % smode)
+    res("m5: binding the relay socket makes no os.umask call", umask_calls == [], umask_calls)
     d.stop.set()
     d.relay_srv.close()
 guard("m5 perms", m5_perms)
@@ -3343,7 +3345,7 @@ while IFS= read -r line; do
     esac
 done <<< "$RH_OUT"
 case "$RH_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL RH: traceback\n%s\n' "$RH_OUT" ;; esac
-check "RH: expected number of hardening results" "111" "$(printf '%s\n' "$RH_OUT" | grep -cE '^(PASS|FAIL) ')"
+check "RH: expected number of hardening results" "112" "$(printf '%s\n' "$RH_OUT" | grep -cE '^(PASS|FAIL) ')"
 
 # --- PK: per-peer pairing keys (module level, socketpairs, no LAN) -------------
 # Acceptance for the pairing layer. Each result line counts on its own.
@@ -5963,6 +5965,120 @@ ok "init from an unserved profile creates no second config" \
     "$([ ! -e "$TMP/AQ/home/.claude-extra/credo/peer-lan.json" ] && echo 0 || echo 1)"
 check "init from an unserved profile adds the peer to the machine config" "1" \
     "$(grep -c '192.0.2.42' "$AQ_CFG")"
+
+# --- PR: pair-reset removes the trust first; a failure changes nothing -------------
+# A trust grant binds to the pairing and DH keys are static, so a re-pair would silently
+# re-apply an old grant: pair-reset removes the peer's grants from every served profile
+# BEFORE the pairing. An unusable trust list refuses the reset before any file changes.
+# A keystore dir made under a restrictive umask is 0700 without a umask change.
+PR_OUT="$("$PY" - "$DAEMON" "$TMP/PR" <<'PYEOF'
+import importlib.util, json, os, stat, subprocess, sys
+daemon_path, root = sys.argv[1:3]
+home = os.path.join(root, "home")
+own = os.path.join(home, ".claude")
+work = os.path.join(home, ".claude-work")
+cfg = os.path.join(own, "credo", "peer-lan.json")
+os.environ["HOME"] = home
+os.environ["CLAUDE_CONFIG_DIR"] = own
+os.environ["CREDO_PEER_LAN_CONFIG"] = cfg
+os.environ["CREDO_PEER_LAN_SOCKDIR"] = os.path.join(root, "sock")
+spec = importlib.util.spec_from_file_location("credo_peer_lan_pr", daemon_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.log = lambda m: None
+def res(name, cond, detail=""):
+    print(("PASS " if cond else "FAIL ") + name + ("" if cond else " %r" % (detail,)))
+for d in (own, work):
+    os.makedirs(os.path.join(d, "sessions"), exist_ok=True)
+    os.makedirs(os.path.join(d, "credo"), exist_ok=True)
+os.makedirs(os.path.join(root, "sock"), exist_ok=True)
+with open(cfg, "w") as fh:
+    json.dump({"this_machine": "box-r", "listen_port": 48610, "peers": [],
+               "networks": {"home": {"fingerprint": {}}}}, fh)
+peer = mod.PairStore(os.path.join(root, "keys-peer")).identity()
+own_trust = mod.trust_path_for(own)
+work_trust = mod.trust_path_for(work)
+keystores = [mod.default_keys_dir(), mod.profile_keys_dir(work)]
+def setup_pairing():
+    for keys in keystores:
+        mod.PairStore(keys).pin(peer["id"], peer["pub"], "cd" * 32, "192.168.1.42:48610", "box-r")
+    mod.TrustStore(own_trust).add(peer["id"], peer["pub"], "alice", "box-r")
+    mod.TrustStore(work_trust).add(peer["id"], peer["pub"], "bob", "box-r")
+def held():
+    return [k for k in keystores if mod.PairStore(k).get(peer["id"]) is not None]
+def granted(path):
+    return any(e["peer_id"] == peer["id"] for e in mod.TrustStore(path).read()["trusted"])
+def reset_cli():
+    return subprocess.run([sys.executable, daemon_path, "pair-reset", peer["id"]],
+                          env=dict(os.environ), capture_output=True, text=True, timeout=60)
+# 1: normal path - trust of every profile, then the pairing
+setup_pairing()
+res("PR setup: pairing held in every keystore, grants in both profiles",
+    len(held()) == len(keystores) and granted(own_trust) and granted(work_trust), held())
+r = reset_cli()
+res("PR normal reset exits 0", r.returncode == 0, r.stdout + r.stderr)
+lines = r.stdout.splitlines()
+ti = next((i for i, l in enumerate(lines) if l.startswith("removed trust")), -1)
+pi = next((i for i, l in enumerate(lines) if l.startswith("removed pairing")), -1)
+res("PR normal reset removes the trust before the pairing", 0 <= ti < pi, lines)
+res("PR normal reset removes the pairing from every keystore", held() == [], held())
+res("PR normal reset removes the grants from every profile",
+    not granted(own_trust) and not granted(work_trust))
+# 2: an unusable trust list in one profile refuses the reset before any change
+setup_pairing()
+with open(work_trust, "w") as fh:
+    fh.write("{not json")
+r = reset_cli()
+res("PR unusable trust list: reset refused (exit 1)", r.returncode == 1, r.stdout + r.stderr)
+res("PR unusable trust list: the pairing is kept in every keystore",
+    len(held()) == len(keystores), held())
+res("PR unusable trust list: the healthy profile keeps its grant", granted(own_trust))
+res("PR unusable trust list: the unusable file is left as it is",
+    open(work_trust).read() == "{not json")
+res("PR unusable trust list: the message says nothing changed and the pairing is kept",
+    "nothing changed" in r.stdout and "the pairing is kept" in r.stdout, r.stdout)
+# 3: the lists read fine but the removal cannot take its lock - the reset still stops
+mod.TrustStore(work_trust)._write({"key": "", "trusted": []})
+setup_pairing()
+os.rename(work_trust + ".lock", work_trust + ".lock.moved")   # the lock file is moved aside
+os.makedirs(work_trust + ".lock")                              # ... and a dir takes its place
+r = reset_cli()
+res("PR failing removal: reset refused (exit 1)", r.returncode == 1, r.stdout + r.stderr)
+res("PR failing removal: the pairing is kept in every keystore",
+    len(held()) == len(keystores), held())
+res("PR failing removal: the message says the pairing is kept",
+    "the pairing is kept" in r.stdout, r.stdout)
+res("PR failing removal: the failing profile keeps its grant", granted(work_trust))
+# 4: a keystore dir created under a restrictive umask is 0700; the process umask is kept
+old = os.umask(0o277)
+umask_calls = []
+real_umask = os.umask
+os.umask = lambda *a: umask_calls.append(a) or real_umask(*a)
+try:
+    fresh = os.path.join(root, "umask-keys")
+    mod.PairStore(fresh).identity()
+    fresh_mode = stat.S_IMODE(os.stat(fresh).st_mode)
+finally:
+    os.umask = real_umask
+    real_umask(old)
+res("PR keystore created under umask 0277 is 0700", fresh_mode == 0o700, oct(fresh_mode))
+res("PR creating the keystore makes no os.umask call", umask_calls == [], umask_calls)
+loose = os.path.join(root, "loose-keys")
+os.makedirs(loose)
+os.chmod(loose, 0o755)
+mod.PairStore(loose).identity()
+res("PR an existing loose keystore dir is set to 0700",
+    stat.S_IMODE(os.stat(loose).st_mode) == 0o700, oct(stat.S_IMODE(os.stat(loose).st_mode)))
+PYEOF
+)"
+while IFS= read -r line; do
+    case "$line" in
+        PASS\ *) PASS=$((PASS + 1)) ;;
+        FAIL\ *) FAIL=$((FAIL + 1)); printf '%s\n' "$line" ;;
+    esac
+done <<< "$PR_OUT"
+case "$PR_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL PR: traceback\n%s\n' "$PR_OUT" ;; esac
+check "PR: expected number of results" "17" "$(printf '%s\n' "$PR_OUT" | grep -cE '^(PASS|FAIL) ')"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
