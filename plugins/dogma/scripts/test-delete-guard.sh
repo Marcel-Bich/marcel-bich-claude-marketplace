@@ -224,6 +224,42 @@ expect allow "$T" "echo x > /mnt/c/Users/me/workspace/proj/out.txt"
 PM=""
 expect allow "$T" "echo x > /mnt/nas/share/a/b/c/x.txt"
 
+# --- deletes below /mnt and /media: the mount point, the drive and the first level below it stay protected,
+# deeper project files are ordinary (file-protection.sh and the permissions decide); the Windows profile
+# root and its first level follow the /home rule, Windows system and profile paths and declared mounts stay
+expect allow "$T" "rm /mnt/d/data/proj/models/x.gguf"
+expect allow "$T" "rm -r /mnt/d/data/proj/old"
+expect allow "$T" "rm -rf /media/usb/x/y/old"
+expect deny  "$T" "rm -rf /mnt"
+expect deny  "$T" "rm -rf /mnt/d"
+expect deny  "$T" "rm -rf /mnt/d/data"
+expect deny  "$T" "rm -rf /media/usb"
+expect deny  "$T" "rm -rf /media/usb/x"
+expect deny  "$T" "rm -rf /mnt/c/Windows/x"
+expect deny  "$T" "rm -rf /mnt/c/Users/alice/AppData/x"
+expect deny  "$T" "rm -rf /mnt/c/Users/alice/.ssh/x"
+expect deny  "$T" "rm -rf /mnt/c/Users/alice"
+expect deny  "$T" "rm -rf /mnt/c/Users/alice/Documents"
+expect allow "$T" "rm -rf /mnt/c/Users/alice/workspace/proj/old"
+expect deny  "$T" "rm -rf /etc/x"
+expect deny  "$T" "rm -rf /opt/x/y/z"
+PM="/mnt/nas/share"
+expect deny  "$T" "rm -rf /mnt/nas/share"
+expect deny  "$T" "rm -rf /mnt/nas/share/a/b/c/x"
+expect allow "$T" "rm -rf /mnt/nas/share2/a/b/c/x"
+PM=""
+# a home that itself sits below /mnt keeps the strict rule for its own files (the path is only analysed)
+run_home() { # home command -> deny or allow
+    local out
+    out="$(jq -n --arg c "$2" --arg d "$T" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+        HOME="$1" CLAUDE_MB_DOGMA_ENABLED=true CLAUDE_MB_DOGMA_PROTECTED_MOUNTS="" bash "$HOOK" 2>/dev/null)"
+    case "$out" in *'"deny"'*) echo deny ;; *) echo allow ;; esac
+}
+got="$(run_home /mnt/d/home-u "rm -rf /mnt/d/home-u/proj/old")"
+if [ "$got" = deny ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL want deny got $got: home below /mnt"; fi
+got="$(run_home /mnt/d/home-u "rm -rf /mnt/d/data/proj/old")"
+if [ "$got" = allow ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL want allow got $got: project below /mnt with home below /mnt"; fi
+
 # --- truncate only in command position; redirects inside quotes are text
 expect allow "$T" "grep -n \"truncate\" /home/u/proj/a.py"
 expect allow "$T" "cd /home/u/proj && grep -n truncate a.py"

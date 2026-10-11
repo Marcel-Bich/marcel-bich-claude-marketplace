@@ -1195,14 +1195,22 @@ def brace_expand(word, limit=64, strict=False):
     return results or [word]
 
 
+def windows_drive(fields):
+    """A Windows drive of WSL (drvfs over 9p) mounted below /mnt or /media, given its /proc/self/mounts fields."""
+    return len(fields) > 2 and fields[2] in ("9p", "drvfs") and fields[1].startswith(("/mnt/", "/media/"))
+
+
 def mount_points():
-    """Mount points below the home, /mnt and /media (their subtrees are protected from recursive deletes)."""
+    """Mount points below the home, /mnt and /media (their subtrees are protected from deletes), and the
+    declared mounts. Windows drives below /mnt are left out: delete-guard.py protects them by depth, Windows
+    paths and declared mounts (is_dangerous), so project files on a drive stay deletable like any other file.
+    Network shares and other mounts keep their subtree protection."""
     points = []
     try:
         with open("/proc/self/mounts", encoding="utf-8", errors="replace") as handle:
             for line in itertools.islice(handle, 4096):
                 fields = line.split()
-                if len(fields) > 1:
+                if len(fields) > 1 and not windows_drive(fields):
                     points.append(fields[1].replace("\\040", " "))
     except OSError:
         points = []
