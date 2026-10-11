@@ -383,10 +383,12 @@ behind a NAT only the Windows host sees, and its IP changes on every WSL restart
 Windows host must forward its own LAN-IP:PORT to the current WSL IP:PORT (a `netsh`
 portproxy) and allow the port inbound. `scripts/credo-peer-lan-winproxy.ps1` makes this
 self-healing. The `init` action below does this for you as a single UAC prompt; to run it
-by hand once in an ELEVATED Windows PowerShell:
+by hand once in an ELEVATED Windows PowerShell, from a local copy (a run straight from the
+`\\wsl.localhost` path can close without installing anything):
 
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -File "\\wsl.localhost\<distro>\<plugin path>\scripts\credo-peer-lan-winproxy.ps1" -Install -Port 48610
+Copy-Item "\\wsl.localhost\<distro>\<plugin path>\scripts\credo-peer-lan-winproxy.ps1" $env:TEMP
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\credo-peer-lan-winproxy.ps1" -Install -Port 48610
 ```
 
 `-Install` copies the script to `%ProgramData%\credo\` (only Administrators/SYSTEM may
@@ -639,17 +641,21 @@ allowlist-scoped firewall rule (the old rule allowed the whole LocalSubnet).
        winps="$(wslpath -w "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan-winproxy.ps1")"
        ```
        `wslpath -w` turns the WSL path into its `\\wsl.localhost\<distro>\...` UNC form
-       (older Windows: `\\wsl$\<distro>\...`). Then launch the installer elevated - this
-       is the only step that prompts for UAC:
+       (older Windows: `\\wsl$\<distro>\...`). An elevated `-File` straight from that UNC
+       path can close at once without installing anything, so the launcher first copies
+       the installer to the user's `%TEMP%` and runs that copy elevated - this is the only
+       step that prompts for UAC:
        ```bash
-       powershell.exe -NoProfile -Command "Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','$winps','-Install','-Port','48610'"
+       powershell.exe -NoProfile -Command '$s = Join-Path $env:TEMP "credo-peer-lan-winproxy.ps1"; Copy-Item -LiteralPath "'"$winps"'" -Destination $s -Force; $p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File",("`"" + $s + "`""),"-Install","-Port","48610"; exit $p.ExitCode'
        ```
        Tell the user to approve the one UAC prompt. The `-Port` MUST equal `listen_port`.
      - **On native Linux:** skip the UAC step; after binding, follow Setup flow
        step 6 (Firewall): `check` prints the exact `ufw` commands when needed.
   4. Bind the network: `init` prints the exact `bind` suggestion when the current
      network is not bound - follow Setup flow steps 3-8 (ask, never bind silently).
-  5. Confirm with `check` (shows ENABLED/DISABLED and the allowlist).
+  5. Confirm with `check` (shows ENABLED/DISABLED and the allowlist). Under WSL trust
+     `check`, not the exit code of the elevated run: a window that closed early can
+     still report 0.
 
 - **setup** - run the Setup flow above (interactive, Ask tool).
 
@@ -731,11 +737,10 @@ allowlist-scoped firewall rule (the old rule allowed the whole LocalSubnet).
      "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" disconnect-all --yes --full
      ```
   4. Pair again like the first time: `init <ip> [...]` writes the peer addresses again,
-     then `restart` (the daemon reads its peers only at start), then `check`. The other
-     machine still holds its old pairing with this one and may refuse the new pairing as a
-     pending repair until that pairing is reset there too: run `disconnect-all` on that
-     machine, or `pair-reset` with this machine's peer id there. Reset both sides for a
-     clean start.
+     then `restart` (the daemon reads its peers only at start), then `check`. This
+     machine keeps its own peer id, so the other machine, which still holds its pairing
+     with it, accepts it again at once. To start clean on both sides, run `disconnect-all`
+     on the other machine too.
 
 - **trust `list` | `add <peer> <caption>` | `remove <peer> [<caption>]`** - the local
   trust list (see Trusted peers). `<peer>` is a paired peer: peer id or an 8+ character

@@ -6,6 +6,15 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.82
 
+#### v0.82.2
+
+##### Fixed
+
+- `pair-reset` removes the peer's trust entries before the pairing; when a trust list cannot be read or an entry cannot be removed, the reset exits 1 and the pairing stays in place
+- Keystore dirs and the holder relay socket are created without a process-wide `os.umask` change (the daemon no longer flips the umask while other threads run)
+- The documented Windows setup runs the elevated `-Install` from a copy in `%TEMP%`: started straight from the `\\wsl.localhost` path, the elevated window could close at once without installing anything while reporting exit code 0
+- The docs no longer say that the other machine may refuse a new pairing after `disconnect-all`; with this machine's peer id kept, it accepts it again at once
+
 #### v0.82.1
 
 ##### Fixed
