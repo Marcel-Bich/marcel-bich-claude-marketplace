@@ -5536,14 +5536,15 @@ for _ in range(50):
 res("deliver: a session in the sibling profile receives the message",
     sock == work_sock and any("hello work profile" in g for g in got_work), (sock, got_work))
 
-# e: trust is per profile, looked up in the target session's own profile
+# e: trust is per profile, looked up in the target session's own profile. Only the
+# daemon profile's pairing store is pinned here: a sibling profile has no pairing
+# record of its own. The sibling case below therefore documents the CURRENT behaviour,
+# a fail-closed "no trust" for a non-daemon target. Whether pairing becomes per profile
+# is an open owner decision (MAJOR-2); when it changes, this check changes with it.
 S = mod.PairStore(os.path.join(root, "keys-peer")).identity()
 own_pairs = mod.PairStore(os.path.join(root, "keys-own"))
 own_pairs.identity()
 own_pairs.pin(S["id"], S["pub"], "ab" * 32, "192.168.1.42:48610", "box-p")
-work_pairs = mod.PairStore(os.path.join(work, "credo", "peer-lan-keys"))
-work_pairs.identity()
-work_pairs.pin(S["id"], S["pub"], "cd" * 32, "192.168.1.42:48610", "box-p")
 mod.TrustStore(mod.trust_path_for(own)).add(S["id"], S["pub"], "alice", "box-p")
 mod.TrustStore(mod.trust_path_for(work)).add(S["id"], S["pub"], "bob", "box-p")
 ch = Chan(S["id"])
@@ -5553,8 +5554,20 @@ res("trust: grant of the daemon profile never applies to a target in the sibling
     d._trust_for(ch, "alice", work) is None)
 res("trust: grant of the sibling profile never applies to a target in the daemon profile",
     d._trust_for(ch, "bob", own) is None)
-res("trust: grant of the sibling profile applies to a target in the sibling profile",
-    d._trust_for(ch, "bob", work) is not None)
+res("trust: a grant in a sibling profile is not honoured without that profile's own pairing "
+    "record (fail closed, current behaviour)",
+    d._trust_for(ch, "bob", work) is None)
+before_probe = len(got_work)
+sock = mod.deliver_local(mod.profile_sessions_dirs(), "sid-work", "peer-probe", "trust probe body",
+                         None, lambda cfg_dir: d._trust_for(ch, "bob", cfg_dir))
+for _ in range(50):
+    if len(got_work) > before_probe:
+        break
+    time.sleep(0.05)
+probe = got_work[before_probe:]
+res("trust: the message to the sibling session is delivered without a trust marker",
+    sock == work_sock and len(probe) == 1 and "trust probe body" in probe[0]
+    and "credo-trust" not in probe[0], probe)
 
 # g: a profile that stops being served loses its copy; a profile served again gets one
 real_profiles = mod.profile_sessions_dirs
@@ -5568,6 +5581,30 @@ d._refresh_descriptor_locked(rkey, {"name": "remote-one", "machine": "box-r", "s
 back = os.path.join(work_sess, "%d.json" % rec["pid"])
 res("profile served again: it gets the mirror copy again",
     os.path.exists(back) and json.load(open(back)).get("sessionId") == "sid-remote", sorted(os.listdir(work_sess)))
+
+# h: a mirror copy whose first write was lost is written again on the next refresh
+flaky = ("127.0.0.1:41001", "sid-flaky")
+real_atomic = d._atomic_write
+lost = []
+def first_write_lost(path, obj):
+    if path.startswith(work_sess) and not lost:
+        lost.append(path)   # the write of this copy is lost; the daemon logs it and goes on
+        return
+    real_atomic(path, obj)
+d._atomic_write = first_write_lost
+d._create_remote_locked(flaky, {"name": "flaky", "sessionId": "sid-flaky", "status": "idle",
+                                "machine": "box-r", "profile": ".claude-work"},
+                        d._template_descriptor_locked())
+d._atomic_write = real_atomic
+flaky_rec = d.remotes.get(flaky) or {}
+work_copy = os.path.join(work_sess, "%d.json" % (flaky_rec.get("pid") or -1))
+res("h: the copy whose first write was lost is recorded but missing",
+    len(lost) == 1 and flaky in d.remotes and not os.path.exists(work_copy), (lost, sorted(d.remotes)))
+d._refresh_descriptor_locked(flaky, {"name": "flaky", "machine": "box-r", "status": "idle"})
+res("h: the next refresh writes the lost copy again",
+    os.path.exists(work_copy) and json.load(open(work_copy)).get("sessionId") == "sid-flaky",
+    sorted(os.listdir(work_sess)))
+d._remove_remote_locked(flaky)
 
 # f: removing the remote session removes its descriptor from every profile
 d._remove_remote_locked(rkey)
@@ -5584,7 +5621,139 @@ while IFS= read -r line; do
     esac
 done <<< "$AP_OUT"
 case "$AP_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL AP: traceback\n%s\n' "$AP_OUT" ;; esac
-check "AP: expected number of results" "16" "$(printf '%s\n' "$AP_OUT" | grep -cE '^(PASS|FAIL) ')"
+check "AP: expected number of results" "19" "$(printf '%s\n' "$AP_OUT" | grep -cE '^(PASS|FAIL) ')"
+
+# --- AR: a sessions/ dir reached through two profiles is one profile ----------
+# The daemon's own sessions/ may be a symlink to a sibling's sessions/ dir. The same
+# registry must not be listed, mirrored or delivered to twice.
+mkdir -p "$TMP/AR/home/.claude-work/sessions" "$TMP/AR/home/.claude"
+ln -s "$TMP/AR/home/.claude-work/sessions" "$TMP/AR/home/.claude/sessions"
+AR_OUT="$(env -u CREDO_SESSION_MODES_DIR -u CREDO_SESSION_ROLES_DIR -u CREDO_SESSION_META_DIR \
+    HOME="$TMP/AR/home" CLAUDE_CONFIG_DIR="$TMP/AR/home/.claude" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/AR/sock" CREDO_PEER_LAN_CONFIG="$TMP/AR/home/.claude/credo/peer-lan.json" \
+    "$PY" - "$DAEMON" "$TMP/AR" <<'PYEOF'
+import importlib.util, json, os, sys
+daemon_path, root = sys.argv[1:3]
+spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.log = lambda m: None
+def res(name, cond, detail=""):
+    print(("PASS " if cond else "FAIL ") + name + ("" if cond else " %r" % (detail,)))
+json.dump({"pid": os.getpid(), "sessionId": "sid-w", "name": "w", "status": "idle",
+           "messagingSocketPath": "/nonexistent/w.sock", "cwd": "/home/myuser/w",
+           "pidDomain": os.readlink("/proc/self/ns/pid")},
+          open(os.path.join(root, "home", ".claude-work", "sessions", "%d.json" % os.getpid()), "w"))
+names = [os.path.basename(p) for p in mod.profiles.profile_dirs()]
+res("a sessions/ dir shared by two profiles is one profile", names == [".claude"], names)
+d = mod.Daemon({"this_machine": "box-b", "peers": ["127.0.0.1:41001"], "listen_port": 41002,
+                "keys_dir": os.path.join(root, "keys-own")})
+listed = [e["sessionId"] for e in d._roster_sessions()]
+res("roster lists the shared session once", listed.count("sid-w") == 1, listed)
+PYEOF
+)"
+while IFS= read -r line; do
+    case "$line" in
+        PASS\ *) PASS=$((PASS + 1)) ;;
+        FAIL\ *) FAIL=$((FAIL + 1)); printf '%s\n' "$line" ;;
+    esac
+done <<< "$AR_OUT"
+case "$AR_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL AR: traceback\n%s\n' "$AR_OUT" ;; esac
+check "AR: expected number of results" "2" "$(printf '%s\n' "$AR_OUT" | grep -cE '^(PASS|FAIL) ')"
+
+# --- AS: a holder serves a profile that appeared after it started -------------
+# A holder lives as long as its remote session. A profile created after the holder
+# started must still be found as the SENDER of a message it forwards: the sender lookup
+# runs over the profiles that exist when a frame arrives (not a snapshot at spawn).
+mkdir -p "$TMP/AS/home/.claude/credo" "$TMP/AS/home/.claude/sessions" "$TMP/AS/sock"
+echo '{"this_machine":"box-b","listen_port":48610,"peers":[]}' > "$TMP/AS/home/.claude/credo/peer-lan.json"
+AS_OUT="$(env -u CREDO_SESSION_MODES_DIR -u CREDO_SESSION_ROLES_DIR -u CREDO_SESSION_META_DIR \
+    HOME="$TMP/AS/home" CLAUDE_CONFIG_DIR="$TMP/AS/home/.claude" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/AS/sock" CREDO_PEER_LAN_CONFIG="$TMP/AS/home/.claude/credo/peer-lan.json" \
+    "$PY" - "$DAEMON" "$TMP/AS" <<'PYEOF'
+import json, os, socket, subprocess, sys, threading, time
+daemon_path, root = sys.argv[1:3]
+home = os.path.join(root, "home")
+sock_dir = os.path.join(root, "sock")
+def res(name, cond, detail=""):
+    print(("PASS " if cond else "FAIL ") + name + ("" if cond else " %r" % (detail,)))
+# the peer end: a loopback listener that records the one frame the holder sends
+srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+srv.bind(("127.0.0.1", 0))
+srv.listen(4)
+port = srv.getsockname()[1]
+got = []
+def serve():
+    srv.settimeout(20)
+    try:
+        c, _ = srv.accept()
+    except OSError:
+        return
+    data = b""
+    while True:
+        chunk = c.recv(65536)
+        if not chunk:
+            break
+        data += chunk
+    c.close()
+    got.append(data.decode("utf-8", "replace"))
+threading.Thread(target=serve, daemon=True).start()
+proxy = os.path.join(sock_dir, "pl-late.sock")
+holder = subprocess.Popen([sys.executable, daemon_path, "holder", "--proxy", proxy,
+                           "--target-session", "sid-t", "--peer-host", "127.0.0.1",
+                           "--peer-port", str(port), "--this-machine", "box-b"],
+                          env=dict(os.environ))
+up = False
+for _ in range(100):
+    if os.path.exists(proxy):
+        up = True
+        break
+    time.sleep(0.05)
+res("holder started and bound its proxy socket", up)
+# the sending profile appears only now, after the holder started
+late_sess = os.path.join(home, ".claude-late", "sessions")
+os.makedirs(late_sess)
+late_sock = os.path.join(sock_dir, "late-sender.sock")
+json.dump({"pid": os.getpid(), "sessionId": "sid-late", "name": "late-one", "status": "idle",
+           "messagingSocketPath": late_sock, "cwd": "/home/myuser/late",
+           "pidDomain": os.readlink("/proc/self/ns/pid")},
+          open(os.path.join(late_sess, "%d.json" % os.getpid()), "w"))
+content = ('<cross-session-message from="uds:%s" from-name="late-one">\n'
+           'hello from the late profile\n</cross-session-message>' % late_sock)
+frame = json.dumps({"type": "user", "message": {"content": content}, "from": "uds:" + late_sock}) + "\n"
+c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+c.connect(proxy)
+c.sendall(frame.encode("utf-8"))
+c.shutdown(socket.SHUT_WR)
+c.close()
+for _ in range(200):
+    if got:
+        break
+    time.sleep(0.05)
+payload = {}
+if got:
+    wire = json.loads(got[0].strip().splitlines()[0])
+    payload = json.loads(wire["body"])
+res("the sender of a profile created after the holder started is found",
+    payload.get("from_sessionId") == "sid-late", payload)
+res("the forwarded deliver carries the message body",
+    payload.get("body") == "hello from the late profile", payload)
+holder.terminate()
+try:
+    holder.wait(timeout=5)
+except Exception:
+    holder.kill()
+srv.close()
+PYEOF
+)"
+while IFS= read -r line; do
+    case "$line" in
+        PASS\ *) PASS=$((PASS + 1)) ;;
+        FAIL\ *) FAIL=$((FAIL + 1)); printf '%s\n' "$line" ;;
+    esac
+done <<< "$AS_OUT"
+case "$AS_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL AS: traceback\n%s\n' "$AS_OUT" ;; esac
+check "AS: expected number of results" "3" "$(printf '%s\n' "$AS_OUT" | grep -cE '^(PASS|FAIL) ')"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

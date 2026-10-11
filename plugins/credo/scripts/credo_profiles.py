@@ -59,12 +59,17 @@ def _sessions_ok(cfg, home_real, uid):
 def profile_dirs(own=None, home=None, uid=None):
     """Config dirs of every local profile: the own dir first (always, as given), then
     the sibling ~/.claude* profiles in home that pass the rule in the module docstring.
-    Two entries with the same real path are listed once."""
+    A profile is listed once: a config dir with the same real path as one already
+    listed is skipped, and so is one whose sessions/ dir has the same real path as the
+    sessions/ dir of a profile already listed (the own sessions/ may be a symlink to a
+    sibling's, and then both name one registry)."""
     own = own or own_config_dir()
     if uid is None and hasattr(os, "getuid"):
         uid = os.getuid()
     home_real = os.path.realpath(home or os.path.expanduser("~"))
-    out, seen = [own], {os.path.realpath(own)}
+    out = [own]
+    seen = {os.path.realpath(own)}
+    seen_sessions = {os.path.realpath(os.path.join(own, "sessions"))}
     try:
         names = sorted(os.listdir(home_real))
     except OSError:
@@ -78,7 +83,11 @@ def profile_dirs(own=None, home=None, uid=None):
             continue
         if not _sessions_ok(cand, home_real, uid):
             continue
+        sessions_real = os.path.realpath(os.path.join(cand, "sessions"))
+        if sessions_real in seen_sessions:
+            continue
         seen.add(real)
+        seen_sessions.add(sessions_real)
         out.append(cand)
     return out
 

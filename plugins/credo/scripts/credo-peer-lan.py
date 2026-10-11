@@ -3308,7 +3308,6 @@ def run_holder(args):
     # Routing is address-based: the holder forwards straight to the peer host:port
     # it was spawned with. No name lookup, so no name contract to get wrong.
     host, port = args.peer_host, int(args.peer_port)
-    sess_dirs = profile_sessions_dirs()
     proxy = args.proxy
     parent = os.getppid()
 
@@ -3372,7 +3371,7 @@ def run_holder(args):
                 line = line.strip()
                 if not line:
                     continue
-                _forward(line, token, host, port, args, sess_dirs, writer_pid=writer)
+                _forward(line, token, host, port, args, writer_pid=writer)
         except Exception as exc:
             log("holder: worker error: %s" % exc)
         finally:
@@ -3442,12 +3441,16 @@ def _sender_descriptor(descs, sock_path):
     return (live or hits or [None])[0]
 
 
-def _forward(line, token, host, port, args, sess_dirs, writer_pid=None):
+def _forward(line, token, host, port, args, sess_dirs=None, writer_pid=None):
     """Forward one frame a local writer put on the proxy socket as a deliver. The
-    sending session is looked up in every profile's sessions dir (sess_dirs).
-    writer_pid: the writer's pid from SO_PEERCRED (see peer_pid); the sender's
-    caption is sent only when the session that owns the reply socket is that
-    process or one of its ancestors (see _sender_names)."""
+    sending session is looked up in every profile's sessions dir. sess_dirs is taken
+    when the frame arrives (profile_sessions_dirs()) unless a caller passes one: a
+    holder lives as long as its remote session, so a profile created after the holder
+    started must still be found. writer_pid: the writer's pid from SO_PEERCRED (see
+    peer_pid); the sender's caption is sent only when the session that owns the reply
+    socket is that process or one of its ancestors (see _sender_names)."""
+    if sess_dirs is None:
+        sess_dirs = profile_sessions_dirs()
     try:
         frame = json.loads(line.decode("utf-8"))
     except Exception:
@@ -5486,10 +5489,12 @@ class Daemon(object):
                     except OSError:
                         pass
         for sess_dir in current:
-            if sess_dir in descs:
-                self._update_descriptor(descs[sess_dir], sess, name)
+            path = descs.get(sess_dir)
+            if path and os.path.exists(path):
+                self._update_descriptor(path, sess, name)
                 continue
-            # a profile that appeared after the mirror was made gets its copy now
+            # no copy yet (a profile that appeared after the mirror was made) or the
+            # copy's first write was lost: write it now, under the holder's pid
             path = os.path.join(sess_dir, "%d.json" % rec["pid"])
             template = self._template_descriptor_locked()
             if template is None or self._foreign_descriptor(path):
@@ -5500,11 +5505,14 @@ class Daemon(object):
 
     def _update_descriptor(self, path, sess, name):
         """Refresh one mirror descriptor in place: status, name, sender machine, metadata
-        and timestamps. A descriptor that cannot be read is left alone."""
+        and timestamps. A descriptor that cannot be read, or that does not carry our
+        marker, is left alone (never overwritten)."""
         try:
             with open(path) as fh:
                 d = json.load(fh)
         except Exception:
+            return
+        if not isinstance(d, dict) or not d.get(MARK):
             return
         now_ms = int(time.time() * 1000)
         d["status"] = sess.get("status", d.get("status", "idle"))
