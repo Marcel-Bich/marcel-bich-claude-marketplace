@@ -128,6 +128,9 @@ FALLBACK_RE = re.compile(r"(?<![^\s;&|({`'\"!=@/])(?:rm|unlink|rmdir|shred|srm|w
                          r"mkfs[\w.-]{0,32}|wipefs|find|mv|rsync)\s+\S")
 # appended to every refusal of a git hook bypass
 HOOK_HINT = " Make a normal commit (a WIP commit is fine); if a hook fails, fix the cause or report it."
+# appended to refusals of remote URL output: the owner/repo scope without the URL
+SCOPE_HINT = " For the owner/repo scope check run: bash %s [dir]" % (
+    Path(__file__).resolve().parent / "git-scope.sh")
 OPAQUE_MAX = 65536  # longer text is not parsed; it is refused when the fallback pattern matches
 # tmux commands (name: alias) for the unique-prefix lookup of tmux's cmd_find
 TMUX_COMMANDS = {
@@ -2933,15 +2936,15 @@ class Analysis:
         if self.flags.get("token_protection", True):
             reason = "dogma: git command may print remote URLs or stored credentials (tokens can be embedded)."
             if sub == "remote" and any(arg in ("-v", "--verbose", "show", "get-url") for arg in rest):
-                raise Deny(reason)
+                raise Deny(reason + SCOPE_HINT)
             if sub == "config" and (any(arg in ("-l", "--list") or long_option(arg, "list", 3)
                                         or long_option(arg, "get-regexp", 5) for arg in rest)
                                     or any(re.search(r"(?i)remote|url|credential|insteadof", arg) for arg in rest)):
-                raise Deny(reason)
+                raise Deny(reason + SCOPE_HINT)
             if sub == "var" and any(arg in ("-l",) for arg in rest):
                 raise Deny(reason)
             if sub == "ls-remote" and "--get-url" in rest:
-                raise Deny(reason)
+                raise Deny(reason + SCOPE_HINT)
             if sub.startswith("credential"):
                 raise Deny(reason)
         if sub == "config":

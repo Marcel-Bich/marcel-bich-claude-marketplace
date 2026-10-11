@@ -15,7 +15,9 @@ versioned) is run and reported without being asserted.
 
 A unit table ("unit") runs the bash-guard -> delete-guard hand-over in process with a
 literal working directory below /home/ (no directory is created), so the legacy text
-patterns are proven to see only the command, never the generated "cd <dir>" lines.
+patterns are proven to see only the command, never the generated "cd <dir>" lines. The
+same table checks that remote URL denials name the installed git-scope.sh, both in
+bash-guard.py and in the token-protection.sh fallback that runs without python3.
 
 The fp table holds false positives (must pass) next to the protection that must
 stay (must be blocked), plus Edit/Write inputs that no Edit/Write hook may treat as a deletion.
@@ -244,6 +246,41 @@ def unit_legacy_cwd():
     return results
 
 
+SCOPE_HINT_COMMANDS = ("git remote -v", "git remote get-url origin", "git config --get remote.origin.url")
+
+
+def unit_scope_hint(runner):
+    """[(ok, line)]: remote denials name the installed git-scope.sh, with python3 and without it."""
+    script = runner.scripts / "git-scope.sh"
+    hint = "bash %s [dir]" % script
+    cwd = str(runner.dirs["X"])
+    env = dict(runner.env, DOGMA_SESSION_DIR=cwd)
+    results = []
+    for command in SCOPE_HINT_COMMANDS:
+        event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                            "tool_input": {"command": command}, "cwd": cwd, "session_id": ""})
+        result = subprocess.run(["python3", "-I", str(runner.scripts / "bash-guard.py")], input=event,
+                                capture_output=True, text=True, cwd=cwd, env=env, timeout=30)
+        reason = result.stdout.strip()
+        results.append((hint in reason and script.is_file(),
+                        "scope hint (bash-guard, %s): %s" % (command, reason[:200])))
+    # token-protection.sh only decides on its own when python3 is missing: a PATH with the
+    # tools it needs but no python3 forces that fallback
+    bare = runner.root / "no-python-bin"
+    bare.mkdir()
+    for tool in ("jq", "grep", "sed", "xargs", "date", "stat", "basename", "dirname", "cat", "head", "tr", "wc"):
+        found = shutil.which(tool)
+        if found:
+            (bare / tool).symlink_to(found)
+    event = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git remote -v"}, "cwd": cwd})
+    result = subprocess.run([shutil.which("bash"), str(runner.scripts / "token-protection.sh")], input=event,
+                            capture_output=True, text=True, cwd=cwd, env=dict(env, PATH=str(bare)), timeout=30)
+    reason = result.stdout.strip()
+    results.append((hint in reason and script.is_file(),
+                    "scope hint (token-protection fallback): %s" % reason[:200]))
+    return results
+
+
 def long_json():
     """A minified JSON document of about 37 KB with many braces and commas (a kubectl patch)."""
     items = [{"name": "c%d" % index, "env": [{"name": "K%d" % index, "value": "v,%d" % index}],
@@ -323,7 +360,7 @@ def main():
                 if not ok:
                     failed.append("FAIL " + line)
         if only in (None, "unit"):
-            for ok, line in unit_legacy_cwd() + unit_perf():
+            for ok, line in unit_legacy_cwd() + unit_perf() + unit_scope_hint(runner):
                 passed, total = counts.get("unit", (0, 0))
                 counts["unit"] = (passed + ok, total + 1)
                 if not ok:
