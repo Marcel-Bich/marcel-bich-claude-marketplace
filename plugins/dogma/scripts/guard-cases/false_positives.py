@@ -744,6 +744,9 @@ CASES = (
     ("allow", "N", "echo x >> /mnt/c/Users/me/AppData/Local/Temp/log.txt"),
     ("deny", "N", "printf x > /mnt/c/Users/me/AppData/Local/Temp"),
     ("deny", "N", "printf x > /mnt/c/Users/me/AppData/Roaming/x.ps1"),
+    ("deny", "N", "printf x > /mnt/c/Users/me/AppData/Local/Temp/$X/../../Roaming/x.ps1"),
+    ("deny", "N", "printf x >> /home/alice/proj/$X/../.bashrc"),
+    ("allow", "N", "printf x > /mnt/c/Users/me/AppData/Local/Temp/a..b.txt"),
     # deletes below /mnt and /media: deeper project files pass with the permission (X), the drive and
     # its first level, Windows system and profile paths and declared mounts stay refused
     ("allow", "X", "rm /mnt/d/data/proj/models/x.gguf"),

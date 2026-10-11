@@ -1220,7 +1220,7 @@ def mount_points():
             points.append((point, False))
     extra = os.environ.get("CLAUDE_MB_DOGMA_PROTECTED_MOUNTS") or ""
     for point in extra.split(":"):
-        if point.startswith("/"):
+        if point.startswith("/") and not re.fullmatch(r"/mnt/[A-Za-z]/*", point):
             point = os.path.normpath(point)
             if point.startswith(("/mnt/", "/media/")) or (_inside(point, user_home) and point != user_home):
                 points.append((point, True))
@@ -2700,13 +2700,15 @@ class Analysis:
             literal = expanded[:min(unresolved)]
             if not literal:
                 return
+            if re.search(r"(^|/)\.\.(/|$)", expanded[min(unresolved):]):
+                raise Deny("dogma: a redirect target with an unknown part and \"..\" cannot be checked; blocked.")
             words = [literal + "x"] + ([literal + ".x"] if literal.endswith("/") else [])
             if append:
                 prefix = literal[:len(literal) - len(literal.rpartition("/")[2])]
                 words += [prefix + name for name in guard.HOME_RC_NAMES if name.startswith(literal[len(prefix):])]
         for item in words:
             for path in self.targets(item, directories):
-                if path and guard.critical_redirect(path, append=append):
+                if path and guard.critical_redirect(path, append=append, unknown=bool(unresolved)):
                     raise Deny("dogma: %s a critical path (%s) is never allowed." % (
                         "appending to" if append else "overwriting", path))
 

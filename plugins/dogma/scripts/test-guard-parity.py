@@ -373,6 +373,8 @@ MOUNT_CASES = (
     ("deny", "rm -rf {H}/gdrive/old/x.bin", ""),
     ("deny", "rm -rf /mnt/vault/a/b/c/x", "/mnt/vault"),
     ("allow", "rm -rf /mnt/vault2/a/b/c/x", "/mnt/vault"),
+    ("allow", "rm -rf /mnt/c/Users/alice/workspace/proj/old", "/mnt/c"),
+    ("deny", "rm -rf /mnt/c", "/mnt/c"),
     ("deny", "rm -rf /mnt/nas/share/old/x.bin", "/mnt/nas/share"),
 )
 

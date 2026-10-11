@@ -6,6 +6,13 @@ Changelog of the dogma plugin. Newest first. Months group releases; no day dates
 
 ### v1.45
 
+#### v1.45.10
+
+##### Fixed
+
+- A redirect target with an unknown part followed by a `..` segment (`> /mnt/c/Users/me/AppData/Local/Temp/$X/../../Roaming/x.ps1`, `>> ~/proj/$X/../.bashrc`) is blocked; such a word could climb out of the directory that was checked, and the Windows temp exception never applies to a word with an unknown part
+- A Windows drive declared in `CLAUDE_MB_DOGMA_PROTECTED_MOUNTS` (`/mnt/c`) no longer protects the whole drive from deletes; it follows the drive rules, as the redirect rules already did
+
 #### v1.45.9
 
 ##### Fixed

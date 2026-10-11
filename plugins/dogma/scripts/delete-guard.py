@@ -1103,7 +1103,7 @@ def declared_mount(path):
     return any(path == mount or path.startswith(mount.rstrip("/") + "/") for mount in declared_mounts())
 
 
-def critical_redirect(target, append=False):
+def critical_redirect(target, append=False, unknown=False):
     """True when truncating target (a literal redirect word) could destroy data that matters.
 
     append=True (">>"): nothing is destroyed, so only what an appended line could hijack counts:
@@ -1140,13 +1140,15 @@ def critical_redirect(target, append=False):
         literal = target[:min(unresolved)]
         if not literal.startswith("/"):
             return False
+        if re.search(r"(^|/)\.\.(/|$)", target[min(unresolved):]):
+            return True  # a ".." after the unknown part can climb out of the literal directory
         probes = [literal + "x"] + ([literal + ".x"] if literal.endswith("/") else [])
         if append:
             # the name may still become a startup file (~/.$X, ~/.bash$X, ~/$X)
             partial = literal.rpartition("/")[2]
             probes += [literal[:len(literal) - len(partial)] + name for name in HOME_RC_NAMES
                        if name.startswith(partial)]
-        return any(critical_redirect(probe, append) for probe in probes)
+        return any(critical_redirect(probe, append, unknown=True) for probe in probes)
     if not target.startswith("/"):
         return False
     path = os.path.normpath(target)
@@ -1179,7 +1181,7 @@ def critical_redirect(target, append=False):
         parts = path.split("/")[1:]
         if len(parts) <= 3:
             return True
-        if (temp_root_of(path) or "").endswith("/AppData/Local/Temp"):
+        if not unknown and (temp_root_of(path) or "").endswith("/AppData/Local/Temp"):
             return False  # inside the Windows user temp folder: scratch space (Windows/Temp stays critical)
         if first == "mnt" and windows_critical(parts, append):
             return True
