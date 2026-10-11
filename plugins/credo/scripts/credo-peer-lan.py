@@ -1996,14 +1996,22 @@ class PairIdentityInvalid(ValueError):
 PAIR_UNKNOWN_ID = "unreadable"
 
 
+def _is_pair_file(name):
+    """True only for a pairing record name, peer-<id>.json with a 32 hex char peer id.
+    A keystore dir may also hold other peer-*.json files (keys_dir can point at a
+    profile's credo/ dir with peer-lan.json and peer-lan-trust.json); they are never
+    pairing records and must not be removed as such."""
+    return name.startswith("peer-") and name.endswith(".json") and bool(PEER_ID_RE.fullmatch(name[5:-5]))
+
+
 def _peer_files(kdir):
-    """Pairing record files (peer-<id>.json) of one keystore dir, by name: corrupt ones
-    included, so none survives a forget-all."""
+    """Pairing record files (peer-<id>.json, see _is_pair_file) of one keystore dir, by
+    name: corrupt ones included, so none survives a forget-all."""
     try:
         names = os.listdir(kdir)
     except OSError:
         return []
-    return [os.path.join(kdir, n) for n in names if n.startswith("peer-") and n.endswith(".json")]
+    return [os.path.join(kdir, n) for n in names if _is_pair_file(n)]
 
 
 class PairStore(object):
@@ -3166,7 +3174,7 @@ def sync_pair_copy_dir(kdir, want):
         except FileNotFoundError:
             names = []
         for name in names:
-            if name.startswith("peer-") and name.endswith(".json") and name[5:-5] not in want:
+            if _is_pair_file(name) and name[5:-5] not in want:
                 copy._unlink_quiet(os.path.join(kdir, name))
                 changed += 1
     return changed
@@ -6697,9 +6705,10 @@ def _win_uninstall(port, task):
         print("Windows: could not convert the script path with wslpath; the Windows side was not changed")
         return 1
     arg = ('"%s"' % win_path).replace("'", "''")
+    task_arg = task.replace("'", "''")
     command = ("$p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList "
                "'-NoProfile','-ExecutionPolicy','Bypass','-File','%s','-Uninstall','-Port','%d','-TaskName','%s'; "
-               "exit $p.ExitCode" % (arg, port, task))
+               "exit $p.ExitCode" % (arg, port, task_arg))
     try:
         rc = subprocess.run([ps_exe, "-NoProfile", "-NonInteractive", "-Command", command],
                             stdin=subprocess.DEVNULL, timeout=900).returncode
@@ -6711,6 +6720,38 @@ def _win_uninstall(port, task):
               "in the elevated window); the Windows side may still be in place" % rc)
         return 1
     print("Windows: the elevated -Uninstall finished (exit code 0); its output is in the elevated window")
+    return 0
+
+
+def _clear_disconnect_rows(rows, path, cfg):
+    """Remove every row's pairings, trust grants and LAN mirrors, then the stored peer
+    addresses from the config. Returns 1 when the config could not be updated."""
+    for row in rows:
+        done = _disconnect_row(row)
+        print("cleared profile %s: pairings %d, trust grants %d, LAN mirrors %d"
+              % (row["name"], done["pairings"], done["trust"], done["mirrors"]))
+    if not (os.path.exists(path) and "peers" in cfg):
+        return 0
+    cfg.pop("peers", None)
+    try:
+        write_config(cfg, path)
+    except Exception as exc:
+        sys.stderr.write("disconnect-all: could not update %s: %s\n" % (path, exc))
+        return 1
+    print("stored peer addresses removed from the config")
+    return 0
+
+
+def _restart_after_disconnect(running, cfg, path):
+    """Start the relay again, but only when it was running before the reset."""
+    if not running:
+        print("relay was not running; nothing to restart (it starts with the next session)")
+        return 0
+    if disabled():
+        print("relay not started: disabled via CREDO_PEER_LAN")
+        return 0
+    if os.path.exists(path):
+        return _start_detached(cfg, "restart")
     return 0
 
 
@@ -6753,26 +6794,16 @@ def run_disconnect_all(args):
         sys.stderr.write("disconnect-all: the running relay did not stop; nothing was changed\n")
         return 1
     rc = 0
-    for row in rows:
-        done = _disconnect_row(row)
-        print("cleared profile %s: pairings %d, trust grants %d, LAN mirrors %d"
-              % (row["name"], done["pairings"], done["trust"], done["mirrors"]))
-    if os.path.exists(path) and "peers" in cfg:
-        cfg.pop("peers", None)
-        try:
-            write_config(cfg, path)
-            print("stored peer addresses removed from the config")
-        except Exception as exc:
-            sys.stderr.write("disconnect-all: could not update %s: %s\n" % (path, exc))
-            rc = 1
-    if args.full and is_wsl():
-        rc = max(rc, _win_uninstall(port, task))
-    if not running:
-        print("relay was not running; nothing to restart (it starts with the next session)")
-    elif disabled():
-        print("relay not started: disabled via CREDO_PEER_LAN")
-    elif os.path.exists(path):
-        rc = max(rc, _start_detached(cfg, "restart"))
+    try:
+        rc = _clear_disconnect_rows(rows, path, cfg)
+        if args.full and is_wsl():
+            rc = max(rc, _win_uninstall(port, task))
+    except OSError as exc:
+        sys.stderr.write("disconnect-all: removing failed: %s\n" % exc)
+        rc = 1
+    finally:
+        # the relay comes back even when the removal failed, but only if it ran before
+        rc = max(rc, _restart_after_disconnect(running, cfg, path))
     return rc
 
 
