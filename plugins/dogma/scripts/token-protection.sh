@@ -99,6 +99,37 @@ command_in_allowed_dir() {
     return 1
 }
 
+# Private key block on stdin: the BEGIN line followed by base64 body (same line, or on the next
+# line after PEM header fields and blank lines). A lone header line is not a key.
+# Same rule as PRIVATE_KEY_BLOCK_RE in bash-guard.py.
+has_private_key_block() {
+    awk '
+    function run40(s,   t, n, parts, k) {
+        t = s
+        gsub(/[^A-Za-z0-9+\/=]+/, " ", t)
+        n = split(t, parts, " ")
+        for (k = 1; k <= n; k++) if (length(parts[k]) >= 40) return 1
+        return 0
+    }
+    function body(s) {
+        gsub(/^[ \t\r]+|[ \t\r]+$/, "", s)
+        return s ~ /^[A-Za-z0-9+\/=]+$/ && length(s) >= 40
+    }
+    BEGIN { pending = 0; found = 0 }
+    {
+        if (pending) {
+            if ($0 ~ /^[ \t\r]*$/ || $0 ~ /^[ \t]*[A-Za-z][A-Za-z0-9-]*: /) next
+            if (body($0)) { found = 1; exit }
+            pending = 0
+        }
+        if (match($0, /-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----/)) {
+            if (run40(substr($0, RSTART + RLENGTH))) { found = 1; exit }
+            pending = 1
+        }
+    }
+    END { exit(found ? 0 : 1) }'
+}
+
 # Read input
 INPUT=$(cat 2>/dev/null || true)
 if [ -z "$INPUT" ]; then
@@ -188,8 +219,8 @@ if [ "$TOOL_NAME" = "Read" ]; then
         if grep -qE 'AKIA[0-9A-Z]{16}' "$FILE_PATH" 2>/dev/null; then
             output_block "BLOCKED: File '$FILE_PATH' contains an AWS Access Key. Reading would expose credentials."
         fi
-        # Private keys
-        if grep -qE -- '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----' "$FILE_PATH" 2>/dev/null; then
+        # Private keys (a lone header line is documentation, not a key)
+        if has_private_key_block < "$FILE_PATH" 2>/dev/null; then
             output_block "BLOCKED: File '$FILE_PATH' contains a private key. Reading would expose credentials."
         fi
     fi

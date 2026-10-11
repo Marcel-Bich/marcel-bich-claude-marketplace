@@ -292,7 +292,6 @@ SECRET_PATTERNS = (
     re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"),
     re.compile(r"\bxox[abposr]-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+"),
     re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),
-    re.compile(r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----"),
     re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}"),
     re.compile(r"x-access-token:[A-Za-z0-9_-]+@"),
     re.compile(r"(?i)\b(?:password|passwd|aws_secret_access_key|secret_key|api_key|apikey|access_token)\s*[=:]\s*"
@@ -468,8 +467,17 @@ def sensitive_path(path):
     return sensitive_name(path) or codex_auth(path)
 
 
+# A private key is the BEGIN line followed by base64 body: on the same line, or on the next line after
+# optional PEM header fields (Proc-Type, DEK-Info) and blank lines. A lone header line is not a key.
+# token-protection.sh has the same rule in awk (has_private_key_block) for the Read guard.
+PRIVATE_KEY_BLOCK_RE = re.compile(
+    r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----"
+    r"(?:[^\n]*?[A-Za-z0-9+/=]{40}"
+    r"|[^\n]*\n(?:[ \t\r]*\n|[ \t]*[A-Za-z][A-Za-z0-9-]*: [^\n]*\n)*[ \t]*[A-Za-z0-9+/=]{40,}[ \t\r]*(?:\n|\Z))")
+
+
 def _contains_secret(text):
-    return any(pattern.search(text) for pattern in SECRET_PATTERNS)
+    return any(pattern.search(text) for pattern in SECRET_PATTERNS) or PRIVATE_KEY_BLOCK_RE.search(text) is not None
 
 
 def _sensitive_variable(name):

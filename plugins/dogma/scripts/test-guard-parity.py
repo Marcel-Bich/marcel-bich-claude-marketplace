@@ -21,6 +21,8 @@ bash-guard.py and in the token-protection.sh fallback that runs without python3.
 
 The fp table holds false positives (must pass) next to the protection that must
 stay (must be blocked), plus Edit/Write inputs that no Edit/Write hook may treat as a deletion.
+PEM_READ (guard-cases/false_positives.py) runs Read inputs through token-protection.sh: a key
+block is denied, a lone PEM header line is allowed.
 
 Usage: test-guard-parity.py [-v] [--only r1x|r1n|r2|probes|everyday|fp|local|unit]
 """
@@ -213,6 +215,27 @@ def unit_edits(runner):
     return results
 
 
+def unit_read_content(runner):
+    """[(ok, line)]: the Read guard (token-protection.sh) denies a key block and allows a lone PEM header."""
+    folder = runner.root / "pem-read"
+    folder.mkdir()
+    cwd = str(runner.dirs["X"])
+    env = dict(runner.env, DOGMA_SESSION_DIR=cwd)
+    results = []
+    for expected, name, content in false_positives.PEM_READ:
+        path = folder / name
+        path.write_bytes(content.encode("utf-8"))
+        event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Read",
+                            "tool_input": {"file_path": str(path)}, "cwd": cwd, "session_id": ""})
+        result = subprocess.run(["bash", str(runner.scripts / "token-protection.sh")], input=event,
+                                capture_output=True, text=True, cwd=cwd, env=env, timeout=30)
+        got = "deny" if '"deny"' in result.stdout or '"ask"' in result.stdout else "allow"
+        reason_ok = expected == "allow" or "private key" in result.stdout
+        results.append((got == expected and reason_ok, "unit read %s (want %s got %s): %s" % (
+            name, expected, got, result.stdout.strip()[:160])))
+    return results
+
+
 # (expected, command) with the literal working directory UNIT_CWD; never executed
 UNIT_CWD = "/home/someone/proj"
 UNIT = (
@@ -360,7 +383,7 @@ def main():
                 if not ok:
                     failed.append("FAIL " + line)
         if only in (None, "unit"):
-            for ok, line in unit_legacy_cwd() + unit_perf() + unit_scope_hint(runner):
+            for ok, line in unit_legacy_cwd() + unit_perf() + unit_scope_hint(runner) + unit_read_content(runner):
                 passed, total = counts.get("unit", (0, 0))
                 counts["unit"] = (passed + ok, total + 1)
                 if not ok:

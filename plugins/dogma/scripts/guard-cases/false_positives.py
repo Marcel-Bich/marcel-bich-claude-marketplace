@@ -9,6 +9,19 @@ EDITS: Edit/Write tool inputs (tool, tool_input) that must pass every Edit/Write
 
 HD = "<<'EOF'"
 
+# PEM private-key fixtures: invented base64 (no key), built from parts so that no literal key
+# header sits in this file. A key counts when the header is followed by base64 body (see bash-guard.py).
+PEM_BEGIN = "-----BEGIN " + "RSA PRIVATE KEY-----"
+PEM_END = "-----END " + "RSA PRIVATE KEY-----"
+PEM_BODY = (  # lengths 64, 64, 64, 40, 39
+    "+S/RJhfT9ebSBq8daDEtyV6LcrG1SzMCTnu5i8RRUKO7CCgpDdFZwTMKHPBZU1Hm",
+    "jS9jAOIx6m0RzaX+pQtQ5VbZy4MNbe685/TBn4OIgANMGdAb/VdNPRhT91qWUt5t",
+    "Gj9YU/6QOuk50rE9bvlwHkMwIxcnQBkeJByQ9DcLQ57PYlTE11J3O7BH0fz7Ytxg",
+    "NH2WLK15e2SCc+4ctOex9dF6+bSkAgCgGWgxUdtr",
+    "WLNq/2V+eGSaiP1kqOxuMDaqcmyjXYTrZZrk4mT",
+)
+PEM_KEY = "\n".join(PEM_BODY[:3])
+
 # fmt: off
 CASES = (
     # 1. release tooling: deletes only consumed changelog.d fragments, delete=deny
@@ -732,6 +745,31 @@ CASES = (
     ("deny", "N", "ln -s {H} {R}/lnk && rm -rf {R}/lnk/"),
     ("deny", "N", "find -L /home/myuser -delete"),
     ("deny", "N", "find /tmp/x {H}/work/keep -delete"),
+    # PEM header: a lone header line (docs, grep patterns, prose) is allowed, a key block is denied
+    ("allow", "N", "grep -n -- '" + PEM_BEGIN + "' /home/myuser/git/guard.md"),
+    ("allow", "N", "cat " + HD + "\n" + PEM_BEGIN + "\nEOF"),
+    ("allow", "N", "cat " + HD + "\n" + PEM_BEGIN + "\nThe key body is base64 text.\nEOF"),
+    ("allow", "N", "cat " + HD + "\n" + PEM_BEGIN + "\n" + PEM_BODY[4] + "\nEOF"),
+    ("deny", "N", "cat " + HD + "\n" + PEM_BEGIN + "\n" + PEM_KEY + "\n" + PEM_END + "\nEOF"),
+    ("deny", "N", "cat " + HD + "\n" + PEM_BEGIN + "\nProc-Type: 4,ENCRYPTED\n"
+                  "DEK-Info: AES-128-CBC,0F3A9C1B7E2D4A60B5C8E1F9A2D3B4C5\n\n" + PEM_BODY[0] + "\n" + PEM_END + "\nEOF"),
+    ("deny", "N", "cat " + HD + "\n" + PEM_BEGIN + PEM_BODY[0] + "\nEOF"),
+    ("deny", "N", "cat " + HD + "\n" + PEM_BEGIN + "\n" + PEM_BODY[3] + "\nEOF"),
+    ("deny", "N", "printf '%s' '" + PEM_BEGIN + "\\n" + PEM_BODY[0] + "\\n" + PEM_END + "\\n'"),
+)
+
+# Read tool input (file name, content) through token-protection.sh: a key block is denied, a lone
+# PEM header (docs, notes, prose) is allowed. Built from the parts above; never a literal key.
+PEM_READ = (
+    ("deny", "pem-notes.md", PEM_BEGIN + "\n" + PEM_KEY + "\n" + PEM_END + "\n"),
+    ("deny", "pem-encrypted.md", PEM_BEGIN + "\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,0F3A9C1B7E2D4A60\n\n"
+                                 + PEM_BODY[0] + "\n" + PEM_END + "\n"),
+    ("deny", "pem-escaped.md", PEM_BEGIN + "\\n" + PEM_BODY[0] + "\\n" + PEM_END + "\\n"),
+    ("deny", "pem-crlf.txt", (PEM_BEGIN + "\n" + PEM_KEY + "\n" + PEM_END + "\n").replace("\n", "\r\n")),
+    ("allow", "pem-doc.md", "# Guard\n\nThe guard blocks this header line:\n\n" + PEM_BEGIN + "\n\nThe body follows.\n"),
+    ("allow", "pem-line.md", PEM_BEGIN + "\n"),
+    ("allow", "pem-prose.md", PEM_BEGIN + "\nThis is prose, not a key.\n" + PEM_BODY[0] + "\n"),
+    ("allow", "pem-short.md", PEM_BEGIN + "\n" + PEM_BODY[4] + "\n"),
 )
 
 EDITS = (
