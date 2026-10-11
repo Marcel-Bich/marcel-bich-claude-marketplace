@@ -1996,6 +1996,16 @@ class PairIdentityInvalid(ValueError):
 PAIR_UNKNOWN_ID = "unreadable"
 
 
+def _peer_files(kdir):
+    """Pairing record files (peer-<id>.json) of one keystore dir, by name: corrupt ones
+    included, so none survives a forget-all."""
+    try:
+        names = os.listdir(kdir)
+    except OSError:
+        return []
+    return [os.path.join(kdir, n) for n in names if n.startswith("peer-") and n.endswith(".json")]
+
+
 class PairStore(object):
     """Pairing state on disk, one 0600 file per paired peer id plus this installation's
     identity, in a 0700 dir. Every write goes to a fresh O_EXCL temp file and is then
@@ -2250,6 +2260,17 @@ class PairStore(object):
             if drop:
                 self._write(self.PENDING, [e for e in cur if e not in drop])
             return gone, drop
+
+    def forget_all(self):
+        """Forget every pairing (corrupt records too) and every pending repair. The
+        identity (self.json) stays, so this machine keeps its peer id and key. Returns
+        the number of pairing files removed."""
+        with self.lock:
+            paths = _peer_files(self.path)
+            for path in paths:
+                self._unlink_quiet(path)
+            self._unlink_quiet(os.path.join(self.path, self.PENDING))
+            return sum(1 for path in paths if not os.path.exists(path))
 
 
 def recv_line(sock, buf):
@@ -6517,6 +6538,244 @@ def run_trust(args):
     return 0
 
 
+# ---------------------------------------------------------------------------
+# disconnect-all: forget every other device this machine knows (pairings, pending
+# repairs, trust grants, stored peer addresses, LAN mirrors) in every served profile,
+# then restart the relay. Kept: this machine's identity (peer id and key, so the other
+# machines see no changed key), the bound networks and their allowlists, the profiles
+# list, the listen settings and the token. --full also undoes the Windows-side setup
+# (WSL only), with the setup's own -Uninstall.
+# ---------------------------------------------------------------------------
+WIN_PS1 = "credo-peer-lan-winproxy.ps1"
+
+
+def _lan_mirror_files(sess_dir):
+    """LAN mirror descriptors of one sessions dir: the credoPeerLan marker, a numeric
+    name and not a symlink (the same rule as the daemon's own cleanup)."""
+    out = []
+    try:
+        names = os.listdir(sess_dir)
+    except OSError:
+        return out
+    for name in names:
+        if not (name.endswith(".json") and name[:-5].isdigit()):
+            continue
+        path = os.path.join(sess_dir, name)
+        if os.path.islink(path):
+            continue
+        try:
+            with open(path) as fh:
+                d = json.load(fh)
+        except Exception:
+            continue
+        if isinstance(d, dict) and d.get(MARK):
+            out.append(path)
+    return out
+
+
+def _disconnect_rows(cfg):
+    """One row per served profile: its pairing keystore, trust list and sessions dir."""
+    rows = []
+    for cfg_dir in served_profile_dirs():
+        machine = is_own_profile(cfg_dir)
+        rows.append({
+            "name": profiles.profile_name(cfg_dir),
+            "machine": machine,
+            "keys": keys_dir_for(cfg) if machine else profile_keys_dir(cfg_dir),
+            "trust": trust_path_for(cfg_dir),
+            "sessions": os.path.join(cfg_dir, "sessions"),
+        })
+    return rows
+
+
+def _disconnect_counts(row):
+    """What disconnect-all would remove from one row (read only)."""
+    return {
+        "pairings": len(_peer_files(row["keys"])),
+        "pending": len(PairStore(row["keys"]).pending()),
+        "trust": len(TrustStore(row["trust"]).read()["trusted"]),
+        "mirrors": len(_lan_mirror_files(row["sessions"])),
+    }
+
+
+def _disconnect_preflight(rows):
+    """Read every store strictly before anything changes; raises when one is unusable."""
+    for row in rows:
+        if os.path.isdir(row["keys"]):
+            os.listdir(row["keys"])   # an unlistable keystore must refuse, not count as empty
+        store = PairStore(row["keys"])
+        store.records()
+        store.pending(strict=True)
+        if os.path.exists(row["trust"]):
+            TrustStore(row["trust"])._load(strict=True)
+
+
+def _remove_lan_mirrors(sess_dir):
+    removed = 0
+    for path in _lan_mirror_files(sess_dir):
+        try:
+            os.unlink(path)
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def _disconnect_row(row):
+    """Remove one row's pairings, pending repairs, trust grants and LAN mirrors."""
+    trust = []
+    if os.path.exists(row["trust"]):
+        trust = TrustStore(row["trust"]).remove(lambda e: True)
+    return {
+        "pairings": PairStore(row["keys"]).forget_all(),
+        "trust": len(trust),
+        "mirrors": _remove_lan_mirrors(row["sessions"]),
+    }
+
+
+def _win_plan_lines(port, task):
+    return [
+        "Windows (--full, one elevated UAC prompt, the setup's own -Uninstall): scheduled "
+        "task '%s', firewall rule 'credo-peer-lan %d', portproxy 0.0.0.0:%d, the applied "
+        "state, and the installed copy in ProgramData\\credo unless another task still uses it."
+        % (task, port, port)
+    ]
+
+
+def _disconnect_plan(cfg, rows, running, full, port, task):
+    lines = ["disconnect-all removes, on this machine:"]
+    for row in rows:
+        c = _disconnect_counts(row)
+        label = row["name"] + (" (machine profile)" if row["machine"] else "")
+        lines.append("  profile %s: pairings %d, pending repairs %d, trust grants %d, LAN mirrors %d"
+                     % (label, c["pairings"], c["pending"], c["trust"], c["mirrors"]))
+    peers = normalize_peers(cfg.get("peers", []), port)
+    shown = ", ".join(peer_to_string(p, port) for p in peers)
+    lines.append("  stored peer addresses: %d%s" % (len(peers), " (%s)" % shown if peers else ""))
+    lines.append("The relay is stopped, cleared and started again."
+                 if running else "The relay is not running, so it is not started.")
+    lines.append("Kept: this machine's identity (peer id and key), the bound networks and "
+                 "their allowlists, the profiles list, the listen settings and the token.")
+    lines.append("Not touched: profiles this machine does not serve.")
+    lines.append("The other machines keep their pairing with this one until it is reset "
+                 "there (disconnect-all there too, or pair-reset this machine's peer id).")
+    if full:
+        if is_wsl():
+            lines += _win_plan_lines(port, task)
+        else:
+            lines.append("Windows (--full): not WSL, the Windows side is skipped (nothing to remove here).")
+    return lines
+
+
+def _stop_for_disconnect(cfg):
+    """Stop the running relay (its verified pid only, like restart). True when the port
+    is free again or nothing was running."""
+    pf = read_pidfile()
+    pid = pidfile_daemon(pf)
+    if pid is None:
+        return True
+    return _terminate_incumbent(pid, cfg.get("listen_host", "127.0.0.1"),
+                                int(cfg.get("listen_port", DEFAULT_PORT)), pstart=pf.get("pstart"))
+
+
+def _win_uninstall(port, task):
+    """--full under WSL: the setup's elevated -Uninstall of credo-peer-lan-winproxy.ps1
+    for this port and task, launched the way `init` launches -Install (one UAC prompt).
+    Returns 0 when the elevated run exited 0, else 1."""
+    ps_exe = win_tool("powershell.exe")
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), WIN_PS1)
+    if not ps_exe or not os.path.isfile(script):
+        print("Windows: powershell.exe or %s not found; remove the Windows side by hand "
+              "(elevated: %s -Uninstall -Port %d)" % (WIN_PS1, WIN_PS1, port))
+        return 1
+    try:
+        win_path = subprocess.run(["wslpath", "-w", script], capture_output=True,
+                                  text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        win_path = ""
+    if not win_path:
+        print("Windows: could not convert the script path with wslpath; the Windows side was not changed")
+        return 1
+    arg = ('"%s"' % win_path).replace("'", "''")
+    command = ("$p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList "
+               "'-NoProfile','-ExecutionPolicy','Bypass','-File','%s','-Uninstall','-Port','%d','-TaskName','%s'; "
+               "exit $p.ExitCode" % (arg, port, task))
+    try:
+        rc = subprocess.run([ps_exe, "-NoProfile", "-NonInteractive", "-Command", command],
+                            stdin=subprocess.DEVNULL, timeout=900).returncode
+    except (OSError, subprocess.SubprocessError) as exc:
+        print("Windows: the elevated run did not finish (%s); the Windows side may still be in place" % exc)
+        return 1
+    if rc != 0:
+        print("Windows: the elevated -Uninstall ended with exit code %d (UAC declined, or an error "
+              "in the elevated window); the Windows side may still be in place" % rc)
+        return 1
+    print("Windows: the elevated -Uninstall finished (exit code 0); its output is in the elevated window")
+    return 0
+
+
+def run_disconnect_all(args):
+    """Reset this machine's relay to "no other device known" (see the block above).
+    Lists what would go, then asks (y/N); --yes skips the question (only after the user
+    confirmed), --dry-run only lists. Without a terminal and without --yes it refuses."""
+    path = config_path()
+    cfg = load_config()
+    if cfg is None and os.path.exists(path):
+        print("disconnect-all: the config %s is not readable; nothing was changed" % path)
+        return 1
+    cfg = cfg or {}
+    rows = _disconnect_rows(cfg)
+    port = int(cfg.get("listen_port", DEFAULT_PORT))
+    task = os.environ.get("CREDO_PEER_LAN_WINPROXY_TASK") or DEFAULT_WIN_TASK
+    running = pidfile_daemon(read_pidfile()) is not None
+    print("\n".join(_disconnect_plan(cfg, rows, running, args.full, port, task)))
+    if args.dry_run:
+        print("dry-run: nothing was changed")
+        return 0
+    if not args.yes:
+        if not sys.stdin.isatty():
+            print("disconnect-all: not confirmed (no terminal). Nothing was changed. "
+                  "Re-run with --yes once the user confirmed.")
+            return 1
+        try:
+            answer = input("Remove all of this? [y/N] ")
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes", "j", "ja"):
+            print("disconnect-all: not confirmed, nothing was changed")
+            return 1
+    try:
+        _disconnect_preflight(rows)
+    except OSError as exc:   # PairStoreUnreadable and TrustFileError are OSErrors too
+        print("disconnect-all: %s; nothing was changed" % exc)
+        return 1
+    if not _stop_for_disconnect(cfg):
+        sys.stderr.write("disconnect-all: the running relay did not stop; nothing was changed\n")
+        return 1
+    rc = 0
+    for row in rows:
+        done = _disconnect_row(row)
+        print("cleared profile %s: pairings %d, trust grants %d, LAN mirrors %d"
+              % (row["name"], done["pairings"], done["trust"], done["mirrors"]))
+    if os.path.exists(path) and "peers" in cfg:
+        cfg.pop("peers", None)
+        try:
+            write_config(cfg, path)
+            print("stored peer addresses removed from the config")
+        except Exception as exc:
+            sys.stderr.write("disconnect-all: could not update %s: %s\n" % (path, exc))
+            rc = 1
+    if args.full and is_wsl():
+        rc = max(rc, _win_uninstall(port, task))
+    if not running:
+        print("relay was not running; nothing to restart (it starts with the next session)")
+    elif disabled():
+        print("relay not started: disabled via CREDO_PEER_LAN")
+    elif os.path.exists(path):
+        rc = max(rc, _start_detached(cfg, "restart"))
+    return rc
+
+
 def run_netinfo(_args):
     net = detect_network()
     if net is None:
@@ -6876,6 +7135,21 @@ def main(argv=None):
     )
     p_preset.add_argument("peer", help="peer id (or 8+ char prefix), slot host:port, host or machine")
     p_preset.set_defaults(func=run_pair_reset)
+
+    p_disc = sub.add_parser(
+        "disconnect-all",
+        help="reset: remove every LAN pairing, trust grant, stored peer address and LAN "
+        "mirror of this machine, then restart the relay (lists first and asks; --dry-run "
+        "only lists)",
+    )
+    p_disc.add_argument("--dry-run", action="store_true",
+                        help="print what would be removed and change nothing")
+    p_disc.add_argument("--yes", action="store_true",
+                        help="skip the question (only after the user confirmed)")
+    p_disc.add_argument("--full", action="store_true",
+                        help="also remove the Windows-side setup (WSL only: scheduled task, "
+                        "firewall rule, portproxy)")
+    p_disc.set_defaults(func=run_disconnect_all)
 
     p_trust = sub.add_parser(
         "trust",
