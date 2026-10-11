@@ -739,6 +739,11 @@ CASES = (
     ("allow", "X", "rm -rf /tmp/foo"),
     ("deny", "N", "rm -rf /tmp"),
     ("deny", "N", "rm -rf /mnt/c/Users/me/AppData/Local/Temp"),
+    # redirects into a Windows temp folder are scratch writes; the temp folder itself and the rest of AppData stay critical
+    ("allow", "N", "printf x > /mnt/c/Users/me/AppData/Local/Temp/run.ps1"),
+    ("allow", "N", "echo x >> /mnt/c/Users/me/AppData/Local/Temp/log.txt"),
+    ("deny", "N", "printf x > /mnt/c/Users/me/AppData/Local/Temp"),
+    ("deny", "N", "printf x > /mnt/c/Users/me/AppData/Roaming/x.ps1"),
     # deletes below /mnt and /media: deeper project files pass with the permission (X), the drive and
     # its first level, Windows system and profile paths and declared mounts stay refused
     ("allow", "X", "rm /mnt/d/data/proj/models/x.gguf"),

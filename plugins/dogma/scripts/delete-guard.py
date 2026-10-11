@@ -1118,7 +1118,8 @@ def critical_redirect(target, append=False):
     devices (except the harmless ones), /mnt and /media with the drive and the first level below
     it (/mnt, /mnt/c, /mnt/c/Users) and the dot entries of a Windows home
     (/mnt/c/Users/<name>/.ssh/...). Not critical: deeper files in ordinary folders
-    (/home/X/project/logs/run.log, /mnt/c/work/project/out.log), /tmp, /var/tmp, the standard
+    (/home/X/project/logs/run.log, /mnt/c/work/project/out.log), /tmp, /var/tmp, files inside the
+    Windows user temp folder (/mnt/c/Users/<name>/AppData/Local/Temp/x), the standard
     streams and relative or unresolved words (bash-guard.py resolves those).
 
     The Windows system and persistence paths below a drive stay critical, truncating and appending
@@ -1178,6 +1179,8 @@ def critical_redirect(target, append=False):
         parts = path.split("/")[1:]
         if len(parts) <= 3:
             return True
+        if (temp_root_of(path) or "").endswith("/AppData/Local/Temp"):
+            return False  # inside the Windows user temp folder: scratch space (Windows/Temp stays critical)
         if first == "mnt" and windows_critical(parts, append):
             return True
     return False
