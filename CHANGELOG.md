@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v1.45
 
+##### v1.45.4
+
+###### Fixed
+
+- delete-guard no longer denies `2>/dev/null; next` or `>/dev/null&& next`: a redirect target now ends at an unquoted `;`, `|`, `&`, `(`, `)`, `<` or `>`, so `/dev/null;` is no longer read as an unknown critical path
+
 ##### v1.45.3
 
 ###### Changed

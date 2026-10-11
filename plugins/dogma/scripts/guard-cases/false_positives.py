@@ -68,6 +68,11 @@ CASES = (
     ("allow", "N", "python3 - <<'PY'\nimport os as o\np = o.path.expanduser('~/git/notes.txt')\n"
                    "text = open(p).read().replace('a', 'b')\nPY"),
     ("allow", "N", "python3 -c \"s = 'abc'; print(s.replace('a', 'b'))\""),
+    # a redirect word ends at an unquoted ; | & ( )
+    ("allow", "N", "ls x 2>/dev/null; echo a"),
+    ("allow", "N", "ls x >/dev/null&& echo a"),
+    ("allow", "N", "(ls x 2>/dev/null)"),
+    ("deny", "N", "echo x >~/.bashrc; echo a"),
 
     # --- must stay blocked
     ("deny", "N", "git remote -v"),

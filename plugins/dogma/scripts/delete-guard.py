@@ -812,9 +812,9 @@ def check_legacy(cmd):
             continue
         # the word ends at the first blank outside quotes ("/mnt/c/Program Files/x"); quotes and
         # escapes inside it are shell syntax, not part of the path ("$HOME"/.bashrc, ~/".bashrc",
-        # ~/'.bashrc', $'/etc/hosts')
+        # ~/'.bashrc', $'/etc/hosts'); an unquoted ; | & ( ) < > ends it too ("2>/dev/null; echo")
         end = m.start(2)
-        while end < len(cmd) and (mask[end] or not cmd[end].isspace()):
+        while end < len(cmd) and (mask[end] or not (cmd[end].isspace() or cmd[end] in ";|&()<>")):
             end += 1
         tgt = shell_word(cmd[m.start(2):end])
         if critical_redirect(tgt, append=m.group(1) == ">>"):
