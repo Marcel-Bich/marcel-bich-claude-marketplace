@@ -8,6 +8,9 @@ Protected (never deletable, moved away or symlinked onto):
   - /, every first-level directory, /tmp itself
   - /home, /home/X, /home/X/Y          (depth 0-2 below /home)
   - $HOME, its parent, $HOME/X         (depth 0-1 below the home)
+  - /mnt and /media: the mount point, the drive and the first level below it, a Windows user profile
+    root and its first level, Windows system/persistence/profile paths and declared mounts; deeper
+    files there are ordinary (file-protection.sh and the permissions decide)
   - every other absolute path outside the temp roots (/tmp/X+, /var/tmp/X+, $TMPDIR/X+, the Windows temp folders)
 Every target is RESOLVED before the check: ~ and $HOME are expanded, relative paths
 are joined to the working directory (including a preceding `cd`), symlinks are
@@ -107,6 +110,21 @@ def temp_root_of(path):
     return None
 
 
+def mount_path_dangerous(p):
+    """True when a path below /mnt or /media (WSL drives, shares, removable media) must never be deleted.
+
+    Protected: the mount point, the drive and the first level below it (/mnt/d, /mnt/d/data, /media/usb/x),
+    a Windows user profile root and its first level (/mnt/c/Users/<name>[/<x>], the /home rule), the Windows
+    system, persistence and profile paths (windows_critical) and anything inside a declared mount. Deeper
+    files are ordinary: file-protection.sh and the permissions decide."""
+    parts = p.split("/")[1:]
+    if len(parts) <= 3 or declared_mount(p):
+        return True
+    if parts[0] != "mnt":
+        return False
+    return (parts[2].lower() == "users" and len(parts) <= 5) or windows_critical(parts, False)
+
+
 def is_dangerous(p):
     """True when the absolute, normalized path p must never be deleted."""
     p = os.path.normpath(p)
@@ -122,6 +140,8 @@ def is_dangerous(p):
     if p.startswith(h + "/") and any(h.startswith(root.rstrip("/") + "/") for root in temp_roots()):
         # a home below a temp root (test setups): the same depth rule as below /home
         return depth(p[len(h):]) <= 1
+    if p.startswith(("/mnt/", "/media/")) and not p.startswith(h.rstrip("/") + "/"):
+        return mount_path_dangerous(p)
     return True
 
 
