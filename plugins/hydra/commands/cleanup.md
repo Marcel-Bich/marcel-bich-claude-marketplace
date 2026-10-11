@@ -43,7 +43,7 @@ A worktree is a removal candidate only when ALL of these hold - otherwise it is 
 - not the main worktree, not the worktree you are in, not locked (a lock is the owner's "keep" marker), not on a detached HEAD
 - its branch is fully merged into the main branch (the branch checked out in the main worktree)
 - no changes to tracked files (`git -C <wt> status --porcelain --untracked-files=no` is empty); untracked scratch (cache/, the symlinks from `worktree-setup.sh`) goes with it
-- a branch that never got a commit may belong to an agent that just started: keep it while it is younger than 24h or has untracked, non-ignored files
+- a branch without a commit of its own (a fast-forward from main does not count) may belong to an agent that just started: keep it while it is younger than 24h or has untracked, non-ignored files
 
 When credo is installed, its `credo-worktree-cleanup.sh [--dry-run] [--json] [--keep <path|branch>]...` implements exactly these checks; prefer it. It reports locked worktrees as `kept <path> branch=<b> reason=locked: <lock reason>`, and `--list-locked` lists them:
 

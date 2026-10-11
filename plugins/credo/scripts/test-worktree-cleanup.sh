@@ -2,7 +2,9 @@
 # Tests for credo-worktree-cleanup.sh. Builds a throwaway git repo with several linked
 # worktrees in a temp dir (removed on exit): merged+clean removed (branch deleted,
 # symlink targets in the main checkout survive), unmerged kept, dirty kept, fresh
-# (never committed) kept, locked kept, the worktree the command runs in kept, the main
+# (never committed) kept, a branch fast-forwarded from main without a commit of its own
+# kept while fresh, own commits removed even when fresh, locked kept, the worktree the
+# command runs in kept, the main
 # worktree never touched, --dry-run removes nothing, JSON output valid. Opt-out: a
 # locked worktree is kept and reported with its lock reason (normal, --dry-run, JSON),
 # --keep <path|branch> (repeatable) is a one-off exception, --list-locked lists locks,
@@ -150,6 +152,39 @@ git -C "$R" worktree add -q -b wt/gone "$W/gone"
 rm -rf -- "$W/gone"
 "$SUT" "$R" >/dev/null
 check "missing dir pruned" 0 "$(git -C "$R" worktree list --porcelain | grep -c "$W/gone" || true)"
+
+# ---------- fresh worktrees: a fast-forward from main is not an own commit ----------
+R5="$TMP/repo5"
+W5="$TMP/repo5-worktrees"
+mkdir -p "$R5"
+git -C "$R5" init -q -b main
+echo base > "$R5/f"; git -C "$R5" add f; git -C "$R5" commit -q -m init
+# (a) fresh, never committed, no edits: kept
+git -C "$R5" worktree add -q -b wt/pristine "$W5/pristine"
+# (a2) fresh, fast-forwarded to a moved main (the reflog gets a second entry), no commit of its own
+git -C "$R5" worktree add -q -b wt/synced "$W5/synced"
+echo advance > "$R5/g"; git -C "$R5" add g; git -C "$R5" commit -q -m advance
+git -C "$W5/synced" merge -q --ff-only main
+# (b) own commit, fast-forwarded into main: merged and clean, removed even though it is fresh
+git -C "$R5" worktree add -q -b wt/ffown "$W5/ffown"
+commit_in "$W5/ffown" ff.txt ff
+git -C "$R5" merge -q --ff-only wt/ffown
+# (b2) own commit, merged with --no-ff: removed even though it is fresh
+git -C "$R5" worktree add -q -b wt/nffown "$W5/nffown"
+commit_in "$W5/nffown" nff.txt nff
+git -C "$R5" merge -q --no-ff -m "merge nff" wt/nffown
+
+out="$("$SUT" --dry-run "$R5")"
+contains "fresh pristine kept" "kept $W5/pristine branch=wt/pristine reason=no commits yet (fresh worktree)" "$out"
+contains "fresh ff-synced kept" "kept $W5/synced branch=wt/synced reason=no commits yet (fresh worktree)" "$out"
+contains "fresh own commit ff-merged is a candidate" "candidate $W5/ffown branch=wt/ffown reason=merged into main, clean" "$out"
+contains "fresh own commit no-ff-merged is a candidate" "candidate $W5/nffown branch=wt/nffown reason=merged into main, clean" "$out"
+out="$("$SUT" --dry-run --fresh-hours 0 "$R5")"
+contains "fresh-hours 0: ff-synced without commits is a candidate" "candidate $W5/synced branch=wt/synced reason=never committed" "$out"
+out="$("$SUT" "$R5")"
+check "real run: pristine and ff-synced kept" "yes yes" "$(exists "$W5/pristine") $(exists "$W5/synced")"
+contains "real run: ff-merged own commit removed" "removed $W5/ffown branch=wt/ffown" "$out"
+contains "real run: no-ff-merged own commit removed" "removed $W5/nffown branch=wt/nffown" "$out"
 
 # ---------- wiring: credo-item-move.sh runs the cleanup at item close ----------
 MOVE="$SCRIPT_DIR/credo-item-move.sh"

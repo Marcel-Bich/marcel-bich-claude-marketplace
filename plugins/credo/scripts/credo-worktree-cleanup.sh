@@ -13,10 +13,10 @@
 #   - its branch is fully merged into the base branch (branch tip is an ancestor)
 #   - it has no changes to tracked files (staged or unstaged); untracked agent scratch
 #     (cache/, the setup symlinks, ...) goes with it
-#   - a branch that never got a commit (its reflog holds only the creation entry) may
-#     still be in use by an agent that just started: it is kept while younger than
-#     --fresh-hours (default 24) or while it has untracked, non-ignored files, and it
-#     is kept when its age cannot be determined
+#   - a branch without a commit of its own (its reflog has no commit, cherry-pick or revert
+#     entry; a fast-forward from the base does not count) may still be in use by an agent
+#     that just started: it is kept while younger than --fresh-hours (default 24) or while
+#     it has untracked, non-ignored files, and it is kept when its age cannot be determined
 #
 # Opt-out: a worktree the owner wants to keep is locked (`git worktree lock --reason
 # "keep: owner" <path>`). A locked worktree is never removed and is reported with its lock
@@ -197,18 +197,20 @@ keep_matches() { # real-path branch
     return "$matched"
 }
 
-# Branch age in hours when its reflog holds only the creation entry; "" when the
-# branch got further updates (commits); "unknown" when there is no reflog.
-fresh_age_hours() { # branch
-    local entries count stamp
+# Hours since the branch was created (its oldest reflog entry); "unknown" without a reflog.
+created_age_hours() { # branch
+    local entries stamp
     entries="$(git -C "$MAIN" reflog show --date=unix --format='%gd' "refs/heads/$1" -- 2>/dev/null || true)"
-    count="$(printf '%s' "$entries" | grep -c . || true)"
-    if [ "$count" -eq 0 ]; then
-        echo "unknown"
-    elif [ "$count" -eq 1 ]; then
-        stamp="$(printf '%s' "$entries" | sed -n 's/.*@{\([0-9]*\)}.*/\1/p')"
-        if [ -n "$stamp" ]; then echo $(( (NOW - stamp) / 3600 )); else echo "unknown"; fi
-    fi
+    stamp="$(printf '%s\n' "$entries" | sed -n '$s/.*@{\([0-9]*\)}.*/\1/p')"
+    if [ -n "$stamp" ]; then echo $(( (NOW - stamp) / 3600 )); else echo "unknown"; fi
+}
+
+# Number of commits of the branch itself: reflog entries written by commit, cherry-pick or
+# revert. A fast-forward from the base ("merge main: Fast-forward") or a reset is no own commit.
+own_commit_entries() { # branch
+    local entries
+    entries="$(git -C "$MAIN" reflog show --format='%gs' "refs/heads/$1" -- 2>/dev/null || true)"
+    printf '%s\n' "$entries" | grep -c -E '^(commit|cherry-pick|revert)' || true
 }
 
 evaluate() { # path branch locked prunable lock-reason
@@ -242,28 +244,30 @@ evaluate() { # path branch locked prunable lock-reason
         return
     fi
     untracked="$(git -C "$path" ls-files --others --exclude-standard 2>/dev/null | grep -c . || true)"
-    age="$(fresh_age_hours "$branch")"
+    if [ "$(own_commit_entries "$branch")" -gt 0 ]; then
+        if [ "$untracked" -gt 0 ]; then
+            add candidate "$path" "$branch" "merged into $BASE, clean ($untracked untracked file(s) go with it)"
+        else
+            add candidate "$path" "$branch" "merged into $BASE, clean"
+        fi
+        return
+    fi
+    # No commit of its own, so it may be the fresh worktree of an agent that has not committed
+    # yet (a fast-forward from the base is not a commit): the age guard applies, not "merged".
+    age="$(created_age_hours "$branch")"
     if [ "$age" = "unknown" ]; then
         add kept "$path" "$branch" "no commits and no branch history - may be in use"
         return
     fi
-    if [ -n "$age" ]; then
-        if [ "$age" -lt "$FRESH_HOURS" ]; then
-            add kept "$path" "$branch" "no commits yet, created ${age}h ago - may be in use"
-            return
-        fi
-        if [ "$untracked" -gt 0 ]; then
-            add kept "$path" "$branch" "never committed but has $untracked untracked file(s)"
-            return
-        fi
-        add candidate "$path" "$branch" "never committed, unused for ${age}h"
+    if [ "$age" -lt "$FRESH_HOURS" ]; then
+        add kept "$path" "$branch" "no commits yet (fresh worktree), created ${age}h ago - may be in use"
         return
     fi
     if [ "$untracked" -gt 0 ]; then
-        add candidate "$path" "$branch" "merged into $BASE, clean ($untracked untracked file(s) go with it)"
-    else
-        add candidate "$path" "$branch" "merged into $BASE, clean"
+        add kept "$path" "$branch" "never committed but has $untracked untracked file(s)"
+        return
     fi
+    add candidate "$path" "$branch" "never committed, unused for ${age}h"
 }
 
 # --- walk all worktrees -----------------------------------------------------------

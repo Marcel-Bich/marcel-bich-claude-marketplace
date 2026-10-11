@@ -800,8 +800,8 @@ fully merged into the main branch (the branch checked out in the main worktree) 
 no changes to tracked files; untracked scratch (cache/, the setup symlinks) goes with them.
 It never touches the main worktree, the worktree it runs in, locked ones, ones named by
 `--keep`, unmerged or dirty ones (those are reported as `kept` with the reason; a locked one
-as `kept <path> branch=<b> reason=locked: <lock reason>`, also on `--dry-run`), and keeps a never-committed worktree
-while it is younger than 24h or has untracked files (an agent may be starting in it). It
+as `kept <path> branch=<b> reason=locked: <lock reason>`, also on `--dry-run`), and keeps a worktree whose branch has no
+commit of its own (a fast-forward from main is not one) while it is younger than 24h or has untracked files (an agent may be starting in it). It
 removes via `git worktree remove --force` (git unlinks symlinks and never follows them) and
 deletes the merged branch with `git branch -d`. Every run covers all worktrees of the
 repository, so the first run also sweeps the backlog. A cleanup error never fails the move.
