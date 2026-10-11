@@ -105,6 +105,7 @@ echo "3. YES but read-only/explore/planning -> Parallel Task calls (no Hydra nee
 echo "4. NO -> Sequential with subagents"
 echo ""
 echo "Hydra = implementation needing isolation. Parallel Tasks = research/planning."
+echo 'Worktrees: while hydra is installed, EVERY worktree is created via hydra (/hydra:create), also for a single isolated track. Never Agent isolation:"worktree" or a bare git worktree add outside ../<repo>-worktrees.'
 echo "IMPORTANT: YOU decide this autonomously - NO user confirmation needed!"
 echo "Goal: Maximum parallelization where sensible."
 echo ""
