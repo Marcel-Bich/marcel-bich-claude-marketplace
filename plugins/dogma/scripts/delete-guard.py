@@ -794,6 +794,11 @@ def check_legacy(cmd):
             continue
         if extra and not (extra(cmd) if callable(extra) else re.search(extra, cmd)):
             continue
+        if reason.startswith("destructive disk") and not any(
+                not mask[m.start(3)] for m in re.finditer(trigger, cmd)):
+            # a disk tool named inside quoted text (printf '... mkfs ...', echo "dd ...") is text, not a command
+            # word; a substitution or a bash -c string is judged by bash-guard.py
+            continue
         if reason.startswith(("destructive disk", "python move")):
             raise Deny(reason)
         if "interpreter symlink" in reason:

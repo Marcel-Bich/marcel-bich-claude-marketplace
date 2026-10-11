@@ -105,7 +105,7 @@ EXEC_ENV_COMMAND = {"GIT_PAGER", "GIT_EXTERNAL_DIFF", "GIT_SSH_COMMAND", "GIT_SS
 CODE_VERBS = {"lua": ("-e",), "luajit": ("-e",), "julia": ("-e", "--eval"), "Rscript": ("-e",), "R": ("-e",),
               "emacs": ("--eval", "-eval", "--execute", "-x"), "emacsclient": ("--eval", "-e"), "osascript": ("-e",),
               "tclsh": (), "wish": (), "jshell": (), "groovy": ("-e",), "scala": ("-e",)}
-EXEC_PRIM_RE = re.compile(r"(system|exec|execSync|spawn|spawnSync|popen|Popen|run|call|check_output|"
+EXEC_PRIM_RE = re.compile(r"\b(system|exec|execSync|spawn|spawnSync|popen|Popen|run|call|check_output|"
                           r"shell_exec|passthru|proc_open|execute|IO\.popen|Command|ProcessBuilder|eval)\s*[\(\[{ \"']"
                           r"|`[^`]+`|%x\{|\bos\.execute\b")
 CODE_INSTALL_RE = re.compile(r"install\.packages|remotes::install|devtools::install|pip\.main|ensurepip|"
@@ -185,7 +185,7 @@ MOVE_HOME_RE = re.compile(r"Path\.home|homedir|\$ENV\{\s*HOME|ENV\[\s*[\"']HOME|
                           r"environ\.get\(\s*[\"']HOME|getenv\(\s*[\"']HOME|\$HOME\b|File\.expand_path|Dir\.home|"
                           r"getpwuid|pw_dir|getpwnam|chr\(\s*126\s*\)|\\x7e|\\176|Sys\.getenv|"
                           r"expanduser\s*\(\s*(?![\"'])")
-CODE_FRAGMENT_RE = re.compile(r"auth\.json|\.credentials|credentials\.json|\.codex\b|\.claude\b|\.ssh\b|"
+CODE_FRAGMENT_RE = re.compile(r"auth\.json|\.credentials|credentials\.json|\.codex\b|\.ssh\b|"
                               r"\.gnupg|\.netrc|\.git-credentials|\bid_(rsa|ed25519|ecdsa|dsa)\b|/environ\b|"
                               r"hosts\.yml|dogma/config|DOGMA-PERMISSIONS|\.env\b(?!\.(example|sample|template))")
 
@@ -301,7 +301,10 @@ CODE_DELETE_RE = re.compile(
     r"\b(?:os\.(?:remove|unlink|rmdir|removedirs)|shutil\.rmtree|rmtree|remove_tree|send2trash|unlink|rmdir|"
     r"unlinkSync|rmSync|rmdirSync|rimraf|rm_rf|rm_r|rm_f|remove_entry(?:_secure)?|remove_dir|"
     r"File\.delete|Dir\.delete|FileUtils\.rm)\b|\bfs(?:\.promises)?\.(?:rm|unlink|rmdir)\b|\.unlink\(|\.rmdir\(|"
-    r"__import__\(\s*['\"]os['\"]\s*\)\.(?:remove|unlink|rmdir|removedirs)|from\s+os\s+import\s+[^\n;]*\b(?:remove|unlink)\b")
+    r"from\s+os\s+import\s+[^\n;]*\b(?:remove|unlink)\b")
+# a deleting function reached through a module named by a string literal; the literal is read from the
+# code with its literals kept (calls), not from the words (see Analysis.code)
+IMPORT_DELETE_RE = re.compile(r"__import__\(\s*['\"]os['\"]\s*\)\.(?:remove|unlink|rmdir|removedirs)")
 CODE_ENV_DUMP_RE = re.compile(
     r"from\s+os\s+import\s+[^\n;]*\benviron\b|\[\s*[\"']env[\"']\s*\]|"
     r"os\.environb?(?!\s*(?:\.get\b|\[|\.setdefault\b|\.pop\b|\.update\b|\.copy\b|\.__getitem__))|"
@@ -400,6 +403,12 @@ def token_allowed(path):
 
 
 CONFIG_HOME_PART_RE = re.compile(r"^\.(?:codex|claude(?:-.+)?)$")
+# The session folder of a Claude configuration home holds the descriptors <id>.json (read freely) and the key
+# files <id>.<hex>.key (secrets). SESSION_KEY_SAMPLE stands for a key file name in glob tests. A literal path
+# into a configuration home in inline code is allowed only as the folder, or as its descriptors (*.json).
+SESSION_KEY_SAMPLE = "session.key"
+SESSION_LITERAL_RE = re.compile(r"(?:^|/)\.claude(?:-[\w.-]+)?/sessions(?:/(?:[^/\s]*\.json)?)?/?$")
+CONFIG_MENTION_RE = re.compile(r"\.claude\b")
 
 
 def config_home_auth(path, lowered):
@@ -425,10 +434,17 @@ def sensitive_name(path):
         return False
     lowered = [part.lower() for part in parts]
     base = lowered[-1]
-    for part in lowered:
+    for index, part in enumerate(lowered):
+        if not GLOB_RE.search(part):
+            continue
+        if index >= 2 and lowered[index - 1] == "sessions" and CONFIG_HOME_PART_RE.match(lowered[index - 2]) \
+                and fnmatch.fnmatchcase(SESSION_KEY_SAMPLE, part):
+            return True  # a glob in a session folder that can match a key file
         literal = re.sub(r"\[[^\]]*\]|[*?]", "", part)
-        if GLOB_RE.search(part) and len(literal) >= 2 and \
-                any(fnmatch.fnmatchcase(name, part) for name in GLOB_SENSITIVE):
+        names = [name for name in GLOB_SENSITIVE if fnmatch.fnmatchcase(name, part)] if len(literal) >= 2 else []
+        # a login file sits directly in a configuration home: a login-file glob elsewhere matches nothing secret
+        if names and not (index > 0 and not CONFIG_HOME_PART_RE.match(lowered[index - 1])
+                          and all(name in PRIVATE_SECRET for name in names)):
             return True
     if re.match(r"^\.env($|[^a-z0-9])", base) or base == ".envrc":
         suffix = base[5:]
@@ -465,6 +481,72 @@ def codex_auth(path):
 
 def sensitive_path(path):
     return sensitive_name(path) or codex_auth(path)
+
+
+SEARCH_GLOB_OPTIONS = ("--include", "--glob", "--iglob", "-g")
+
+
+def glob_values(args):
+    """{position: glob} of the file-name globs of a search (grep --include, rg -g/--glob/--iglob), the value
+    after the option or after its "=". A glob selects files below the search root; it is no path."""
+    found = {}
+    for position, item in enumerate(args):
+        if item in SEARCH_GLOB_OPTIONS and position + 1 < len(args):
+            found[position + 1] = args[position + 1]
+        elif item.startswith(tuple(option + "=" for option in SEARCH_GLOB_OPTIONS)):
+            found[position] = item.partition("=")[2]
+    return found
+
+
+def login_glob(glob):
+    """True for a wildcard file-name glob whose only sensitive matches are login files (*.json, .cred*)."""
+    if not GLOB_RE.search(glob):
+        return False
+    names = [name for name in GLOB_SENSITIVE if fnmatch.fnmatchcase(name, glob)]
+    return bool(names) and all(name in PRIVATE_SECRET for name in names)
+
+
+def searches_recursively(verb, args):
+    """grep -r/-R (also combined, -rl, -nR) and --recursive; rg, ag and ack recurse by default."""
+    if verb in ("rg", "ag", "ack"):
+        return True
+    return any(item in ("--recursive", "--dereference-recursive") or re.match(r"^-[A-Za-z]*[rR]", item)
+               for item in args)
+
+
+def reaches_login_file(path):
+    """True when a recursive search rooted at path can reach a login file of a configuration home: the root is
+    a configuration home (.claude, .claude-*, .codex, CLAUDE_CONFIG_DIR, CODEX_HOME) or a directory above one.
+    A subfolder such as plugins/ of a profile cannot hold the login file of the profile root."""
+    try:
+        real = os.path.realpath(path)
+    except (OSError, ValueError):
+        return True
+    if CONFIG_HOME_PART_RE.match(os.path.basename(real)):
+        return True
+    for base in (home(), os.environ.get("CLAUDE_CONFIG_DIR") or "", str(codex_home())):
+        if base:
+            try:
+                if _inside(os.path.realpath(base), real):
+                    return True
+            except (OSError, ValueError):
+                continue
+    return False
+
+
+def is_session_folder(path):
+    """True for a <configuration home>/sessions folder (its key files are secrets)."""
+    try:
+        real = os.path.realpath(path)
+    except (OSError, ValueError):
+        return True
+    return os.path.basename(real) == "sessions" and CONFIG_HOME_PART_RE.match(os.path.basename(os.path.dirname(real))) \
+        is not None
+
+
+def _may_match(globs, names):
+    """True when no file-name glob is given, or one of the globs can match one of the names."""
+    return not globs or any(fnmatch.fnmatchcase(name, glob) for glob in globs.values() for name in names)
 
 
 # A private key is the BEGIN line followed by base64 body: on the same line, or on the next line after
@@ -2254,7 +2336,9 @@ class Analysis:
     def check_arguments(self, verb, args, directories):
         skipped = self.text_positions(verb, args)
         kind = self.verb_class(verb, args)
-        if self.flags.get("token_protection", True) and verb in SEARCH_COMMANDS:
+        token = self.flags.get("token_protection", True)
+        globs = glob_values(args) if token and verb in SEARCH_COMMANDS else {}
+        if token and verb in SEARCH_COMMANDS:
             for position, item in enumerate(args):
                 if item in ("-g", "--glob", "--iglob") and position + 1 < len(args):
                     pattern = args[position + 1]
@@ -2269,6 +2353,7 @@ class Analysis:
                         r"(?i)(?<![A-Za-z0-9_])(\.env|\.ssh|\.smbcredentials|\.netrc|\.git-credentials|\.npmrc|"
                         r"\.pypirc)|\.(pem|key)\b", cleaned):
                     raise Deny("dogma: search glob explicitly includes a protected credential path.")
+        roots = []
         for position, item in enumerate(args):
             if position in skipped:
                 continue
@@ -2277,7 +2362,27 @@ class Analysis:
                 value = item[3:]
             if value.startswith("-") and value != "-":
                 continue
+            if position in globs and login_glob(globs[position]):
+                continue  # a file-name glob, not a path: the search root is checked below
+            if position not in globs:
+                roots.append(value)
             self.check_path(value, directories, kind)
+        if token and verb in SEARCH_COMMANDS and searches_recursively(verb, args):
+            self.check_login_reach(roots, globs, directories)
+
+    def check_login_reach(self, roots, globs, directories):
+        """A recursive search reads a secret when its root holds one: the login file of a configuration home
+        (root = that home or a directory above it) or a key file of a session folder (root = the folder). Its
+        file-name globs (none given: every file) must be able to match that secret's name."""
+        if roots:
+            paths = [self.join(directory, root) for root in roots for directory in directories]
+        else:
+            paths = list(directories)
+        if any(path and reaches_login_file(path) for path in paths) and _may_match(globs, PRIVATE_SECRET):
+            raise Deny("dogma: a recursive search reaches a login file of a Claude or Codex configuration home; "
+                       "search a subfolder such as plugins/ instead.")
+        if any(path and is_session_folder(path) for path in paths) and _may_match(globs, (SESSION_KEY_SAMPLE,)):
+            raise Deny("dogma: a recursive search of a session folder would read its key files; search *.json only.")
 
     def check_dumps(self, verb, args):
         if not self.flags.get("token_protection", True):
@@ -3186,6 +3291,27 @@ class Analysis:
                 if path and guard.is_protected_link_target(os.path.realpath(path)):
                     raise Deny("dogma: inline code creates a symlink onto a protected path (%s)." % path)
 
+    def exec_commands(self, code, literals, directories, depth, home_lookup):
+        """Inline code that runs commands (subprocess, os.system, the exec family, popen). A pure literal list
+        or tuple of the code (["rm", "-rf", "/"]) is one command line and is judged like shell text, so a
+        harmless command (["ls", "/home/X"], os.system("ls ~")) passes and a deleting one is refused by the
+        shell analysis. A deleting word that is not in such a literal list (its target is built at run
+        time) next to a home lookup cannot be checked and is refused."""
+        pure = set()
+        for match in LITERAL_LIST_RE.finditer(code):
+            values = [item.group(1) if item.group(1) is not None else item.group(2)
+                      for item in CODE_STRING_RE.finditer(match.group(1))]
+            if not values:
+                continue
+            pure.update(values)
+            # one element is a shell string (subprocess with shell=True); several are argv words
+            command = values[0] if len(values) == 1 else " ".join(_command_word(value) for value in values)
+            self.walk(command, directories, depth + 1)
+        if home_lookup and any(_deleting_command(value) for value in literals if value not in pure):
+            raise Deny("dogma: inline code runs a deleting command next to a home lookup; its target cannot be "
+                       "checked, blocked.")
+        return pure
+
     def code(self, code, directories, depth, nesting=0):
         # a backslash-newline is a line continuation (python: os.\<newline>remove(...) is os.remove(...))
         code = CONT_RE.sub("", code)
@@ -3196,9 +3322,13 @@ class Analysis:
         # as paths and, when the code can run commands, as command lines.
         calls = CODE_STRING_RE.sub(lambda m: m.group(0) if not re.search(r"\s", m.group(0)[1:-1])
                                    else m.group(0)[0] * 2, code)
-        deletes = bool(CODE_DELETE_RE.search(calls)) or bool(re.search(r"getattr\s*\(\s*(os|shutil|pathlib|fs)\b", calls)) \
+        # the words of the code with every string literal blanked: a word inside a literal (a regex
+        # that spells "rmdir", a message that says "run") is data, not a call
+        words = CODE_STRING_RE.sub(lambda m: m.group(0)[0] * 2, code)
+        deletes = bool(CODE_DELETE_RE.search(words)) or bool(IMPORT_DELETE_RE.search(calls)) \
+            or bool(re.search(r"getattr\s*\(\s*(os|shutil|pathlib|fs)\b", words)) \
             or bool(re.search(r"\b(delete-directory|delete-file|file\s+delete|rm\s*\(|unlink\s*\(|"
-                              r"os\.remove|remove_tree|rmtree)", calls))
+                              r"os\.remove|remove_tree|rmtree)", words))
         # moving or renaming over a path destroys it like a delete (checked the same way, but
         # not reported as a deletion to file-protection.sh)
         moves = bool(re.search(r"\bshutil\s*\.\s*move\b|\bos\s*\.\s*(rename|renames|replace)\b|"
@@ -3213,7 +3343,7 @@ class Analysis:
             for literal in load_delete_guard().python_literals(code):
                 if len(literal) >= 6 and literal != code:
                     self.code(literal, directories, depth, nesting + 1)
-        executes = bool(EXEC_PRIM_RE.search(calls))
+        executes = bool(EXEC_PRIM_RE.search(words))
         # anything that can turn a literal into a command line (then literals are walked as shell)
         may_run = executes or bool(re.search(
             r"\b(subprocess|pty|exec\w*|spawn\w*|posix_spawn\w*|system|popen\w*|getattr|__import__|importlib|"
@@ -3237,11 +3367,10 @@ class Analysis:
         if any(CODE_SYMLINK_RE.search(text) for text in (calls, CODE_STRING_RE.sub(
                 lambda m: m.group(0) if not re.search(r"\s", m.group(0)[1:-1]) else m.group(0)[0] * 2, joined))):
             self.check_symlinks(code, literals, directories)
-        if deletes or executes:
-            if deletes:
-                self.deletes.append(("inline code deletion", "", set(directories)))
+        if deletes:
+            self.deletes.append(("inline code deletion", "", set(directories)))
             if home_ref or risky_literal:
-                raise Deny("dogma: inline code deletes or runs commands near the home, root or parent directories; "
+                raise Deny("dogma: inline code deletes near the home, root or parent directories; "
                            "blocked (the hook cannot follow arbitrary code).")
             for literal in literals:
                 if not literal or "\n" in literal:
@@ -3257,12 +3386,19 @@ class Analysis:
                         physical = os.path.realpath(physical)
                         if dangerous(physical) or self.anchor(physical):
                             raise Deny("dogma: inline code deletes a protected path (%s)." % physical)
+        exec_pure = set()
+        if executes:
+            exec_pure = self.exec_commands(code, literals, directories, depth, CODE_HOME_RE.search(code))
         if self.flags.get("token_protection", True):
             if CODE_ENV_DUMP_RE.search(code):
                 raise Deny("dogma: inline code may print environment variables, which can expose credentials.")
             for name in CODE_NAME_RE.findall(code):
                 if _sensitive_variable(name):
                     raise Deny("dogma: inline code references a token or secret variable.")
+            # the agent configuration is read in inline code only as its session descriptors or the folder itself
+            if any(CONFIG_MENTION_RE.search(literal) and not SESSION_LITERAL_RE.search(literal)
+                   for literal in literals):
+                raise Deny("dogma: inline code references credential files or agent configuration.")
             if CODE_FRAGMENT_RE.search(code):
                 raise Deny("dogma: inline code references credential files or agent configuration.")
         for literal in literals:
@@ -3274,7 +3410,8 @@ class Analysis:
                     if path:
                         self.check_location(path, "write", self.flags.get("token_protection", True), False)
             first = literal.split(None, 1)[0] if literal.split() else ""
-            if may_run and os.path.basename(first) in EXEC_VERBS:
+            # a list element of an exec call was judged as its command line already (exec_commands)
+            if may_run and os.path.basename(first) in EXEC_VERBS and literal not in exec_pure:
                 self.walk(literal, directories, depth + 1)
 
     def awk(self, args, segment, directories, depth):
@@ -3370,6 +3507,28 @@ def load_delete_guard():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+# a pure literal list or tuple of strings handed to an exec call: ["rm", "-rf", "/"], ("ls", "~")
+LITERAL_LIST_RE = re.compile(r"[\[(]\s*((?:%s)(?:\s*,\s*(?:%s))*)\s*,?\s*[\])]"
+                             % (CODE_STRING_RE.pattern, CODE_STRING_RE.pattern))
+# the commands that destroy data or a disk when run with a protected or home target (shell words, basenames)
+DESTRUCTIVE_COMMAND_RE = re.compile(r"(?:rm|rmdir|unlink|shred|srm|wipe|del|dd|truncate|wipefs|mke2fs|mkswap|"
+                                    r"blkdiscard|mkfs(?:\.\w+)?)$")
+
+
+def _command_word(value):
+    """One argument of a literal command list as shell text: quoted only when a shell would split or
+    interpret it (blanks, ; | & < > ( ) ` quotes and backslashes); ~, $ and * stay open, so the shell
+    analysis expands them like the shell would (a fail-closed reading)."""
+    if not value:
+        return "''"
+    return shlex.quote(value) if re.search(r"[\s;|&<>()`\"'\\]", value) else value
+
+
+def _deleting_command(text):
+    words = text.split()
+    return bool(words) and DESTRUCTIVE_COMMAND_RE.match(os.path.basename(words[0])) is not None
 
 
 def alias_calls(code):
