@@ -20,6 +20,14 @@ cloud. It extends the same-machine peer model: a small daemon on each machine pu
 its local sessions to its configured peers over TCP and mirrors every remote session
 into the local `sessions/` registry so it shows up as an ordinary peer.
 
+One relay per machine serves ALL Claude Code profiles of that machine. A profile is a
+config dir (`CLAUDE_CONFIG_DIR`, e.g. `~/.claude` or `~/.claude-work`) with a
+`sessions/` dir in it; sibling profiles of the same user are found automatically. The
+roster lists the sessions of every profile, each with its own profile name, every
+remote session is mirrored into each profile's `sessions/`, and a message reaches a
+session in any profile. Trust is always checked in the profile of the target session
+(see Trusted peers).
+
 The relay is a no-op until a config file exists. It is OFF by default. Once the config
 exists it starts automatically on session start (see Auto-start below), so start/stop
 here is mostly for manual control.
@@ -389,6 +397,12 @@ peer forwards still need the user. The user of a RECEIVING machine can declare o
 on that machine, that tasks from one captioned session on one paired peer count like
 the user's own tasks.
 
+- **Per profile.** A grant belongs to the profile it was made in and applies only to
+  target sessions of that profile. The relay reads the trust list of the target's
+  profile (`<profile>/credo/peer-lan-trust.json`) and checks the pairing against that
+  profile's pairing store (`peer-lan-keys/` of that profile, or the `keys_dir` its
+  `peer-lan.json` names), the same store its peer-message hook verifies with. A grant
+  in one profile never reaches a session in another.
 - **Granted only locally, only by the user.** The trust list lives in
   `peer-lan-trust.json` next to the config (file 0600) and is written only by
   `credo-peer-lan.py trust add|remove` on this machine. Nothing received over the wire
@@ -446,14 +460,11 @@ the user's own tasks.
   example CJK) are not flagged.
 - **Unique captions.** When 2+ live sessions on the sending machine share a caption
   (case-insensitive, after the filter and the 20-character cap; every live real session
-  of the sending relay's profile counts, also one without a messaging socket) the
-  sending relay sends no caption but `from_caption_dup`; trust is suspended for both
-  (fail closed), the receiving relay logs it and the message gets a one-line notice
-  (`from-caption-note` in the opening tag; the hook says to rename one session). Trust
-  returns once the caption is unique again. Duplicate detection currently covers only
-  the sender relay's own profile (its `sessions/` directory): two Claude profiles on the
-  same machine can hold the same caption without noticing each other (a relay that
-  watches several profiles is planned).
+  of the sending machine, in any of its profiles, counts, also one without a messaging
+  socket) the sending relay sends no caption but `from_caption_dup`; trust is suspended
+  for both (fail closed), the receiving relay logs it and the message gets a one-line
+  notice (`from-caption-note` in the opening tag; the hook says to rename one session).
+  Trust returns once the caption is unique again.
 - **Binding scope.** Trust follows the caption on that paired machine: a session
   renamed away from it loses trust, a session on the same machine that takes the
   caption gets it. Trust therefore means "this machine, this caption", not one process.
