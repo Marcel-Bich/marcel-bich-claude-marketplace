@@ -4,6 +4,18 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ## v0
 
+### v0.80
+
+#### v0.80.0
+
+##### Changed
+
+- The session-move cleanup script decides by the source. A source file is removed while it is unchanged since the verify and its target copy exists as a regular file; a target that changed after the copy (the resumed session's transcript included) no longer keeps it. A missing or emptied target copy still keeps the source, and a changed source still refuses the cleanup.
+- The LAN relay serves every Claude Code profile of the machine. The roster names the profile of each local session, every remote session is mirrored into each profile's `sessions/`, and a message reaches a session in any profile.
+- Trusted peers are checked in the target session's own profile. A grant made in one profile never applies to a session in another profile.
+- Duplicate caption detection covers all profiles of the sending machine.
+- The pairing record is copied into the keystore of every profile of the machine. Trust is still granted per profile with `trust add` run in that profile, and `pair-reset` removes a pairing and the peer's trust from every profile.
+
 ### v0.79
 
 #### v0.79.0
