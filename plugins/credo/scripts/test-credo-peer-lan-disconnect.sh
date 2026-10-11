@@ -17,7 +17,12 @@
 #   - a running relay is restarted with a new pid; a stopped one is not started,
 #   - --full runs the elevated Windows removal (stubbed) only under WSL, never elsewhere,
 #     and a failing Windows step is reported while the local part is still done,
-#   - an unreadable trust list refuses before anything is changed.
+#   - an unreadable trust list refuses before anything is changed,
+#   - keys_dir may point at a dir that also holds the relay's own files (peer-lan.json,
+#     peer-lan-trust.json, other peer-*.json): only peer-<id>.json records are counted
+#     and removed, corrupt records with a valid name included (command and daemon sync),
+#   - an OSError while clearing still restarts a running relay and fails the command,
+#   - a quote in the scheduled task name is escaped for PowerShell.
 #
 # Usage: bash test-credo-peer-lan-disconnect.sh
 
@@ -72,6 +77,7 @@ s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.clos
 ID_A="0123456789abcdef0123456789abcdef"
 ID_B="fedcba9876543210fedcba9876543210"
 ID_C="11112222333344445555666677778888"
+ID_D="aaaabbbbccccddddeeeeffff00001111"
 KEY="$(printf 'ab%.0s' $(seq 1 32))"
 
 PASS=0
@@ -298,6 +304,75 @@ OUT="$(env CREDO_PEER_LAN_PROCVERSION="$PV_WSL" PATH="$BIN:$PATH" FAKE_PS_RC=1 "
 ok "a failing Windows step makes the command exit non-zero" "$([ "$RC" -ne 0 ] && echo 0 || echo 1)"
 grep -q "Windows" <<<"$OUT"; ok "a failing Windows step is reported" "$?"
 check "a failing Windows step still clears the local state" "0" "$(count_peer_files "$M/credo/peer-lan-keys")"
+
+# --- keys_dir that also holds the relay's own files -------------------------
+# keys_dir is a user config key. Pointed at a profile's credo/ dir it also holds the
+# relay's config and the trust list, next to the pairing records.
+mk_shared_keys() { # the machine's keys_dir is $M/credo, with files that are not pairings
+    mk_fixture
+    "$PY" -c 'import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["keys_dir"] = sys.argv[2]
+json.dump(d, open(p, "w"))' "$M/credo/peer-lan.json" "$M/credo"
+    printf '{"id": "%s", "pub": "%s", "key": "%s", "slot": "10.0.0.7:48610", "machine": "box-3"}\n' \
+        "$ID_B" "$KEY" "$KEY" > "$M/credo/peer-$ID_B.json"
+    printf 'not json\n' > "$M/credo/peer-$ID_D.json"             # corrupt, but a valid name
+    printf '{"note": "keep me"}\n' > "$M/credo/peer-notes.json"
+}
+
+daemon_call() { # daemon_call <python statements>: runs them with the daemon module as m
+    "$PY" -c 'import importlib.util, sys
+spec = importlib.util.spec_from_file_location("credo_peer_lan", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+exec(sys.argv[2])' "$DAEMON" "$1"
+}
+
+mk_shared_keys
+NOTES_BEFORE="$(cksum < "$M/credo/peer-notes.json")"
+OUT="$(dc --dry-run </dev/null 2>&1)"; RC=$?
+check "shared keys_dir: dry-run exits 0" "0" "$RC"
+grep -q "(machine profile): pairings 2," <<<"$OUT"; ok "dry-run counts only the two peer-<id>.json records" "$?"
+OUT="$(dc --yes </dev/null 2>&1)"; RC=$?
+check "shared keys_dir: --yes exits 0" "0" "$RC"
+ok "peer-lan.json survives --yes" "$([ -f "$M/credo/peer-lan.json" ] && echo 0 || echo 1)"
+ok "peer-lan-trust.json survives --yes" "$([ -f "$M/credo/peer-lan-trust.json" ] && echo 0 || echo 1)"
+ok "peer-notes.json survives --yes unchanged" \
+    "$([ "$(cksum < "$M/credo/peer-notes.json" 2>/dev/null)" = "$NOTES_BEFORE" ] && echo 0 || echo 1)"
+ok "pairing record in the shared keys_dir removed" "$([ ! -e "$M/credo/peer-$ID_B.json" ] && echo 0 || echo 1)"
+ok "corrupt pairing record with a valid name removed" "$([ ! -e "$M/credo/peer-$ID_D.json" ] && echo 0 || echo 1)"
+
+mk_shared_keys
+daemon_call "m.sync_pair_copy_dir('$M/credo', {})" >/dev/null 2>&1; RC=$?
+check "daemon copy sync runs" "0" "$RC"
+ok "copy sync keeps peer-lan.json" "$([ -f "$M/credo/peer-lan.json" ] && echo 0 || echo 1)"
+ok "copy sync keeps peer-lan-trust.json" "$([ -f "$M/credo/peer-lan-trust.json" ] && echo 0 || echo 1)"
+ok "copy sync keeps peer-notes.json" "$([ -f "$M/credo/peer-notes.json" ] && echo 0 || echo 1)"
+ok "copy sync removes a pairing record that is no longer wanted" "$([ ! -e "$M/credo/peer-$ID_B.json" ] && echo 0 || echo 1)"
+
+# --- an OSError while clearing: relay restarted, command fails ---------------
+mk_fixture
+"$PY" "$DAEMON" start >/dev/null 2>&1; RC=$?
+check "clearing-failure test relay started" "0" "$RC"
+OLD_PID="$(pid_of_status)"
+OUT="$(daemon_call 'def boom(row):
+    raise OSError("injected clearing failure")
+m._disconnect_row = boom
+sys.exit(m.main(["disconnect-all", "--yes"]))' 2>&1 </dev/null)"; RC=$?
+ok "an OSError while clearing makes the command exit non-zero" "$([ "$RC" -ne 0 ] && echo 0 || echo 1)"
+grep -q "injected clearing failure" <<<"$OUT"; ok "the OSError is reported" "$?"
+NEW_PID="$(pid_of_status)"
+ok "the running relay is restarted after an OSError" \
+    "$([ -n "$NEW_PID" ] && [ "$NEW_PID" != "$OLD_PID" ] && echo 0 || echo 1)"
+"$PY" "$DAEMON" stop >/dev/null 2>&1
+ok "clearing-failure test relay stopped" "$([ -z "$(pid_of_status)" ] && echo 0 || echo 1)"
+
+# --- Windows task name is escaped for PowerShell -----------------------------
+mk_fixture
+OUT="$(env CREDO_PEER_LAN_PROCVERSION="$PV_WSL" PATH="$BIN:$PATH" CREDO_PEER_LAN_WINPROXY_TASK="credo'task" "$PY" "$DAEMON" disconnect-all --full --yes </dev/null 2>&1)"; RC=$?
+ok "a quote in the task name is doubled in the PowerShell command" \
+    "$(grep -q "credo''task" "$PSLOG" 2>/dev/null && echo 0 || echo 1)"
 
 # --- done --------------------------------------------------------------------
 echo "credo-peer-lan disconnect-all: $PASS passed, $FAIL failed"
