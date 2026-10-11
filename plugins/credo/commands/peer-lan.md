@@ -2,7 +2,7 @@
 description: credo - Start, stop, or check the LAN peer relay (cross-machine peer messaging, no cloud)
 arguments:
   - name: action
-    description: setup | init | bind | unbind | networks | netinfo | token | whoami | check | pairs | pair-reset | start | restart | stop | trust | profiles | status (default status). init takes peer IPs, bind takes --name/--group/--label/--allow, pair-reset takes a peer (slot host:port, id or machine), trust takes list | add <peer> <caption> | remove <peer> [<caption>], profiles takes list (default) | set <name>... | add <name> | all.
+    description: setup | init | bind | unbind | networks | netinfo | token | whoami | check | pairs | pair-reset | disconnect-all | start | restart | stop | trust | profiles | status (default status). init takes peer IPs, bind takes --name/--group/--label/--allow, pair-reset takes a peer (slot host:port, id or machine), disconnect-all takes --dry-run | --yes | --full, trust takes list | add <peer> <caption> | remove <peer> [<caption>], profiles takes list (default) | set <name>... | add <name> | all.
     required: false
 allowed-tools:
   - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py:*)
@@ -697,6 +697,43 @@ allowlist-scoped firewall rule (the old rule allowed the whole LocalSubnet).
   pairs again (trust on first use). Only for a reinstalled peer or lost keys,
   and only after the user confirmed it (Ask tool; never in autonomous mode). A running
   daemon applies it at once; no restart. Exits 1 when nothing matches.
+
+- **disconnect-all `[--full]`** - the reset: set this machine's relay back to "no other
+  device known", so pairing can be set up cleanly again. In every profile the relay
+  serves it removes the pairings (keystore `peer-*.json`), the pending repairs, the trust
+  grants (`peer-lan-trust.json`), the LAN mirror descriptors (the `credoPeerLan` marker in
+  `sessions/`), and the stored peer addresses (`peers` in the machine config). A running
+  relay is stopped first and started again afterwards; a stopped one stays stopped.
+  Kept: this machine's identity (peer id and key), the bound networks and their
+  allowlists, the `profiles` list, the listen settings and the token. Profiles the relay
+  does not serve are not touched, and so are all other files and the non-LAN session
+  descriptors. `--full` also undoes the Windows-side setup under WSL with the setup's own
+  `credo-peer-lan-winproxy.ps1 -Uninstall`: the scheduled task, the firewall rule
+  `credo-peer-lan <port>`, the portproxy for the port, the applied state, and the installed
+  copy unless another task still uses it (one elevated UAC prompt). Elsewhere `--full`
+  skips the Windows side with a note.
+
+  The command lists the exact plan first and asks before it changes anything. Without a
+  terminal and without `--yes` it refuses and changes nothing. Flow (interactive sessions
+  only, never in autonomous mode):
+  1. Show the exact list without changing anything:
+     ```bash
+     "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" disconnect-all --dry-run
+     ```
+  2. Explain it to the user in one or two sentences (what goes, what stays, and that the
+     other machines keep their side). Ask (Ask tool) which variant to run: the default
+     (relay state only), the default with `--full` (WSL only, one UAC prompt), or cancel.
+  3. Only after the user said yes, run the chosen variant with `--yes`:
+     ```bash
+     "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" disconnect-all --yes
+     "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" disconnect-all --yes --full
+     ```
+  4. Pair again like the first time: `init <ip> [...]` writes the peer addresses again,
+     then `restart` (the daemon reads its peers only at start), then `check`. The other
+     machine still holds its old pairing with this one and may refuse the new pairing as a
+     pending repair until that pairing is reset there too: run `disconnect-all` on that
+     machine, or `pair-reset` with this machine's peer id there. Reset both sides for a
+     clean start.
 
 - **trust `list` | `add <peer> <caption>` | `remove <peer> [<caption>]`** - the local
   trust list (see Trusted peers). `<peer>` is a paired peer: peer id or an 8+ character
