@@ -52,6 +52,7 @@ EVERYDAY = (
     ("make test", "N"),
     ("bash plugins/dogma/scripts/test-delete-guard.sh", "N"),
     ("bash plugins/dogma/scripts/git-scope.sh", "N"),
+    ("bash plugins/dogma/scripts/git-remote-safe.sh url", "N"),
     ("bash /home/alice/.claude/plugins/cache/test-market/dogma/0.0.0/scripts/git-scope.sh /home/alice/work/proj", "N"),
     ("shellcheck scripts/*.sh", "N"),
     ("echo $HOME", "N"),
