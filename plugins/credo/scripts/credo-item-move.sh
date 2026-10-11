@@ -52,7 +52,9 @@
 #                       This applies from every source folder, so a detour via hold,
 #                       future or 3_blocked never turns into a GO without the user.
 #                     agent-owned from 1_clarify: refused unless the History has a GO line,
-#                       normally "(GO: agent per SOTA rule, <reason>)".
+#                       normally "(GO: agent decision, <reason>)". The older marker
+#                       "(GO: agent per SOTA rule, <reason>)" is still accepted. The decision
+#                       rule itself lives in the active preset (credo-preset.sh mainagent).
 #                     agent-owned from elsewhere: only warns when no GO line exists.
 #                     After the move a human-owned item becomes clarify_owner: agent and
 #                     its History gets "-> go <date> (origin: created by user; clarify_owner
@@ -396,7 +398,7 @@ case "$TARGET" in
             case "$SRC_DIR" in
                 */1_todo/1_clarify)
                     if [ -z "$GO_LINES" ] && [ "$FLAG" != "--user-authorized" ]; then
-                        die "item #$ID is agent-owned but its History has no GO line. Log the decision first, e.g. '- -> go <date> (GO: agent per SOTA rule, <reason>)', and name it in the next report so the user can veto."
+                        die "item #$ID is agent-owned but its History has no GO line. Log the decision first, e.g. '- -> go <date> (GO: agent decision, <reason>)', and name it in the next report so the user can veto."
                     fi
                     ;;
             esac

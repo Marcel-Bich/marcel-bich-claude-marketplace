@@ -12,6 +12,12 @@
 # while every key it does not set still falls back to global. It is optional and
 # never auto-created; for the default profile it equals global and is skipped.
 #
+# Model presets: the plugin ships templates/presets.default.yaml as a builtin
+# layer (key `presets:`), read fresh on every call so a plugin update reaches
+# users; a preset defined in the global, profile or project config REPLACES a
+# same-named built-in or lower-layer preset as a whole (no per-key merge), so a
+# missing prompt key stays missing. `get presets` returns the merged map.
+#
 # The global layer is auto-created from the builtin template on first need
 # (universal defaults; personal fields stay empty). YAML is parsed with PyYAML
 # when available and with a bundled stdlib subset parser otherwise, so no
@@ -36,6 +42,8 @@
 #   CREDO_PROFILE             path to the per-profile override config file
 #   CREDO_PROJECT             path to the project config file
 #   CREDO_DIR                 project .credo dir (project config = $CREDO_DIR/config)
+#   CREDO_BUILTIN_PRESETS     builtin presets file (default templates/presets.default.yaml)
+#   CREDO_CONFIG_STDLIB_YAML  1 = skip PyYAML and use the bundled stdlib parser (tests)
 #   CREDO_SKIP_ENSURE         if set to 1, "get" does not auto-create the global layer
 #   CREDO_SESSION_PROJECTS_DIR session-pin dir (default $CLAUDE_CONFIG_DIR/credo/session-projects)
 #   CREDO_SESSION_ID           session id for the pin lookup (test override)
@@ -53,6 +61,11 @@ if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
     BUILTIN="$CLAUDE_PLUGIN_ROOT/templates/config.default.yaml"
 else
     BUILTIN="$SCRIPT_DIR/../templates/config.default.yaml"
+fi
+
+BUILTIN_PRESETS="$(dirname "$BUILTIN")/presets.default.yaml"
+if [ -n "${CREDO_BUILTIN_PRESETS:-}" ]; then
+    BUILTIN_PRESETS="$CREDO_BUILTIN_PRESETS"
 fi
 
 GLOBAL="${CREDO_GLOBAL:-$HOME/.claude/credo/config}"
@@ -165,6 +178,7 @@ case "$CMD" in
         ;;
     paths)
         printf 'builtin: %s (%s)\n' "$BUILTIN" "$([ -f "$BUILTIN" ] && echo present || echo missing)"
+        printf 'presets: %s (%s)\n' "$BUILTIN_PRESETS" "$([ -f "$BUILTIN_PRESETS" ] && echo present || echo missing)"
         printf 'global:  %s (%s)\n' "$GLOBAL" "$([ -f "$GLOBAL" ] && echo present || echo missing)"
         if [ -z "$PROFILE" ] || [ "$PROFILE" = "$GLOBAL" ]; then
             printf 'profile: %s (none - default profile, skipped)\n' "${PROFILE:-<none>}"
@@ -184,7 +198,7 @@ case "$CMD" in
         fi
         PROFILE_F="$PROFILE"
         [ "$PROFILE_F" = "$GLOBAL" ] && PROFILE_F=""
-        CREDO_BUILTIN="$BUILTIN" CREDO_GLOBAL_F="$GLOBAL" CREDO_PROFILE_F="$PROFILE_F" CREDO_PROJECT_F="$PROJECT" \
+        CREDO_BUILTIN="$BUILTIN" CREDO_BUILTIN_PRESETS="$BUILTIN_PRESETS" CREDO_GLOBAL_F="$GLOBAL" CREDO_PROFILE_F="$PROFILE_F" CREDO_PROJECT_F="$PROJECT" \
             python3 - "$KEY" "$CMD" <<'PY'
 import os, sys, json
 
@@ -196,18 +210,47 @@ def load_yaml(path):
         return {}
     with open(path, "r", encoding="utf-8") as fh:
         text = fh.read()
-    try:
-        import yaml  # PyYAML if available
-        data = yaml.safe_load(text)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        pass
+    if os.environ.get("CREDO_CONFIG_STDLIB_YAML") != "1":
+        try:
+            import yaml  # PyYAML if available
+            data = yaml.safe_load(text)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            pass
     return _fallback_parse(text)
+
+def _split_flow(inner):
+    # Split on commas that sit outside quotes (prompts may contain commas).
+    parts, cur, quote = [], "", None
+    for ch in inner:
+        if quote:
+            cur += ch
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+            cur += ch
+        elif ch == ",":
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur)
+    return [x.strip() for x in parts if x.strip() != ""]
+
+def _flow_map(inner):
+    out = {}
+    for item in _split_flow(inner):
+        k, sep, v = item.partition(":")
+        out[k.strip()] = _scalar(v) if sep else None
+    return out
 
 def _scalar(v):
     v = v.strip()
     if v == "" or v == "~" or v == "null":
         return None
+    if v.startswith("{") and v.endswith("}"):
+        return _flow_map(v[1:-1])
     if (v[0], v[-1]) in (('"', '"'), ("'", "'")) and len(v) >= 2:
         return v[1:-1]
     if v.startswith("[") and v.endswith("]"):
@@ -235,6 +278,8 @@ def _fallback_parse(text):
     # maps), inline flow lists, scalars. Sufficient for the credo config.
     lines = []
     for raw in text.splitlines():
+        if raw.lstrip().startswith("#"):
+            continue  # comment-only line (may contain quotes)
         stripped = raw.split("#", 1)[0].rstrip() if not _in_quote(raw) else raw.rstrip()
         if stripped.strip() == "":
             continue
@@ -283,7 +328,7 @@ def _fallback_parse(text):
                     lst.append(parse_node(lines[pos[0]][0]))
                 else:
                     lst.append(None)
-            elif (":" in item) and not item.startswith("["):
+            elif (":" in item) and not item.startswith(("[", "{")):
                 m = {}
                 k, _, v = item.partition(":")
                 k = k.strip()
@@ -346,12 +391,18 @@ def lookup(tree):
 merged = {}
 source = None
 for name, p in (("builtin", os.environ.get("CREDO_BUILTIN")),
+                ("builtin", os.environ.get("CREDO_BUILTIN_PRESETS")),
                 ("global", os.environ.get("CREDO_GLOBAL_F")),
                 ("profile", os.environ.get("CREDO_PROFILE_F")),
                 ("project", os.environ.get("CREDO_PROJECT_F"))):
     layer = load_yaml(p)
     if layer:
+        prev_presets = merged.get("presets") if isinstance(merged.get("presets"), dict) else {}
         merged = deep_merge(merged, layer)
+        if isinstance(layer.get("presets"), dict):
+            # a preset is a unit: a same-named preset replaces the lower layer's whole
+            # definition (no per-key merge), so a missing prompt key stays missing
+            merged["presets"] = dict(prev_presets, **layer["presets"])
         if lookup(layer)[0]:
             source = (name, p)
 

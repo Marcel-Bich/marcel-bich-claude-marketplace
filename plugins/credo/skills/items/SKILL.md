@@ -185,10 +185,11 @@ well-founded and must NOT be used as an argument against building the item itsel
 
 Every item in `2_go` is agent-owned (`clarify_owner: agent`, set by the move helper on
 entry), so a question surfacing mid-build first goes through the agent decision rule
-("Clarify owner and the agent decision rule" below): the agent decides it itself per SOTA /
-best effort and builds on. Only a question on that rule's escalation list (user taste or
-preference, a change to the verbatim requirement, infeasible or really not good, the hard
-safety rules) can pass condition 1 here. An item sent back by this test gets
+("Clarify owner and the agent decision rule" below): the agent decides it itself per the active
+mainagent-prompt (`credo-preset.sh mainagent`) and builds on. Only a question on the fixed escalation list ("Clarify owner and
+the agent decision rule" below: user taste or preference, a change to the verbatim
+requirement, the hard safety rules, deletions of user data, installs, money) can pass
+condition 1 here. An item sent back by this test gets
 `clarify_owner: human` again, because its open question is the user's by definition:
 `credo-item-move.sh <id> clarify` sets it and logs `clarify_owner <old> -> human` in the
 History. A GO line from before the send-back no longer counts; the item needs a new GO.
@@ -212,10 +213,11 @@ an agent surfaces these URGENT clarify items FIRST, before any other clarify or 
 
 ## Clarify owner and the agent decision rule
 
-The default intention is to build everything as well as at all possible (state of the
-art); where that is not possible, best effort; only where even that does not work or would
-really not be good, the point is noted and presented to the user. How much work it is never
-counts against an item: feasible = GO.
+How an agent decides an open question is set by the active model preset: the
+`mainagent-prompt` (and the `universal-prompt`) that `scripts/credo-preset.sh mainagent`
+prints, delivered at every SessionStart. This section fixes only who decides, the GO line
+requirement and the safety calls below; the decision philosophy itself lives in the preset
+config, not here. Follow the active mainagent-prompt for every agent-owned decision.
 
 **Who decides depends on the owner** (frontmatter `clarify_owner`, missing = `human`):
 
@@ -228,13 +230,12 @@ counts against an item: feasible = GO.
 - **Agent-owned items** (`clarify_owner: agent`, plus everything in `2_go`): uncritical
   questions are decided by the plan agent. If no plan agent peer is known (none was
   announced as owning this responsibility), the EXECUTING agent takes this pseudo plan role
-  for the moment, without changing its real role, and decides by the same rule:
-  1. SOTA - the best solution known today;
-  2. else best effort;
-  3. else note it and present it to the user later.
-  Size or effort is never a reason against a solution. Feasible = GO: an agent-owned clarify
-  item may move to `2_go` with the History line
-  `-> go <date> (GO: agent per SOTA rule, <reason>)`.
+  for the moment, without changing its real role, and decides per the active
+  mainagent-prompt. The fixed escalation list is never a preset decision: user taste or
+  preference, a change to the verbatim requirement, the hard safety rules, deleting user
+  data, installs and money go to the user. Feasible = GO: an agent-owned clarify item may
+  move to `2_go` with the History line `-> go <date> (GO: agent decision, <reason>)`. The
+  older marker `(GO: agent per SOTA rule, <reason>)` stays valid (the move helper accepts both).
   **No slicing around the user:** an item with `parent: <id>` may only be agent-GO'd while
   its parent is GO'd (in `2_go`, `2_done`, `3_verified`, or `3_blocked` with a GO). Children
   of a human-owned parent that is still in `1_clarify` (or parked, archived, missing) are
@@ -808,7 +809,7 @@ Valid transitions (folder = status):
 
 - `1_clarify -> 2_go` once the user gives an explicit GO (go-gate: only `2_go` is
   buildable; `1_clarify` is not). For an agent-owned item (`clarify_owner: agent`) the agent
-  decision rule may give the GO instead (`(GO: agent per SOTA rule, <reason>)`, see "Clarify
+  decision rule may give the GO instead (`(GO: agent decision, <reason>)`, see "Clarify
   owner and the agent decision rule"); a human-owned item always needs the user's GO, and
   the move helper refuses it otherwise. In a presence session, clarify and propose that GO one
   item at a time, each item in its own Ask round - see "One item per Ask round" in the

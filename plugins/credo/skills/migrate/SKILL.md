@@ -186,7 +186,7 @@ These two interleave; run them together.
     the agent decision rule (`items` skill, "Clarify owner and the agent decision rule"). The
     `-> go` History line must cite the GO source, e.g.
     `-> go 2026-08-04 (GO: user, <short context>)` or
-    `-> go 2026-08-04 (GO: agent per SOTA rule, <reason>)`.
+    `-> go 2026-08-04 (GO: agent decision, <reason>)`.
   - **G2 - not deferred.** No "build FUTURE" / deferred marker in the item, in any language
     (e.g. German "Bau FUTURE") -> otherwise `parked/future`.
   - **G3 - no hard block on unbuilt work.** No hard dependency on an unbuilt item ->

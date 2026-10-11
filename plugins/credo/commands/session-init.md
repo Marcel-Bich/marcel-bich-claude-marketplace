@@ -144,6 +144,14 @@ tag convention, and terminology live in the credo `items` skill under "Harness t
 missing), say so once and point to `/credo:setup` Step 10 instead of tracking the list in
 prose (same skill, "When the task-list tools are missing").
 
+## Model preset check (read-only, best effort)
+
+Compare the main model with the active preset's recommendation, once per session start:
+
+1. Run `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-preset.sh" active` (the preset name) and `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-preset.sh" mainagent --field model` and `... --field effort` (the recommendation).
+2. Your own model id is in your system prompt (for example `claude-opus-5-5`). If it is not the recommended model, add one short hint line to your start-up report: the active preset `<name>` recommends `<model>` / `<effort>` for the main agent; the user sets it with `/model` and `/effort`, and credo never changes it.
+3. If the ids match, say nothing about it. Never change the model or effort yourself and never ask the user about it here; the hint is information only.
+
 ## Output convention
 
 Item references are always written in inline-code style: `#37`, `#90`, `#91` (backticks) -

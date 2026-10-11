@@ -1,6 +1,6 @@
 ---
 name: orchestration
-description: Delegate work to subagents safely and efficiently - follow the measured default batch workflow (plan once, 3-4 builders plus 1 bundle in worktrees, fresh audit per item, one release per batch), decide how many subagents to run, keep parallel tracks on disjoint files (item `touches:` overlap check) and within machine resources (resource gate, `heavy:` items), give each code track a set-up git worktree (hydra or native, automatic), monitor them without flooding your context, inherit security to every subagent, and use return-and-resume so a subagent can ask a question and continue with full context. Use whenever you are about to spawn one or more subagents, run work in parallel, or coordinate delegated tasks. Applies to any agent that delegates, including subagents that spawn their own helpers.
+description: Delegate work to subagents safely and efficiently - follow the measured default batch workflow (plan once, 3-4 builders plus 1 bundle in worktrees, fresh audit per item, one release per batch), decide how many subagents to run, pick model and effort per role from the active model preset (credo-preset.sh stage, with its attempt chains), keep parallel tracks on disjoint files (item `touches:` overlap check) and within machine resources (resource gate, `heavy:` items), give each code track a set-up git worktree (hydra or native, automatic), monitor them without flooding your context, inherit security to every subagent, and use return-and-resume so a subagent can ask a question and continue with full context. Use whenever you are about to spawn one or more subagents, run work in parallel, or coordinate delegated tasks. Applies to any agent that delegates, including subagents that spawn their own helpers.
 ---
 
 # orchestration
@@ -90,10 +90,10 @@ the security block):
   and reports the value (credo `items`, Build-completion gate).
 - Questions that come up during the build follow the agent decision rule (credo `items`,
   "Clarify owner and the agent decision rule"): the builder decides uncritical ones itself
-  (SOTA, else best effort; effort never counts against it) and logs them in the item
-  History; it returns `{status: needs_decision, question}` only for the escalated ones
-  (infeasible or really not good, the user's taste or preference, deleting user data,
-  installs, money, safety, a change to the verbatim requirement). Items it creates (slices,
+  per the active mainagent-prompt and logs them in the item History; it returns
+  `{status: needs_decision, question}` only for the escalated ones (the user's taste or
+  preference, deleting user data, installs, money, safety, a change to the verbatim
+  requirement, and points the preset says to note and present). Items it creates (slices,
   follow-ups, build questions) get `clarify_owner: agent`, `parent: <id>` and a
   `created by agent` first History line; while the parent is not GO'd they stay
   human-owned, so a not yet GO'd user item is never sliced into agent-GO'able children.
@@ -173,10 +173,11 @@ downloads):
 - starts only when `credo-resource-check.sh --running <N> --heavy` says `ok` - the check
   always runs for heavy items, even below the agent gate.
 
-### Worktrees for parallel code tracks (hydra or native, automatic)
+### Worktrees for every code track (hydra or native, automatic)
 
-Parallel code tracks work in git worktrees. Decide the flow once per batch, without any
-user command:
+Every code track that works in a git worktree follows this flow, also a single isolated
+build track, not only parallel ones. Before ANY worktree run, decide the flow (once per
+batch or track, without any user command):
 
 ```
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-worktree-flow.sh"   # flow=hydra|ask|native, setup=<script>
@@ -195,6 +196,10 @@ installed:
 - `flow=native` (`[ ]` or hydra not installed):
   plain `git worktree add -b <branch> <path>`, then `credo-worktree-setup.sh`.
 
+Hard rule: under `flow=hydra` never use the Agent tool's built-in `isolation: "worktree"`
+and never a bare `git worktree add` without the setup script - always hydra's create flow
+plus its setup. Under `flow=native` every `git worktree add` is followed by the setup script.
+
 Right after EVERY `git worktree add`, run the `setup=` script on the new worktree
 (`<setup> <worktree-path>`). A fresh worktree only has versioned files; the setup links
 (relative symlinks) or copies the excluded ones - CLAUDE.md, CLAUDE/, GUIDES/,
@@ -203,8 +208,9 @@ DOGMA-PERMISSIONS.md and everything unversioned under .credo/ by default, or the
 overwrites an existing path, skips versioned paths and untracked paths that are not
 ignored (a `git add -A` in the worktree would commit them; builders read them in the
 main checkout), and prints `main=<main checkout>`.
-When the harness created the worktree itself (Agent tool `isolation: worktree`), the
-builder runs the setup on its own worktree root as its first step.
+Under `flow=native` only, a harness-created worktree (Agent tool `isolation: worktree`) is
+allowed after this check; the builder then runs the setup on its own worktree root as its
+first step. Under `flow=hydra` it is never used.
 
 Every worktree builder brief names the ABSOLUTE main-checkout path (the `main=` line) with
 this rule: when something important is missing in the worktree (neither checked out,
@@ -223,7 +229,7 @@ cleanup at item close").
 - Sequential commit: in the MAIN checkout only the MAIN agent commits, one track's result
   at a time. Subagents do not commit there. This keeps history clean and avoids two agents
   racing on the index or on a shared file. Exception (owner-approved): a subagent working
-  in its OWN git worktree (hydra or native, see "Worktrees for parallel code tracks") has
+  in its OWN git worktree (hydra or native, see "Worktrees for every code track") has
   its own index and MAY commit on its worktree branch - never push, never merge; merge,
   push and release stay with the main agent. (By the same index-race logic, the default agent roles put
   commits and push with the task / build agent, not the plan / clarify agent - a guiding
@@ -308,7 +314,7 @@ pointer, and pointers are lossy.
 - Every such brief MUST name the item path. Where the work touches domain rules or logic,
   it MUST also name the relevant source of truth as `file:symbol`, not just describe it.
   When the builder works in a worktree, the brief also names the absolute main-checkout
-  path plus the read-only lookup rule ("Worktrees for parallel code tracks" above).
+  path plus the read-only lookup rule ("Worktrees for every code track" above).
 - The subagent MUST read the WHOLE item itself and treat it as the single source of truth:
   the complete body, the Success Criteria / DoD, the Historie, AND the requirements log
   under `.credo/process/requirements/` - not just the head, and never the brief alone. It
@@ -364,11 +370,54 @@ pinned project directly, so no preamble can steer it there - the hook moves the 
 the fact. You therefore do not need to name the target folder in the spawn preamble; just
 require the naming rule. See the credo `verify` skill for the full evidence and naming rules.
 
-## Model policy (no downgrade, no model-choice logic)
+## Model presets (model and effort per role)
 
-Subagents always run at a model at least as capable as the main agent's model - never
-downgrade a subagent to a weaker model. There is no model-selection logic to reason
-about: best quality everywhere. Do not spend effort choosing models.
+Subagent model and effort come from the active preset, chosen by config, not by ad-hoc
+judgment. Select it with `preset: <name>` in the credo config (project overrides global;
+unset means `balanced`). Built-in presets: `quality`, `balanced`, `budget`. Custom presets
+live under `presets:` and may use any model. Show the active one in full with
+`"${CLAUDE_PLUGIN_ROOT}/scripts/credo-preset.sh" show`.
+
+Roles:
+
+- `explore` - locate code, return file:line facts.
+- `build` - implement a `2_go` item.
+- `review` - independent review or audit of built work.
+- `hard` - a build the main agent judges difficult.
+
+Difficulty (`build` vs `hard`) is the main agent's best-effort call. When unsure, start with
+`build`; a failed attempt escalates by itself.
+
+Per spawn:
+
+1. Run `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-preset.sh" stage <role> <attempt>`. The attempt
+   is 1 for the first try of that role on the item and grows by one per failed try of that
+   role. The output gives `alias`, `effort`, `prompt`, `action` and `next`.
+2. Pass `alias` as the Agent tool's `model`, `effort` as its `effort`, and append the printed
+   `prompt` block (universal-prompt plus the stage's subagent-prompt) verbatim to the Agent
+   prompt.
+3. `action: back-to-human` means the chain is used up: do not spawn; hand the item back (below).
+
+A failed attempt is a red gate: tests red, the done-gate red, an audit FAIL, or the subagent
+reports itself stuck. The next attempt gets the findings (file:line, failing test, audit
+finding) in its brief. Then follow `next`:
+
+- `retry` - the same stage runs again.
+- `next-stage` - the next `stage` call returns the next stage's model and effort
+  (`next-model` and `next-effort` show them).
+- `back-to-human` - hand the item back.
+
+`until-done` stages have no attempt cap: the budget caps (credo `budget`) stop them, and the
+same failure twice without progress hands the item back.
+
+Back-to-human: move the item to `1_clarify` (`credo-item-move.sh <id> clarify`), put a
+`> URGENT: <blocker>` note at the top of its History, and send an ntfy push
+(`credo-ntfy-send.sh`, high priority). In an autonomous run, continue with the other items.
+In an attended session, surface it with the Ask tool as well.
+
+The main agent's own model is a recommendation only (`mainagent` in the preset); the user sets
+it with `/model` and `/effort`. `session-init` hints when they differ. Escalated questions
+still go through `needs_decision` (see the items skill).
 
 ## return-and-resume (subagent asks, then continues)
 

@@ -35,6 +35,11 @@
 #      CREDO_SESSION_START_SHORTHANDS (default on); CREDO_SESSION_START_INJECT
 #      =false still silences the whole hook, legend included.
 #
+#   4. PRESET (active sessions). The universal-prompt and mainagent-prompt of the
+#      active model preset are appended (credo-preset.sh mainagent --field prompt).
+#      Subagents do not get them here: the main agent appends the per-stage prompt
+#      itself when it spawns one (SubagentStart carries no role or prompt).
+#
 # State (keyed by session_id, mirrors session-mode-set.sh / credo-decision-set.sh):
 #   mode      : ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-modes/<id>      (active|passive|autonomous)
 #   decision  : ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-decisions/<id>  (accepted|declined)
@@ -259,10 +264,25 @@ case "$source" in
         ;;
 esac
 
+# --- model preset: main-agent prompt (active sessions only) -----------------
+# The universal-prompt and mainagent-prompt of the active preset (credo-preset.sh)
+# reach the main agent here, at every SessionStart including the one after a
+# compaction. Missing prompt keys add nothing; the block is then omitted.
+PRESET_BLOCK=""
+PRESET_SCRIPT="${_scripts_dir:-${CLAUDE_PLUGIN_ROOT:-}/scripts}/credo-preset.sh"
+if [[ "$active" == true && -x "$PRESET_SCRIPT" ]]; then
+    _preset_prompt="$("$PRESET_SCRIPT" mainagent --field prompt 2>/dev/null)" || _preset_prompt=""
+    if [[ -n "$_preset_prompt" ]]; then
+        _preset_name="$("$PRESET_SCRIPT" active 2>/dev/null)" || _preset_name="balanced"
+        PRESET_BLOCK="[credo] Model preset '${_preset_name}' - instructions for the main agent (they apply to the whole session, also after a compaction):"$'\n'"${_preset_prompt}"
+    fi
+fi
+
 # --- decision logic: assemble the output, then emit once ---------------------
 OUT=""
 if [[ "$active" == true ]]; then
     OUT="$KNOWLEDGE"
+    [[ -n "$PRESET_BLOCK" ]] && OUT="$OUT"$'\n\n'"$PRESET_BLOCK"
 elif [[ "$decision" == "declined" || "$dir_decision" == "declined" ]]; then
     OUT=""
 elif [[ "$mode" != "autonomous" ]]; then
