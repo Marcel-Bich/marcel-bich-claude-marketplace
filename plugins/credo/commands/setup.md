@@ -146,6 +146,102 @@ Record the answer with `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-optimize-state.sh" 
 or `... optin no`. On Yes, run `/credo:optimize` once the remaining setup steps are done
 (before "Setup Complete").
 
+## Step 2d: Model Preset (Recommended)
+
+credo chooses the model and effort for every subagent from a model preset. Skip this step when `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" source preset` prints `global:` or `project:` (a preset is already chosen; offer a change only if the user asks). An empty result (exit 3, the key is unset) means nothing is chosen yet, so balanced applies and the menu is shown.
+
+1. Present the setup text below to the user, in the user's configured language (German when the user's language is German). Keep the preset names, model ids, effort values, YAML keys, command names and the author's experience quotes exactly as written; translate only the surrounding prose.
+2. Ask the choice with AskUserQuestion: `quality`, `balanced` (recommended), `budget`, or `custom` (the user describes it). In the same round ask where it applies: `global` (all projects, `~/.claude/credo/config`) or `this project only` (`.credo/config`).
+3. For a built-in preset, write `preset: <name>` into the chosen config file: replace an existing `preset:` line or append it (the shipped template has none). For a custom preset, first confirm the description with the user, then write it under `presets:` in the chosen file (insert it below an existing `presets:` line, or append a `presets:` block). Use the flow or block syntax of the built-in presets (`templates/presets.default.yaml`); never duplicate a top-level key.
+4. Verify with `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-preset.sh" show <name>`. Show any warning to the user and fix the entry until the helper reports none. Then `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-preset.sh" active` must print the chosen name.
+5. Tell the user that the main-agent prompt reaches the main agent at the next SessionStart or after `/compact`; subagents use the preset right away.
+
+Setup text (present it as described in step 1):
+
+```text
+Model presets
+-------------
+credo picks the model and effort for every subagent from a preset. Your main
+model is your own choice (set it with /model and /effort); each preset only
+recommends one. The presets come from extensive tests on real production
+problems. Below each one you find the author's own experience with it.
+
+1) quality - state-of-the-art results
+   mainagent (recommended): claude-opus-5-5 / medium
+   explore: claude-haiku-5-5 / xhigh
+   build, review, hard: claude-opus-5-5 / medium
+   For every project where quality has the highest priority.
+   Author's experience: "I rarely use it myself because it is expensive."
+
+2) balanced - the default
+   mainagent (recommended): claude-opus-5-5 / medium
+   explore: claude-haiku-5-5 / low
+   build, review: claude-haiku-5-5 / xhigh
+   hard: claude-haiku-5-5 / xhigh (2 attempts), then claude-opus-5-5 / medium
+         (up to 5 attempts), then back to you
+   Recommended for basically every project.
+   Author's experience: "My own standard when I run only a few parallel
+   sessions (about 1-3)."
+
+3) budget - save tokens, still good results
+   mainagent (recommended): claude-haiku-5-5 / xhigh
+   explore: claude-haiku-5-5 / low
+   build, review: claude-haiku-5-5 / xhigh
+   hard: claude-haiku-5-5 / xhigh (3 attempts), then claude-opus-5-5 / medium
+         (1 attempt), then back to you
+   Recommended for simple projects.
+   Author's experience: "I use it for many parallel sessions (4 or more),
+   otherwise the weekly limit burns too fast."
+
+Every preset also carries prompts: a universal-prompt for every agent, a
+mainagent-prompt for the main agent and a subagent-prompt per role or stage.
+Run the preset helper to see them in full.
+
+Why no Sonnet 5.5? In our tests sonnet scored below haiku at xhigh on every
+effort level, including code review, and cost more. Its only advantage was
+speed, so we do not recommend it. You can still use it in a custom preset.
+
+Custom: describe how you want it, or write your own preset under "presets:"
+in the credo config and select it with "preset: <name>". Every stage takes a
+model id, an effort (low, medium, high, xhigh, max) and how many attempts it
+gets before the next stage takes over; "until-done" means no limit,
+"back-to-human" hands the item back to you.
+
+What else you can do (examples)
+-------------------------------
+a) Your own instructions for the main agent and for every agent:
+   mainagent: {model: claude-opus-5-5, effort: medium, mainagent-prompt: "KISS: simplest working solution, effort counts."}
+   universal-prompt: "Answer in short sentences."
+
+b) A quick first check, then a thorough one (subagent-prompt per stage):
+   review:
+     - {model: claude-haiku-5-5, effort: low, attempts: 1, subagent-prompt: "Check only the surface and report back fast."}
+     - {model: claude-haiku-5-5, effort: xhigh, attempts: 2}
+
+c) Escalate only the effort, not the model:
+   build:
+     - {model: claude-haiku-5-5, effort: low,   attempts: 2}
+     - {model: claude-haiku-5-5, effort: xhigh, attempts: 2}
+     - back-to-human
+
+d) No attempt limit (until-done; budget caps still stop, repeated
+   failure without progress goes back to you):
+   hard:
+     - {model: claude-opus-5-5, effort: medium, attempts: until-done}
+
+e) A different preset per project: put "preset: budget" into the
+   project's .credo/config, keep "preset: balanced" globally.
+
+f) Your own preset with any model, e.g. sonnet for narrow fixes:
+   presets:
+     my-mix:
+       build: {model: claude-sonnet-5-5, effort: low}
+       ...
+   preset: my-mix
+
+Which preset do you want? [1-3, or describe your own]
+```
+
 ## Step 3: Install Recommended and Optional Plugins
 
 **Skip if:** `plugins.dogma = true` (and, if the user wants GSD, `plugins.gsd = true`)

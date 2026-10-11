@@ -64,14 +64,14 @@ The full rule lives in the credo `items` skill ("Clarify owner and the agent dec
 rule"); in short:
 
 - **Human-owned clarify items are always clarified with the user.** The agent recommends
-  per the SOTA rule (SOTA, else best effort, else note it; effort is never a reason
-  against) and puts the recommended option first; the user decides and gives the GO.
+  per the active mainagent-prompt (`credo-preset.sh mainagent`) and puts the recommended
+  option first; the user decides and gives the GO.
 - **Agent-owned items:** the plan agent - or, with no known plan agent peer, the executing
   agent in a temporary pseudo plan role (its real role does not change) - decides
-  uncritical questions itself by the same rule, GOs a feasible item
-  (`(GO: agent per SOTA rule, <reason>)`), logs each decision in the item History and names
+  uncritical questions itself per the active mainagent-prompt, GOs a feasible item
+  (`(GO: agent decision, <reason>)`), logs each decision in the item History and names
   it in the next reply so the user can veto.
-- **Always the user's call, on every item:** infeasible or really not good, the user's taste
+- **Always the user's call, on every item:** the user's taste
   or preference, deleting user data, installs, money, the hard safety rules, and any
   question whose answer would change or narrow the verbatim requirement.
 - **Mode:** active and passive decide the uncritical questions and ask the rest via the Ask

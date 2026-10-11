@@ -93,7 +93,7 @@ item 7 1_todo/1_clarify 'clarify_owner: agent\nparent: 3\n' ''
 out="$("$SUT" 7 go 2>&1)"; rc=$?
 check "agent owner, no GO: exit" 1 "$rc"
 check "agent owner, no GO: stays" "1_todo/1_clarify" "$(where 7)"
-contains "agent owner, no GO: message" "(GO: agent per SOTA rule" "$out"
+contains "agent owner, no GO: message" "(GO: agent decision, <reason>)" "$out"
 
 # 8. a GO line only inside an HTML comment (template example) does not count
 item 8 1_todo/1_clarify '' '<!--\n## History\n- -> go 2026-07-04 (GO: the user, chat 2026-07-04)\n-->\n'
@@ -276,6 +276,29 @@ item 36 1_todo/3_blocked 'clarify_owner: agent\nparent: 12\nblocked_by: [12]\nun
 CREDO_DIR="$CREDO_DIR" "$SWEEP" "$CREDO_DIR" >/dev/null 2>&1
 check "sweep -> clarify: moved" "1_todo/1_clarify" "$(where 36)"
 check "sweep -> clarify: owner kept" "agent" "$(owner_of 36)"
+
+# 11. neutral agent decision marker (GO: agent decision, <reason>) and the old SOTA marker
+item 60 1_todo/1_clarify 'clarify_owner: agent\nparent: 3\n' '- -> go 2026-01-02 (GO: agent decision, standard approach, no user taste involved)\n'
+out="$("$SUT" 60 go 2>&1)"; rc=$?
+check "neutral marker, agent owner: exit" 0 "$rc"
+check "neutral marker, agent owner: moved" "1_todo/2_go" "$(where 60)"
+check "neutral marker, agent owner: owner stays agent" "agent" "$(owner_of 60)"
+
+item 61 1_todo/1_clarify 'clarify_owner: human\n' '- -> go 2026-01-02 (GO: agent decision, default is clear)\n'
+out="$("$SUT" 61 go 2>&1)"; rc=$?
+check "neutral marker, human owner: exit" 1 "$rc"
+check "neutral marker, human owner: stays" "1_todo/1_clarify" "$(where 61)"
+contains "neutral marker, human owner: message" "does not count for a human-owned item" "$out"
+
+item 62 1_todo/1_clarify 'clarify_owner: agent\nparent: 3\n' '- -> go 2026-01-02 (GO: agent per SOTA rule, old marker still valid)\n'
+out="$("$SUT" 62 go 2>&1)"; rc=$?
+check "old SOTA marker, agent owner: still accepted" 0 "$rc"
+check "old SOTA marker, agent owner: moved" "1_todo/2_go" "$(where 62)"
+
+item 63 1_todo/1_clarify 'clarify_owner: agent\nparent: 3\n' ''
+out="$("$SUT" 63 go 2>&1)"; rc=$?
+check "agent owner, no marker: refused" 1 "$rc"
+contains "agent owner, no marker: names neutral marker" "(GO: agent decision, <reason>)" "$out"
 
 printf 'passed: %s, failed: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

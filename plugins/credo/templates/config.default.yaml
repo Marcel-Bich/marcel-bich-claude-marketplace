@@ -27,6 +27,21 @@
 # The CREDO_TASK_BACKEND env var overrides this value when set and non-empty.
 task_backend: credo
 
+# --- model preset ------------------------------------------------------------
+# Which model preset drives subagent model and effort choices: quality, balanced
+# (default when unset), budget, or any custom name under presets: (set it there
+# in the global or project config). The built-in presets live in
+# templates/presets.default.yaml; show them with scripts/credo-preset.sh show.
+# The mainagent model and effort in a preset are a recommendation only; they do
+# not change your own /model and /effort.
+# The line stays commented out: no preset line means balanced, and a fresh global
+# config then shows the setup preset menu. /credo:setup writes the line once you choose.
+# preset: balanced
+# presets:            # custom preset example (same schema as the built-in ones)
+#   my-mix:
+#     mainagent: {model: claude-opus-5-5, effort: medium}
+#     build: {model: claude-sonnet-5-5, effort: low}
+
 # --- visual verify -----------------------------------------------------------
 verify:
   # Fixed viewport widths (px) for visual verification.

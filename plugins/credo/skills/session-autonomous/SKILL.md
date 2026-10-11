@@ -110,13 +110,12 @@ Agent-owned clarify items (`clarify_owner: agent` - slices, follow-ups, build qu
 audit findings of approved work, with `parent:`) are part of the approved work: apply the
 agent decision rule (credo `items`, "Clarify owner and the agent decision rule"). With no
 plan agent peer known, you take the pseudo plan role for the moment (your real role does
-not change): decide the uncritical questions per SOTA, else best effort, effort never
-counting against it; GO a feasible item with `(GO: agent per SOTA rule, <reason>)` and
-build it; log every decision in the item History and list it in the end-of-run report so
-the user can veto. Park the escalated questions (infeasible or really not good, the user's
-taste or preference, deleting user data, installs, money, the hard safety rules, anything
-that would change or narrow the verbatim requirement) for the end-of-run report - never
-adopt a default for them.
+not change): decide the uncritical questions per the active mainagent-prompt; GO a feasible
+item with `(GO: agent decision, <reason>)` and build it; log every decision in the item
+History and list it in the end-of-run report so the user can veto. Park the escalated
+questions (the user's taste or preference, deleting user data, installs, money, the hard
+safety rules, anything that would change or narrow the verbatim requirement, points the
+preset says to note and present) for the end-of-run report - never adopt a default for them.
 
 go=go: a `2_go` item IS buildable by the folder - build it (best effort), never self-skip or
 self-demote it for size, UI, or "not sure it is verifiable". See the go=go build-side anchor
@@ -145,7 +144,7 @@ flow on `[x] use Hydra for 2+ independent tasks` with hydra installed, else nati
 `git worktree add`); a `flow=ask` result is treated as native here - never ask in
 autonomous mode. Run the printed `setup=` script right after every `git worktree add`, and
 put the absolute main-checkout path (its `main=` line) plus the read-only lookup rule into
-every builder brief (credo `orchestration`, "Worktrees for parallel code tracks"). Closing
+every builder brief (credo `orchestration`, "Worktrees for every code track"). Closing
 an item cleans up merged+clean worktrees per the DOGMA-PERMISSIONS checkbox; with `[?]` or
 no checkbox the removal waits for the user (credo `items`, "Worktree cleanup at item
 close"). Locked worktrees (`git worktree lock --reason "keep: owner"`) are kept; in
@@ -424,9 +423,9 @@ re-raised. Only if it is truly unanswered:
 3. If the answer arrives within the window: incorporate it and continue. Log it verbatim
    (credo `requirements-verbatim`).
 4. If no answer arrives: for an uncritical question, decide it by the agent decision rule
-   (credo `items`: SOTA, else best effort) as the documented default - record the decision
+   (credo `items`, per the active mainagent-prompt) as the documented default - record the decision
    and its rationale in the item History / handoff so it is auditable - and continue fully
-   autonomously. A question on the escalation list (infeasible or really not good, the
+   autonomously. A question on the escalation list (the
    user's taste or preference, deleting user data, installs, money, the hard safety rules,
    a change to the verbatim requirement) or the GO of a human-owned item is NEVER defaulted:
    park it (the item stays where it is), continue with other work, and put it into the

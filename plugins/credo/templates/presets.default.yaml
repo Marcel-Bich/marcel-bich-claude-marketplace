@@ -1,0 +1,95 @@
+# credo built-in model presets. Read by credo-config.sh as a builtin layer
+# (key presets:) and by credo-preset.sh. Select one with preset: <name> in the
+# global or project config; write your own under presets: there. A custom preset
+# with the same name as a built-in one replaces it completely.
+#
+# Fields per preset:
+#   universal-prompt   text for every agent (main agent and all subagents)
+#   mainagent          {model, effort, mainagent-prompt}: a recommendation only,
+#                      it does not change your own /model and /effort
+#   explore, build, review, hard
+#                      one stage {model, effort, attempts, subagent-prompt}, or a
+#                      chain (a list) of stages that may end with back-to-human
+#
+# attempts: a positive integer, or until-done (no attempt cap: budget caps stop
+# it, and the same failure twice without progress goes back to the human). A
+# stage without attempts counts as until-done and may only be the last stage.
+# A missing prompt key adds nothing; there is no hidden default text.
+presets:
+  quality:
+    universal-prompt: "Read the source (rules, skill, code, tests) before you decide or change anything - never answer a rule question from memory or a handoff."
+    mainagent:
+      model: claude-opus-5-5
+      effort: medium
+      mainagent-prompt: "Build everything as well as at all possible. When you decide an open question yourself (agent-owned items), decide in this order: 1. SOTA - the best solution known today; 2. else best effort; 3. else note it and present it to the user later. Size or effort is never a reason against a solution: feasible = GO."
+    explore:
+      model: claude-haiku-5-5
+      effort: xhigh
+      subagent-prompt: "Locate only: return file:line findings and short facts. No fixes, no long excerpts."
+    build:
+      model: claude-opus-5-5
+      effort: medium
+      subagent-prompt: "If the project has tests, write the failing test first. Report what you changed (file:line) and the test result."
+    review:
+      model: claude-opus-5-5
+      effort: medium
+      subagent-prompt: "Review against the verbatim requirement. Report each finding as file:line - severity - concrete failure scenario, then PASS or FAIL. Report nits too: fix them where possible, unless that causes too much work or refactoring."
+    hard:
+      model: claude-opus-5-5
+      effort: medium
+
+  balanced:
+    universal-prompt: "Read the source (rules, skill, code, tests) before you decide or change anything - never answer a rule question from memory or a handoff."
+    mainagent:
+      model: claude-opus-5-5
+      effort: medium
+      mainagent-prompt: "Build everything as well as at all possible. When you decide an open question yourself (agent-owned items), decide in this order: 1. SOTA - the best solution known today; 2. else best effort; 3. else note it and present it to the user later. Size or effort is never a reason against a solution: feasible = GO."
+    explore:
+      model: claude-haiku-5-5
+      effort: low
+      subagent-prompt: "Locate only: return file:line findings and short facts. No fixes, no long excerpts."
+    build:
+      model: claude-haiku-5-5
+      effort: xhigh
+      subagent-prompt: "If the project has tests, write the failing test first. Report what you changed (file:line) and the test result."
+    review:
+      model: claude-haiku-5-5
+      effort: xhigh
+      subagent-prompt: "Review against the verbatim requirement. Report each finding as file:line - severity - concrete failure scenario, then PASS or FAIL. No praise, no style nits unless they change meaning."
+    hard:
+      - model: claude-haiku-5-5
+        effort: xhigh
+        attempts: 2
+      - model: claude-opus-5-5
+        effort: medium
+        attempts: 5
+        subagent-prompt: "Earlier attempts failed. Read their findings first and do not repeat the same approach."
+      - back-to-human
+
+  budget:
+    universal-prompt: "Read the source (rules, skill, code, tests) before you decide or change anything - never answer a rule question from memory or a handoff. Save tokens without lowering quality: keep reports short, do not re-read files you already have."
+    mainagent:
+      model: claude-haiku-5-5
+      effort: xhigh
+      mainagent-prompt: "Build everything as well as at all possible. When you decide an open question yourself (agent-owned items), decide in this order: 1. SOTA - the best solution known today; 2. else best effort; 3. else note it and present it to the user later. Size or effort is never a reason against a solution: feasible = GO. Delegate searches to the explore stage."
+    explore:
+      model: claude-haiku-5-5
+      effort: low
+      subagent-prompt: "Locate only: return file:line findings and short facts. No fixes, no long excerpts."
+    build:
+      model: claude-haiku-5-5
+      effort: xhigh
+      subagent-prompt: "If the project has tests, write the failing test first. Report what you changed (file:line) and the test result."
+    review:
+      model: claude-haiku-5-5
+      effort: xhigh
+      subagent-prompt: "Review against the verbatim requirement. Report each finding as file:line - severity - concrete failure scenario, then PASS or FAIL. No praise, no nits in general unless they change meaning."
+    hard:
+      - model: claude-haiku-5-5
+        effort: xhigh
+        attempts: 3
+      - model: claude-opus-5-5
+        effort: medium
+        attempts: 1
+        subagent-prompt: "Earlier attempts failed. Read their findings first and do not repeat the same approach."
+      - back-to-human

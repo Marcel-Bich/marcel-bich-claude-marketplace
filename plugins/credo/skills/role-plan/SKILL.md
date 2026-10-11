@@ -48,10 +48,10 @@ compaction, new sessions and subagents (stored on disk, not in context):
 
 The plan role owns deciding agent-owned clarify items (`clarify_owner: agent`) per the agent
 decision rule in the `items` skill ("Clarify owner and the agent decision rule"): uncritical
-questions are decided SOTA, else best effort, else noted for the user; a feasible item moves to
-`2_go` with `(GO: agent per SOTA rule, <reason>)` in its History. Human-owned items still need
-the user's GO, and the escalation list there (infeasible, taste, deleting user data, installs,
-money, safety, anything changing the verbatim requirement) always goes to the user.
+questions are decided per the active mainagent-prompt (`credo-preset.sh mainagent`); a feasible
+item moves to `2_go` with `(GO: agent decision, <reason>)` in its History. Human-owned items
+still need the user's GO, and the fixed escalation list there (taste, deleting user data,
+installs, money, safety, anything changing the verbatim requirement) always goes to the user.
 
 ## Sandbox pre-work
 
