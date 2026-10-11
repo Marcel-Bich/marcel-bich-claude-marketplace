@@ -165,6 +165,7 @@ You can type a few short shorthands in chat; credo's SessionStart hook teaches t
 | `/credo:session-active`     | Set the session to active (live collaboration)                 |
 | `/credo:session-passive`    | Set the session to passive (clarifications only)               |
 | `/credo:session-autonomous` | Set the session to autonomous (unattended GO items, keep-alive)|
+| `/credo:session-move`       | Move sessions to another profile (only on your own invocation) |
 
 credo also ships auto-discovered skills that trigger on their own (including audit, diag, verify, items, rules, requirements-verbatim, optimize, budget, compact-plus, orchestration, safety, cross-cutting-checklist-generator, skill-capture, wsl-env, pr-vetting, issue-triage, and the session-mode skills). You do not call them by hand; they apply when they apply, including inside subagents.
 

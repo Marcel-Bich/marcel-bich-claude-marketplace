@@ -107,17 +107,26 @@ import unicodedata
 import secrets
 import signal
 import socket
+import stat
+import struct
 import subprocess
 import sys
 import threading
 import time
 import uuid
 
+try:
+    import fcntl
+except ImportError:  # not on POSIX: the trust list is then changed without a lock
+    fcntl = None
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     import credo_peer_meta as peer_meta
 except ImportError:  # metadata is optional; the relay works without it
     peer_meta = None
+import credo_session_name as session_name
+from credo_session_name import sid_short
 
 MARK = "credoPeerLan"
 # mirror descriptor key holding the sender's validated session metadata (credo mode,
@@ -753,13 +762,6 @@ def build_allowlist(entries, peers):
 
 
 MIRROR_NAME_MAX = 150
-
-
-def sid_short(sid):
-    """First char of each dash group joined by "-", plus the last char of the id:
-    a1b2c3d4-e5f6-... -> a-e-4-8-d8. Keeps two sessions of the same name apart."""
-    sid = sid or "?"
-    return "-".join(g[:1] for g in sid.split("-") if g) + sid[-1:]
 
 
 def mirror_name(parts, session, sid):
@@ -2563,9 +2565,11 @@ def proc_start(pid):
     return rest[19]
 
 
-def read_local_sessions(sess_dir):
+def read_local_sessions(sess_dir, need_socket=True):
     """Real local session descriptors only (not our mirrors, not bridge mirrors),
-    returning the parsed dicts that have a socket and a sessionId."""
+    returning the parsed dicts that have a sessionId and (need_socket) a socket.
+    need_socket=False also returns sessions without a messaging socket (the duplicate
+    caption check counts every real session, see _sender_names)."""
     out = []
     try:
         names = os.listdir(sess_dir)
@@ -2589,7 +2593,7 @@ def read_local_sessions(sess_dir):
             continue
         if d.get(MARK) or d.get("credoPeerBridge"):
             continue
-        if d.get("sessionId") and d.get("messagingSocketPath"):
+        if d.get("sessionId") and (d.get("messagingSocketPath") or not need_socket):
             out.append(d)
     return out
 
@@ -2729,10 +2733,10 @@ def resolve_socket(sess_dir, session_id):
     return cands[0][0] if cands else None
 
 
-def deliver_local(sess_dir, session_id, from_name, body, reply, trust=None):
+def deliver_local(sess_dir, session_id, from_name, body, reply, trust=None, note=None):
     """Inject into the live local session: the newest live descriptor first, the
     next live one when an inject fails. Logs the chosen descriptor. Returns the
-    socket used, or None when nothing was delivered."""
+    socket used, or None when nothing was delivered. trust / note: see build_envelope."""
     cands, stale = resolve_sockets(sess_dir, session_id)
     if not cands:
         log("deliver: no live local session %r (%d stale descriptor(s) ignored), dropped"
@@ -2740,7 +2744,7 @@ def deliver_local(sess_dir, session_id, from_name, body, reply, trust=None):
         return None
     for sock, pid in cands:
         try:
-            inject(sock, from_name, body, reply, trust)
+            inject(sock, from_name, body, reply, trust, note, target=session_id)
         except InjectMaybeSent as exc:
             log("deliver: inject into %s (pid %s) failed after sending, not retried "
                 "(could deliver twice): %s" % (sock, pid, exc))
@@ -2825,9 +2829,20 @@ def safe_reply(reply):
     return None
 
 
-def build_envelope(body, from_name, reply, trust=None):
-    """trust: (key, peer_id) from trust_lookup for a verified trusted paired sender;
-    only then are the credo-trust attributes added (see the trusted peers section)."""
+# the one notice attribute a relay may add (never from text): the sending machine has
+# 2+ live sessions with the sender's caption, so trust for it is suspended
+CAPTION_NOTE_ATTR = "from-caption-note"
+CAPTION_NOTE_DUP = "not-unique"
+
+
+def build_envelope(body, from_name, reply, trust=None, note=None, target=None, now=None):
+    """from_name is display text (credo_session_name.clean: letters, digits, space
+    . _ -, at most 20). trust: (key, peer_id, caption) from _trust_for for a verified
+    trusted paired sender; only then (and only with the receiving session's id as
+    target) are from-caption and the credo-trust attributes added, the MAC bound to
+    target and the time now (default: the current time; see the trusted peers
+    section). note: CAPTION_NOTE_DUP adds the from-caption-note attribute (trust
+    suspended, caption not unique)."""
     if not isinstance(body, str):
         raise ValueError("body must be text")
     if body_has_envelope_delim(body):
@@ -2836,24 +2851,31 @@ def build_envelope(body, from_name, reply, trust=None):
     reply = safe_reply(reply)
     if reply:
         attrs.append('from="%s"' % reply)
-    safe = sanitize_from_name(from_name)
+    safe = session_name.clean(from_name, session_name.NAME_MAX)
     if safe:
         attrs.append('from-name="%s"' % safe)
+    if note == CAPTION_NOTE_DUP:
+        attrs.append('%s="%s"' % (CAPTION_NOTE_ATTR, CAPTION_NOTE_DUP))
     inner = FRAMING_LINE + "\n" + body
-    if trust and safe:
-        key, pid = trust
+    if trust and len(trust) == 3 and session_name.is_caption(trust[2]) \
+            and isinstance(target, str) and target:
+        key, pid, caption = trust
+        ts = int(time.time() if now is None else now)
+        attrs.append('from-caption="%s"' % caption)
         attrs.append('credo-trust-peer="%s"' % peer_id_str(pid))
-        attrs.append('credo-trust="%s"' % trust_mac(key, peer_id_str(pid), safe, inner))
+        attrs.append('credo-trust-ts="%d"' % ts)
+        attrs.append('credo-trust="%s"' % trust_mac(key, peer_id_str(pid), caption, inner, target, ts))
     head = "<cross-session-message" + "".join(" " + a for a in attrs) + ">"
     return head + "\n" + inner + "\n</cross-session-message>"
 
 
-def inject(target_socket, from_name, body, reply, trust=None):
+def inject(target_socket, from_name, body, reply, trust=None, note=None, target=None):
     """Write one cross-session-message frame into a local inbox unix socket.
-    reply is a 'uds:<path>' address or None. No from-mode is ever set. trust: see
-    build_envelope (None for every sender that is not a trusted paired peer)."""
+    reply is a 'uds:<path>' address or None. No from-mode is ever set. trust / note /
+    target: see build_envelope (trust None for every sender that is not a trusted
+    paired peer; target is the receiving session's id)."""
     reply = safe_reply(reply)
-    envelope = build_envelope(body, from_name, reply, trust)
+    envelope = build_envelope(body, from_name, reply, trust, note, target)
     frame = {
         "type": "user",
         "message": {"content": envelope},
@@ -2882,23 +2904,51 @@ def inject(target_socket, from_name, body, reply, trust=None):
 # ---------------------------------------------------------------------------
 # trusted peers (local, per receiving machine)
 # ---------------------------------------------------------------------------
-# The user of THIS machine may declare that tasks from one named session on one
+# The user of THIS machine may declare that tasks from one captioned session on one
 # PAIRED peer count like the user's own tasks. The grant lives only here, in a 0600
 # file next to the config, and is written only by the `trust` CLI; nothing that
 # arrives over the wire ever reads into it or writes it. An entry binds the sender's
 # pairing peer id, its pinned DH public value (a re-paired id with another key never
-# inherits it) and its session name (the from-name the paired machine reports).
+# inherits it) and the session's CAPTION: the name the user set with /rename
+# (registry nameSource "user"). The sending relay resolves it from its own session
+# registry (holder _forward, never from the free-form from-name the harness writes)
+# and sends it as from_caption; with 2+ live local sessions of that caption it sends
+# from_caption_dup instead and trust is suspended. from-name is display text only.
+# Grants of the old format (keyed on the from-name, field "session") stay in the
+# file as LEGACY entries that never match until the user re-adds them by caption.
 #
-# When a deliver arrives over a link authenticated as that paired id from that
-# session name, the daemon adds two attributes to the OPENING tag of the envelope it
-# builds: credo-trust-peer (the peer id) and credo-trust, an HMAC under a random key
-# that only this file holds, over peer id, session name and the envelope text. The
+# When a deliver arrives over a link authenticated as that paired id with that
+# caption, the daemon adds four attributes to the OPENING tag of the envelope it
+# builds: from-caption, credo-trust-peer (the peer id), credo-trust-ts (unix time)
+# and credo-trust, an HMAC under a random key that only this file holds, over peer
+# id, caption, the receiving session's id, the timestamp and the envelope text. The
 # body can never reach the opening tag (envelope delimiters are refused) and a forged
-# attribute fails the HMAC, so the peer-message hook (`trust verify`) can tell a
-# relay-made marker from text. Verification re-reads the file and the pairing store
-# every time, so `trust remove` / `pair-reset` end the trust at once.
+# attribute fails the HMAC, so the peer-message hook (`trust verify`, run in the
+# receiving session with its session id) can tell a relay-made marker from text. A
+# marker verifies only in the session it was made for and for TRUST_MAX_AGE seconds.
+# Verification re-reads the file and the pairing store every time, so `trust remove`
+# / `pair-reset` end the trust at once; removing the last entry of a peer also
+# rotates the key, so a re-added grant never revives an older marker.
+#
+# What this does NOT protect against: any process of the same local user can read
+# the key (0600 file of that user) and mint markers - the user account is the trust
+# boundary. The caption is what the paired SENDING relay reports: a hostile or
+# modified relay on the paired machine can claim any caption and can leave out the
+# duplicate flag (suspension is enforced by the sender's relay, not here).
 TRUST_FILE = "peer-lan-trust.json"
-TRUST_TAG = "credo-peer-lan-trust-v1"
+TRUST_TAG = "credo-peer-lan-trust-v2"   # v2: caption, target session, time (v1 never verifies)
+TRUST_MAX_AGE = 600      # seconds a marker stays valid after the relay made it
+TRUST_MAX_SKEW = 60      # seconds a marker may lie in the future (same machine clock)
+TRUST_TS_RE = re.compile(r"[0-9]{1,12}")
+MACHINE_LABEL_MAX = 24
+MACHINE_LABEL_BAD_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def machine_label(text):
+    """A machine label for hook text: only A-Z a-z 0-9 . _ -, at most 24 characters."""
+    if not isinstance(text, str):
+        return ""
+    return MACHINE_LABEL_BAD_RE.sub("", text)[:MACHINE_LABEL_MAX]
 TRUST_KEY_RE = re.compile(r"[0-9a-f]{64}")
 TRUST_MAC_RE = re.compile(r"[0-9a-f]{64}")
 TRUST_ATTR_RE = re.compile(r' ([a-z][a-z-]*)="([^"<>]*)"')
@@ -2913,37 +2963,73 @@ def trust_path():
 
 
 def _trust_entry(e):
-    """A stored trust entry in canonical form, or None when it is not valid."""
+    """A stored trust entry in canonical form, or None when it is not valid.
+    {"peer_id", "pub", "caption", "machine"}; an entry of the old format (keyed on
+    the from-name, field "session", no caption) comes back with "legacy": True and
+    never matches (trust_lookup), it is only listed and kept until removed."""
     if not isinstance(e, dict):
         return None
-    pid, pub, sess, machine = e.get("peer_id"), e.get("pub"), e.get("session"), e.get("machine")
-    if not (peer_id_str(pid) and isinstance(pub, str) and DH_HEX_RE.fullmatch(pub)
-            and isinstance(sess, str) and sess and sanitize_from_name(sess) == sess):
+    pid, pub, machine = e.get("peer_id"), e.get("pub"), e.get("machine")
+    if not (peer_id_str(pid) and isinstance(pub, str) and DH_HEX_RE.fullmatch(pub)):
         return None
-    return {"peer_id": pid, "pub": pub, "session": sess,
-            "machine": sanitize_from_name(machine) if isinstance(machine, str) else ""}
+    machine = sanitize_from_name(machine) if isinstance(machine, str) else ""
+    cap, sess = e.get("caption"), e.get("session")
+    if "caption" in e:
+        if not session_name.is_caption(cap):
+            return None
+        return {"peer_id": pid, "pub": pub, "caption": cap, "machine": machine}
+    if isinstance(sess, str) and sess and sanitize_from_name(sess) == sess:
+        return {"peer_id": pid, "pub": pub, "session": sess, "machine": machine, "legacy": True}
+    return None
+
+
+def trust_label(e):
+    """The name a trust entry is shown under: its caption, or a legacy entry's old name."""
+    return e.get("caption") or e.get("session") or ""
+
+
+class TrustFileError(OSError):
+    """The trust file exists but cannot be used (unsafe or cannot be parsed)."""
 
 
 class TrustStore(object):
     """The local trust list: {"key": hex, "trusted": [entries]} in one 0600 file.
-    A missing, unreadable or corrupt file means no trust (fail closed). Writes go to
-    a fresh O_EXCL temp file renamed over the target; reads never follow a symlink."""
+    A missing, unreadable, unsafe or corrupt file means no trust (fail closed). Reads
+    never follow a symlink and never block (credo_session_name.open_own_file: regular
+    file, owned by this user, not writable by group or others). add / remove hold an
+    exclusive flock on the sidecar <file>.lock around read-modify-write and abort
+    (TrustFileError) when the file exists but is unsafe or cannot be parsed, instead
+    of overwriting it. Writes go to a fresh O_EXCL temp file renamed over the target."""
 
     def __init__(self, path):
         self.path = path
 
     def read(self):
+        """The trust list; empty on any problem (fail closed, never raises)."""
+        try:
+            return self._load(strict=False)
+        except Exception:
+            return {"key": "", "trusted": []}
+
+    def _load(self, strict):
         empty = {"key": "", "trusted": []}
         try:
-            fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        except OSError:
+            fd = session_name.open_own_file(self.path, private=True)
+        except FileNotFoundError:
+            return empty
+        except (OSError, session_name.UnsafeFile) as exc:
+            if strict:
+                raise TrustFileError("trust list %s is not usable (%s)" % (self.path, exc))
             return empty
         try:
-            with os.fdopen(fd, "r") as fh:
+            with os.fdopen(fd, "r", encoding="utf-8") as fh:
                 d = json.load(fh)
-        except Exception:
-            return empty
-        if not isinstance(d, dict):
+            if not isinstance(d, dict) or not isinstance(d.get("trusted", []), list):
+                raise ValueError("not a trust list object")
+        except Exception as exc:
+            if strict:
+                raise TrustFileError("trust list %s cannot be parsed (%s); fix or move it "
+                                     "away by hand, nothing was changed" % (self.path, exc))
             return empty
         key = d.get("key")
         out = {"key": key if isinstance(key, str) and TRUST_KEY_RE.fullmatch(key) else "",
@@ -2953,6 +3039,13 @@ class TrustStore(object):
             if e is not None:
                 out["trusted"].append(e)
         return out
+
+    @staticmethod
+    def _stored(cur):
+        """The file form of read()'s result (the in-memory legacy flag dropped)."""
+        return {"key": cur["key"],
+                "trusted": [dict((k, v) for k, v in e.items() if k != "legacy")
+                            for e in cur["trusted"]]}
 
     def _write(self, obj):
         d = os.path.dirname(self.path) or "."
@@ -2975,44 +3068,89 @@ class TrustStore(object):
                 pass
             raise
 
-    def add(self, peer_id, pub, session, machine=""):
-        """Trust session on the paired peer (peer_id, pub). True when it is new."""
-        e = _trust_entry({"peer_id": peer_id, "pub": pub, "session": session, "machine": machine})
+    def _locked(self):
+        """An fd holding an exclusive flock on the sidecar lock file (close it to
+        release), or None without fcntl. The lock file is opened without following a
+        symlink and must be a regular file of this user."""
+        if fcntl is None:
+            return None
+        d = os.path.dirname(self.path) or "."
+        os.makedirs(d, exist_ok=True)
+        fd = os.open(self.path + ".lock", os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_CLOEXEC", 0), 0o600)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+                raise TrustFileError("trust lock %s.lock is not a regular file of this user"
+                                     % self.path)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
+
+    def _change(self, fn):
+        """Run fn(current list) under the lock; fn returns (result, write?)."""
+        lock = self._locked()
+        try:
+            cur = self._load(strict=True)
+            result, write = fn(cur)
+            if write:
+                self._write(self._stored(cur))
+            return result
+        finally:
+            if lock is not None:
+                os.close(lock)
+
+    def add(self, peer_id, pub, caption, machine=""):
+        """Trust the session captioned `caption` on the paired peer (peer_id, pub).
+        True when it is new. Legacy entries are left alone (they never match).
+        Raises TrustFileError when the file exists but is unsafe or unparsable."""
+        e = _trust_entry({"peer_id": peer_id, "pub": pub, "caption": caption, "machine": machine})
         if e is None:
             raise ValueError("invalid trust entry")
-        cur = self.read()
-        if any(x["peer_id"] == e["peer_id"] and x["session"] == e["session"] and x["pub"] == e["pub"]
-               for x in cur["trusted"]):
-            return False
-        cur["key"] = cur["key"] or secrets.token_hex(32)
-        cur["trusted"] = [x for x in cur["trusted"]
-                          if not (x["peer_id"] == e["peer_id"] and x["session"] == e["session"])]
-        cur["trusted"].append(e)
-        self._write(cur)
-        return True
+
+        def change(cur):
+            if any(x.get("caption") == e["caption"] and x["peer_id"] == e["peer_id"]
+                   and x["pub"] == e["pub"] for x in cur["trusted"]):
+                return False, False
+            cur["key"] = cur["key"] or secrets.token_hex(32)
+            cur["trusted"] = [x for x in cur["trusted"]
+                              if not (x["peer_id"] == e["peer_id"] and x.get("caption") == e["caption"])]
+            cur["trusted"].append(e)
+            return True, True
+        return self._change(change)
 
     def remove(self, pred):
-        """Drop every entry pred(entry) is true for; returns the removed entries."""
-        cur = self.read()
-        gone = [x for x in cur["trusted"] if pred(x)]
-        if gone:
+        """Drop every entry pred(entry) is true for; returns the removed entries.
+        When a removed caption entry was the last one of its peer, the key is
+        rotated: markers made before can then never verify again, even after the
+        same grant is re-added. Raises TrustFileError like add."""
+        def change(cur):
+            gone = [x for x in cur["trusted"] if pred(x)]
+            if not gone:
+                return gone, False
             cur["trusted"] = [x for x in cur["trusted"] if not pred(x)]
-            self._write(cur)
-        return gone
+            left = set(x["peer_id"] for x in cur["trusted"] if x.get("caption"))
+            if any(x.get("caption") and x["peer_id"] not in left for x in gone):
+                cur["key"] = secrets.token_hex(32)
+            return gone, True
+        return self._change(change)
 
 
-def trust_lookup(peer_id, session, pairs, store):
-    """(key, entry, paired record) when session on paired peer peer_id is trusted
-    here: an entry for exactly that id and name, and the id is still paired with
-    the same DH public value. None otherwise (also on any read problem)."""
+def trust_lookup(peer_id, caption, pairs, store):
+    """(key, entry, paired record) when the session captioned `caption` on paired
+    peer peer_id is trusted here: an entry for exactly that id and caption (legacy
+    name entries never match), and the id is still paired with the same DH public
+    value. None otherwise (also on any read problem or a caption that is not clean)."""
     pid = peer_id_str(peer_id)
-    if not pid or not isinstance(session, str) or not session or sanitize_from_name(session) != session:
+    if not pid or not session_name.is_caption(caption):
         return None
     data = store.read()
     if not data["key"]:
         return None
     for e in data["trusted"]:
-        if e["peer_id"] == pid and e["session"] == session:
+        if e["peer_id"] == pid and e.get("caption") == caption:
             try:
                 rec = pairs.get(pid)
             except Exception:
@@ -3023,21 +3161,28 @@ def trust_lookup(peer_id, session, pairs, store):
     return None
 
 
-def trust_mac(key, peer_id, session, inner):
-    """The credo-trust marker: HMAC over peer id, session name and the envelope text
-    (the lines between the tags, CRLF folded, outer whitespace stripped)."""
+def trust_mac(key, peer_id, caption, inner, target, ts):
+    """The credo-trust marker: HMAC over peer id, caption, the receiving session's
+    id (target), the unix time ts and the envelope text (the lines between the tags,
+    CRLF folded, outer whitespace stripped). Text is encoded with surrogatepass, so a
+    body holding a lone surrogate (valid JSON escape, not valid UTF-8) is still
+    marked and verified instead of failing the inject."""
     text = (inner or "").replace("\r\n", "\n").strip()
-    msg = "%s|%s|%s|%s" % (TRUST_TAG, peer_id, session,
-                           hashlib.sha256(text.encode("utf-8")).hexdigest())
-    return hmac.new(bytes.fromhex(key), msg.encode("ascii"), hashlib.sha256).hexdigest()
+    msg = "%s|%s|%s|%s|%d|%s" % (TRUST_TAG, peer_id, caption, target, int(ts),
+                                 hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest())
+    return hmac.new(bytes.fromhex(key), msg.encode("utf-8", "surrogatepass"),
+                    hashlib.sha256).hexdigest()
 
 
-def verify_trust_prompt(prompt, pairs=None, store=None):
+def verify_trust_prompt(prompt, pairs=None, store=None, target=None, now=None):
     """Check a delivered prompt for a valid trust marker. The prompt must be exactly
     one envelope (nothing before or after, one opening and one closing tag) whose
-    opening tag carries from-name, credo-trust-peer and a credo-trust HMAC that
-    matches a CURRENT trust entry of a still-paired peer. Returns {"trusted": bool,
-    "marker": "none" | "invalid" | "valid", ...}; never raises."""
+    opening tag carries from-caption, credo-trust-peer, credo-trust-ts and a
+    credo-trust HMAC that matches a CURRENT trust entry of a still-paired peer, made
+    for the session target (the verifying session's id; none -> never trusted) no
+    longer than TRUST_MAX_AGE seconds before now (from-name is display only).
+    Returns {"trusted": bool, "marker": "none" | "invalid" | "valid", ...}; never
+    raises."""
     out = {"trusted": False, "marker": "none"}
     try:
         if not isinstance(prompt, str):
@@ -3058,8 +3203,15 @@ def verify_trust_prompt(prompt, pairs=None, store=None):
         if "credo-trust" not in attrs and "credo-trust-peer" not in attrs:
             return out
         out["marker"] = "invalid"
-        name, pid, mac = attrs.get("from-name", ""), attrs.get("credo-trust-peer", ""), attrs.get("credo-trust", "")
-        if not TRUST_MAC_RE.fullmatch(mac):
+        name, pid, mac = attrs.get("from-caption", ""), attrs.get("credo-trust-peer", ""), attrs.get("credo-trust", "")
+        ts = attrs.get("credo-trust-ts", "")
+        if not TRUST_MAC_RE.fullmatch(mac) or not TRUST_TS_RE.fullmatch(ts):
+            return out
+        if not isinstance(target, str) or not target:
+            return out
+        age = (time.time() if now is None else now) - int(ts)
+        if age > TRUST_MAX_AGE or age < -TRUST_MAX_SKEW:
+            out["reason"] = "outdated"
             return out
         if pairs is None:
             pairs = PairStore(keys_dir_for(load_config() or {}))
@@ -3069,10 +3221,11 @@ def verify_trust_prompt(prompt, pairs=None, store=None):
         if hit is None:
             return out
         key, entry, rec = hit
-        if not hmac.compare_digest(mac.encode("ascii"), trust_mac(key, pid, name, m.group(2)).encode("ascii")):
+        want = trust_mac(key, pid, name, m.group(2), target, int(ts))
+        if not hmac.compare_digest(mac.encode("ascii"), want.encode("ascii")):
             return out
         out.update(trusted=True, marker="valid", session=name, peer=pid,
-                   machine=entry["machine"] or sanitize_from_name(rec.get("machine") or ""))
+                   machine=machine_label(entry["machine"] or rec.get("machine") or ""))
     except Exception:
         out["trusted"] = False
     return out
@@ -3136,6 +3289,9 @@ def run_holder(args):
 
     def _serve(conn):
         try:
+            # the writing process, from the kernel (SO_PEERCRED), never from the frame:
+            # only it (or its ancestors) may lend the frame a session caption
+            writer = peer_pid(conn)
             try:
                 conn.settimeout(5)
                 buf = b""
@@ -3153,7 +3309,7 @@ def run_holder(args):
                 line = line.strip()
                 if not line:
                     continue
-                _forward(line, token, host, port, args, sess_dir)
+                _forward(line, token, host, port, args, sess_dir, writer_pid=writer)
         except Exception as exc:
             log("holder: worker error: %s" % exc)
         finally:
@@ -3203,7 +3359,31 @@ def run_holder(args):
     return 0
 
 
-def _forward(line, token, host, port, args, sess_dir):
+def peer_pid(conn):
+    """pid of the process on the other end of a unix socket connection (SO_PEERCRED,
+    as the kernel recorded it at connect time), or None when unknown."""
+    try:
+        raw = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+        pid = struct.unpack("3i", raw)[0]
+    except Exception:
+        return None
+    return pid if pid > 0 else None
+
+
+def _sender_descriptor(descs, sock_path):
+    """The descriptor whose messagingSocketPath is sock_path; with several (a stale
+    one next to the live one after a crash or resume) the newest live one wins, else
+    the first. None when nothing matches."""
+    hits = [d for d in descs if sock_path and d.get("messagingSocketPath") == sock_path]
+    live = sorted((d for d in hits if descriptor_live(d)), key=_desc_time, reverse=True)
+    return (live or hits or [None])[0]
+
+
+def _forward(line, token, host, port, args, sess_dir, writer_pid=None):
+    """Forward one frame a local writer put on the proxy socket as a deliver.
+    writer_pid: the writer's pid from SO_PEERCRED (see peer_pid); the sender's
+    caption is sent only when the session that owns the reply socket is that
+    process or one of its ancestors (see _sender_names)."""
     try:
         frame = json.loads(line.decode("utf-8"))
     except Exception:
@@ -3221,18 +3401,20 @@ def _forward(line, token, host, port, args, sess_dir):
     reply = frame.get("from") if isinstance(frame, dict) else None
     from_session = ""
     sock_path = strip_uds(reply)
-    if sock_path:
-        for d in read_local_sessions(sess_dir):
-            if d.get("messagingSocketPath") == sock_path:
-                from_session = d.get("sessionId", "")
-                break
+    # every real local session, also those without a socket (duplicate caption check)
+    descs = read_local_sessions(sess_dir, need_socket=False) if sock_path else []
+    sender = _sender_descriptor(descs, sock_path)
+    if sender is not None:
+        from_session = sender.get("sessionId", "")
     payload = {
         "kind": "deliver",
         "target_sessionId": args.target_session,
         "from_sessionId": from_session,
-        "from_name": from_name,
+        "from_name": session_name.clean(from_name, session_name.NAME_MAX),
         "body": body,
     }
+    if sender is not None:
+        _sender_names(payload, sender, descs, writer_pid)
     # Prefer the daemon: it sends over the return channel when one exists (the only
     # way to reach a peer that cannot be connected to). Only when the daemon's relay
     # socket is unreachable does the holder fall back to its own direct connection.
@@ -3272,6 +3454,45 @@ def _forward(line, token, host, port, args, sess_dir):
         log("holder: forwarded deliver to %s:%s" % (host, port))
     except Exception as exc:
         log("holder: forward to %s:%s failed: %s" % (host, port, exc))
+
+
+def _sender_names(payload, sender, descs, writer_pid=None):
+    """Fill the sender's names into a deliver payload, from THIS machine's session
+    registry (never from the from-name the harness wrote into the envelope):
+    from_name    display name: caption, else short id. No tmux / kitty lookup here, so
+                 a deliver never waits on them; the daemon swaps in its roster-tick
+                 name (caption, kitty, tmux, short id) when it relays the deliver
+    from_caption the user-set caption (nameSource "user") of a LIVE sender, the one
+                 name a receiver may key trust on; left out without a caption, and
+                 left out unless the writer of the proxy connection (writer_pid, from
+                 SO_PEERCRED) is the sender session's process or a child of it - the
+                 reply socket in the frame is the writer's unauthenticated claim
+    from_caption_dup  True instead of from_caption when another live real local
+                 session (with or without a messaging socket) has the same caption
+                 (case-insensitive): trust is then suspended at the receiver until one
+                 of them is renamed"""
+    if not descriptor_live(sender):
+        return
+    try:
+        payload["from_name"] = session_name.claude_name(sender)
+    except Exception:
+        pass
+    caption = session_name.claude_caption(sender)
+    if not caption:
+        return
+    spid = sender.get("pid")
+    if not isinstance(writer_pid, int) or spid not in session_name.ancestors(writer_pid):
+        log("holder: proxy writer pid %s is not session %s's process or a child of it; "
+            "no caption sent" % (writer_pid, sender.get("sessionId")))
+        return
+    key, sid = session_name.caption_key(caption), sender.get("sessionId")
+    if any(d.get("sessionId") != sid and session_name.caption_key(
+            session_name.claude_caption(d) or "") == key and descriptor_live(d) for d in descs):
+        payload["from_caption_dup"] = True
+        log("holder: session caption %r is not unique on this machine (2+ live sessions); "
+            "peer trust for it is suspended until one session is renamed (/rename)" % caption)
+        return
+    payload["from_caption"] = caption
 
 
 # ===========================================================================
@@ -3389,6 +3610,10 @@ class Daemon(object):
         # peer id, read from disk on every use (a CLI pair-reset applies at once)
         self.pairs = PairStore(keys_dir_for(cfg))
         self.pair_warned = set()  # pairing refusal log tags, logged once each
+        # sessionId -> display name (caption, kitty, tmux, short id) of the local
+        # sessions, refreshed by every roster tick; a relayed deliver takes its
+        # from_name from here so the deliver path never waits on tmux / kitty
+        self.display_names = {}
 
     # -- lifecycle ----------------------------------------------------------
     def _ensure_sock_dir(self):
@@ -4634,6 +4859,9 @@ class Daemon(object):
                 if not isinstance(payload, dict) or payload.get("kind") != "deliver":
                     raise ValueError("only deliver frames are relayed")
                 host, port = str(req.get("peer_host")), int(req.get("peer_port"))
+                cached = self.display_names.get(payload.get("from_sessionId") or "")
+                if cached:
+                    payload["from_name"] = cached
                 via = self.send_frame(host, port, payload,
                                       allow_raw=peer_allowed_outbound(host, self.lan_state))
                 reply = "ok %s" % via
@@ -4662,24 +4890,33 @@ class Daemon(object):
                 )
             return
         reply = self._reply_addr_for(payload.get("from_sessionId"), chan)
-        from_name = sanitize_from_name(payload.get("from_name", ""))
-        trust = self._trust_for(chan, from_name)
-        if deliver_local(self.sess_dir, target, from_name, body, reply, trust):
+        # from_name is display text only; trust keys on from_caption alone
+        from_name = session_name.clean(payload.get("from_name", ""), session_name.NAME_MAX)
+        caption, note, trust = payload.get("from_caption"), None, None
+        if payload.get("from_caption_dup") is True:
+            note = CAPTION_NOTE_DUP
+            log("deliver: trust suspended for %r: the sender's session caption is not unique "
+                "on its machine (2+ live sessions), rename one session (/rename)" % from_name)
+        else:
+            trust = self._trust_for(chan, caption)
+        if deliver_local(self.sess_dir, target, from_name, body, reply, trust, note):
             log("deliver: injected into %s (from %r%s)"
                 % (target, from_name, ", trusted peer" if trust else ""))
 
-    def _trust_for(self, chan, from_name):
-        """(key, peer id) when this deliver came over a link authenticated as a paired
-        peer AND the local user trusts from_name on that peer (see TrustStore), else
-        None. Unpaired links, fresh connections and any read problem: None."""
+    def _trust_for(self, chan, caption):
+        """(key, peer id, caption) when this deliver came over a link authenticated as
+        a paired peer AND the local user trusts the session with that caption on that
+        peer (see TrustStore), else None. A caption is used only when it already is a
+        clean caption (never cleaned into shape). Unpaired links, fresh connections and
+        any read problem: None."""
         pid = getattr(chan, "pair_id", "") if chan is not None else ""
-        if not peer_id_str(pid) or not from_name:
+        if not peer_id_str(pid) or not session_name.is_caption(caption):
             return None
         try:
-            hit = trust_lookup(pid, from_name, self.pairs, TrustStore(trust_path()))
+            hit = trust_lookup(pid, caption, self.pairs, TrustStore(trust_path()))
         except Exception:
             return None
-        return (hit[0], pid) if hit else None
+        return (hit[0], pid, caption) if hit else None
 
     def _reply_addr_for(self, from_session, chan=None):
         """A local proxy socket that routes back to the remote sender, if we hold
@@ -4702,6 +4939,25 @@ class Daemon(object):
     def _roster_loop(self):
         while not self.stop.wait(self.roster_interval):
             self.roster_tick()
+
+    def _roster_sessions(self, pub_meta=False, pub_project=False):
+        """The roster entries of the local sessions; also refreshes display_names."""
+        sessions, names = [], {}
+        # one name order for everything credo shows: caption, kitty, tmux, short id
+        snap = session_name.Snapshot()
+        for d in read_local_sessions(self.sess_dir):
+            entry = {
+                "sessionId": d.get("sessionId"),
+                "name": session_name.claude_name(d, snap),
+                "status": d.get("status", "idle"),
+            }
+            if pub_meta:
+                entry["meta"] = roster_meta(self.sess_dir, d, pub_project)
+            sessions.append(entry)
+            if isinstance(entry["sessionId"], str):
+                names[entry["sessionId"]] = entry["name"]
+        self.display_names = names
+        return sessions
 
     def roster_tick(self):
         """Send one roster to every peer the outbound gate allows. While LAN is
@@ -4755,16 +5011,7 @@ class Daemon(object):
         if not targets:
             return 0
         pub_meta, pub_project = meta_publication(self.cfg_meta)
-        sessions = []
-        for d in read_local_sessions(self.sess_dir):
-            entry = {
-                "sessionId": d.get("sessionId"),
-                "name": d.get("name") or d.get("sessionId"),
-                "status": d.get("status", "idle"),
-            }
-            if pub_meta:
-                entry["meta"] = roster_meta(self.sess_dir, d, pub_project)
-            sessions.append(entry)
+        sessions = self._roster_sessions(pub_meta, pub_project)
         payload = {
             "kind": "roster",
             "machine": self.this_machine,
@@ -5042,7 +5289,7 @@ class Daemon(object):
         return mirror_name(
             [sess.get("harness") or "Claude Code", network, sess.get("machine") or host,
              sess.get("user") or "", sess.get("profile") or ""],
-            sess.get("name") or sid,
+            sess.get("name") or sid_short(sid),
             sid,
         )
 
@@ -5797,7 +6044,7 @@ def run_pair_reset(args):
               "reset pairing anyway)" % (trust_path(), exc))
     for e in dropped:
         print("removed trust for session %r on machine %r (peer %s)"
-              % (e["session"], e["machine"], e["peer_id"][:8]))
+              % (trust_label(e), e["machine"], e["peer_id"][:8]))
     print("the next link from that peer pairs again automatically")
     return 0
 
@@ -5814,6 +6061,11 @@ def _pair_matches(recs, sel):
             or (r["machine"] and r["machine"] == sel)]
 
 
+CAPTION_RULE = ("Trust matches only a session the user named with /rename on that machine "
+                "(its caption, at most 20 characters); kitty, tmux, derived or id names never "
+                "count, and while 2+ live sessions there share the caption, trust is suspended.")
+
+
 def run_trust(args):
     """Local trust list (see TrustStore). Only the user of this machine grants trust,
     here, never a peer: add asks for confirmation (or needs --yes after the user
@@ -5823,12 +6075,14 @@ def run_trust(args):
     pairs = PairStore(keys_dir_for(cfg))
     if args.action == "verify":
         # internal, for the peer-message hook: the hook's JSON on stdin
+        # (prompt + session_id of the receiving session: a marker verifies only there)
         try:
             data = json.loads(sys.stdin.read() or "{}")
             prompt = data.get("prompt") if isinstance(data, dict) else None
+            target = data.get("session_id") if isinstance(data, dict) else None
         except Exception:
-            prompt = None
-        print(json.dumps(verify_trust_prompt(prompt, pairs, store)))
+            prompt, target = None, None
+        print(json.dumps(verify_trust_prompt(prompt, pairs, store, target=target)))
         return 0
     try:
         recs = pairs.records()
@@ -5840,20 +6094,32 @@ def run_trust(args):
     if args.action == "list":
         print("Trusted peers (tasks count like the user's own, except dangerous ones): %s"
               % store.path)
-        entries = store.read()["trusted"]
+        try:
+            entries = store._load(strict=True)["trusted"]
+        except TrustFileError as exc:
+            print("trust list: %s (no peer is trusted while it is unusable)" % exc)
+            return 1
         if not entries:
-            print("  none (add one with: credo-peer-lan.py trust add <peer> <session> --yes)")
+            print("  none (add one with: credo-peer-lan.py trust add <peer> <caption> --yes)")
         by_id = dict((r["id"], r) for r in recs or [])
         for e in entries:
             rec = by_id.get(e["peer_id"])
-            state = "active" if rec is not None and rec["pub"] == e["pub"] else \
-                "INACTIVE (peer not paired with this key anymore)"
+            if e.get("legacy"):
+                state = ("LEGACY, inactive (granted by session name; trust now follows the "
+                         "user-set caption: re-add it with trust add <peer> <caption>)")
+            elif rec is not None and rec["pub"] == e["pub"]:
+                state = "active"
+            else:
+                state = "INACTIVE (peer not paired with this key anymore)"
             print("  session %r on machine %r  peer=%s  %s"
-                  % (e["session"], e["machine"], e["peer_id"], state))
+                  % (trust_label(e), e["machine"], e["peer_id"], state))
+            warn = session_name.confusable_warning(e.get("caption"))
+            if warn:
+                print("    " + warn)
         return 0
     if args.action == "add":
         if not args.peer or not args.session:
-            print("usage: credo-peer-lan.py trust add <peer> <session> [--yes]")
+            print("usage: credo-peer-lan.py trust add <peer> <caption> [--yes]")
             return 2
         hits = _pair_matches(recs, args.peer)
         if len(hits) != 1:
@@ -5861,16 +6127,28 @@ def run_trust(args):
                   "(see: credo-peer-lan.py pairs)" % ("no" if not hits else "more than one", args.peer))
             return 1
         rec = hits[0]
-        session = sanitize_from_name(args.session)
-        if not session or session != args.session:
-            print("trust add: session name %r is not a valid from-name (allowed: "
-                  "A-Z a-z 0-9 space _ . ( ) @ : -, at most 80)" % args.session)
+        # the same form the sending relay sends (claude_caption): filtered to letters,
+        # digits, space . _ -, whitespace collapsed, cut at NAME_MAX characters
+        session = session_name.clean(args.session, session_name.NAME_MAX)
+        if not session:
+            print("trust add: %r holds no caption characters. %s Kept: letters, digits, "
+                  "space . _ -, at most %d characters."
+                  % (args.session, CAPTION_RULE, session_name.NAME_MAX))
             return 1
+        normalized = ""
+        if session != unicodedata.normalize("NFC", args.session):
+            normalized = ("Note: %r is stored as %r, the form the sending relay sends (only "
+                          "letters, digits, space . _ - are kept, at most %d characters)."
+                          % (args.session, session, session_name.NAME_MAX))
+        warn = session_name.confusable_warning(session)
         machine = sanitize_from_name(rec["machine"])
-        question = ("Treat tasks from session %r on machine %r (peer %s) like tasks from you? "
+        question = ("Treat tasks from the session captioned %r on machine %r (peer %s) like tasks from you? "
                     "Dangerous ones (deleting data, installs, money, permissions, credentials, "
                     "security settings, irreversible steps outside the repo) are still only "
                     "reported, never done." % (session, machine, rec["id"][:8]))
+        for line in (normalized, warn):
+            if line:
+                print(line)
         if not args.yes:
             if not sys.stdin.isatty():
                 print("trust add: not confirmed. %s Only the user of this machine may answer; "
@@ -5883,9 +6161,13 @@ def run_trust(args):
             if answer.strip().lower() not in ("y", "yes", "j", "ja"):
                 print("trust add: not confirmed, nothing changed")
                 return 1
-        new = store.add(rec["id"], rec["pub"], session, machine)
-        print("%s session %r on machine %r (peer %s)"
-              % ("trusted" if new else "already trusted:", session, machine, rec["id"]))
+        try:
+            new = store.add(rec["id"], rec["pub"], session, machine)
+        except TrustFileError as exc:
+            print("trust add: %s" % exc)
+            return 1
+        print("%s session %r on machine %r (peer %s). %s"
+              % ("trusted" if new else "already trusted:", session, machine, rec["id"], CAPTION_RULE))
         return 0
     # remove
     if not args.peer:
@@ -5894,19 +6176,27 @@ def run_trust(args):
     sel = args.peer.strip()
     ids = set(r["id"] for r in _pair_matches(recs or [], sel))
 
+    # a name matches as typed (legacy entries) or in the stored caption form
+    wanted = set([unicodedata.normalize("NFC", args.session),
+                  session_name.clean(args.session, session_name.NAME_MAX)]) if args.session else None
+
     def hit(e):
-        if args.session and e["session"] != args.session:
+        if wanted is not None and trust_label(e) not in wanted:
             return False
         return (e["peer_id"] in ids or e["peer_id"] == sel
                 or (len(sel) >= 8 and e["peer_id"].startswith(sel))
                 or (e["machine"] and e["machine"] == sel))
-    gone = store.remove(hit)
+    try:
+        gone = store.remove(hit)
+    except TrustFileError as exc:
+        print("trust remove: %s" % exc)
+        return 1
     if not gone:
         print("no trust entry matches %r (see: credo-peer-lan.py trust list)" % sel)
         return 1
     for e in gone:
         print("removed trust for session %r on machine %r (peer %s)"
-              % (e["session"], e["machine"], e["peer_id"]))
+              % (trust_label(e), e["machine"], e["peer_id"]))
     return 0
 
 
@@ -6189,13 +6479,14 @@ def main(argv=None):
 
     p_trust = sub.add_parser(
         "trust",
-        help="local trust list: tasks from a named session on a PAIRED peer count like "
+        help="local trust list: tasks from a captioned session on a PAIRED peer count like "
         "the user's own (granted only here, by the user of this machine)",
     )
     p_trust.add_argument("action", choices=("list", "add", "remove", "verify"))
     p_trust.add_argument("peer", nargs="?", default="",
                          help="peer id (or 8+ char prefix), slot host:port, host or machine")
-    p_trust.add_argument("session", nargs="?", default="", help="the sender's session name")
+    p_trust.add_argument("session", nargs="?", default="",
+                         help="the sender session's caption (the name the user set with /rename)")
     p_trust.add_argument("--yes", action="store_true",
                          help="the user already confirmed (no interactive question)")
     p_trust.set_defaults(func=run_trust)

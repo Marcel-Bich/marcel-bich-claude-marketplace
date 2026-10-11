@@ -148,7 +148,11 @@ put the absolute main-checkout path (its `main=` line) plus the read-only lookup
 every builder brief (credo `orchestration`, "Worktrees for parallel code tracks"). Closing
 an item cleans up merged+clean worktrees per the DOGMA-PERMISSIONS checkbox; with `[?]` or
 no checkbox the removal waits for the user (credo `items`, "Worktree cleanup at item
-close").
+close"). Locked worktrees (`git worktree lock --reason "keep: owner"`) are kept; in
+autonomous mode you may unlock a `keep: owner` lock yourself once the keep instruction is
+fulfilled or revoked (log it in the run report), never a lock with another reason (credo
+`items`, "Keeping a worktree"). Check `credo-worktree-cleanup.sh --list-locked` before an
+item close and name the kept worktrees in the report.
 
 Autonomous / AFK runs are read-heavy, so isolated writing pre-work has room here: for a clarify
 item blocked by a missing measurement, mockup, or feasibility proof, use the `sandbox` skill

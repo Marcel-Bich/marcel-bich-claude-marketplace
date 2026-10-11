@@ -40,19 +40,24 @@ git worktree list | tail -n +2
 ### 3. Check Each Worktree (same criteria as credo's automatic cleanup)
 
 A worktree is a removal candidate only when ALL of these hold - otherwise it is kept and listed with its reason:
-- not the main worktree, not the worktree you are in, not locked, not on a detached HEAD
+- not the main worktree, not the worktree you are in, not locked (a lock is the owner's "keep" marker), not on a detached HEAD
 - its branch is fully merged into the main branch (the branch checked out in the main worktree)
 - no changes to tracked files (`git -C <wt> status --porcelain --untracked-files=no` is empty); untracked scratch (cache/, the symlinks from `worktree-setup.sh`) goes with it
 - a branch that never got a commit may belong to an agent that just started: keep it while it is younger than 24h or has untracked, non-ignored files
 
-When credo is installed, its `credo-worktree-cleanup.sh [--dry-run] [--json]` implements exactly these checks; prefer it:
+When credo is installed, its `credo-worktree-cleanup.sh [--dry-run] [--json] [--keep <path|branch>]...` implements exactly these checks; prefer it. It reports locked worktrees as `kept <path> branch=<b> reason=locked: <lock reason>`, and `--list-locked` lists them:
 
 ```bash
 CREDO_CLEANUP=$(ls -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/*/credo/*/scripts/credo-worktree-cleanup.sh 2>/dev/null | sort -V | tail -1)
 [ -n "$CREDO_CLEANUP" ] && "$CREDO_CLEANUP" --dry-run
 ```
 
-Without credo, check by hand:
+Without credo, check by hand. Locked worktrees (a `locked` line in the porcelain output, with the reason after it) are always kept and shown with that reason:
+
+```bash
+# Locked worktrees and their reasons
+git worktree list --porcelain | grep -B2 '^locked'
+```
 
 For each worktree:
 
@@ -84,6 +89,9 @@ NOT MERGED worktrees (will be kept):
   - feature-c (hydra/feature-c) - 2 commits, still open
   - feature-d (hydra/feature-d) - 7 commits, still open
 
+LOCKED worktrees (will be kept, shown with their lock reason):
+  - kept <path>/feature-e branch=hydra/feature-e reason=locked: keep: owner
+
 {If dry-run}
 --dry-run mode: No changes made.
 Run without --dry-run to clean up.
@@ -112,13 +120,15 @@ Options:
 For each confirmed worktree:
 
 ```bash
-# Remove worktree (--force only for verified merged+clean candidates: it lets git
-# drop untracked scratch; git unlinks symlinks and never follows them)
-git worktree remove --force "$WORKTREE_PATH"
+# Remove worktree. No force flag: agents never run it (dogma's bash-guard denies it),
+# and git itself refuses a locked worktree.
+git worktree remove "$WORKTREE_PATH"
 
 # Remove branch
 git branch -d "$BRANCH"
 ```
+
+Without the force flag, git refuses a worktree that still holds untracked files (cache, the symlinks from `worktree-setup.sh`). Do not retry with a force flag. Either use credo's `credo-worktree-cleanup.sh`, which removes verified merged+clean worktrees including that scratch (git unlinks symlinks and never follows them), or show the user the forced removal command for the verified merged+clean worktree (`git worktree remove --force <path>`) and let the user run it.
 
 ### 7. Output
 
@@ -158,11 +168,24 @@ With credo installed, closing an item (move to done, verified or archived) runs 
 
 `[x]` removes merged+clean worktrees without asking, `[?]` (or no checkbox) lists them and asks, `[ ]` never. Every run covers all worktrees of the repo, so older ones are swept too.
 
+## Keeping a worktree (lock) and releasing it
+
+A locked worktree is never removed and is listed with its lock reason. To keep a worktree, lock it; to release it, unlock it:
+
+```bash
+git worktree lock --reason "keep: owner" <path>    # keep
+git worktree list --porcelain | grep -B2 '^locked' # list locks with reasons
+git worktree unlock <path>                         # release
+```
+
+With credo, `credo-worktree-cleanup.sh --list-locked` lists the locks. Unlocking asks the user first (AskUserQuestion); only credo's autonomous mode may unlock a `keep: owner` lock itself, once the keep reason no longer applies. Never unlock a lock with a different reason on your own.
+
 ## Safety Features
 
 - Main worktree (project root) is NEVER touched - always excluded
 - Only fully merged branches with no changes to tracked files are removed
-- Locked worktrees and fresh worktrees without commits (an agent may be starting) are kept
+- Locked worktrees (owner "keep" marker, shown with their reason) and fresh worktrees without commits (an agent may be starting) are kept
+- No forced removal by agents: the user runs it themselves
 - No force-delete (`git branch -d` not `-D`)
 - Confirmation before deletion (except dry-run)
 - Non-merged worktrees are always kept

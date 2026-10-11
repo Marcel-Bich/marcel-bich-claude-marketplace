@@ -55,6 +55,7 @@ try:
     import credo_peer_meta as peer_meta
 except ImportError:  # metadata is optional; the check works without it
     peer_meta = None
+import credo_session_name as session_name
 
 MAX_DESCRIPTOR_BYTES = 65536
 SOCK_NAME_RE = re.compile(r"^(\d+)\.sock$")
@@ -260,11 +261,15 @@ def is_codex_proc(pid):
 
 # --------------------------------------------------------------------------- tmux
 
+def tmux_binary():
+    """The tmux binary to use; "" when tmux is skipped (CREDO_PEER_CHECK_TMUX empty)."""
+    binary = os.environ.get("CREDO_PEER_CHECK_TMUX")
+    return "tmux" if binary is None else binary
+
+
 def tmux_info():
     """[(session, [pane_pids], activity)] or [] when tmux is absent/not running."""
-    binary = os.environ.get("CREDO_PEER_CHECK_TMUX")
-    if binary is None:
-        binary = "tmux"
+    binary = tmux_binary()
     if not binary:
         return []
 
@@ -462,6 +467,8 @@ def collect(run_lan_check=True):
     socks = live_sockets()
     kids = proc_children()
     tmux = tmux_info()
+    # names: caption, kitty label, tmux label, short id (credo_session_name.py)
+    snap = session_name.Snapshot(tmux_bin=tmux_binary() or None, panes=tmux)
     pane_tree = {}
     codex_tmux = set()
     for sess, panes, _act in tmux:
@@ -498,14 +505,14 @@ def collect(run_lan_check=True):
                 meta=meta_for(d, prof))
         else:
             in_cur = prof == cur
-            tm = pane_tree.get(pid)
+            tm = pane_tree.get(pid) or snap.tmux_label(pid)
             via = "SendMessage" if in_cur else ("tmux only" if tm else "none")
             detail = "socket %s" % os.path.dirname(d.get("messagingSocketPath") or "?")
             if d.get("credoPeerBridge"):
                 detail += ", profile bridge mirror"
             if not in_cur:
                 detail += ", other profile %s (not in this session's ListAgents)" % os.path.basename(prof)
-            add(name=d.get("name") or "(unnamed)", kind="claude", reachable_by=via,
+            add(name=session_name.claude_name(d, snap, tmux=tm), kind="claude", reachable_by=via,
                 last_seen=fmt_ts(last), session_id=sid, pid=pid, tmux=tm, detail=detail,
                 status=d.get("status"), meta=meta_for(d, prof))
         seen_pids.add(pid)
@@ -516,8 +523,11 @@ def collect(run_lan_check=True):
         for pid, path, mtime in items:
             if pid in seen_pids:
                 continue
-            tm = pane_tree.get(pid)
-            add(name=tm or "pid %d" % pid, kind="claude",
+            tm = pane_tree.get(pid) or snap.tmux_label(pid)
+            kit = snap.kitty_label(pid, tm)
+            # same order as every other name: kitty tab, tmux session; "pid N" when neither
+            add(name=session_name.pick(None, kit, tm, None) if kit or tm else "pid %d" % pid,
+                kind="claude",
                 reachable_by="tmux only" if tm else "none", last_seen=fmt_ts(mtime),
                 session_id=None, pid=pid, tmux=tm,
                 detail="live socket %s without a registry descriptor (not in ListAgents)" % path)
@@ -525,6 +535,12 @@ def collect(run_lan_check=True):
 
     cx = codex_status()
     if cx:
+        # An unnamed Codex thread can only be tied to a tmux session when that is
+        # unambiguous: one Codex pane that nothing else claimed, one unnamed thread.
+        free_codex = sorted(codex_tmux - matched_tmux)
+        unnamed = [s for s in cx["sessions"] if s.get("sessionId") not in seen_sids
+                   and not session_name.codex_caption(s.get("sessionId"))]
+        codex_pane = free_codex[0] if len(free_codex) == 1 and len(unnamed) == 1 else None
         for s in cx["sessions"]:
             sid = s.get("sessionId")
             if sid in seen_sids:
@@ -533,7 +549,7 @@ def collect(run_lan_check=True):
                 via = "a2a"
             else:
                 via = "tmux only" if codex_tmux else "none"
-            add(name=s.get("name") or sid, kind="codex", reachable_by=via,
+            add(name=session_name.codex_name(sid, snap, tmux=codex_pane), kind="codex", reachable_by=via,
                 last_seen=fmt_ts(s.get("lastSeen")), session_id=sid, pid=None,
                 detail="Codex relay session (%s, active=%s)" % (cx["source"], s.get("active")))
             seen_sids.add(sid)

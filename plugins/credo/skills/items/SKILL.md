@@ -797,12 +797,39 @@ The helper reads the DOGMA-PERMISSIONS checkbox in the `### Hydra` subsection (v
 `credo-worktree-cleanup.sh [--dry-run] [--json]` removes ONLY worktrees whose branch is
 fully merged into the main branch (the branch checked out in the main worktree) AND that have
 no changes to tracked files; untracked scratch (cache/, the setup symlinks) goes with them.
-It never touches the main worktree, the worktree it runs in, locked ones, unmerged or dirty
-ones (those are reported as `kept` with the reason), and keeps a never-committed worktree
+It never touches the main worktree, the worktree it runs in, locked ones, ones named by
+`--keep`, unmerged or dirty ones (those are reported as `kept` with the reason; a locked one
+as `kept <path> branch=<b> reason=locked: <lock reason>`, also on `--dry-run`), and keeps a never-committed worktree
 while it is younger than 24h or has untracked files (an agent may be starting in it). It
 removes via `git worktree remove --force` (git unlinks symlinks and never follows them) and
 deletes the merged branch with `git branch -d`. Every run covers all worktrees of the
 repository, so the first run also sweeps the backlog. A cleanup error never fails the move.
+
+**Keeping a worktree (opt-out = `git worktree lock`).** When the user says to keep a
+worktree, lock it right away, with the reason `keep: owner`:
+
+```
+git worktree lock --reason "keep: owner" <path>
+```
+
+A locked worktree is never removed (cleanup script, `[x]` auto mode and `/hydra:cleanup`
+alike) and shows up as `kept <path> branch=<b> reason=locked: <lock reason>`. List the locks and their reasons with
+`credo-worktree-cleanup.sh --list-locked` (or `git worktree list --porcelain`, the `locked`
+lines). Before closing an item, run `--list-locked` once and name the kept worktrees (and
+their reasons) in the close note or run report, so the owner sees what stays around. For a
+single run without locking, pass `credo-worktree-cleanup.sh --keep <path|branch>`
+(repeatable; a string that is an existing directory is matched as a path first, so a
+branch of the same name is not kept as well).
+
+Unlocking (`git worktree unlock <path>`) follows one rule:
+
+- credo AUTONOMOUS mode: the agent may unlock a `keep: owner` lock on its own once the keep
+  reason no longer applies (the instruction was fulfilled or revoked); it logs the unlock
+  and the reason in the run report.
+- Every other mode (active, passive, default): only after asking the user via the Ask tool.
+- A lock with any other reason (set by git, the harness, another tool or person; e.g. a
+  running agent's worktree) is not ours: never unlock it on your own, in any mode - report
+  it and ask the user. Autonomous mode leaves it locked.
 
 Valid transitions (folder = status):
 

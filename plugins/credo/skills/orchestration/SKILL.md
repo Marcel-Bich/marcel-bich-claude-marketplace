@@ -213,7 +213,12 @@ state-changing git commands there - and mention in the report anything that shou
 added to the worktree files list.
 
 Merged and clean worktrees are removed at item close (credo `items` skill, "Worktree
-cleanup at item close").
+cleanup at item close"). A worktree the owner wants to keep is locked, never left to the
+cleanup's judgement: `git worktree lock --reason "keep: owner" <path>`. Locked worktrees
+are kept and reported with their reason; `credo-worktree-cleanup.sh --list-locked` lists
+them. Never unlock one on your own except in credo autonomous mode when the keep reason no
+longer applies; in every other mode ask the user first via the Ask tool (credo `items`,
+"Keeping a worktree"). Builders never unlock, and never touch a lock they did not set.
 
 ## Parallel safety
 

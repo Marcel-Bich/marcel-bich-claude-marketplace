@@ -59,6 +59,15 @@ worktree, not unmerged, dirty, locked or other worktrees, no other path, and no 
 command - git unlinks symlinks there and never follows them, so link targets in the main
 checkout survive.
 
+Opt-out: when the user says to keep a worktree, lock it (`git worktree lock --reason
+"keep: owner" <path>`). A locked worktree is never removed, by this carve-out or any other
+path, and is listed as `kept <path> branch=<b> reason=locked: <lock reason>`. Find locks with
+`credo-worktree-cleanup.sh --list-locked`. Unlocking (`git worktree unlock <path>`): credo
+autonomous mode may unlock a `keep: owner` lock itself once the keep reason no longer
+applies; every other mode only after asking the user via the Ask tool; a lock with another
+reason is never unlocked on your own. Agents never run `git worktree remove --force`
+(dogma's bash-guard denies it); the user runs that themselves.
+
 Carve-out - own temporary leftovers in `/tmp` (user rule): in every session mode, the MAIN
 agent cleans up the unimportant leftovers that THIS session (itself or its subagents)
 created under `/tmp/<name>` - mktemp dirs, test fixtures, sockets, logs, scratch output -

@@ -85,8 +85,9 @@ desc() { # file pid sid name sockpath [extra-json]
 import json, sys
 path, pid, sid, name, sock = sys.argv[1:6]
 extra = json.loads(sys.argv[6]) if len(sys.argv) > 6 else {}
-d = {"pid": int(pid), "sessionId": sid, "name": name, "messagingSocketPath": sock,
-     "status": "idle", "updatedAt": 1700000000000, "kind": "interactive"}
+d = {"pid": int(pid), "sessionId": sid, "name": name, "nameSource": "user",
+     "messagingSocketPath": sock, "status": "idle", "updatedAt": 1700000000000,
+     "kind": "interactive"}
 d.update(extra)
 json.dump(d, open(path, "w"))
 PYEOF
