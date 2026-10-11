@@ -9,6 +9,10 @@ enumerates local peers by reading session descriptor files under
 socket (messagingSocketPath). This daemon makes REMOTE sessions appear there too, so
 ListAgents lists them and SendMessage reaches them, with replies routing back.
 
+One daemon serves every local Claude Code profile (see credo_profiles.py): the roster
+lists the sessions of all of them, each with its own profile name, and a remote session
+gets one holder with a mirror descriptor in every profile's sessions/ dir.
+
 How a remote session is represented locally
 --------------------------------------------
 A remote session has no local process, so its pid is not alive and its descriptor
@@ -63,7 +67,8 @@ SAFETY
     of us forging a trusted sender. The relay is mode-agnostic (name/body/reply only).
   - The only extra the relay may add is the local trust marker (see "trusted peers"):
     for a deliver over a PAIRED link from a session the local user trusted with the
-    `trust` command. Nothing received over the wire can create or change trust.
+    `trust` command in the TARGET session's profile (that profile's trust list and
+    pairing store only). Nothing received over the wire can create or change trust.
   - Session metadata (credo mode, role, model, effort, credo decision; the project
     name only on opt-in) is published per roster session from the sender's own
     credo state (off: config "publish_meta": false or CREDO_PEER_LAN_META=0; project:
@@ -125,6 +130,7 @@ try:
     import credo_peer_meta as peer_meta
 except ImportError:  # metadata is optional; the relay works without it
     peer_meta = None
+import credo_profiles as profiles
 import credo_session_name as session_name
 from credo_session_name import sid_short
 
@@ -228,6 +234,17 @@ def sessions_dir():
     return os.path.join(cfg, "sessions")
 
 
+def profile_sessions_dirs():
+    """sessions/ dir of every local Claude Code profile (credo_profiles rule), the
+    daemon's own profile first. One relay serves all of them."""
+    return profiles.sessions_dirs()
+
+
+def is_own_profile(cfg_dir):
+    """True when cfg_dir is the profile this process runs in (the daemon's own)."""
+    return os.path.realpath(cfg_dir) == os.path.realpath(profiles.own_config_dir())
+
+
 def sock_dir():
     p = os.environ.get("CREDO_PEER_LAN_SOCKDIR")
     if p:
@@ -244,8 +261,8 @@ def pidfile_path():
     return os.path.join(os.path.dirname(config_path()), "peer-lan.pid")
 
 
-def load_config():
-    path = config_path()
+def load_config(path=None):
+    path = path or config_path()
     try:
         with open(path) as fh:
             cfg = json.load(fh)
@@ -2598,10 +2615,27 @@ def read_local_sessions(sess_dir, need_socket=True):
     return out
 
 
-def local_real_session_ids(sess_dir):
-    """sessionIds of every local descriptor that is NOT one of our own credoPeerLan
-    mirrors (real sessions and other bridges' mirrors alike). A roster entry whose
-    sessionId is in this set already exists locally and must not be mirrored again."""
+def read_all_local_sessions(sess_dirs, need_socket=True):
+    """read_local_sessions over every profile's sessions dir. A real session is listed
+    once, by the profile whose dir holds its descriptor."""
+    out = []
+    for sess_dir in sess_dirs:
+        out.extend(read_local_sessions(sess_dir, need_socket))
+    return out
+
+
+def local_real_session_ids(sess_dirs):
+    """sessionIds of every local descriptor, in any profile's sessions dir, that is NOT
+    one of our own credoPeerLan mirrors (real sessions and other bridges' mirrors
+    alike). A roster entry whose sessionId is in this set already exists locally and
+    must not be mirrored again, in any profile."""
+    out = set()
+    for sess_dir in sess_dirs:
+        out |= _real_session_ids_in(sess_dir)
+    return out
+
+
+def _real_session_ids_in(sess_dir):
     out = set()
     try:
         names = os.listdir(sess_dir)
@@ -2710,22 +2744,30 @@ def _desc_time(d):
     return 0
 
 
-def resolve_sockets(sess_dir, session_id):
-    """(live candidates, stale count) for a sessionId. After a crash or resume the
-    registry can hold several descriptors of one session: a dead one with an old
-    socket path (e.g. under a vanished runtime dir) next to the live one. Only live
-    descriptors count (descriptor_live); newest updatedAt first. Each candidate is
-    (socket path, pid). Descriptor files are never touched."""
+def resolve_sockets_all(sess_dirs, session_id):
+    """(live candidates, stale count) for a sessionId across every profile's sessions
+    dir. After a crash or resume the registry can hold several descriptors of one
+    session: a dead one with an old socket path (e.g. under a vanished runtime dir)
+    next to the live one. Only live descriptors count (descriptor_live); newest
+    updatedAt first. Each candidate is (socket path, pid, sessions dir), the dir being
+    the profile the descriptor lives in. Descriptor files are never touched."""
     live, stale = [], 0
-    for d in read_local_sessions(sess_dir):
-        if d.get("sessionId") != session_id:
-            continue
-        if descriptor_live(d):
-            live.append(d)
-        else:
-            stale += 1
-    live.sort(key=_desc_time, reverse=True)
-    return [(d.get("messagingSocketPath"), d.get("pid")) for d in live], stale
+    for sess_dir in sess_dirs:
+        for d in read_local_sessions(sess_dir):
+            if d.get("sessionId") != session_id:
+                continue
+            if descriptor_live(d):
+                live.append((d, sess_dir))
+            else:
+                stale += 1
+    live.sort(key=lambda item: _desc_time(item[0]), reverse=True)
+    return [(d.get("messagingSocketPath"), d.get("pid"), sd) for d, sd in live], stale
+
+
+def resolve_sockets(sess_dir, session_id):
+    """resolve_sockets_all for one sessions dir: ([(socket path, pid)], stale count)."""
+    cands, stale = resolve_sockets_all([sess_dir], session_id)
+    return [(sock, pid) for sock, pid, _ in cands], stale
 
 
 def resolve_socket(sess_dir, session_id):
@@ -2733,16 +2775,20 @@ def resolve_socket(sess_dir, session_id):
     return cands[0][0] if cands else None
 
 
-def deliver_local(sess_dir, session_id, from_name, body, reply, trust=None, note=None):
-    """Inject into the live local session: the newest live descriptor first, the
-    next live one when an inject fails. Logs the chosen descriptor. Returns the
-    socket used, or None when nothing was delivered. trust / note: see build_envelope."""
-    cands, stale = resolve_sockets(sess_dir, session_id)
+def deliver_local(sess_dirs, session_id, from_name, body, reply, trust_for=None, note=None):
+    """Inject into the live local session, searched across every profile's sessions
+    dir: the newest live descriptor first, the next live one when an inject fails.
+    trust_for(cfg_dir) returns the trust marker for a target in that profile (None:
+    no marker), so a grant is only ever checked against the target's own profile.
+    Logs the chosen descriptor. Returns the socket used, or None when nothing was
+    delivered. note: see build_envelope."""
+    cands, stale = resolve_sockets_all(sess_dirs, session_id)
     if not cands:
         log("deliver: no live local session %r (%d stale descriptor(s) ignored), dropped"
             % (session_id, stale))
         return None
-    for sock, pid in cands:
+    for sock, pid, sess_dir in cands:
+        trust = trust_for(os.path.dirname(sess_dir)) if trust_for is not None else None
         try:
             inject(sock, from_name, body, reply, trust, note, target=session_id)
         except InjectMaybeSent as exc:
@@ -2752,8 +2798,8 @@ def deliver_local(sess_dir, session_id, from_name, body, reply, trust=None, note
         except Exception as exc:
             log("deliver: inject into %s (pid %s) failed: %s" % (sock, pid, exc))
             continue
-        log("deliver: chose descriptor pid %s socket %s for %s (%d live, %d stale)"
-            % (pid, sock, session_id, len(cands), stale))
+        log("deliver: chose descriptor pid %s socket %s for %s (%d live, %d stale%s)"
+            % (pid, sock, session_id, len(cands), stale, ", trusted peer" if trust else ""))
         return sock
     log("deliver: every live descriptor of %r failed, dropped" % session_id)
     return None
@@ -2960,6 +3006,76 @@ TRUST_TAG_MARK_RE = re.compile(r"<\s*cross-session-message[^>]*credo-trust", re.
 
 def trust_path():
     return os.path.join(os.path.dirname(config_path()), TRUST_FILE)
+
+
+def trust_path_for(cfg_dir):
+    """Trust list of profile cfg_dir. The daemon's own profile keeps its configured
+    location (trust_path); any other profile uses its own credo/ dir, the file its
+    peer-message hook verifies against."""
+    if is_own_profile(cfg_dir):
+        return trust_path()
+    return os.path.join(cfg_dir, "credo", TRUST_FILE)
+
+
+def profile_keys_dir(cfg_dir):
+    """Pairing key dir of profile cfg_dir: the keys_dir its peer-lan config names, else
+    <profile>/credo/peer-lan-keys (the store its own trust verification reads)."""
+    cfg = load_config(os.path.join(cfg_dir, "credo", "peer-lan.json")) or {}
+    d = cfg.get("keys_dir")
+    return d if isinstance(d, str) and d else os.path.join(cfg_dir, "credo", "peer-lan-keys")
+
+
+def pair_store_dirs(cfg):
+    """Keystores that pair-reset cleans: the one the CLI's own config names, plus the
+    keystore of every served profile. The daemon's machine store is one of them (its
+    own profile's keystore, or a keys_dir the profiles name). Each real path once."""
+    out, seen = [], set()
+    for kdir in [keys_dir_for(cfg)] + [profile_keys_dir(p) for p in profiles.profile_dirs()]:
+        real = os.path.realpath(kdir)
+        if real not in seen:
+            seen.add(real)
+            out.append(kdir)
+    return out
+
+
+def pair_copy_dirs(machine_dir):
+    """Keystores that receive a copy of every pairing record: the keystore of each served
+    profile except the daemon's own profile, whose keystore is the machine store
+    (machine_dir). Each real path once."""
+    out, seen = [], {os.path.realpath(machine_dir)}
+    for cfg_dir in profiles.profile_dirs():
+        if is_own_profile(cfg_dir):
+            continue
+        kdir = profile_keys_dir(cfg_dir)
+        real = os.path.realpath(kdir)
+        if real not in seen:
+            seen.add(real)
+            out.append(kdir)
+    return out
+
+
+def sync_pair_copy_dir(kdir, want):
+    """Make the keystore kdir hold exactly the pairing records in want ({peer id: record}).
+    A missing, corrupt or different copy is written through the store's own atomic
+    writer (0600 files in a 0700 dir, the machine store's modes and locking); a copy
+    whose peer is no longer in want is removed. Returns how many files changed. Never
+    touches anything but peer-<id>.json files."""
+    copy = PairStore(kdir)
+    changed = 0
+    with copy.lock:
+        for pid, rec in want.items():
+            if copy.get(pid) != rec:
+                copy._write("peer-%s.json" % pid, rec)
+                changed += 1
+        try:
+            names = os.listdir(kdir)
+        except FileNotFoundError:
+            names = []
+        for name in names:
+            if name.startswith("peer-") and name.endswith(".json") and name[5:-5] not in want:
+                copy._unlink_quiet(os.path.join(kdir, name))
+                changed += 1
+    return changed
 
 
 def _trust_entry(e):
@@ -3245,7 +3361,6 @@ def run_holder(args):
     # Routing is address-based: the holder forwards straight to the peer host:port
     # it was spawned with. No name lookup, so no name contract to get wrong.
     host, port = args.peer_host, int(args.peer_port)
-    sess_dir = sessions_dir()
     proxy = args.proxy
     parent = os.getppid()
 
@@ -3309,7 +3424,7 @@ def run_holder(args):
                 line = line.strip()
                 if not line:
                     continue
-                _forward(line, token, host, port, args, sess_dir, writer_pid=writer)
+                _forward(line, token, host, port, args, writer_pid=writer)
         except Exception as exc:
             log("holder: worker error: %s" % exc)
         finally:
@@ -3379,11 +3494,16 @@ def _sender_descriptor(descs, sock_path):
     return (live or hits or [None])[0]
 
 
-def _forward(line, token, host, port, args, sess_dir, writer_pid=None):
-    """Forward one frame a local writer put on the proxy socket as a deliver.
-    writer_pid: the writer's pid from SO_PEERCRED (see peer_pid); the sender's
-    caption is sent only when the session that owns the reply socket is that
-    process or one of its ancestors (see _sender_names)."""
+def _forward(line, token, host, port, args, sess_dirs=None, writer_pid=None):
+    """Forward one frame a local writer put on the proxy socket as a deliver. The
+    sending session is looked up in every profile's sessions dir. sess_dirs is taken
+    when the frame arrives (profile_sessions_dirs()) unless a caller passes one: a
+    holder lives as long as its remote session, so a profile created after the holder
+    started must still be found. writer_pid: the writer's pid from SO_PEERCRED (see
+    peer_pid); the sender's caption is sent only when the session that owns the reply
+    socket is that process or one of its ancestors (see _sender_names)."""
+    if sess_dirs is None:
+        sess_dirs = profile_sessions_dirs()
     try:
         frame = json.loads(line.decode("utf-8"))
     except Exception:
@@ -3402,7 +3522,7 @@ def _forward(line, token, host, port, args, sess_dir, writer_pid=None):
     from_session = ""
     sock_path = strip_uds(reply)
     # every real local session, also those without a socket (duplicate caption check)
-    descs = read_local_sessions(sess_dir, need_socket=False) if sock_path else []
+    descs = read_all_local_sessions(sess_dirs, need_socket=False) if sock_path else []
     sender = _sender_descriptor(descs, sock_path)
     if sender is not None:
         from_session = sender.get("sessionId", "")
@@ -3657,6 +3777,7 @@ class Daemon(object):
                 time.sleep(self.bind_retry_interval)
         self._cleanup_stale_descriptors()
         self._cleanup_stale_sockets()
+        self._sync_pair_copies()
         self.srv.listen(32)
         self._write_pidfile()
         log(
@@ -4227,9 +4348,36 @@ class Daemon(object):
                 self._pair_conflict(slot, other, pid, machine, "a new peer id")
             return False
         pair.to_pin = None
+        self._sync_pair_copies()
         if new:
             log("paired with peer %s (%r) at %s: pairing key stored" % (pid[:8], machine, slot))
         return True
+
+    def _sync_pair_copies(self):
+        """Keep the machine's pairing records in the keystore of every served profile
+        (owner decision, option 2): a profile can then grant trust to that peer with
+        `trust add` run in that profile, and only there. A copy carries the pairing
+        record, never a trust grant. Idempotent: a copy is written only when it differs.
+        Runs after every new pairing, on each roster tick (a profile that appears later
+        gets the record) and at start. The machine store is never changed here; an
+        unreadable store or copy is skipped (fail closed: nothing is copied from a store
+        that cannot be read). Returns how many copy files changed."""
+        try:
+            want = dict((r["id"], r) for r in self.pairs.records())
+        except PairStoreUnreadable as exc:
+            self._pair_log("copy-machine", "pairing copies not synced: %s" % exc)
+            return 0
+        changed = 0
+        for kdir in pair_copy_dirs(self.pairs.path):
+            try:
+                n = sync_pair_copy_dir(kdir, want)
+            except (OSError, PairStoreUnreadable) as exc:
+                self._pair_log(("copy", kdir), "pairing copy in %s not synced: %s" % (kdir, exc))
+                continue
+            if n:
+                log("pairing copies in %s updated (%d file(s))" % (kdir, n))
+            changed += n
+        return changed
 
     def _pair_open(self, sock, key, c_open, msg, expected):
         """Pairing step of our own outbound link to key, after the acceptor's
@@ -4892,28 +5040,32 @@ class Daemon(object):
         reply = self._reply_addr_for(payload.get("from_sessionId"), chan)
         # from_name is display text only; trust keys on from_caption alone
         from_name = session_name.clean(payload.get("from_name", ""), session_name.NAME_MAX)
-        caption, note, trust = payload.get("from_caption"), None, None
+        caption, note, trust_for = payload.get("from_caption"), None, None
         if payload.get("from_caption_dup") is True:
             note = CAPTION_NOTE_DUP
             log("deliver: trust suspended for %r: the sender's session caption is not unique "
                 "on its machine (2+ live sessions), rename one session (/rename)" % from_name)
         else:
-            trust = self._trust_for(chan, caption)
-        if deliver_local(self.sess_dir, target, from_name, body, reply, trust, note):
-            log("deliver: injected into %s (from %r%s)"
-                % (target, from_name, ", trusted peer" if trust else ""))
+            # looked up per target: deliver_local asks for the profile of the session
+            # it picked, so a grant never follows the message into another profile
+            trust_for = lambda cfg_dir: self._trust_for(chan, caption, cfg_dir)
+        if deliver_local(profile_sessions_dirs(), target, from_name, body, reply, trust_for, note):
+            log("deliver: injected into %s (from %r)" % (target, from_name))
 
-    def _trust_for(self, chan, caption):
+    def _trust_for(self, chan, caption, cfg_dir):
         """(key, peer id, caption) when this deliver came over a link authenticated as
-        a paired peer AND the local user trusts the session with that caption on that
-        peer (see TrustStore), else None. A caption is used only when it already is a
-        clean caption (never cleaned into shape). Unpaired links, fresh connections and
-        any read problem: None."""
+        a paired peer AND the user of the TARGET session's profile (cfg_dir) trusts the
+        session with that caption on that peer, else None. Only that profile's own
+        trust list and pairing store are read (see trust_path_for, profile_keys_dir);
+        the daemon's pairing store serves its own profile. A caption is used only when
+        it already is a clean caption (never cleaned into shape). Unpaired links, fresh
+        connections and any read problem: None."""
         pid = getattr(chan, "pair_id", "") if chan is not None else ""
         if not peer_id_str(pid) or not session_name.is_caption(caption):
             return None
         try:
-            hit = trust_lookup(pid, caption, self.pairs, TrustStore(trust_path()))
+            pairs = self.pairs if is_own_profile(cfg_dir) else PairStore(profile_keys_dir(cfg_dir))
+            hit = trust_lookup(pid, caption, pairs, TrustStore(trust_path_for(cfg_dir)))
         except Exception:
             return None
         return (hit[0], pid, caption) if hit else None
@@ -4941,21 +5093,25 @@ class Daemon(object):
             self.roster_tick()
 
     def _roster_sessions(self, pub_meta=False, pub_project=False):
-        """The roster entries of the local sessions; also refreshes display_names."""
+        """The roster entries of the local sessions of every profile; each entry names
+        the profile its session lives in. Also refreshes display_names."""
         sessions, names = [], {}
         # one name order for everything credo shows: caption, kitty, tmux, short id
         snap = session_name.Snapshot()
-        for d in read_local_sessions(self.sess_dir):
-            entry = {
-                "sessionId": d.get("sessionId"),
-                "name": session_name.claude_name(d, snap),
-                "status": d.get("status", "idle"),
-            }
-            if pub_meta:
-                entry["meta"] = roster_meta(self.sess_dir, d, pub_project)
-            sessions.append(entry)
-            if isinstance(entry["sessionId"], str):
-                names[entry["sessionId"]] = entry["name"]
+        for sess_dir in profile_sessions_dirs():
+            profile = profiles.profile_name(os.path.dirname(sess_dir))
+            for d in read_local_sessions(sess_dir):
+                entry = {
+                    "sessionId": d.get("sessionId"),
+                    "name": session_name.claude_name(d, snap),
+                    "status": d.get("status", "idle"),
+                    "profile": profile,
+                }
+                if pub_meta:
+                    entry["meta"] = roster_meta(sess_dir, d, pub_project)
+                sessions.append(entry)
+                if isinstance(entry["sessionId"], str):
+                    names[entry["sessionId"]] = entry["name"]
         self.display_names = names
         return sessions
 
@@ -4963,6 +5119,7 @@ class Daemon(object):
         """Send one roster to every peer the outbound gate allows. While LAN is
         disabled no LAN peer gets anything (no session names leak on a foreign
         network); loopback peers are unaffected."""
+        self._sync_pair_copies()   # idempotent; a profile that appeared since the last tick
         with self.lock:
             state = self.lan_state
         targets = []
@@ -5170,7 +5327,7 @@ class Daemon(object):
             # sessions that already exist here or that another sender already owns.
             # Skip a sessionId that is a real local session (not one of our mirrors),
             # and dedupe by sessionId across all senders - the first owner wins.
-            local_ids = local_real_session_ids(self.sess_dir)
+            local_ids = local_real_session_ids(profile_sessions_dirs())
             # owned by a DIFFERENT address, or by another machine on this address
             # that is still alive (see renamed_from); a machine rename is refreshed below
             owned_elsewhere = {
@@ -5208,9 +5365,12 @@ class Daemon(object):
                 s["machine"] = machine  # announced this_machine, for the display name
                 # sender-published metadata: whitelist only, never trusted
                 s["meta"] = clean_meta(s.get("meta"))
-                # sender-level naming fields (optional; older senders omit them)
+                # sender-level naming fields (optional; older senders omit them). The
+                # profile is the session's own when the sender names it per session
                 for fld in ("harness", "network", "user", "profile"):
                     v = payload.get(fld)
+                    if fld == "profile" and isinstance(s.get("profile"), str) and s["profile"]:
+                        v = s["profile"]
                     s[fld] = v[:60] if isinstance(v, str) else ""
                 present[sid] = s
             # remove sessions that vanished from THIS sender's roster. The prune is
@@ -5245,22 +5405,23 @@ class Daemon(object):
 
     # -- holder / descriptor lifecycle (must hold self.lock) ----------------
     def _template_descriptor_locked(self):
+        """The newest real local session of any profile: the machine-level fields
+        (pidDomain, version, ...) of a mirror are copied from it."""
         best = None
         best_mtime = -1
-        for d in read_local_sessions(self.sess_dir):
-            if not d.get("pidDomain"):
-                continue
-            pid = d.get("pid")
-            mtime = 0
-            try:
-                mtime = os.path.getmtime(
-                    os.path.join(self.sess_dir, "%s.json" % pid)
-                )
-            except OSError:
-                pass
-            if mtime > best_mtime:
-                best_mtime = mtime
-                best = d
+        for sess_dir in profile_sessions_dirs():
+            for d in read_local_sessions(sess_dir):
+                if not d.get("pidDomain"):
+                    continue
+                pid = d.get("pid")
+                mtime = 0
+                try:
+                    mtime = os.path.getmtime(os.path.join(sess_dir, "%s.json" % pid))
+                except OSError:
+                    pass
+                if mtime > best_mtime:
+                    best_mtime = mtime
+                    best = d
         return best
 
     def _foreign_descriptor(self, path):
@@ -5344,11 +5505,16 @@ class Daemon(object):
                 log("holder for %s exited early (rc=%s)" % (name, proc.returncode))
                 return
             time.sleep(0.05)
-        desc_path = os.path.join(self.sess_dir, "%d.json" % proc.pid)
-        if self._foreign_descriptor(desc_path):
+        # one holder serves the remote session in every local profile: its descriptor
+        # is written into each profile's sessions dir under the holder's pid
+        desc_paths = dict(
+            (sd, os.path.join(sd, "%d.json" % proc.pid)) for sd in profile_sessions_dirs()
+        )
+        if any(self._foreign_descriptor(path) for path in desc_paths.values()):
             # pid reuse: a real local descriptor (one without our marker) already
-            # occupies this pid path. Never clobber a file we do not own - kill the
-            # holder we just spawned and skip this remote; the next roster retries.
+            # occupies this pid path in some profile. Never clobber a file we do not
+            # own - kill the holder we just spawned and skip this remote; the next
+            # roster retries.
             log(
                 "remote %s skipped: holder pid %d collides with a real local descriptor"
                 % (name, proc.pid)
@@ -5367,11 +5533,12 @@ class Daemon(object):
             except OSError:
                 pass
             return
-        self._write_descriptor(desc_path, proc.pid, sid, name, machine, sess, template, proxy)
+        for path in desc_paths.values():
+            self._write_descriptor(path, proc.pid, sid, name, machine, sess, template, proxy)
         self.remotes[key] = {
             "holder": proc,
             "proxy": proxy,
-            "descriptor": desc_path,
+            "descriptors": desc_paths,  # sessions dir -> our mirror descriptor there
             "pid": proc.pid,
             "machine": machine,
             "no_direct": no_direct,
@@ -5387,17 +5554,52 @@ class Daemon(object):
             # holder died: drop and let the next roster recreate it
             self._remove_remote_locked(key)
             return
+        # follow a rename (session or machine) or a network change of the sender
+        name = self._mirror_name(sess, key[1], split_host_port(key[0], self.listen_port)[0])
+        if sess.get("machine"):
+            rec["machine"] = sess["machine"]
+        descs = rec.setdefault("descriptors", {})
+        current = profile_sessions_dirs()
+        for sess_dir in list(descs):
+            if sess_dir not in current:
+                # that profile is no longer served: drop our copy there (never a file
+                # without our marker)
+                path = descs.pop(sess_dir)
+                if path and not self._foreign_descriptor(path):
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
+        for sess_dir in current:
+            path = descs.get(sess_dir)
+            if path and os.path.exists(path):
+                self._update_descriptor(path, sess, name)
+                continue
+            # no copy yet (a profile that appeared after the mirror was made) or the
+            # copy's first write was lost: write it now, under the holder's pid
+            path = os.path.join(sess_dir, "%d.json" % rec["pid"])
+            template = self._template_descriptor_locked()
+            if template is None or self._foreign_descriptor(path):
+                continue
+            self._write_descriptor(path, rec["pid"], key[1], name, rec["machine"], sess,
+                                   template, rec["proxy"])
+            descs[sess_dir] = path
+
+    def _update_descriptor(self, path, sess, name):
+        """Refresh one mirror descriptor in place: status, name, sender machine, metadata
+        and timestamps. A descriptor that cannot be read, or that does not carry our
+        marker, is left alone (never overwritten)."""
         try:
-            with open(rec["descriptor"]) as fh:
+            with open(path) as fh:
                 d = json.load(fh)
         except Exception:
             return
+        if not isinstance(d, dict) or not d.get(MARK):
+            return
         now_ms = int(time.time() * 1000)
         d["status"] = sess.get("status", d.get("status", "idle"))
-        # follow a rename (session or machine) or a network change of the sender
-        d["name"] = self._mirror_name(sess, key[1], split_host_port(key[0], self.listen_port)[0])
+        d["name"] = name
         if sess.get("machine"):
-            rec["machine"] = sess["machine"]
             d[MARK_FROM] = sess["machine"]
         meta = clean_meta(sess.get("meta"))
         if meta:
@@ -5406,7 +5608,7 @@ class Daemon(object):
             d.pop(META_KEY, None)
         d["statusUpdatedAt"] = now_ms
         d["updatedAt"] = now_ms
-        self._atomic_write(rec["descriptor"], d)
+        self._atomic_write(path, d)
 
     def _write_descriptor(self, path, pid, sid, name, machine, sess, template, proxy):
         try:
@@ -5476,7 +5678,7 @@ class Daemon(object):
                     proc.kill()
                 except OSError:
                     pass
-        for p in (rec.get("descriptor"), rec.get("proxy")):
+        for p in list(rec.get("descriptors", {}).values()) + [rec.get("proxy")]:
             if p:
                 try:
                     os.unlink(p)
@@ -5504,68 +5706,23 @@ class Daemon(object):
 
     def _cleanup_stale_descriptors(self):
         """Remove leftover credoPeerLan descriptors from a previous daemon run whose
-        holder pid is no longer alive. Never touches anything without our marker."""
-        try:
-            names = os.listdir(self.sess_dir)
-        except OSError:
-            return
-        for name in names:
-            if not name.endswith(".json"):
-                continue
-            base = name[:-5]
-            if not base.isdigit():
-                continue
-            path = os.path.join(self.sess_dir, name)
-            if os.path.islink(path):
-                continue
-            try:
-                with open(path) as fh:
-                    d = json.load(fh)
-            except Exception:
-                continue
-            if not isinstance(d, dict) or not d.get(MARK):
-                continue
-            if not pid_alive(base):
-                try:
-                    os.unlink(path)
-                    log("pruned stale descriptor %s" % name)
-                except OSError:
-                    pass
+        holder pid is no longer alive, in every profile's sessions dir. Never touches
+        anything without our marker."""
+        for sess_dir in profile_sessions_dirs():
+            _prune_stale_descriptors_in(sess_dir)
 
     def _cleanup_stale_sockets(self):
         """Remove leftover proxy sockets in our sock dir that no live credoPeerLan
-        descriptor points at (e.g. orphaned by a SIGKILLed previous daemon). Only
-        touches our own 'pl-*.sock' naming, never anything we cannot attribute."""
+        descriptor points at, in any profile (e.g. orphaned by a SIGKILLed previous
+        daemon). Only touches our own 'pl-*.sock' naming, never anything we cannot
+        attribute."""
         try:
             names = os.listdir(self.sock_dir)
         except OSError:
             return
         referenced = set()
-        try:
-            snames = os.listdir(self.sess_dir)
-        except OSError:
-            snames = []
-        for sname in snames:
-            if not sname.endswith(".json"):
-                continue
-            base = sname[:-5]
-            if not base.isdigit():
-                continue
-            spath = os.path.join(self.sess_dir, sname)
-            if os.path.islink(spath):
-                continue
-            try:
-                with open(spath) as fh:
-                    d = json.load(fh)
-            except Exception:
-                continue
-            if not isinstance(d, dict) or not d.get(MARK):
-                continue
-            if not pid_alive(base):
-                continue
-            msp = d.get("messagingSocketPath")
-            if msp:
-                referenced.add(msp)
+        for sess_dir in profile_sessions_dirs():
+            referenced |= _live_proxy_sockets(sess_dir)
         for name in names:
             if not (name.startswith("pl-") and name.endswith(".sock")):
                 continue
@@ -5577,6 +5734,69 @@ class Daemon(object):
                 log("pruned stale proxy socket %s" % name)
             except OSError:
                 pass
+
+
+def _prune_stale_descriptors_in(sess_dir):
+    """Remove the credoPeerLan descriptors of one profile's sessions dir whose holder
+    pid is no longer alive (see Daemon._cleanup_stale_descriptors)."""
+    try:
+        names = os.listdir(sess_dir)
+    except OSError:
+        return
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        base = name[:-5]
+        if not base.isdigit():
+            continue
+        path = os.path.join(sess_dir, name)
+        if os.path.islink(path):
+            continue
+        try:
+            with open(path) as fh:
+                d = json.load(fh)
+        except Exception:
+            continue
+        if not isinstance(d, dict) or not d.get(MARK):
+            continue
+        if not pid_alive(base):
+            try:
+                os.unlink(path)
+                log("pruned stale descriptor %s" % name)
+            except OSError:
+                pass
+
+
+def _live_proxy_sockets(sess_dir):
+    """Proxy socket paths named by the live credoPeerLan descriptors of one profile's
+    sessions dir (see Daemon._cleanup_stale_sockets)."""
+    out = set()
+    try:
+        snames = os.listdir(sess_dir)
+    except OSError:
+        return out
+    for sname in snames:
+        if not sname.endswith(".json"):
+            continue
+        base = sname[:-5]
+        if not base.isdigit():
+            continue
+        spath = os.path.join(sess_dir, sname)
+        if os.path.islink(spath):
+            continue
+        try:
+            with open(spath) as fh:
+                d = json.load(fh)
+        except Exception:
+            continue
+        if not isinstance(d, dict) or not d.get(MARK):
+            continue
+        if not pid_alive(base):
+            continue
+        msp = d.get("messagingSocketPath")
+        if msp:
+            out.add(msp)
+    return out
 
 
 def _serve(cfg):
@@ -6019,32 +6239,53 @@ def run_pairs(_args):
 
 def run_pair_reset(args):
     """Forget a peer's pairing so its next link pairs again (trust on first use).
-    The only manual pairing step, for a reinstalled peer or lost keys."""
-    store = PairStore(keys_dir_for(load_config() or {}))
+    The only manual pairing step, for a reinstalled peer or lost keys. The pairing is
+    removed from every keystore (the machine store and each served profile's copy),
+    and the peer's trust grants from every served profile: no profile keeps the peer."""
+    stores = [PairStore(d) for d in pair_store_dirs(load_config() or {})]
     try:
-        gone, drop = store.reset(args.peer)
+        for store in stores:   # read every keystore first: an unreadable one changes nothing
+            store.records()
+            store.pending(strict=True)
     except PairStoreUnreadable as exc:
         print("pair-reset: %s; nothing changed" % exc)
         return 1
-    if not gone and not drop:
+    gone, drop = [], []
+    for store in stores:
+        try:
+            g, dr = store.reset(args.peer)
+        except PairStoreUnreadable as exc:
+            print("pair-reset: %s; the keystores after it are not changed" % exc)
+            return 1
+        gone += g
+        drop += dr
+    removed, seen = [], set()
+    for r in gone:
+        if r["id"] not in seen:   # the machine store and its copies hold the same record
+            seen.add(r["id"])
+            removed.append(r)
+    if not removed and not drop:
         print("no pairing or pending repair matches %r (see: credo-peer-lan.py pairs)" % args.peer)
         return 1
-    for r in gone:
+    for r in removed:
         print("removed pairing with %s (machine %r, slot %s)" % (r["id"], r["machine"], r["slot"]))
     for e in drop:
         print("cleared pending repair at %s (peer id %s)" % (e["slot"], e["new_id"][:8]))
-    # a trust grant binds to the pairing: a reset pairing never keeps it (whoever
-    # pairs at that id next must be trusted again by the user)
-    ids = set(r["id"] for r in gone)
-    try:
-        dropped = TrustStore(trust_path()).remove(lambda e: e["peer_id"] in ids)
-    except OSError as exc:
-        dropped = []
-        print("could not update the trust list %s: %s (its entries no longer match the "
-              "reset pairing anyway)" % (trust_path(), exc))
-    for e in dropped:
-        print("removed trust for session %r on machine %r (peer %s)"
-              % (trust_label(e), e["machine"], e["peer_id"][:8]))
+    # a trust grant binds to the pairing: a reset pairing never keeps it in any profile
+    # (whoever pairs at that id next must be trusted again by the user there)
+    for cfg_dir in profiles.profile_dirs():
+        path = trust_path_for(cfg_dir)
+        if not os.path.exists(path):
+            continue
+        try:
+            dropped = TrustStore(path).remove(lambda e: e["peer_id"] in seen)
+        except (OSError, TrustFileError) as exc:
+            print("could not update the trust list %s: %s (its entries no longer match the "
+                  "reset pairing anyway)" % (path, exc))
+            continue
+        for e in dropped:
+            print("removed trust for session %r on machine %r (peer %s) in profile %s"
+                  % (trust_label(e), e["machine"], e["peer_id"][:8], profiles.profile_name(cfg_dir)))
     print("the next link from that peer pairs again automatically")
     return 0
 

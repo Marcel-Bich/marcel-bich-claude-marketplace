@@ -20,6 +20,14 @@ cloud. It extends the same-machine peer model: a small daemon on each machine pu
 its local sessions to its configured peers over TCP and mirrors every remote session
 into the local `sessions/` registry so it shows up as an ordinary peer.
 
+One relay per machine serves ALL Claude Code profiles of that machine. A profile is a
+config dir (`CLAUDE_CONFIG_DIR`, e.g. `~/.claude` or `~/.claude-work`) with a
+`sessions/` dir in it; sibling profiles of the same user are found automatically. The
+roster lists the sessions of every profile, each with its own profile name, every
+remote session is mirrored into each profile's `sessions/`, and a message reaches a
+session in any profile. Trust is always checked in the profile of the target session
+(see Trusted peers).
+
 The relay is a no-op until a config file exists. It is OFF by default. Once the config
 exists it starts automatically on session start (see Auto-start below), so start/stop
 here is mostly for manual control.
@@ -234,7 +242,9 @@ a persistent random peer id and a static Diffie-Hellman key pair (RFC 3526 group
 Python stdlib only), stored next to the config in `peer-lan-keys/` (dir 0700, files
 0600, every write atomic: fresh temp file, then rename; symlinks are never followed).
 An existing identity is never replaced: while it cannot be read or is not a valid
-identity, the relay pairs with nobody and `pairs` shows the reason.
+identity, the relay pairs with nobody and `pairs` shows the reason. Each pairing record
+is also kept in the keystore of every profile of the machine (see Trusted peers, Per
+profile); trust is still granted per profile.
 The machine name stays a display label.
 
 - **Automatic.** On the first link between two relays that do not know each other yet,
@@ -389,6 +399,15 @@ peer forwards still need the user. The user of a RECEIVING machine can declare o
 on that machine, that tasks from one captioned session on one paired peer count like
 the user's own tasks.
 
+- **Per profile.** The pairing is copied to every profile of the machine: after a
+  pairing the relay writes the same pairing record into the keystore of each served
+  profile (`peer-lan-keys/` of that profile, or the `keys_dir` its `peer-lan.json`
+  names), with the same file modes, and keeps those copies in sync. Trust is never
+  copied. A grant is made per profile with `credo-peer-lan.py trust add <peer> <caption>
+  --yes` run in that profile (its `CLAUDE_CONFIG_DIR`), it is stored in that profile's
+  trust list (`<profile>/credo/peer-lan-trust.json`) and applies only to target sessions
+  of that profile. A pairing copy alone grants nothing, and a grant in one profile never
+  reaches a session in another.
 - **Granted only locally, only by the user.** The trust list lives in
   `peer-lan-trust.json` next to the config (file 0600) and is written only by
   `credo-peer-lan.py trust add|remove` on this machine. Nothing received over the wire
@@ -418,8 +437,9 @@ the user's own tasks.
   trust grants.
 - **Paired senders only.** An entry binds the sender's pairing peer id, its pinned key
   and the sender session's caption. Unpaired, token-only and same-machine senders never
-  get trust. A `pair-reset` of that peer removes its trust entries; a peer that pairs
-  again (also under the same id) must be trusted again.
+  get trust. A `pair-reset` of that peer removes its pairing and its trust entries from
+  every profile; a peer that pairs again (also under the same id) must be trusted again
+  in each profile.
 - **Caption only.** Trust keys on the session CAPTION: the name the user set with
   `/rename` (registry file `sessions/<pid>.json`, `name` with `nameSource` `user`),
   filtered to letters, digits, space, `.`, `_`, `-` and capped at 20 characters. No
@@ -446,14 +466,11 @@ the user's own tasks.
   example CJK) are not flagged.
 - **Unique captions.** When 2+ live sessions on the sending machine share a caption
   (case-insensitive, after the filter and the 20-character cap; every live real session
-  of the sending relay's profile counts, also one without a messaging socket) the
-  sending relay sends no caption but `from_caption_dup`; trust is suspended for both
-  (fail closed), the receiving relay logs it and the message gets a one-line notice
-  (`from-caption-note` in the opening tag; the hook says to rename one session). Trust
-  returns once the caption is unique again. Duplicate detection currently covers only
-  the sender relay's own profile (its `sessions/` directory): two Claude profiles on the
-  same machine can hold the same caption without noticing each other (a relay that
-  watches several profiles is planned).
+  of the sending machine, in any of its profiles, counts, also one without a messaging
+  socket) the sending relay sends no caption but `from_caption_dup`; trust is suspended
+  for both (fail closed), the receiving relay logs it and the message gets a one-line
+  notice (`from-caption-note` in the opening tag; the hook says to rename one session).
+  Trust returns once the caption is unique again.
 - **Binding scope.** Trust follows the caption on that paired machine: a session
   renamed away from it loses trust, a session on the same machine that takes the
   caption gets it. Trust therefore means "this machine, this caption", not one process.
@@ -627,8 +644,9 @@ allowlist-scoped firewall rule (the old rule allowed the whole LocalSubnet).
   `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" pairs`
 
 - **pair-reset `<peer>`** - forget the pairing with `<peer>` (slot `host:port`, host,
-  peer id or an 8+ character prefix, or machine label) and its pending repair, so the
-  next link pairs again (trust on first use). Only for a reinstalled peer or lost keys,
+  peer id or an 8+ character prefix, or machine label) in every profile's keystore, and
+  its pending repair, and remove its trust entries from every profile, so the next link
+  pairs again (trust on first use). Only for a reinstalled peer or lost keys,
   and only after the user confirmed it (Ask tool; never in autonomous mode). A running
   daemon applies it at once; no restart. Exits 1 when nothing matches.
 
