@@ -115,6 +115,12 @@ if [ "$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)" = "Bash" ] && 
         output_deny "$BLOCKED_REASON"
     fi
     [ "$(printf '%s' "$FINDINGS" | jq '.deletes | length')" -gt 0 ] || exit 0
+    # Deletes that stay inside a temp root (/tmp, /var/tmp, $TMPDIR, Windows temp folders) are always
+    # allowed, whatever the delete setting; anything unsure keeps the setting below (delete-guard.py).
+    EVENT_CWD="$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)"
+    if [ "$(printf '%s' "$FINDINGS" | python3 -I "$SCRIPT_DIR/delete-guard.py" --temp-only "$EVENT_CWD" 2>/dev/null)" = "temp" ]; then
+        exit 0
+    fi
     mapfile -t DIRS < <(printf '%s' "$FINDINGS" | jq -r '[.deletes[].dirs[]] | unique | .[]')
     [ "${#DIRS[@]}" -gt 0 ] || DIRS=("")
     dogma_strictest_mode "§0lgy|delete files" deny "${DIRS[@]}"

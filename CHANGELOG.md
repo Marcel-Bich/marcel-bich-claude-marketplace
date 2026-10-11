@@ -2,62 +2,55 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-10
 
-## signal
-
-### v1
-
-#### v1.5
-
-##### v1.5.4
-
-###### Added
-
-- `CLAUDE_MB_NOTIFY_TOAST` (default `true`): `false` skips every toast and desktop notification attempt and the preflight; sounds are unaffected
-- Once-a-day toast preflight at session start (only with the switch on): on WSL a read-only registry check whether Windows toasts are enabled (`PushNotifications ToastEnabled`, `Notifications\Settings` global switch, the per-app key of the toast sender; absent value = enabled; Focus Assist is not checked), on native Linux only whether `gdbus` or `notify-send` exists. On WSL the registry read runs detached in the background and the NEXT session start reports it (SessionStart stays fast); the daily stamp is only set after a usable result, a failed read is retried at most once per hour. When toasts are off, `powershell.exe` is missing or no tool exists, one short context line asks the agent to tell the user once and to open the settings only after the user said yes; nothing is ever changed automatically. `toast-preflight.sh decline` stops the hint for good, `reset` brings it back, `open-settings` opens the Windows notification settings
-- State dir `${CLAUDE_MB_SIGNAL_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-mb-signal}` (mode 0700, owner-checked, never a symlink) for the cached path, the log and the once-a-day markers
-
-###### Fixed
-
-- Toasts and sounds no longer fail silently on WSL when `powershell.exe` is not on `PATH`: it is looked up on `PATH`, then in the Windows drive mounts of `/proc/mounts` (9p/drvfs mounts with a drive letter, below `Windows/System32/WindowsPowerShell/v1.0/`), never from a hardcoded drive. The found path is cached in the state dir and re-checked before every use
-- Exit codes are evaluated: a failed or hung `powershell.exe` run (killed after 20 seconds, `CLAUDE_MB_SIGNAL_PS_TIMEOUT`) is logged and reported once a day, and when no notification channel worked (Linux: gdbus and notify-send both missing or failing; WSL: no `powershell.exe`) one rate-limited warning goes to stderr and the state log. Hooks stay non-blocking
-- Session start only clears the toast history when `powershell.exe` can be resolved
-- PowerShell scripts are passed with `-EncodedCommand` (UTF-16LE base64) instead of a multi-line argv string; background runs get stdin from `/dev/null`; the toast tag (session id) is restricted to `[A-Za-z0-9-]` and title and body are flattened to one line each
-- On Linux a gdbus `Notify` call with exit code 0 counts as delivered even when the reply id cannot be parsed (no duplicate via `notify-send`)
-- State dir hardening: below `$HOME` every level must be a real directory owned by the user, not world-writable (unless sticky) and group-writable only for one of the user's own groups (default Ubuntu umask 002 makes `~/.local` group-writable), no symlink below the anchor; `signal.log`, the cached `powershell.exe` path, the once-a-day markers and the preflight files are never written through a symlink. Only GNU or BSD `stat`, `cd -P` and `id` are used (no `realpath -e`), so macOS works too
-- Without a usable state dir (HOME unset, symlinked parent) warnings are limited to once a day by a private per-user marker in `${TMPDIR:-/tmp}` instead of firing on every call
-- Toast title and body: control characters other than tab and newline are stripped (invalid in the toast XML), and the length caps (title 200, body 1000 characters) apply before the XML escaping, so the encoded command stays far below the Windows command-line limit even for 2000 `&`
-- The failed-run marker is kept per kind (toast, sound, remove-group): a working sound run no longer hides a failing toast; sound failures are reported once a day like toast failures. `toast-preflight.sh reset` clears them too
-- Atomic state-file writes use `mktemp` next to the target and refuse a symlink or directory target; a missing `/proc/mounts` no longer prints a shell error; the PowerShell runs set `$ProgressPreference = 'SilentlyContinue'`
-- Preflight: a missing `powershell.exe` no longer sets the daily stamp; it uses the failure marker (retry at most once per hour) and the hint line is shown once a day
-- `CLAUDE_MB_NOTIFY_TOAST`: surrounding whitespace is ignored and `disabled` counts as off
-
-##### v1.5.3
-
-###### Changed
-
-- Every toast title (Done, Tool waiting, permission prompt, waiting for input) uses one name order:
-  the session name set by the user (a derived name never counts), else the kitty tab title, else the tmux session, else the short session id
-- Every name in the title (user name, kitty label, tmux label) has control characters removed and is cut to 20 characters
-- The user name comes from the session file (`nameSource: user`, a file without a matching session id is skipped), and only that; checked on a live setup, a manual `/rename` sets `nameSource: user` in the session file. The transcript `custom-title` is not used
-- The `session_name` hook field and the Limit statusline caption are no longer used as title sources (the caption could be a name Claude Code derived on its own)
-- The Done toast title uses that name instead of the fixed "Done" text and keeps its sparkle in front as the only event marker; the body is unchanged
-
-###### Fixed
-
-- The tmux part of the body and of the title fallback is found in daemon-hosted sessions and when `TMUX_PANE` is missing, by taking the pane of the client terminal
-- The Done toast resolves the kitty tab title like the other toasts
-
-##### v1.5.2
-
-###### Changed
-
-- Code comment uses a neutral example home path
-
 ## dogma
 
 ### v1
 
 #### v1.45
+
+##### v1.45.3
+
+###### Changed
+
+- Reading inside the private Codex config home is allowed anywhere, no longer only in a fixed list of folders (`cat ~/.codex/myplugin/state.json`, `grep foo ~/.codex/history.jsonl`, `ls ~/.codex/logs`, `cat ~/.codex/archived_sessions/x.jsonl`). Credential files stay blocked: `auth.json` (in the Codex and the Claude config homes `~/.claude`, `~/.claude-*`, `$CLAUDE_CONFIG_DIR`), `.credentials*`, `credentials.json`, `.pem` and `.key` files, `.env` (not `.env.example`); the home itself and a glob in its first path component stay refused. Writing there is blocked as before
+- `git worktree remove` without `--force` and `git worktree prune` are no deletes under the delete setting and pass (also inside `bash -c`); `git worktree remove --force`, `-f`, `-ff` and any prefix of `--force` (`--f`, `--fo`) stay blocked
+- The redirect target is read the way the shell reads it: quotes inside the word (`"$HOME"/.bashrc`, `~/".bashrc"`), `$'...'`, a relative target after `cd ~` and `tee -a` are checked too
+- The truncating redirect `>` is blocked only onto a critical path (the home and its parent, direct children of a home, everything inside a home's dot folders, `/home/X/Y`, `/` and first-level directories, the system trees except `/var/tmp`, devices, and `/mnt` and `/media` with the drive and the first level below it plus the dot entries of `/mnt/<x>/Users/<name>` and the Windows system and persistence paths below a drive (`Windows`, `ProgramData`, `Program Files*`, `Users/<name>/AppData` with the Startup folder, `Start Menu`, `NTUSER.DAT*`, `Documents/PowerShell`, `Documents/WindowsPowerShell`; also for `>>` and `tee -a`); files deeper inside a project on a Windows drive (`/mnt/c/work/project/.bench/x.log`) are ordinary files. This relaxation applies to redirects only: `rm`, `mv` and `truncate` below a deep `/mnt` path are not relaxed and follow the normal delete rules (protected mounts and the delete permission `§0lgy`)
+- The standard streams `/dev/stdout`, `/dev/stderr`, `/dev/stdin` and `/dev/fd/N` are no files and pass as redirect targets (`> /dev/stdout`, `>> /dev/stderr`); a heredoc body written to them is still checked as shell text
+- A file written in the same command and then read by a shell or interpreter through `<` (`sh < x.sh`, `sh -s < x.sh`, `. /dev/stdin < x.sh`) is refused like running it by name; a syntax check does not run the script, so `bash -n x.sh` and `sh -n x.sh` pass
+- Quoted heredoc bodies written by `cat` or `tee` (not piped on) or fed to an interpreter are data for the text rules of the delete guard only while the output goes to a normal file or `/dev/null`; a process substitution (`> >(sh)`), another `/dev/*` or `/proc/*` target, a file descriptor copy other than `1` and `2`, or `mkfifo` in the command keeps the body checked as shell text
+- Python deletes are detected under every spelling of the module and through indirection, in the text rule and in the inline code analysis of heredoc bodies alike (one shared detection): `import os as o`, `from os import remove` and `from os import *`, `posix` and `nt`, `(os).remove`, `getattr(o, 'remove')`, `vars(os)`, `os.__dict__`, `importlib.import_module('posix')`, `sys.modules['os']`, and strings handed to `exec`, `eval` or `compile`. `os.rename`, `os.replace` and `shutil.move` are refused only when a path they name is critical (as for redirects) or the working directory or a parent, or the home is looked up in a way that hides the path
+- Deletes whose targets all lie strictly inside a temporary root (`/tmp`, `/var/tmp`, `$TMPDIR` and the Windows temp folders `/mnt/<drive>/Users/<name>/AppData/Local/Temp`, `/mnt/<drive>/Windows/Temp`) are allowed whatever the delete setting (`§0lgy`). The root itself, the home below a temp root and any target that cannot be resolved for sure follow the normal rules
+
+###### Fixed
+
+- Delete guard: quoted heredoc bodies written by `cat` or `tee` (not piped on) or fed to an interpreter are data; the line-by-line delete check and the text rules no longer read them as commands, so a script written to a file (`rm -rf "${VAR:?}"`, `find it's here`) no longer blocks
+- The shell scanner no longer removes a backslash-newline before it looks for the end of a heredoc: bash keeps it literal inside a quoted body, so the line that ends the body and the command after it were misplaced and a command after the first `EOF` could be read as data
+- A heredoc inside `$(...)` inside double quotes, the standard commit pattern `git commit -m "$(cat <<'EOF' ... EOF)"` (also `git tag -a` and `--amend`), is read as a heredoc: an apostrophe in its body (`don't`) no longer unbalances the quoting and blocks the command; `<<` inside `$((...))` is still a shift
+- Delete guard: the python text rule reacts to deleting calls instead of the bare words `remove`, `unlink` or `shutil`; the interpreter symlink rule needs a symlink call, not the word; `os.replace(p + '.tmp', p)` (the atomic write) below a project passes
+- Inline code: string literals with whitespace are text, so a message or file content mentioning `unlink` or `run` no longer counts as a deletion or a command; literals are only walked as shell commands when the code can run commands
+- `git grep`: the search pattern is text like the pattern of `grep` (`git grep -n '.credentials' plugins/`); paths after it are still checked
+- A shell option that starts with `+` (`bash +x x.sh`) is no longer taken for the script name by the check for a script written and run in the same command
+- Delete guard: `truncate` is a truncation only in command position (start of a command, after `sudo`, `env`, `xargs`, `find -exec`); `grep -n truncate a.py` and `cd /home/u/proj && grep -n truncate a.py` pass
+- Delete guard: a `>` inside a quoted string, a `$(...)` inside double quotes or a comment is text, no redirect (`git commit -m "no longer blocks > ~/.bashrc"`, `grep -n "> ~/.bashrc" notes.md`, a commit message heredoc with `> /etc/passwd`); a real unquoted redirect stays blocked, and the target word keeps blanks inside quotes (`> "/mnt/c/Program Files/x"`). The text rules for python, perl, node and ruby react to the interpreter as a command, not to its name inside a quoted message (`git commit -m "fix: python os.remove(~/x)"`). A command whose quotes cannot be read is judged as before
+- New parity table `guard-cases/false_positives.py`: false positives that must pass, the protection that must stay, and Edit/Write inputs that no Edit/Write hook may treat as a deletion
+
+###### Security
+
+- New: an append `>>` and `tee -a` are blocked onto startup and persistence files. Before, `>>` was never checked at all. Blocked are the shell and session startup files of a home (`.bashrc`, `.bash_profile`, `.bash_login`, `.bash_logout`, `.bash_aliases`, `.profile`, `.zshrc`, `.zprofile`, `.zshenv`, `.zlogin`, `.zlogout`, `.inputrc`, `.xprofile`, `.xinitrc`, `.xsession`, `.pam_environment`), `~/.ssh`, `~/.gnupg`, `~/.config/fish`, `~/.config/autostart`, `~/.config/systemd`, `~/.config/environment.d` and `~/.local/bin` (the same below `/home/X` and a Windows home `/mnt/c/Users/<name>`), the system trees (the cron and at spools are below `/var`), devices and the top levels of `/mnt` and `/media`. Every other append passes: plain files of the home (`~/notes.md`), a log below a project, the other dot folders (`~/.cache/x.log`, `~/.local/state/...`, `~/.claude/...`, `~/.npm/_logs/...`)
+- A redirect target with a variable that is not known (`> ~/$X`, `> /etc/$X`, `> $HOME/.$X`, `>> $HOME/.bash$X`) is judged by its literal part before the first `$`: a name that starts there could be any name, a dot name too. A target that starts with the variable (`> $X`) is unknown and passes, as before
+- `$'...'` (ANSI-C quoting) and `$"..."` redirect targets are read the way the shell reads them (`> $'/etc/hosts'`, `>> $'\x2fetc/hosts'`); `tee -a` already did
+- A heredoc body written by `cat` or `tee` or fed to an interpreter is data only when these commands are the real ones: a function (`cat() { sh; }`, `function cat`), an alias, `hash`, `enable`, `builtin`, a changed `PATH` or a sourced file in the same command keep the body checked as shell text (`/bin/cat` stays data)
+- Inline interpreter code in a heredoc is checked for symlink calls again (`os.symlink`, `Path.symlink_to`, `from os import symlink`, perl `symlink`, `File.symlink`, `fs.symlinkSync`, under any import name): a path the code names that a link must not point at (the rule of `ln -s`: the home and its parent, a direct child of the home, `/`, a first-level directory, `/home/X/Y`) or a home lookup that hides the path is refused
+- A mount declared in `CLAUDE_MB_DOGMA_PROTECTED_MOUNTS` is protected against `>`, `>>` and `tee` at any depth (`> /mnt/nas/share/a/b/c/x.txt`); a Windows drive such as `/mnt/c` is excepted, it follows the drive rules, so a project below it stays writable
+- A heredoc piped into a subshell (`cat <<'EOF' | (sh)`, `| ( bash -s )`, `| (python3)`, `tee /dev/null <<'EOF' | (sh)`) is piped on like `| { sh; }`: its body is no data and is checked
+- Inline and heredoc code that truncates a file by path (`os.truncate`, `fs.truncateSync`) is refused when a path it names is critical for `>` or the home is looked up so that the path is hidden; `open(path, 'w'|'a')`, `Path(path).write_text()` and `fs.writeFileSync(path, ...)` onto a startup or persistence file (the rule of `>>`) are refused as well, like the `python3 -c` form
+- A python line continuation in inline or heredoc code (`os.\<newline>remove(...)`) is joined before the calls are read, so it no longer hides a delete
+- A `#` inside `${...}` is part of the parameter expansion, no comment: `echo ${x// #/y} > /etc/hosts` and `echo ${x%% #*} > ~/.bashrc` are checked as redirects
+- Inside `$(...)` a `)` that ends a case pattern no longer closes the substitution, in double quotes and unquoted alike, so the commands after it are checked (`echo "$(case x in a) rm -rf /home;; esac)"`); `truncate` onto a critical path inside a substitution is refused like `>`
+- 8.3 short names below a Windows drive (`/mnt/c/PROGRA~1/...`, `Users/<name>/Documents/WINDOW~1/profile.ps1`) count as the critical system and profile folders for `>` and `>>`; the PowerShell profile rule covers the localized `Dokumente` too
+- A shell or interpreter that reads stdin anywhere inside a group or compound command that is the target of a pipe is refused (`curl ... | (cd /tmp; sh)`, `| { true; sh; }`, `| while read l; do sh; done`), not only as the first command
+- Inline code `open(file='...', mode='a'|'w')` (either argument order) onto a startup or persistence file is refused like the positional form
 
 ##### v1.45.2
 
@@ -204,6 +197,57 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 ##### Added
 
 - `permissions-summary.sh` listing only the restricting DOGMA-PERMISSIONS entries
+
+## signal
+
+### v1
+
+#### v1.5
+
+##### v1.5.4
+
+###### Added
+
+- `CLAUDE_MB_NOTIFY_TOAST` (default `true`): `false` skips every toast and desktop notification attempt and the preflight; sounds are unaffected
+- Once-a-day toast preflight at session start (only with the switch on): on WSL a read-only registry check whether Windows toasts are enabled (`PushNotifications ToastEnabled`, `Notifications\Settings` global switch, the per-app key of the toast sender; absent value = enabled; Focus Assist is not checked), on native Linux only whether `gdbus` or `notify-send` exists. On WSL the registry read runs detached in the background and the NEXT session start reports it (SessionStart stays fast); the daily stamp is only set after a usable result, a failed read is retried at most once per hour. When toasts are off, `powershell.exe` is missing or no tool exists, one short context line asks the agent to tell the user once and to open the settings only after the user said yes; nothing is ever changed automatically. `toast-preflight.sh decline` stops the hint for good, `reset` brings it back, `open-settings` opens the Windows notification settings
+- State dir `${CLAUDE_MB_SIGNAL_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-mb-signal}` (mode 0700, owner-checked, never a symlink) for the cached path, the log and the once-a-day markers
+
+###### Fixed
+
+- Toasts and sounds no longer fail silently on WSL when `powershell.exe` is not on `PATH`: it is looked up on `PATH`, then in the Windows drive mounts of `/proc/mounts` (9p/drvfs mounts with a drive letter, below `Windows/System32/WindowsPowerShell/v1.0/`), never from a hardcoded drive. The found path is cached in the state dir and re-checked before every use
+- Exit codes are evaluated: a failed or hung `powershell.exe` run (killed after 20 seconds, `CLAUDE_MB_SIGNAL_PS_TIMEOUT`) is logged and reported once a day, and when no notification channel worked (Linux: gdbus and notify-send both missing or failing; WSL: no `powershell.exe`) one rate-limited warning goes to stderr and the state log. Hooks stay non-blocking
+- Session start only clears the toast history when `powershell.exe` can be resolved
+- PowerShell scripts are passed with `-EncodedCommand` (UTF-16LE base64) instead of a multi-line argv string; background runs get stdin from `/dev/null`; the toast tag (session id) is restricted to `[A-Za-z0-9-]` and title and body are flattened to one line each
+- On Linux a gdbus `Notify` call with exit code 0 counts as delivered even when the reply id cannot be parsed (no duplicate via `notify-send`)
+- State dir hardening: below `$HOME` every level must be a real directory owned by the user, not world-writable (unless sticky) and group-writable only for one of the user's own groups (default Ubuntu umask 002 makes `~/.local` group-writable), no symlink below the anchor; `signal.log`, the cached `powershell.exe` path, the once-a-day markers and the preflight files are never written through a symlink. Only GNU or BSD `stat`, `cd -P` and `id` are used (no `realpath -e`), so macOS works too
+- Without a usable state dir (HOME unset, symlinked parent) warnings are limited to once a day by a private per-user marker in `${TMPDIR:-/tmp}` instead of firing on every call
+- Toast title and body: control characters other than tab and newline are stripped (invalid in the toast XML), and the length caps (title 200, body 1000 characters) apply before the XML escaping, so the encoded command stays far below the Windows command-line limit even for 2000 `&`
+- The failed-run marker is kept per kind (toast, sound, remove-group): a working sound run no longer hides a failing toast; sound failures are reported once a day like toast failures. `toast-preflight.sh reset` clears them too
+- Atomic state-file writes use `mktemp` next to the target and refuse a symlink or directory target; a missing `/proc/mounts` no longer prints a shell error; the PowerShell runs set `$ProgressPreference = 'SilentlyContinue'`
+- Preflight: a missing `powershell.exe` no longer sets the daily stamp; it uses the failure marker (retry at most once per hour) and the hint line is shown once a day
+- `CLAUDE_MB_NOTIFY_TOAST`: surrounding whitespace is ignored and `disabled` counts as off
+
+##### v1.5.3
+
+###### Changed
+
+- Every toast title (Done, Tool waiting, permission prompt, waiting for input) uses one name order:
+  the session name set by the user (a derived name never counts), else the kitty tab title, else the tmux session, else the short session id
+- Every name in the title (user name, kitty label, tmux label) has control characters removed and is cut to 20 characters
+- The user name comes from the session file (`nameSource: user`, a file without a matching session id is skipped), and only that; checked on a live setup, a manual `/rename` sets `nameSource: user` in the session file. The transcript `custom-title` is not used
+- The `session_name` hook field and the Limit statusline caption are no longer used as title sources (the caption could be a name Claude Code derived on its own)
+- The Done toast title uses that name instead of the fixed "Done" text and keeps its sparkle in front as the only event marker; the body is unchanged
+
+###### Fixed
+
+- The tmux part of the body and of the title fallback is found in daemon-hosted sessions and when `TMUX_PANE` is missing, by taking the pane of the client terminal
+- The Done toast resolves the kitty tab title like the other toasts
+
+##### v1.5.2
+
+###### Changed
+
+- Code comment uses a neutral example home path
 
 ## credo
 

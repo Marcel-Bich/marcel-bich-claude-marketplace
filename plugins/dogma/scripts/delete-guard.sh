@@ -1,9 +1,10 @@
 #!/bin/bash
 # Dogma: Delete Guard Hook (PreToolUse:Bash)
 # Blocks commands that could destroy protected data: /, first-level directories,
-# /home depth 0-2, the home and its direct children, and every absolute path outside
-# /tmp/X+ and /var/tmp/X+. Targets are resolved before the check (~, $HOME, relative
-# to the working directory and a preceding cd, symlinks via realpath, glob base), so
+# /home depth 0-2, the home and its direct children, and every absolute path outside the
+# temp roots (/tmp, /var/tmp, $TMPDIR and the Windows temp folders below a drive). Targets
+# are resolved before the check (~, $HOME, relative to the working directory and a
+# preceding cd, symlinks via realpath, glob base), so
 # a symlink in /tmp pointing at the home cannot smuggle a wipe through. Targets that
 # cannot be resolved for sure are blocked. Symlinks onto protected paths are blocked
 # at creation as an extra hurdle.

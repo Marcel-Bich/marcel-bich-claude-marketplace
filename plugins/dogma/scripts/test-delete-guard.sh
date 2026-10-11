@@ -24,7 +24,7 @@ FAIL=0
 run() {
     local out
     out="$(jq -n --arg c "$2" --arg d "$1" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
-        HOME="$FH" CLAUDE_MB_DOGMA_ENABLED=true bash "$HOOK" 2>/dev/null)"
+        HOME="$FH" CLAUDE_MB_DOGMA_ENABLED=true CLAUDE_MB_DOGMA_PROTECTED_MOUNTS="${PM:-}" bash "$HOOK" 2>/dev/null)"
     case "$out" in *'"deny"'*) echo deny ;; *) echo allow ;; esac
 }
 expect() { # want cwd command
@@ -49,8 +49,15 @@ expect deny  "$T" "rm -rf ."
 expect allow "$T" "rm -f $T/plain/a.txt"
 expect allow "$T/plain" "rm -rf dir"
 
-# --- symlink under /tmp pointing at the home (the reported hole)
+# --- symlink under /tmp pointing at the home
 expect deny  "$T" "rm -rf $T/lnk/"
+
+# --- temporary roots: deletes inside pass, the root itself and the home below it do not
+expect allow "$T" "rm -rf /mnt/c/Users/me/AppData/Local/Temp/abc"
+expect deny  "$T" "rm -rf /mnt/c/Users/me/AppData/Local/Temp"
+expect allow "$T" "rm -rf /var/tmp/dogma-fixture.log"
+expect deny  "$T" "rm -rf $FH/proj"
+expect deny  "$T" "rm -rf /tmp"
 expect deny  "$T" "rm -rf $T/lnk/*"
 expect deny  "$T" "rm -rf $T/lnk/proj"
 expect allow "$T" "rm -rf $T/lnk"          # rm removes only the link itself
@@ -139,7 +146,7 @@ expect allow "$T" "ls $T/plain >/dev/null 2>&1"
 expect deny  "$T" "echo x > /etc/passwd"
 expect deny  "$FH" "find . -delete"
 
-# --- parser gaps found in review (subshells, groups, pushd, combined -c, git clean, ${...})
+# --- parser cases (subshells, groups, pushd, combined -c, git clean, ${...})
 expect deny  "$T" "(cd ~; rm -rf proj)"
 expect deny  "$T" "{ rm -rf ~/proj; }"
 expect deny  "$T" "pushd ~ && rm -rf proj"
@@ -153,6 +160,241 @@ expect deny  "$T" "rm -rf \${HOME%/}"
 expect deny  "$T" "dd if=/dev/zero of=/dev/sda"
 expect deny  "$T" "chmod -R 777 /etc"
 expect deny  "$T" "rsync -a --delete $T/plain/ ~/"
+
+# --- python under an import alias is the same call; the bare words stay no deletion
+expect deny  "$T" "python3 -c \"import os as o; o.remove('/home/u/.bashrc')\""
+expect deny  "$T" "python3 -c \"import os as o; o.removedirs('/home/u/a/b')\""
+expect deny  "$T" "python3 -c \"import os as o; o.remove(o.path.expanduser('~/.bashrc'))\""
+expect deny  "$T" "python3 -c \"import shutil as s; s.move('/home/u/git', '/tmp/x')\""
+expect deny  "$T" "python3 -c \"import shutil as s; s.rmtree('/home/u/git')\""
+expect deny  "$T" "python3 -c \"import os; o = os; o.unlink('/home/u/.bashrc')\""
+expect deny  "$T" "python3 -c \"from os import remove as r; r('/home/u/.bashrc')\""
+expect allow "$T" "python3 -c \"import os as o; print(o.path.expanduser('~/x'))\""
+expect allow "$T" "python3 -c \"import shutil as s; s.copy('/home/u/a', '/home/u/b')\""
+
+# --- redirects: ">" and ">>" onto startup and persistence files, plain appends pass
+expect deny  "$T" "echo x > ~/.bashrc"
+expect deny  "$T" "echo x >> ~/.bashrc"
+expect deny  "$T" "echo x >> ~/.profile"
+expect deny  "$T" "echo x >> $FH/.zshrc"
+expect deny  "$T" "echo x >> ~/.config/fish/config.fish"
+expect deny  "$T" "echo x >> /etc/hosts"
+expect allow "$T" "echo x >> ~/notes.md"
+expect allow "$T" "echo x >> ~/proj/notes.md"
+expect allow "$T" "echo x >> $T/plain/log.txt"
+# quotes inside the target, a relative target after cd, tee -a
+expect deny  "$T" "echo x >> \"\$HOME\"/.bashrc"
+expect deny  "$T" "echo x >> ~/\".bashrc\""
+expect deny  "$T" "echo x >> ~/'.bashrc'"
+expect deny  "$T" "echo x > \"\$HOME\"/.bashrc"
+expect deny  "$T" "cd ~ && echo x >> .bashrc"
+expect deny  "$T" "cd ~; echo x >> ./.bashrc"
+expect deny  "$T" "cd ~ && echo x >> .config/fish/config.fish"
+expect deny  "$T" "echo x | tee -a ~/.bashrc"
+expect deny  "$T" "echo x | tee -a $FH/.profile"
+expect allow "$T" "cd ~ && echo x >> notes.md"
+expect allow "$T" "echo x | tee -a ~/proj/notes.md"
+expect allow "$T" "echo x | tee -a $T/plain/log.txt"
+# WSL drives: only /mnt, /mnt/<x> and the first level below stay critical
+expect allow "$T" "echo x > /mnt/c/somewhere/project/.bench/results/x.log"
+expect allow "$T" "echo x >> /mnt/c/somewhere/project/.bench/results/x.log"
+expect deny  "$T" "echo x > /mnt/c"
+expect deny  "$T" "echo x > /mnt/c/somewhere"
+expect deny  "$T" "echo x >> /mnt/c/Users/me/.bashrc"
+# WSL drives: persistence and system paths below a drive stay critical (truncate and append)
+expect deny  "$T" "echo x > /mnt/c/Users/me/AppData/Roaming/Microsoft/Windows/Start\\ Menu/Programs/Startup/a.bat"
+expect deny  "$T" "echo x >> /mnt/c/Users/me/AppData/Local/a/b/c.txt"
+expect deny  "$T" "echo x > /mnt/c/Windows/System32/drivers/etc/hosts"
+expect deny  "$T" "echo x >> /mnt/c/Windows/System32/drivers/etc/hosts"
+expect deny  "$T" "echo x > /mnt/c/ProgramData/a/b/c.txt"
+expect deny  "$T" "echo x > \"/mnt/c/Program Files/App/sub/x.cfg\""
+expect deny  "$T" "echo x >> \"/mnt/c/Program Files (x86)/App/sub/x.cfg\""
+expect deny  "$T" "echo x > /mnt/c/Users/me/Documents/PowerShell/profile.ps1"
+expect deny  "$T" "echo x >> /mnt/c/Users/me/Documents/WindowsPowerShell/profile.ps1"
+expect deny  "$T" "echo x > /mnt/c/Users/me/NTUSER.DAT"
+expect allow "$T" "echo x > /mnt/c/Users/me/workspace/proj/out.txt"
+expect allow "$T" "echo x >> /mnt/c/Users/me/Documents/notes/a/b.txt"
+# a mount the user declares is protected for redirects at any depth; a Windows drive keeps the rule above
+PM="/mnt/nas/share:/mnt/c"
+expect deny  "$T" "echo x > /mnt/nas/share/a/b/c/x.txt"
+expect deny  "$T" "echo x >> /mnt/nas/share/a/b/c/x.txt"
+expect deny  "$T" "echo x | tee /mnt/nas/share/a/b/c/x.txt"
+expect allow "$T" "echo x > /mnt/nas/share2/a/b/c/x.txt"
+expect allow "$T" "echo x > /mnt/c/Users/me/workspace/proj/out.txt"
+PM=""
+expect allow "$T" "echo x > /mnt/nas/share/a/b/c/x.txt"
+
+# --- truncate only in command position; redirects inside quotes are text
+expect allow "$T" "grep -n \"truncate\" /home/u/proj/a.py"
+expect allow "$T" "cd /home/u/proj && grep -n truncate a.py"
+expect deny  "$T" "truncate -s 0 ~/.bashrc"
+expect deny  "$T" "sudo truncate -s 0 /home/u/x"
+expect deny  "$T" "find /home/u/proj -exec truncate -s0 {} \\;"
+expect deny  "$T" "grep -rn x /home/u/proj | xargs truncate -s 0"
+expect allow "$T" "git commit -m \"fix: no longer blocks > ~/.bashrc\""
+expect allow "$T" "echo \"use > ~/.bashrc carefully\""
+expect allow "$T" "grep -n \"> ~/.bashrc\" notes.md"
+expect allow "$T" "gh pr create --body \"\$(cat <<'EOF'
+> /etc/passwd
+EOF
+)\""
+expect allow "$T" "git commit -m \"\$(cat <<'EOF'
+fix: python os.remove(~/x) is checked
+EOF
+)\""
+expect deny  "$T" "echo x > ~/.bashrc"
+expect deny  "$T" "echo \"a\" \"b\" > ~/.bashrc"
+expect deny  "$T" "echo \"done\"; echo x > ~/.bashrc"
+expect deny  "$T" "cat <<'EOF' > $T/plain/f
+don't
+EOF
+echo 'a' 'b' > ~/.bashrc"
+
+# --- a heredoc piped into a subshell reaches the shell inside it
+expect deny  "$T" "cat <<'EOF' | (sh)
+rm -rf ~
+EOF"
+expect deny  "$T" "cat <<'EOF' | ( bash -s )
+rm -rf ~
+EOF"
+expect deny  "$T" "cat <<'EOF' | (sh) > /dev/null
+rm -rf ~
+EOF"
+expect allow "$T" "cat <<'EOF' | (wc -l)
+line
+EOF"
+
+# --- heredoc bodies: data only when the output goes to a normal file or /dev/null
+expect allow "$T" "cat > $T/plain/c.sh <<'EOF'
+rm -rf \"\${VAR:?}\"
+EOF"
+expect allow "$T" "cat > $T/plain/c.sh <<'EOF'
+rm -rf \\
+  \"\${VAR:?}\"
+EOF"
+expect deny  "$T" "cat <<'EOF' > $T/plain/f
+a\\
+EOF
+rm -rf ~
+EOF"
+expect deny  "$T" "cat <<'EOF' > >(sh)
+rm -rf ~
+EOF"
+expect deny  "$T" "cat <<'EOF' > /dev/stdout
+rm -rf ~
+EOF"
+expect deny  "$T" "cat > $T/plain/x.sh <<'EOF'
+rm -rf ~
+EOF
+sh < $T/plain/x.sh"
+expect deny  "$T" "printf 'rm -rf ~' > $T/plain/x.sh && sh -s < $T/plain/x.sh"
+
+# --- python deletes through indirection stay blocked, plain reads and writes pass
+expect deny  "$T" "python3 -c \"from os import *; remove('/home/u/.bashrc')\""
+expect deny  "$T" "python3 -c \"import posix; posix.remove('/home/u/.bashrc')\""
+expect deny  "$T" "python3 -c \"import os; vars(os)['remove']('/home/u/.bashrc')\""
+expect deny  "$T" "python3 -c \"import os as o; getattr(o, 'remove')('/home/u/.bashrc')\""
+expect deny  "$T" "python3 -c \"import os; (os).remove('/home/u/.bashrc')\""
+expect deny  "$T" "python3 -c \"import sys; sys.modules['os'].remove('/home/u/.bashrc')\""
+expect deny  "$T" "python3 -c \"import importlib; importlib.import_module('posix').remove('/home/u/.bashrc')\""
+expect deny  "$T" "python3 -c \"exec('import os; os.remove(\\\"/home/u/.bashrc\\\")')\""
+expect allow "$T" "python3 -c \"import os; p = '/home/u/proj/d.json'; os.replace(p + '.tmp', p)\""
+expect allow "$T" "python3 -c \"import importlib; print(importlib.import_module('json'))\""
+expect deny  "$T" "python3 -c \"import os; os.replace('/tmp/x', '/home/u/.config/git/config')\""
+
+# --- a heredoc body is data only when cat, tee or the interpreter is the real one
+expect deny  "$T" "cat() { sh; }; cat > $T/plain/f.txt <<'EOF'
+rm -rf ~
+EOF"
+expect deny  "$T" "alias tee=sh
+tee $T/plain/f.txt <<'EOF'
+rm -rf ~
+EOF"
+expect deny  "$T" "function cat { sh; }; cat > $T/plain/f.txt <<'EOF'
+rm -rf ~
+EOF"
+expect allow "$T" "/bin/cat > $T/plain/c.sh <<'EOF'
+rm -rf \"\${VAR:?}\"
+EOF"
+expect allow "$T" "cat > $T/plain/c.sh <<'EOF'
+cleanup() {
+  rm -rf \"\${VAR:?}\"
+}
+EOF"
+
+# --- inline code in a heredoc: symlinks onto the home, a python line continuation
+expect deny  "$T" "python3 <<'EOF'
+import os
+os.symlink('$FH', 'link')
+EOF
+rm -rf link/*"
+expect allow "$T" "python3 <<'EOF'
+import os
+os.symlink('a.txt', 'b.txt')
+EOF"
+expect deny  "$T" "python3 <<'PY'
+import os
+os.\\
+remove('$FH/.bashrc')
+PY"
+
+# --- a redirect target with an unresolved variable, ANSI-C quoting, the standard streams
+expect deny  "$T" "echo x > ~/\$X"
+expect deny  "$T" "echo x > /etc/\$X"
+expect deny  "$T" "echo x >> \$HOME/.\$X"
+expect deny  "$T" "echo x > \$'/etc/hosts'"
+expect deny  "$T" "echo x >> \$'$FH/.bashrc'"
+expect allow "$T" "echo x > $FH/proj/\$X.log"
+expect allow "$T" "echo x > \$X"
+expect allow "$T" "echo x > /dev/stdout"
+expect allow "$T" "echo x >> /dev/stderr"
+expect allow "$T" "echo x > /dev/stdin"
+
+# --- an append is blocked onto startup and persistence files only
+expect allow "$T" "echo x >> ~/.cache/x.log"
+expect allow "$T" "echo x >> ~/.local/state/app/x.log"
+expect allow "$T" "echo x >> ~/.npm/_logs/run.log"
+expect deny  "$T" "echo x >> ~/.ssh/config"
+expect deny  "$T" "echo x >> ~/.zshenv"
+expect deny  "$T" "echo x >> ~/.config/autostart/a.desktop"
+expect deny  "$T" "echo x >> ~/.config/systemd/user/a.service"
+expect deny  "$T" "echo x > ~/.cache/x.log"
+
+# --- a heredoc inside $(...) inside double quotes: apostrophes in the body do not unbalance the quoting
+expect allow "$T" "git commit -m \"\$(cat <<'EOF'
+fix: don't crash
+EOF
+)\""
+expect allow "$T" "git tag -a v1 -m \"\$(cat <<'EOF'
+release, don't panic
+EOF
+)\""
+expect deny  "$T" "git commit -m \"\$(cat <<'EOF'
+don't
+EOF
+)\" && rm -rf ~"
+expect deny  "$T" "git commit -m \"it's"
+
+# --- a "#" inside ${...} is no comment: the rest of the line is code; a real comment stays one
+expect deny  "$T" 'x=a; echo ${x// #/y} > /etc/hosts'
+expect deny  "$T" 'echo ${x%% #*} > ~/.bashrc'
+expect deny  "$T" 'echo ${x/#a/ #} > ~/.bashrc'
+expect deny  "$T" 'echo ${x// #/y}; truncate -s0 /etc/hosts'
+expect allow "$T" 'echo ${x// #/y} # note > ~/.bashrc'
+expect allow "$T" 'echo ${x:-a} # note > ~/.bashrc'
+
+# --- 8.3 short names of Windows system folders and the localized PowerShell profile folder
+expect deny  "$T" 'echo x > /mnt/c/PROGRA~1/app/a.txt'
+expect deny  "$T" 'echo x >> /mnt/c/PROGRA~2/app/a.txt'
+expect deny  "$T" 'echo x > /mnt/c/Users/me/Documents/WINDOW~1/profile.ps1'
+expect deny  "$T" 'echo x > /mnt/c/Users/me/OneDrive/Dokumente/WindowsPowerShell/profile.ps1'
+expect allow "$T" 'echo x > /mnt/c/Users/me/Documents/notes/a.txt'
+
+# --- a shell syntax check runs nothing
+expect allow "$T" "printf 'echo hi' > $T/plain/x.sh && bash -n $T/plain/x.sh"
+expect allow "$T" "printf 'echo hi' > $T/plain/x.sh && sh -n $T/plain/x.sh"
+expect deny  "$T" "printf 'echo hi' > $T/plain/x.sh && bash $T/plain/x.sh"
+expect deny  "$T" "printf 'echo hi' > $T/plain/x.sh && bash +n $T/plain/x.sh"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

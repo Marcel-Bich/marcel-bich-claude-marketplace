@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parity tests: the dogma Bash PreToolUse guards against the review case tables.
+"""Parity tests: the dogma Bash PreToolUse guards against the case tables.
 
 SAFETY: no case command is ever executed. Every command is only handed to the hook
 scripts as PreToolUse JSON on stdin. All paths live in a fresh temporary directory with a
@@ -8,8 +8,8 @@ copy of the plugin installed below the fake Claude configuration home (like a re
 install), so the self-protection of installed hook files is tested too.
 
 A case counts as "deny" when any guard hook answers deny or ask (both stop the command),
-otherwise as "allow". Case tables live in guard-cases/: two review rounds (round 2 with
-explicit ids), the audit probes and everyday commands that must pass. apply_patch cases
+otherwise as "allow". Case tables live in guard-cases/: review_r1 (REVIEW_X and REVIEW_N),
+review_r2 (with explicit ids), the probes and everyday commands that must pass. apply_patch cases
 (a Codex tool) are skipped. An optional local table (guard-cases/local_cases.py, not
 versioned) is run and reported without being asserted.
 
@@ -17,7 +17,10 @@ A unit table ("unit") runs the bash-guard -> delete-guard hand-over in process w
 literal working directory below /home/ (no directory is created), so the legacy text
 patterns are proven to see only the command, never the generated "cd <dir>" lines.
 
-Usage: test-guard-parity.py [-v] [--only r1x|r1n|r2|probes|everyday|local|unit]
+The fp table holds false positives (must pass) next to the protection that must
+stay (must be blocked), plus Edit/Write inputs that no Edit/Write hook may treat as a deletion.
+
+Usage: test-guard-parity.py [-v] [--only r1x|r1n|r2|probes|everyday|fp|local|unit]
 """
 
 import json
@@ -34,6 +37,7 @@ HERE = Path(__file__).resolve().parent
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(HERE / "guard-cases"))
 import everyday  # noqa: E402
+import false_positives  # noqa: E402
 import probes  # noqa: E402
 import review_r1  # noqa: E402
 import review_r2  # noqa: E402
@@ -63,10 +67,14 @@ def setup():
 
 def fill(root):
     home = root / "home" / USER
+    # P, N and X sit below the fake home: a folder below /tmp is temporary (deletes there are always
+    # allowed), a folder below the home is not, as with real projects.
     # W: an allow-all project whose path contains a /home/<user> segment (outside the fake home)
-    dirs = {"P": root / "perm", "N": root / "noperm", "X": root / "allow" / "proj",
+    work = home / "work"
+    dirs = {"P": work / "perm-project", "N": work / "noperm-project", "X": work / "allow-project" / "proj",
             "W": root / "home" / "someone" / "proj"}
-    for directory in list(dirs.values()) + [home]:
+    home.mkdir(parents=True)
+    for directory in dirs.values():
         directory.mkdir(parents=True)
     (dirs["P"] / "DOGMA-PERMISSIONS.md").write_text(
         "# perms\n<permissions>\n- [ ] (§6gpt) May git add\n- [ ] (§2w1t) May git commit\n"
@@ -84,6 +92,8 @@ def fill(root):
     for folder in ("git", "Documents", "Downloads"):
         (home / folder).mkdir()
     (home / ".bashrc").write_text("# fixture\n", encoding="utf-8")
+    # a symlink inside the temporary root that points at the home (deletes through it stay blocked)
+    (root / "homelink").symlink_to(home)
     # an existing symlink entry inside an ordinary folder that points at a protected file
     (home / "Documents" / "link.pdf").symlink_to(home / ".bashrc")
     # a symlink to the home inside the allow-all project (rm/unlink/mv act on the link only)
@@ -173,6 +183,32 @@ def jobs(runner, only):
     if only in (None, "everyday"):
         for number, (command, directory) in enumerate(everyday.EVERYDAY):
             yield "everyday", number, "allow", directory, "Bash", command, None
+    if only in (None, "fp"):
+        for number, (expected, directory, command) in enumerate(false_positives.CASES):
+            yield "fp", number, expected, directory, "Bash", runner.fill_r2(command), None
+
+
+# PreToolUse hooks of hooks.json for Edit and Write (the tool name is passed where hooks.json does)
+EDIT_HOOKS = (("secrets-detection.sh",), ("write-edit-reminder.sh",), ("subagent-enforcement.sh", "TOOL"))
+
+
+def unit_edits(runner):
+    """[(ok, line)]: Edit/Write inputs that change file content are never a deletion."""
+    results = []
+    for number, (tool, tool_input) in enumerate(false_positives.EDITS):
+        tool_input = {key: runner.fill_r2(value) for key, value in tool_input.items()}
+        cwd = str(runner.dirs["X"])
+        event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": tool_input,
+                            "cwd": cwd, "session_id": ""})
+        reasons = []
+        for hook in EDIT_HOOKS:
+            argv = ["bash", str(runner.scripts / hook[0])] + [tool for _ in hook[1:]]
+            result = subprocess.run(argv, input=event, capture_output=True, text=True, cwd=cwd,
+                                    env=dict(runner.env, DOGMA_SESSION_DIR=cwd), timeout=30)
+            if '"deny"' in result.stdout or '"ask"' in result.stdout:
+                reasons.append("%s: %s" % (hook[0], result.stdout.strip()[:160]))
+        results.append((not reasons, "fp-edit#%d %s must pass: %s" % (number, tool, " | ".join(reasons))))
+    return results
 
 
 # (expected, command) with the literal working directory UNIT_CWD; never executed
@@ -280,6 +316,12 @@ def main():
                 failed.append("FAIL %s#%d (%s, want %s got %s)%s" % (
                     table, number, directory, expected, got,
                     (": " + " | ".join(reasons)) if verbose and reasons else ""))
+        if only in (None, "fp"):
+            for ok, line in unit_edits(runner):
+                passed, total = counts.get("fp", (0, 0))
+                counts["fp"] = (passed + ok, total + 1)
+                if not ok:
+                    failed.append("FAIL " + line)
         if only in (None, "unit"):
             for ok, line in unit_legacy_cwd() + unit_perf():
                 passed, total = counts.get("unit", (0, 0))

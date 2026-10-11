@@ -96,8 +96,7 @@ EXEC_VERBS = {"rm", "unlink", "rmdir", "shred", "srm", "wipe", "find", "mv", "tr
               "ksh", "fish", "sudo", "doas", "env", "busybox", "mkfs", "wipefs", "sed"}
 EXEC_WORD_RE = re.compile(r"\b(rm|unlink|rmdir|shred|find|mv|truncate|dd|git|chmod|chown|rsync|sh|bash|eval|"
                           r"python[0-9.]*|perl|node)\b")
-PRIVATE_SECRET = {"sessions", "archived_sessions", "history.jsonl", "log", "logs", "auth.json", ".credentials.json",
-                  "projects", "shell_snapshots"}
+PRIVATE_SECRET = {"auth.json", ".credentials.json"}
 EXEC_ENV_ALWAYS = {"BASH_ENV", "ENV", "LD_PRELOAD", "LD_AUDIT", "PROMPT_COMMAND", "PERL5OPT", "RUBYOPT",
                    "PYTHONSTARTUP", "GIT_EXEC_PATH", "GIT_TEMPLATE_DIR"}
 EXEC_ENV_COMMAND = {"GIT_PAGER", "GIT_EXTERNAL_DIFF", "GIT_SSH_COMMAND", "GIT_SSH", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
@@ -169,11 +168,20 @@ TMUX_KEYS = {"enter": "\n", "kpenter": "\n", "c-m": "\n", "c-j": "\n", "^m": "\n
 TMUX_KEY_NAME_RE = re.compile(r"(?i)((c|m|s)-|\^).+|f\d{1,2}|up|down|left|right|home|end|npage|pagedown|pgdn|ppage|"
                               r"pageup|pgup|ic|insert|dc|delete|bspace|btab|escape|kp\w+|any|mouse\w*|wheel\w*|"
                               r"double\w*|triple\w*|secondclick\w*|paste\w*|focus\w*|user\d+")
-PRIVATE_READABLE = {"credo", "plugins", "skills", "prompts", "rules", "AGENTS.md", "CLAUDE.md", "CLAUDE", "config.toml",
-                    "GUIDES", "agents", "commands", "memories"}
+def private_blocked(path, root):
+    """True when path inside the private config home root must not be read: the root itself (a recursive read
+    reaches the logins), a glob in the first component and the login files."""
+    relative = os.path.relpath(path, root)
+    first = relative.split("/")[0]
+    return path == root or bool(GLOB_RE.search(first)) or first in PRIVATE_SECRET
 CODE_HOME_RE = re.compile(r"expanduser|Path\.home|homedir\s*\(|\$ENV\{\s*HOME|ENV\[\s*[\"']HOME|"
                           r"environ\s*\[\s*[\"']HOME|environ\.get\(\s*[\"']HOME|getenv\(\s*[\"']HOME|"
                           r"\$HOME\b|[\"']~[\"'/]|File\.expand_path|Dir\.home")
+# a home lookup whose result is not a visible path (the literal "~/x" of expanduser is checked as a path)
+MOVE_HOME_RE = re.compile(r"Path\.home|homedir|\$ENV\{\s*HOME|ENV\[\s*[\"']HOME|environ\s*\[\s*[\"']HOME|"
+                          r"environ\.get\(\s*[\"']HOME|getenv\(\s*[\"']HOME|\$HOME\b|File\.expand_path|Dir\.home|"
+                          r"getpwuid|pw_dir|getpwnam|chr\(\s*126\s*\)|\\x7e|\\176|Sys\.getenv|"
+                          r"expanduser\s*\(\s*(?![\"'])")
 CODE_FRAGMENT_RE = re.compile(r"auth\.json|\.credentials|credentials\.json|\.codex\b|\.claude\b|\.ssh\b|"
                               r"\.gnupg|\.netrc|\.git-credentials|\bid_(rsa|ed25519|ecdsa|dsa)\b|/environ\b|"
                               r"hosts\.yml|dogma/config|DOGMA-PERMISSIONS|\.env\b(?!\.(example|sample|template))")
@@ -181,6 +189,34 @@ CODE_FRAGMENT_RE = re.compile(r"auth\.json|\.credentials|credentials\.json|\.cod
 MKTEMP_RE = re.compile(r"^\s*mktemp(\s+[-\w.%/]+)*\s*$")
 SUB_RE = re.compile(r"__DOGMA_SUB_(\d+)__")
 HEREDOC_RE = re.compile(r"__DOGMA_HEREDOC_(\d+)__")
+CONT_RE = re.compile(r"\\\r?\n")  # a line continuation: backslash, newline
+# the standard streams are no files: a redirect onto them is not resolved (realpath leads to /proc/<pid>/fd/...)
+STREAM_TARGET_RE = re.compile(r"^/dev/(?:stdin|stdout|stderr|fd/\d+)$")
+# text that can redefine cat, tee or an interpreter in the running shell: a function, an alias, hash, enable,
+# builtin, a changed PATH, a sourced file (a heredoc body is data only when these words are the real ones)
+SHADOW_RE = re.compile(
+    r"[\w.:+@%-]\s*\(\s*\)|"
+    r"(?:^|[\s;&|({`'\"])function\s|"
+    r"(?:^|[;&|(){}\n`'\"])\s*(?:(?:builtin|command|exec|sudo|env|time|nohup)\s+)*"
+    r"(?:alias|unalias|hash|enable|builtin|source|\.)(?=\s|$)|"
+    r"(?:^|[\s;&|({`'\"])PATH\+?=")
+# the symlink calls of inline code (python, perl, ruby, node): their first argument is the link target
+CODE_SYMLINK_RE = re.compile(r"\b(?:symlink|symlinkSync|make_symlink|symlink_to|ln_sfn?|ln_s)\s*(?:\(|[\"'$@])|"
+                             r"\bimport\b[^\n;]*\bsymlink\b|\bFile\.symlink\b")
+# inline code that truncates a file by path (os.truncate(path, 0), fs.truncateSync(path), File.truncate): a call whose
+# first argument is no bare number (f.truncate(0) acts on an open file)
+CODE_TRUNCATE_RE = re.compile(r"\btruncate(?:Sync)?\s*\(\s*(?![-+]?\d+\s*[,)]|\))")
+# inline code that opens a literal path for writing: open(path, 'w'|'a'|'x'|'r+'), Path(path).write_text(...),
+# fs.writeFileSync(path, ...); the keyword form open(file='...', mode='a') in either order; also with
+# os.path.expanduser('~/...') around the literal. The path is group 2, 4, 6, 8 or 10.
+CODE_WRITE_RE = re.compile(
+    r"\bopen\s*\(\s*(?:(?:os\s*\.\s*)?path\s*\.\s*expanduser\s*\(\s*)?([\"'])([^\"'\s]+)\1\s*\)?\s*,\s*"
+    r"(?:mode\s*=\s*)?[\"'](?:[wax]|r\+)[^\"']*[\"']|"
+    r"\bPath\s*\(\s*(?:(?:os\s*\.\s*)?path\s*\.\s*expanduser\s*\(\s*)?([\"'])([^\"'\s]+)\3\s*\)*"
+    r"(?:\s*\.\s*expanduser\s*\(\s*\))?\s*\.\s*(?:write_text|write_bytes)\s*\(|"
+    r"\b(?:writeFile|appendFile)(?:Sync)?\s*\(\s*([\"'])([^\"'\s]+)\5|"
+    r"\bopen\s*\(\s*file\s*=\s*([\"'])([^\"'\s]+)\7\s*,\s*mode\s*=\s*[\"'](?:[wax]|r\+)[^\"']*[\"']|"
+    r"\bopen\s*\(\s*mode\s*=\s*[\"'](?:[wax]|r\+)[^\"']*[\"']\s*,\s*file\s*=\s*([\"'])([^\"'\s]+)\9")
 ASSIGN_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\+?=(.*)$", re.S)
 VAR_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 SHELL_VAR_RE = re.compile(r"\$\{?!?#?([A-Za-z_][A-Za-z0-9_]*)")
@@ -200,6 +236,8 @@ TEXT_COMMANDS = {":", "true", "false", "test", "[", "[[", "let", "local", "reado
 SEARCH_COMMANDS = {"rg", "grep", "egrep", "fgrep", "ag", "ack", "git-grep"}
 KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac", "in",
             "function", "coproc", "[[", "]]"}
+GROUP_OPEN = {"{", "if", "while", "until", "for", "select", "case"}
+GROUP_CLOSE = {"}", "fi", "done", "esac"}
 GUARD_RELEVANT = DELETE_VERBS | {"find", "mv", "ln", "cp", "cd", "pushd", "git", "eval", "xargs"} | SHELLS
 GIT_KNOWN = set("""
 add am annotate apply archive bisect blame branch bugreport bundle cat-file check-attr check-ignore
@@ -359,6 +397,25 @@ def token_allowed(path):
     return any(_inside(os.path.normpath(path), root) for root in token_allowed_dirs())
 
 
+CONFIG_HOME_PART_RE = re.compile(r"^\.(?:codex|claude(?:-.+)?)$")
+
+
+def config_home_auth(path, lowered):
+    """auth.json below a Claude or Codex config home: below a directory named .codex, .claude or .claude-*,
+    or inside CLAUDE_CONFIG_DIR or CODEX_HOME."""
+    if any(CONFIG_HOME_PART_RE.match(part) for part in lowered[:-1]):
+        return True
+    for root in (os.environ.get("CLAUDE_CONFIG_DIR") or "", str(codex_home())):
+        if not root:
+            continue
+        try:
+            if _inside(os.path.realpath(path), os.path.realpath(root)):
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
 def sensitive_name(path):
     """Lexical credential check of one path (no filesystem access)."""
     parts = _components(path)
@@ -375,7 +432,7 @@ def sensitive_name(path):
         suffix = base[5:]
         if suffix not in SAFE_ENV_SUFFIXES and (token_strict() or base in (".env", ".env.local")):
             return True
-    if base in SENSITIVE_NAMES and (base != "auth.json" or len(lowered) > 1 and lowered[-2] == ".codex"):
+    if base in SENSITIVE_NAMES and (base != "auth.json" or config_home_auth(path, lowered)):
         return True
     if base.endswith(SENSITIVE_SUFFIXES) or base in ("fish_history",):
         return True
@@ -428,6 +485,13 @@ class Segment:
         self.redirects = []
         self.herestrings = []
         self.piped_in = []  # literal text an echo, printf or cat before the pipe writes to stdin
+        self.dups = []      # (operator, word) of file descriptor duplications (2>&1, >&3)
+        self.group_piped = False  # inside a group or compound command that is the target of a pipe (| (...), | { ...; })
+
+    @property
+    def piped(self):
+        """The segment reads the standard input of a pipe: it follows "|" or sits inside a piped group."""
+        return self.connector == "|" or self.group_piped
 
 
 class Script:
@@ -437,11 +501,70 @@ class Script:
         self.heredocs = []      # [body, quoted]
         self.visible = []       # text the shell expands (outside single quotes)
         self.unterminated = False
+        self.text = ""          # the scanned text (line continuations joined outside heredoc bodies)
+        self.proc_out = False   # an output process substitution ">(...)" occurs
+        self.spans = {}         # heredoc slot -> (start, end) of its body lines incl. the delimiter line
 
 
-def _close_paren(text, start):
-    """Index of the ")" closing a "$(" or "(" whose content starts at start; -1 if none."""
-    depth, index, quote = 1, start, None
+def _heredoc_operator(text, index):
+    """(delimiter, strip tabs, index after the delimiter word) for a heredoc operator "<<" at index, else None."""
+    if not text.startswith("<<", index) or text.startswith("<<<", index):
+        return None
+    position = index + 2
+    strip = text.startswith("-", position)
+    position += strip
+    while position < len(text) and text[position] in " \t":
+        position += 1
+    if position >= len(text):
+        return None
+    if text[position] in "'\"":
+        end = text.find(text[position], position + 1)
+        if end < 0:
+            return None
+        word, position = text[position + 1:end], end + 1
+    else:
+        end = position
+        while end < len(text) and text[end] not in " \t\n;&|()<>":
+            end += 1
+        word, position = re.sub(r"[\\'\"]", "", text[position:end]), end
+    return None if not word or word.isdigit() else (word, strip, position)
+
+
+def _skip_heredoc_bodies(text, position, pending):
+    """Index after the delimiter lines of the pending heredocs whose bodies start at position; None when
+    a delimiter line is missing (then "<<" was no heredoc)."""
+    for delimiter, strip in pending:
+        while True:
+            if position > len(text):
+                return None
+            end = text.find("\n", position)
+            line = text[position:] if end < 0 else text[position:end]
+            position = len(text) + 1 if end < 0 else end + 1
+            if (line.lstrip("\t") if strip else line) == delimiter:
+                break
+    return min(position, len(text))
+
+
+CASE_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+CASE_PREFIX_RE = re.compile(r"(?:^|[\s;&|({`])(?:then|do|else|elif|!|time)$")
+
+
+def _command_position(text, index, start):
+    """True when the word at index stands where a command may start: at the start, after a separator or
+    after then, do, else, elif."""
+    before = text[start:index].rstrip(" \t")
+    return not before or before[-1] in ";&|()\n{`" or bool(CASE_PREFIX_RE.search(before))
+
+
+def _close_paren(text, start, heredocs=True):
+    """Index of the ")" closing a "$(" or "(" whose content starts at start; -1 if none.
+
+    A heredoc inside is skipped (its body may hold quotes and parentheses that are text), so
+    "$(cat <<'EOF' ... don't ... EOF)" closes at its own parenthesis. heredocs=False for "$((":
+    there "<<" is a shift. A case command inside is followed: the ")" that ends a pattern
+    ("$(case x in a) rm -rf /home;; esac)") closes no substitution."""
+    depth, index, quote, pending = 1, start, None, []
+    cases = []  # the open case commands: [phase, depth]; phase is head (before "in"), pattern or body
     while index < len(text):
         char = text[index]
         if quote:
@@ -453,14 +576,45 @@ def _close_paren(text, start):
         elif char == "\\":
             index += 2
             continue
+        elif heredocs and char == "<" and _heredoc_operator(text, index):
+            word, strip, index = _heredoc_operator(text, index)
+            pending.append((word, strip))
+            continue
+        elif char == "\n" and pending:
+            skipped = _skip_heredoc_bodies(text, index + 1, pending)
+            pending = []
+            if skipped is not None:
+                index = skipped
+                continue
         elif char in "'\"`":
             quote = char
+        elif (char.isalpha() or char == "_") and not (index > start and (text[index - 1].isalnum()
+                                                                       or text[index - 1] in "_$.-")):
+            word = CASE_WORD_RE.match(text, index).group()
+            index += len(word)
+            if word == "case" and _command_position(text, index - len(word), start):
+                cases.append(["head", depth])
+            elif word == "in" and cases and cases[-1][0] == "head":
+                cases[-1][0] = "pattern"
+            elif word == "esac" and cases and cases[-1][1] == depth and cases[-1][0] != "head" \
+                    and _command_position(text, index - len(word), start):
+                cases.pop()
+            continue
+        elif char == ";" and cases and cases[-1][0] == "body" and cases[-1][1] == depth \
+                and text[index + 1:index + 2] in (";", "&"):
+            cases[-1][0] = "pattern"  # ;; ;& ;;& start the next pattern
+            index += 2
+            continue
         elif char == "(":
-            depth += 1
+            if not (cases and cases[-1][0] == "pattern" and cases[-1][1] == depth):  # "(a)" opens a pattern
+                depth += 1
         elif char == ")":
-            depth -= 1
-            if depth == 0:
-                return index
+            if cases and cases[-1][0] == "pattern" and cases[-1][1] == depth:
+                cases[-1][0] = "body"  # the ")" that ends a pattern
+            else:
+                depth -= 1
+                if depth == 0:
+                    return index
         index += 1
     return -1
 
@@ -485,7 +639,7 @@ def _expansions(text):
             index += 2
             continue
         if text.startswith("$((", index):
-            end = _close_paren(text, index + 3)
+            end = _close_paren(text, index + 3, False)
             index = len(text) if end < 0 else end + 1
             continue
         if text.startswith("$(", index):
@@ -511,9 +665,15 @@ def _ansi_c(raw):
 
 def _read_word(text, index):
     """Raw shell word starting at index (quotes kept); returns (word, next index)."""
-    start, quote = index, None
+    start, quote, parts = index, None, []
     while index < len(text):
         char = text[index]
+        if char == "\\" and quote != "'":
+            match = CONT_RE.match(text, index)
+            if match:  # bash removes a line continuation before it reads the word
+                parts.append(text[start:index])
+                start = index = match.end()
+                continue
         if quote:
             if char == "\\" and quote == '"':
                 index += 2
@@ -528,10 +688,14 @@ def _read_word(text, index):
         elif char in WORD_END:
             break
         index += 1
-    return text[start:index], index
+    return "".join(parts) + text[start:index], index
 
 
 def _unquote(word):
+    if "$'" in word or '$"' in word:
+        # the shell reads $'...' (ANSI-C quoting) and $"..." as plain quoted words
+        word = re.sub(r"\$'((?:[^'\\]|\\.)*)'", lambda match: shlex.quote(_ansi_c(match.group(1))), word)
+        word = word.replace('$"', '"')
     try:
         parts = shlex.split(word, posix=True)
     except ValueError:
@@ -541,20 +705,61 @@ def _unquote(word):
 
 def scan(command):
     """Split a shell command into simple-command segments plus nested scripts."""
-    text = command.replace("\\\r\n", "").replace("\\\n", "")
+    # line continuations are removed while scanning (join), not up front: inside a quoted heredoc
+    # body bash keeps the backslash and the newline, so removing them first would move the
+    # line that ends the body and cut the real command after it out as data
+    text = command
     script = Script()
     segment, buffer, visible = Segment(None), [], []
     pending, quote, index, size = [], None, 0, len(text)
+
+    def join(position, window=0):
+        """Remove the line continuations at position and, when window is set, inside the
+        next few characters (an operator split by a continuation: >\\<newline>>)."""
+        nonlocal text, size
+        steps = -1
+        while steps < window and position < size:
+            match = CONT_RE.match(text, position)
+            if match:
+                text = text[:position] + text[match.end():]
+                size = len(text)
+                continue
+            position += 1
+            steps += 1
+
+    groups = []  # open groups, innermost last: [kind, piped]; kind "(" for a subshell, "kw" for a compound command
+
+    def track(words, piped):
+        """Follow the compound commands a segment opens or closes (its first word). A group is piped when it
+        is the target of a pipe (| (...), | { ...; }, | while ...; do ...; done) or lies inside one: every
+        command in it reads the pipe (cd /tmp; sh), not only the first."""
+        position = 0
+        while position < len(words) and words[position] in ("do", "then", "else", "elif", "!", "time"):
+            position += 1
+        first = words[position] if position < len(words) else ""
+        if first in GROUP_OPEN:
+            groups.append(["kw", piped])
+        elif first in GROUP_CLOSE and groups and groups[-1][0] == "kw":
+            groups.pop()
 
     def flush(next_connector):
         nonlocal segment, buffer
         segment.text = "".join(buffer).strip()
         if segment.text or segment.redirects or segment.herestrings:
+            segment.group_piped = any(group[1] for group in groups)
+            words = segment.text.split()
+            track(words, segment.piped)
             script.segments.append(segment)
             segment = Segment(next_connector)
+        elif segment.connector == "|" and next_connector in ("(", "\n"):
+            pass  # a subshell "| (sh)" or a line break after the pipe still receives the pipe
         else:
             segment.connector = next_connector if segment.connector is None or next_connector else segment.connector
         buffer = []
+        if next_connector == "(":
+            groups.append(["(", segment.piped or any(group[1] for group in groups)])
+        elif next_connector == ")" and groups and groups[-1][0] == "(":
+            groups.pop()
 
     def substitution(inner):
         script.subs.append(inner)
@@ -563,16 +768,27 @@ def scan(command):
     def take_bodies(position):
         for item in pending:
             delimiter, strip_tabs, slot = item
-            lines = []
+            quoted = script.heredocs[slot][1]
+            lines, carry = [], None
+            begin = position
             while position <= size:
                 end = text.find("\n", position)
                 line = text[position:] if end < 0 else text[position:end]
                 position = size + 1 if end < 0 else end + 1
+                if not quoted and end >= 0 and (len(line) - len(line.rstrip("\\"))) % 2 == 1:
+                    # an expanding body joins a line that ends in a backslash with the next one
+                    carry = (carry or "") + line[:-1]
+                    continue
+                if carry is not None:
+                    line, carry = carry + line, None
                 check = line.lstrip("\t") if strip_tabs else line
                 if check == delimiter:
                     break
                 lines.append(line)
+            if carry is not None:
+                lines.append(carry)
             script.heredocs[slot][0] = "\n".join(lines)
+            script.spans[slot] = (begin, min(position, size))
         pending.clear()
         return min(position, size)
 
@@ -584,7 +800,12 @@ def scan(command):
                 quote = None
             index += 1
             continue
+        if char == "$" or (quote is None and char in "<>&|;"):
+            join(index + 1, 2)
         if quote == '"':
+            if char == "\\" and CONT_RE.match(text, index):
+                join(index)
+                continue
             if char == "\\" and index + 1 < size:
                 buffer.append(text[index:index + 2])
                 visible.append(" ")
@@ -596,7 +817,7 @@ def scan(command):
                 index += 1
                 continue
             if text.startswith("$((", index):
-                end = _close_paren(text, index + 3)
+                end = _close_paren(text, index + 3, False)
                 end = size - 1 if end < 0 else end
                 buffer.append(text[index:end + 1])
                 index = end + 1
@@ -614,6 +835,9 @@ def scan(command):
             buffer.append(char)
             visible.append(char)
             index += 1
+            continue
+        if char == "\\" and CONT_RE.match(text, index):
+            join(index)
             continue
         if char == "\\" and index + 1 < size:
             buffer.append(text[index:index + 2])
@@ -637,12 +861,14 @@ def scan(command):
             index = size if end < 0 else end
             continue
         if text.startswith("$((", index):
-            end = _close_paren(text, index + 3)
+            end = _close_paren(text, index + 3, False)
             end = size - 1 if end < 0 else end
             buffer.append(text[index:end + 1])
             index = end + 1
             continue
         if text.startswith("$(", index) or text.startswith("<(", index) or text.startswith(">(", index):
+            if text.startswith(">(", index):
+                script.proc_out = True
             end = _close_paren(text, index + 2)
             inner = text[index + 2:] if end < 0 else text[index + 2:end]
             buffer.append(substitution(inner))
@@ -685,13 +911,18 @@ def scan(command):
                 end += 1
             operator = text[index:end]
             index = end
-            while index < size and text[index] in " \t":
-                index += 1
+            while True:
+                while index < size and text[index] in " \t":
+                    index += 1
+                if not CONT_RE.match(text, index):
+                    break
+                join(index)
             if text.startswith("$(", index) or text.startswith("`", index):
                 word = ""
             else:
                 word, index = _read_word(text, index)
             if operator.endswith("&") and re.match(r"^(\d+-?|-)?$", word):
+                segment.dups.append((operator, word))
                 continue
             if word:
                 segment.redirects.append((operator, word))
@@ -737,7 +968,13 @@ def scan(command):
             for inner in _expansions(body):
                 script.subs.append(inner)
     script.visible.append("".join(visible))
+    script.text = text
     return script
+
+
+def plain_output(target):
+    """True when a redirect target is a normal file or /dev/null, not a device or another special path."""
+    return target == "/dev/null" or not target.startswith(("/dev/", "/proc/", "/sys/"))
 
 
 def tokenize(text):
@@ -772,19 +1009,19 @@ def missing_before_dotdot(path):
     return None
 
 
+_DELETE_GUARD = []
+
+
+def delete_guard():
+    """delete-guard.py, loaded once: its deletion rules are shared with this module."""
+    if not _DELETE_GUARD:
+        _DELETE_GUARD.append(load_delete_guard())
+    return _DELETE_GUARD[0]
+
+
 def dangerous(path):
     """Same rule as the upstream delete-guard: never deleted, moved away or emptied."""
-    path = os.path.normpath(path)
-    if path == "/":
-        return True
-    user_home = home()
-    if path in (user_home, os.path.dirname(user_home)) or os.path.dirname(path) == user_home:
-        return True
-    if path == "/home" or path.startswith("/home/"):
-        return _depth(path[len("/home"):]) <= 2
-    if path.startswith(("/tmp/", "/var/tmp/")):
-        return False
-    return True
+    return delete_guard().is_dangerous(path)
 
 
 def overwrite_protected(path):
@@ -942,6 +1179,10 @@ class Analysis:
         self.pipe_next = None
         self.git_alt = False
         self.anchors = {self.event_cwd}
+        self.top = None        # Script of the whole command (first walk)
+        self.data_bodies = set()  # heredoc slots of self.top that are only data (see segment)
+        self.shadowed = None   # cat, tee or an interpreter may be redefined by the command (see shadowing)
+        self.proc_out = False  # some script of the command has an output process substitution ">(...)"
         self.private = private_roots()
         self.own = self_paths()
 
@@ -1056,7 +1297,8 @@ class Analysis:
                 if path is None:
                     raise Deny("dogma: %s target %s cannot be resolved before running; protected paths are "
                                "checked first, so the command is blocked." % (label, operand[:80]))
-                if dangerous(path) or self.anchor(path, strict=contents) or mounted(path):
+                if dangerous(path) or self.anchor(path, strict=contents) or \
+                        (mounted(path) and not delete_guard().temp_root_of(path)):
                     raise Deny("dogma: %s of a protected path (%s) is never allowed." % (label, path))
                 if not contents and repository_root(path):
                     raise Deny("dogma: %s of a whole repository or worktree (%s) is never allowed; let the user "
@@ -1111,6 +1353,9 @@ class Analysis:
         if time_left() < 0:
             raise Deny("dogma: check ran out of time, command blocked (fail closed).")
         script = scan(command)
+        if self.top is None:
+            self.top = script
+        self.proc_out = self.proc_out or script.proc_out
         self.subs = script.subs
         visible = "".join(script.visible)
         if self.flags.get("token_protection", True):
@@ -1143,14 +1388,17 @@ class Analysis:
 
     def segment(self, segment, heredocs, directories, depth):
         tokens, parsed = tokenize(segment.text)
-        bodies, kept = [], []
+        bodies, kept, slots = [], [], []
         for token in tokens:
             match = HEREDOC_RE.fullmatch(token)
             if match:
                 bodies.append(heredocs[int(match.group(1))])
+                slots.append(int(match.group(1)))
             else:
                 kept.append(token)
         tokens = kept
+        if slots and self.top is not None and heredocs is self.top.heredocs:
+            self.mark_data_bodies(tokens, slots, heredocs, segment)
         while tokens and tokens[0] in KEYWORDS:
             tokens.pop(0)
         if tokens and tokens[0] in ("for", "select", "case"):
@@ -1167,7 +1415,10 @@ class Analysis:
                 self.check_path(target, directories, "read", force=True)
             if operator.startswith((">", "&>")) or operator == "<>":
                 self.check_path(target, directories, "write", force=True)
+                if STREAM_TARGET_RE.match(target):
+                    continue  # /dev/stdout and friends: no file, nothing to protect (nor to remember)
                 self.remember_written(target, directories)
+                self.critical_target(target, directories, ">>" in operator)
                 if ">>" not in operator:
                     self.protect_overwrite([target], directories, "overwrite", unresolved_ok=not bare)
                     if bare:
@@ -1182,6 +1433,73 @@ class Analysis:
                     self.deny("dependency_verification", "dogma: script built at run time is fed to %s; it cannot "
                                                          "be checked." % verb)
         return self.command(tokens, segment, bodies, directories, depth)
+
+    def mark_data_bodies(self, tokens, slots, heredocs, segment):
+        """Quoted heredoc bodies that are no shell text: written by cat or tee (not piped on),
+        or the stdin of an interpreter, whose code this analysis checks itself (code()).
+
+        delete-guard.py re-reads the original command line by line; such a body is left out
+        there, so delete text that is only data (a script written to a file) is no command.
+        Only when the output goes to a normal file or /dev/null: a body that reaches a shell
+        (cat <<'EOF' > >(sh), > /dev/stdout, >&3 after exec 3> >(sh)) stays shell text."""
+        if not tokens or self.pipe_next is not None:
+            return
+        verb = os.path.basename(tokens[0])
+        if verb not in ("cat", "tee") and not INTERPRETER_RE.match(verb):
+            return
+        if self.shadowing():
+            return  # a function, alias, hash or PATH may make cat or tee run the body as a shell
+        if any(SUB_RE.search(token) for token in tokens):
+            return
+        outputs = [_unquote(word) for operator, word in segment.redirects
+                   if operator.startswith((">", "&>")) or operator == "<>"]
+        if verb == "tee":
+            outputs += [token for token in tokens[1:] if not token.startswith("-")]
+        if not all(plain_output(target) for target in outputs):
+            return
+        if any(word not in ("", "-", "0", "1", "2") for _operator, word in segment.dups):
+            return
+        for slot in slots:
+            if heredocs[slot][1]:
+                self.data_bodies.add(slot)
+
+    def shadowing(self):
+        """True when the command text can redefine cat, tee or an interpreter (SHADOW_RE: a function,
+        an alias, hash, enable, builtin, a changed PATH, a sourced file). The text outside the heredoc
+        bodies counts, and the body of a heredoc that is read by a sourced file (source /dev/stdin <<EOF)."""
+        if self.shadowed is None:
+            script = self.top
+            cuts = []
+            for segment in script.segments:
+                words = tokenize(segment.text)[0]
+                slots = [int(match.group(1)) for match in map(HEREDOC_RE.fullmatch, words) if match]
+                if slots and not any(word in ("source", ".") for word in words):
+                    cuts += [script.spans[slot] for slot in slots if slot in script.spans]
+            text, last, parts = script.text, 0, []
+            for start, end in sorted(cuts):
+                if start >= last:
+                    parts.append(text[last:start])
+                    last = end
+            parts.append(text[last:])
+            self.shadowed = bool(SHADOW_RE.search("".join(parts)))
+        return self.shadowed
+
+    def without_data_bodies(self, command):
+        """The command for the text checks of delete-guard.py, without data heredoc bodies."""
+        if self.top is None or not self.data_bodies:
+            return command
+        if self.proc_out or re.search(r"\b(?:mkfifo|mknod)\b", command):
+            return command  # a body could reach a shell through a process or a named pipe
+        text, cut = self.top.text, 0
+        parts = []
+        for slot in sorted(self.data_bodies, key=lambda item: self.top.spans.get(item, (0, 0))[0]):
+            start, end = self.top.spans.get(slot, (cut, cut))
+            if start < cut:
+                return command  # overlapping spans: keep the full text (fail safe)
+            parts.append(text[cut:start])
+            cut = end
+        parts.append(text[cut:])
+        return "".join(parts)
 
     def command(self, tokens, segment, bodies, directories, depth, wrapped=False):
         while tokens and ASSIGN_RE.match(tokens[0]):
@@ -1205,7 +1523,7 @@ class Analysis:
         tokens = [first] + tokens[1:]
         verb = os.path.basename(first)
         args = tokens[1:]
-        self.check_written_run(first, verb, args, directories)
+        self.check_written_run(first, verb, args, directories, segment)
         safe = [VAR_RE.sub(lambda m: self.mktemp.get(m.group(1) or m.group(2), m.group(0)), arg) for arg in args]
         self.batch.append(([verb] + [variant for arg in safe for variant in brace_expand(arg)], set(directories)))
 
@@ -1223,7 +1541,7 @@ class Analysis:
         self.check_install(verb, args)
         self.check_delete(verb, args, directories)
         self.check_special(verb, args, segment, bodies, directories, depth)
-        piped = bool(segment and segment.connector == "|")
+        piped = bool(segment and segment.piped)
 
         if verb in ("git", "hub"):
             self.git(args, directories, depth)
@@ -1368,8 +1686,7 @@ class Analysis:
         if not rest:
             if verb != "env" and getopt.has(options, "-s", "-i", "--shell", "--login"):
                 # a shell without a command reads its script from stdin, like sh does
-                self.shell("sh", [], segment, bodies, directories, depth,
-                           bool(segment and segment.connector == "|"))
+                self.shell("sh", [], segment, bodies, directories, depth, bool(segment and segment.piped))
             return directories
         return self.command(rest, segment, bodies, directories, depth, wrapped=True)
 
@@ -1819,6 +2136,10 @@ class Analysis:
             path = self.join(directory, static) if "$" not in static else None
             if path is None:
                 continue
+            if token and kind == "read" and SUB_RE.search(expanded) \
+                    and any(_inside(path, root) for root in self.private):
+                raise Deny("dogma: a name built by a substitution inside a private config home cannot be "
+                           "checked; blocked.")
             candidates = [path]
             if GLOB_RE.search(path) and "**" not in path:
                 candidates.extend(itertools.islice(glob.iglob(path), 64))
@@ -1854,11 +2175,9 @@ class Analysis:
             if kind == "write":
                 raise Deny("dogma: %s is protected against agent writes (it holds hook switches, logins and "
                            "configuration)." % root)
-            relative = os.path.relpath(path, root)
-            if path == root or globbed or relative.split("/")[0] not in PRIVATE_READABLE:
-                if token:
-                    raise Deny("dogma: %s holds logins, sessions and configuration; only listing it is allowed."
-                               % root)
+            if token and private_blocked(path, root):
+                raise Deny("dogma: %s holds logins and sessions; its secrets cannot be read (listing and "
+                           "reading the rest is allowed)." % root)
 
     def text_positions(self, verb, args):
         skipped = set()
@@ -1891,6 +2210,16 @@ class Analysis:
                 if not explicit:
                     skipped.add(position)
                 break
+        if verb in ("git", "hub"):
+            # git grep: its pattern is text like the pattern of grep (paths after it stay checked)
+            position = 0
+            while position < len(args) and args[position].startswith("-"):
+                position += 2 if args[position] in ("-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                                                    "--exec-path", "--config-env") else 1
+            if position < len(args) and args[position] == "grep":
+                start = position + 1
+                inner = self.text_positions("git-grep", args[start:])
+                skipped |= {start + index for index in inner}
         if verb in ("git", "gh", "glab", "hub"):
             for position, item in enumerate(args):
                 if item in GIT_MESSAGE_OPTIONS | {"--title", "--body", "-t", "-b", "--notes"} \
@@ -2106,6 +2435,8 @@ class Analysis:
             self.protect_delete(operands, directories, "deletion", follow=verb in FOLLOWING_DELETERS)
         elif verb == "truncate":
             self.protect_overwrite(operands, directories, "truncation")
+            for operand in operands:
+                self.critical_target(operand, directories, False)  # the rule of ">" (system trees, dot folders)
         elif verb.startswith(("mkfs", "mke2fs")) or verb in DEVICE_TOOLS:
             raise Deny("dogma: destructive disk operation blocked.")
         elif verb == "hdparm" and any(re.match(r"^--(security-erase|security-set|trim|write-sector|dco|fwdownload|"
@@ -2187,9 +2518,12 @@ class Analysis:
                 self.protect_destination(destination, sources, directories, "replace", into=into,
                                          file_only=no_target and not into
                                          or getopt.has(options, "-n", "--no-dereference"))
-        elif verb == "tee" and operands and not has("append", 2, "a"):
-            self.protect_overwrite(operands, directories, "overwrite")
+        elif verb == "tee" and operands:
+            appending = has("append", 2, "a")
+            if not appending:
+                self.protect_overwrite(operands, directories, "overwrite")
             for operand in operands:
+                self.critical_target(operand, directories, appending)
                 self.remember_written(operand, directories)
         elif verb in ("chmod", "chown", "chgrp", "setfacl", "chattr", "chcon") and (short_flag(args, "R") or
                                                                                    has("recursive", 3)):
@@ -2207,7 +2541,13 @@ class Analysis:
             if scripts and re.fullmatch(r"\s*(?:\d+\s*,\s*)?(?:\$|\d+)?\s*d\s*", scripts[0]):
                 label, target = "sed -i d", scripts[-1] if len(scripts) > 1 else ""
         if label and not posix:
-            self.deletes.append((label, target, set(directories)))
+            # one entry per operand, so the temp-root exemption of file-protection.sh sees every target
+            targets = [target]
+            if verb in DELETE_VERBS:
+                after_separator = args[args.index("--") + 1:] if "--" in args else []
+                targets = operands + [arg for arg in after_separator if arg.startswith("-")]
+            for each in targets or [target]:
+                self.deletes.append((label, each, set(directories)))
 
     def remember_written(self, word, directories):
         for path in self.targets(word, directories):
@@ -2215,13 +2555,66 @@ class Analysis:
                 self.written.add(path)
                 self.written.add(os.path.basename(path))
 
-    def check_written_run(self, first, verb, args, directories):
+    def critical_target(self, word, directories, append):
+        """The rule of delete-guard.py for what a redirect or tee may write onto (startup and
+        persistence files, dot folders of a home, system trees, drives), also for a relative
+        word (after cd) and a word with quotes inside."""
+        guard = load_delete_guard()
+        words = [word]
+        expanded = self.expand(word)
+        unresolved = [position for position in (expanded.find("$"), expanded.find("`")) if position >= 0]
+        if unresolved:
+            # a variable that is not known here: the literal part before it decides (a name that
+            # starts there could be any name, a dot name too: ~/$X, ~/.$X, /etc/$X)
+            literal = expanded[:min(unresolved)]
+            if not literal:
+                return
+            words = [literal + "x"] + ([literal + ".x"] if literal.endswith("/") else [])
+            if append:
+                prefix = literal[:len(literal) - len(literal.rpartition("/")[2])]
+                words += [prefix + name for name in guard.HOME_RC_NAMES if name.startswith(literal[len(prefix):])]
+        for item in words:
+            for path in self.targets(item, directories):
+                if path and guard.critical_redirect(path, append=append):
+                    raise Deny("dogma: %s a critical path (%s) is never allowed." % (
+                        "appending to" if append else "overwriting", path))
+
+    @staticmethod
+    def syntax_check_only(args):
+        """True when the options of a shell (before its script name) switch on noexec: -n, -xn, -o noexec.
+        A later +n or an argument after the script name does not count."""
+        syntax = False
+        position = 0
+        while position < len(args) and args[position][:1] in ("-", "+"):
+            option = args[position]
+            if option == "--":
+                break
+            if option in ("-o", "+o") and position + 1 < len(args):
+                syntax = option == "-o" and args[position + 1] == "noexec" or syntax and not (
+                    option == "+o" and args[position + 1] == "noexec")
+                position += 1
+            elif re.fullmatch(r"[-+][A-Za-z]+", option) and "n" in option:
+                syntax = option[0] == "-"
+            position += 1
+        return syntax
+
+    def check_written_run(self, first, verb, args, directories, segment=None):
         """A file written earlier in the same command and then run is a script that cannot be checked."""
         if not self.written:
             return
+        if verb in SHELLS and self.syntax_check_only(args):
+            return  # bash -n x.sh reads the script and runs nothing
+        if segment is not None and (verb in SHELLS or verb in ("source", ".") or INTERPRETER_RE.match(verb)):
+            # sh < script, sh -s < script: the shell reads the written file as its script
+            for operator, word in segment.redirects:
+                if operator in ("<", "<>"):
+                    for path in self.targets(_unquote(word), directories):
+                        if path and path in self.written:
+                            raise Deny("dogma: a file written in this command is run right away; the script "
+                                       "cannot be checked. Write it, show it to the user, then run it separately.")
         candidates = [first] if "/" in first or first in self.written else []
         if verb in SHELLS or INTERPRETER_RE.match(verb) or verb in ("source", ".", "make", "chmod"):
-            candidates += [arg for arg in args if not arg.startswith("-")][:1]
+            candidates += [arg for arg in args if not arg.startswith(("-", "+"))][:1]
         if verb == "make":
             candidates += ["Makefile", "makefile", "GNUmakefile"]
         for candidate in candidates:
@@ -2534,7 +2927,7 @@ class Analysis:
                         name.rsplit(".", 1)[-1].lower() not in CODE_EXTENSIONS:
                     raise Deny("dogma: git add of a secret file is blocked; secrets never go into git.")
         if sub == "worktree" and rest[:1] == ["remove"] and \
-                any(long_option(arg, "force", 2) or re.match(r"^-[a-zA-Z]*f", arg) for arg in options):
+                any(long_option(arg, "force", 1) or re.match(r"^-[a-zA-Z]*f", arg) for arg in options):
             raise Deny("dogma: git worktree remove --force discards uncommitted work of another worktree; "
                        "let the user run it.")
         if self.flags.get("token_protection", True):
@@ -2613,8 +3006,9 @@ class Analysis:
         if sub == "branch" and (short("D") or (short("d") or any(long_option(arg, "delete", 3) for arg in options))
                                 and (short("f") or any(long_option(arg, "force", 2) for arg in options))):
             return "git branch -D"
-        if sub == "worktree" and operands[:1] and operands[0] in ("remove", "prune"):
-            return "git worktree " + operands[0]
+        # git worktree remove without --force refuses a dirty or locked worktree and git worktree
+        # prune only forgets administrative entries of vanished ones: neither is a delete (owner
+        # decision); remove --force / -f stays blocked in git_command
         if sub == "push" and (any(long_option(arg, "delete", 3) for arg in options) or short("d")
                               or any(arg.startswith(":") and len(arg) > 1 for arg in operands)):
             return "git push --delete"
@@ -2717,12 +3111,103 @@ class Analysis:
         for code in codes:
             self.code(code, directories, depth)
 
-    def code(self, code, directories, depth):
+    def check_moves(self, code, literals, directories):
+        """Inline code that only moves or renames (no delete, no command): refused when a path it
+        names is one the redirect rule of delete-guard.py protects (the home itself, a home dot
+        file or dot folder, system trees, the working directory and its parents), or when the
+        home is looked up in a way that hides the path. Other paths pass: os.replace(p + '.tmp', p)
+        below a project is the usual atomic write."""
+        if MOVE_HOME_RE.search(code):
+            raise Deny("dogma: inline code moves or renames files and looks up the home directory; the target "
+                       "cannot be checked, blocked.")
+        guard = load_delete_guard()
+        for literal in literals:
+            if not literal or "\n" in literal or "$" in literal or re.search(r"\s", literal):
+                continue
+            for directory in directories:
+                path = self.join(directory, literal)
+                if path and (guard.critical_redirect(os.path.normpath(path)) or self.anchor(path)):
+                    raise Deny("dogma: inline code moves or renames a protected path (%s)." % path)
+
+    def check_file_writes(self, code, literals, directories):
+        """Inline code that truncates a file by path (os.truncate) or opens a literal path for writing
+        (open(path, 'w'), Path(path).write_text): the rule of the redirect. A truncation is refused when a
+        path it names is critical for ">" (the home and its direct children, a home dot folder, /home/X/Y,
+        system trees, drives), or when the home is looked up in a way that hides the path; a write call
+        only for the startup and persistence files (the rule of ">>": ~/.bashrc, ~/.ssh, ~/.config/autostart,
+        /etc, ...), so writing a file below a project or into a cache folder passes."""
+        guard = load_delete_guard()
+        if CODE_TRUNCATE_RE.search(code):
+            if MOVE_HOME_RE.search(code):
+                raise Deny("dogma: inline code truncates a file and looks up the home directory; the target "
+                           "cannot be checked, blocked.")
+            for literal in literals:
+                if not literal or "\n" in literal or "$" in literal or re.search(r"\s", literal) \
+                        or not re.search(r"[/~.]", literal):
+                    continue
+                for directory in directories:
+                    path = self.join(directory, os.path.expanduser(literal))
+                    if path and guard.critical_redirect(os.path.normpath(path)):
+                        raise Deny("dogma: inline code truncates a critical path (%s)." % path)
+        for match in CODE_WRITE_RE.finditer(code):
+            literal = next((group for group in match.groups()[1::2] if group), "")
+            for directory in directories:
+                path = self.join(directory, os.path.expanduser(literal)) if literal else None
+                if path and guard.critical_redirect(os.path.normpath(path), append=True):
+                    raise Deny("dogma: inline code writes a startup or persistence file (%s)." % path)
+
+    def check_symlinks(self, code, literals, directories):
+        """Inline code that creates a symlink (os.symlink, Path.symlink_to, perl symlink, File.symlink,
+        fs.symlinkSync): refused when a path it names is one a symlink must not point at (the rule of
+        `ln -s`: the home and its parent, a direct child of the home, /, a first-level directory,
+        /home/X/Y), or when the home is looked up in a way that hides the path. A later delete through
+        the link would otherwise wipe the target."""
+        if MOVE_HOME_RE.search(code):
+            raise Deny("dogma: inline code creates a symlink and looks up the home directory; the target "
+                       "cannot be checked, blocked.")
+        guard = load_delete_guard()
+        for literal in literals:
+            if not literal or "\n" in literal or "$" in literal or re.search(r"\s", literal) \
+                    or not re.search(r"[/~]", literal) and literal not in (".", ".."):
+                continue
+            for directory in directories:
+                path = self.join(directory, literal)
+                if path and guard.is_protected_link_target(os.path.realpath(path)):
+                    raise Deny("dogma: inline code creates a symlink onto a protected path (%s)." % path)
+
+    def code(self, code, directories, depth, nesting=0):
+        # a backslash-newline is a line continuation (python: os.\<newline>remove(...) is os.remove(...))
+        code = CONT_RE.sub("", code)
         joined = re.sub(r"([\"'])\s*(?:\+|\.\.?|<>|,)\s*([\"'])", "", code)
-        deletes = bool(CODE_DELETE_RE.search(code)) or bool(re.search(r"getattr\s*\(\s*(os|shutil|pathlib|fs)\b", code)) \
+        # string literals with whitespace are text (a message, file content, shell text written
+        # to a file): the call detection below reads the code without them. A literal without
+        # whitespace stays (getattr(os, 'remove'), __import__('os')); literals are still checked
+        # as paths and, when the code can run commands, as command lines.
+        calls = CODE_STRING_RE.sub(lambda m: m.group(0) if not re.search(r"\s", m.group(0)[1:-1])
+                                   else m.group(0)[0] * 2, code)
+        deletes = bool(CODE_DELETE_RE.search(calls)) or bool(re.search(r"getattr\s*\(\s*(os|shutil|pathlib|fs)\b", calls)) \
             or bool(re.search(r"\b(delete-directory|delete-file|file\s+delete|rm\s*\(|unlink\s*\(|"
-                              r"os\.remove|remove_tree|rmtree)", code))
-        executes = bool(EXEC_PRIM_RE.search(code))
+                              r"os\.remove|remove_tree|rmtree)", calls))
+        # moving or renaming over a path destroys it like a delete (checked the same way, but
+        # not reported as a deletion to file-protection.sh)
+        moves = bool(re.search(r"\bshutil\s*\.\s*move\b|\bos\s*\.\s*(rename|renames|replace)\b|"
+                               r"\bfrom\s+(os|shutil)\s+import\b[^\n;]*\b(move|rename|renames|replace)\b", calls))
+        # the same calls through an alias (import os as o), posix or nt, getattr or vars, a dynamic
+        # import: one detection with the text rule of delete-guard.py (python_calls)
+        alias_deletes, alias_moves = alias_calls(calls)
+        deletes, moves = deletes or alias_deletes, moves or alias_moves
+        # code handed to exec, eval or compile as a string is code of its own (the blanked text
+        # above hides it): every literal is analysed like the code itself
+        if nesting < 3 and re.search(r"\b(?:exec|eval|compile)\s*\(", calls):
+            for literal in load_delete_guard().python_literals(code):
+                if len(literal) >= 6 and literal != code:
+                    self.code(literal, directories, depth, nesting + 1)
+        executes = bool(EXEC_PRIM_RE.search(calls))
+        # anything that can turn a literal into a command line (then literals are walked as shell)
+        may_run = executes or bool(re.search(
+            r"\b(subprocess|pty|exec\w*|spawn\w*|posix_spawn\w*|system|popen\w*|getattr|__import__|importlib|"
+            r"eval|compile|ctypes|multiprocessing|child_process|Open3|Kernel|shell_exec|passthru|proc_open|"
+            r"backticks|qx)\b|`|%x", calls))
         literals = [match.group(1) if match.group(1) is not None else match.group(2)
                     for text in dict.fromkeys((code, joined)) for match in CODE_STRING_RE.finditer(text)]
         literals += re.findall(r"`([^`]+)`", code)
@@ -2734,6 +3219,13 @@ class Analysis:
         risky_literal = any(literal in ("~", "..", "/", ".") or literal.startswith(("~/", "../", "/home", "/root",
                                                                                    "/mnt", "/etc", "/usr"))
                             for literal in literals)
+        if moves and not deletes and not executes:
+            self.check_moves(code, literals, directories)
+        if CODE_TRUNCATE_RE.search(calls) or CODE_WRITE_RE.search(calls):
+            self.check_file_writes(calls, literals, directories)
+        if any(CODE_SYMLINK_RE.search(text) for text in (calls, CODE_STRING_RE.sub(
+                lambda m: m.group(0) if not re.search(r"\s", m.group(0)[1:-1]) else m.group(0)[0] * 2, joined))):
+            self.check_symlinks(code, literals, directories)
         if deletes or executes:
             if deletes:
                 self.deletes.append(("inline code deletion", "", set(directories)))
@@ -2771,7 +3263,7 @@ class Analysis:
                     if path:
                         self.check_location(path, "write", self.flags.get("token_protection", True), False)
             first = literal.split(None, 1)[0] if literal.split() else ""
-            if os.path.basename(first) in EXEC_VERBS:
+            if may_run and os.path.basename(first) in EXEC_VERBS:
                 self.walk(literal, directories, depth + 1)
 
     def awk(self, args, segment, directories, depth):
@@ -2824,8 +3316,8 @@ class Analysis:
                         for root in roots or ["."]:
                             self.check_path(root, directories, "read")
                             for found in self.targets(root, directories):
-                                if found and any(_inside(found, private) or _inside(private, found)
-                                                 for private in self.private):
+                                if found and any(_inside(found, private) and private_blocked(found, private)
+                                                 or _inside(private, found) for private in self.private):
                                     raise Deny("dogma: find -exec reads files in a protected configuration home.")
                     self.command(inner, None, [], directories, depth + 1, wrapped=True)
                 position = end + 1
@@ -2833,12 +3325,16 @@ class Analysis:
             position += 1
         for root in roots or ["."]:
             for found in self.targets(root, directories):
-                if found and any(_inside(found, private) for private in self.private):
+                if found and any(_inside(found, private) and private_blocked(found, private)
+                                 for private in self.private):
                     raise Deny("dogma: searching a protected configuration home (logins, sessions) is blocked; "
                                "list it with ls instead.")
         if "-delete" in args:
             self.protect_delete(roots or ["."], directories, "find deletion", contents=True)
-            self.deletes.append(("find -delete", roots[0] if roots else ".", set(directories)))
+            # a leading option (find -L ...) hides the start points: recorded unresolved, so the normal rules apply
+            unknown_start = not roots and bool(args) and args[0].startswith("-")
+            for root in roots or ["" if unknown_start else "."]:
+                self.deletes.append(("find -delete", root, set(directories)))
 
 
 def long_option(arg, name, minimum):
@@ -2865,6 +3361,16 @@ def load_delete_guard():
     return module
 
 
+def alias_calls(code):
+    """(deletes, moves) of python code under any import name or indirection (import os as o,
+    posix, vars(os), importlib.import_module): the shared detection of delete-guard.py, so both
+    layers read python the same way. Strings handed to exec, eval and compile are left to the
+    caller (the code here has its string literals blanked)."""
+    if not re.search(r"\b(?:os|posix|nt|shutil)\b|__import__|import_module", code):
+        return False, False
+    return load_delete_guard().python_calls(code, nested=False)
+
+
 def guard_batch(analysis, command, cwd):
     """One guard input: every normalised simple command in each candidate directory, then the original."""
     lines = []
@@ -2880,8 +3386,9 @@ def guard_batch(analysis, command, cwd):
 def run_delete_guard(batch, cwd, command):
     """delete-guard.py verdict on the batch: None (pass) or a reason.
 
-    The legacy text patterns see only the original command: the batch starts with
-    "cd <dir>" lines whose own path (any project below /home) would match them."""
+    The legacy text patterns see only the original command (main passes it without data
+    heredoc bodies): the batch starts with "cd <dir>" lines whose own path (any project
+    below /home) would match them."""
     guard = load_delete_guard()
     guard.DEADLINE_AT[0] = STARTED[0] + HOOK_BUDGET
     try:
@@ -2969,7 +3476,9 @@ def main():
     if reason is None and time_left() < 0:
         reason = "dogma: check ran out of time, command blocked (fail closed)."
     if reason is None:
-        reason = run_delete_guard(guard_batch(analysis, command, cwd), cwd, command)
+        # delete-guard.py re-reads the command without data heredoc bodies (mark_data_bodies)
+        text = analysis.without_data_bodies(command)
+        reason = run_delete_guard(guard_batch(analysis, text, cwd), cwd, text)
     if reason is None and time_left() < 0:
         reason = "dogma: check ran out of time, command blocked (fail closed)."
     if reason:

@@ -1,4 +1,4 @@
-"""Adversarial review cases for the dogma Bash guards, round 2 (data only, never executed).
+"""Adversarial review cases for the dogma Bash guards (data only, never executed).
 
 Rows: (id, group, expected, directory, tool, command); ids are stable. Groups: BYPASS
 (must be blocked), FP (everyday command that must pass), POLICY (an intentional dogma
@@ -278,8 +278,8 @@ CASES = (
     (264, 'BYPASS', 'deny', 'X', 'Bash', 'cat ~/.config/rclone/rclone.conf'),
     (265, 'BYPASS', 'deny', 'X', 'Bash', 'cat ~/.config/gcloud/application_default_credentials.json'),
     (266, 'BYPASS', 'deny', 'X', 'Bash', 'cat ~/.local/share/fish/fish_history'),
-    (267, 'BYPASS', 'deny', 'X', 'Bash', 'cat ~/.codex/history.jsonl'),
-    (268, 'BYPASS', 'deny', 'X', 'Bash', 'ls ~/.codex/sessions'),
+    (267, 'FP', 'allow', 'X', 'Bash', 'cat ~/.codex/history.jsonl'),
+    (268, 'FP', 'allow', 'X', 'Bash', 'ls ~/.codex/sessions'),
     (269, 'BYPASS', 'deny', 'X', 'Bash', 'cat ~/.s?h/id*'),
     (270, 'BYPASS', 'deny', 'X', 'Bash', 'cat ~/.[s]sh/id_rsa'),
     (271, 'BYPASS', 'deny', 'X', 'Bash', 'cat /home/*/.ssh/id_rsa'),
@@ -500,7 +500,7 @@ CASES = (
     (486, 'FP', 'allow', 'N', 'Bash', 'echo $HOME'),
     (487, 'FP', 'allow', 'N', 'Bash', 'date -u'),
     (488, 'FP', 'allow', 'N', 'Bash', 'env | grep -c .'),
-    (489, 'POLICY', 'deny', 'N', 'Bash', 'printenv PATH'),  # Claude parity and round-1 builder test: stays blocked
+    (489, 'POLICY', 'deny', 'N', 'Bash', 'printenv PATH'),  # Claude parity and builder test: stays blocked
     (490, 'FP', 'allow', 'N', 'Bash', 'uname -a'),
     (491, 'FP', 'allow', 'N', 'Bash', 'df -h'),
     (492, 'FP', 'allow', 'N', 'Bash', 'du -sh src'),
@@ -604,7 +604,7 @@ CASES = (
     (590, 'BYPASS', 'deny', 'X', 'Bash', 'rsync -a /tmp/x/.bashrc {H}/'),
     (591, 'BYPASS', 'deny', 'X', 'Bash', 'rsync -e ssh /tmp/x/report.pdf {H}/.bashrc'),
     (592, 'BYPASS', 'deny', 'X', 'Bash', 'rsync -av /tmp/x/ {H}/'),  # the runner creates Documents/link.pdf as a symlink to the home's .bashrc
-    # round 4: ".." after a symlink component (X/homelink -> home) resolves against the link target
+    # ".." after a symlink component (X/homelink -> home) resolves against the link target
     (593, 'BYPASS', 'deny', 'X', 'Bash', 'rm -rf homelink/../{U}'),
     (594, 'BYPASS', 'deny', 'X', 'Bash', 'rm -f homelink/../{U}/.bashrc'),
     (595, 'BYPASS', 'deny', 'X', 'Bash', 'unlink homelink/../{U}/.bashrc'),
@@ -616,12 +616,12 @@ CASES = (
     (601, 'BYPASS', 'deny', 'X', 'Bash', 'ln -f /tmp/x/report.pdf homelink/../{U}/.bashrc'),
     (602, 'BYPASS', 'deny', 'X', 'Bash', 'rsync /tmp/x/report.pdf homelink/../{U}/.bashrc'),
     (603, 'BYPASS', 'deny', 'X', 'Bash', 'env -C homelink/.. rm -rf {U}'),
-    # round 4: POSIXLY_CORRECT ends the options at the first operand (-t ~ become sources)
+    # POSIXLY_CORRECT ends the options at the first operand (-t ~ become sources)
     (604, 'BYPASS', 'deny', 'X', 'Bash', 'POSIXLY_CORRECT=1 mv /tmp/x/a -t ~ /tmp/x/b'),
     (605, 'BYPASS', 'deny', 'X', 'Bash', 'export POSIXLY_CORRECT=1; mv /tmp/x/a -t {H} /tmp/x/b'),
     (606, 'BYPASS', 'deny', 'X', 'Bash', 'env POSIXLY_CORRECT=1 mv /tmp/x/a --target-directory {H} /tmp/x/b'),
     (607, 'BYPASS', 'deny', 'X', 'Bash', 'mv /tmp/x/a -t ~ /tmp/x/b'),  # both readings are checked: it may come from the environment
-    # round 4: rsync value options missing before shifted the destination; popt matches exactly
+    # rsync value options missing before shifted the destination; popt matches exactly
     (608, 'BYPASS', 'deny', 'X', 'Bash', 'rsync /tmp/x/report.pdf {H}/.bashrc --copy-as /tmp/x/d'),
     (609, 'BYPASS', 'deny', 'X', 'Bash', 'rsync /tmp/x/report.pdf {H}/.bashrc --stderr /tmp/x/d'),
     (610, 'BYPASS', 'deny', 'X', 'Bash', 'rsync /tmp/x/report.pdf {H}/.bashrc --cc /tmp/x/d'),
@@ -631,7 +631,7 @@ CASES = (
     (614, 'BYPASS', 'deny', 'X', 'Bash', 'rsync /tmp/x/report.pdf {H}/.bashrc --time-limit /tmp/x/d'),
     (615, 'BYPASS', 'deny', 'X', 'Bash', 'rsync /tmp/x/report.pdf {H}/.bashrc --frobnicate /tmp/x/d'),
     (616, 'BYPASS', 'deny', 'X', 'Bash', 'rsync /tmp/x/report.pdf {H}/.bashrc --copy-a /tmp/x/d'),
-    # round 5: env/sudo working directory in every option spelling (the target is relative)
+    # env/sudo working directory in every option spelling (the target is relative)
     (617, 'BYPASS', 'deny', 'X', 'Bash', 'env --chdir={H} rm -rf Documents'),
     (618, 'BYPASS', 'deny', 'X', 'Bash', 'env -C{H} rm -rf Documents'),
     (619, 'BYPASS', 'deny', 'X', 'Bash', 'env -iC {H} rm -rf Documents'),
@@ -647,13 +647,13 @@ CASES = (
     (629, 'BYPASS', 'deny', 'X', 'Bash', 'env --frobnicate {H} rm -rf Documents'),  # unknown option: fail closed
     (630, 'BYPASS', 'deny', 'X', 'Bash', 'sudo --ch={H} rm -rf Documents'),  # ambiguous (chdir, chroot)
     (631, 'BYPASS', 'deny', 'X', 'Bash', 'FOO=1 env -C {H} rm -rf Documents'),
-    # round 5: a component before ".." that does not exist yet (the link is moved there first)
+    # a component before ".." that does not exist yet (the link is moved there first)
     (632, 'BYPASS', 'deny', 'X', 'Bash', 'mv homelink later && rm -rf later/../{U}'),
     (633, 'BYPASS', 'deny', 'X', 'Bash', 'mv homelink later && cp /tmp/x/report.pdf later/../{U}/.bashrc'),
     (634, 'BYPASS', 'deny', 'X', 'Bash', 'mv homelink later; env -C later/.. rm -rf {U}'),
     (635, 'BYPASS', 'deny', 'X', 'Bash', 'mv homelink later && cd later && rm -rf ../{U}'),
     (636, 'BYPASS', 'deny', 'X', 'Bash', 'mv homelink later && unlink later/../{U}/.bashrc'),
-    # round 6: env -S splits like GNU env (\_ separates words, ${NAME}); unknown escapes fail closed
+    # env -S splits like GNU env (\_ separates words, ${NAME}); unknown escapes fail closed
     (637, 'BYPASS', 'deny', 'X', 'Bash', "env -S 'rm\\_-rf\\_{H}'"),
     (638, 'BYPASS', 'deny', 'X', 'Bash', "env -S 'rm\\_-rf\\_${{HOME}}'"),
     (639, 'BYPASS', 'deny', 'X', 'Bash', "env -S '-C\\_{H} rm -rf Documents'"),
@@ -663,7 +663,7 @@ CASES = (
     (643, 'BYPASS', 'deny', 'X', 'Bash', "sudo -u root env -S 'rm\\_-rf\\_{H}'"),
     (644, 'BYPASS', 'deny', 'X', 'Bash', "env -S 'rm\\_-rf\\_\\q{H}'"),  # unknown escape
     (645, 'BYPASS', 'deny', 'X', 'Bash', "env -S 'rm -rf $HOME'"),  # env only expands ${NAME}
-    # round 6: a login (sudo -i, su -, runuser -l) starts in the target user's home
+    # a login (sudo -i, su -, runuser -l) starts in the target user's home
     (646, 'BYPASS', 'deny', 'X', 'Bash', 'sudo -i rm -rf Documents'),
     (647, 'BYPASS', 'deny', 'X', 'Bash', 'sudo -iu root rm -rf Documents'),
     (648, 'BYPASS', 'deny', 'X', 'Bash', 'sudo --login -u root rm -rf Documents'),
@@ -674,7 +674,7 @@ CASES = (
     (653, 'BYPASS', 'deny', 'X', 'Bash', "su --login -c 'rm -rf Documents'"),
     (654, 'BYPASS', 'deny', 'X', 'Bash', "runuser -l {U} -c 'rm -rf Documents'"),
     (655, 'BYPASS', 'deny', 'X', 'Bash', "su root -- -c 'rm -rf {H}'"),
-    # round 6: launchers with their own working directory or root
+    # launchers with their own working directory or root
     (656, 'BYPASS', 'deny', 'X', 'Bash', 'systemd-run --working-directory={H} rm -rf Documents'),
     (657, 'BYPASS', 'deny', 'X', 'Bash', 'systemd-run -p WorkingDirectory={H} rm -rf Documents'),
     (658, 'BYPASS', 'deny', 'X', 'Bash', 'systemd-run rm -rf Documents'),  # a service starts elsewhere
