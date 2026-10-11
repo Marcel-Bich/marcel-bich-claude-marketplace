@@ -6,6 +6,25 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 ### v0
 
+#### v0.82
+
+##### v0.82.0
+
+###### Added
+
+- LAN relay `disconnect-all` (`--dry-run`, `--yes`, `--full`) resets the relay to "no other device known": removes the pairings, pending repairs, trust grants, stored peer addresses and LAN mirrors of every served profile, then restarts the relay. It lists what goes and asks first; the slash command `/credo:peer-lan disconnect-all` explains it and asks before running it
+- `disconnect-all --full` also removes the Windows-side setup under WSL (scheduled task, firewall rule, portproxy) through the setup's own `credo-peer-lan-winproxy.ps1 -Uninstall`, with one elevated prompt; elsewhere it is skipped with a note
+- Kept by `disconnect-all`: this machine's identity, the bound networks and their allowlists, the `profiles` list, the listen settings and the token
+
+###### Changed
+
+- The kept reason for a fresh worktree without own commits reads `no commits yet (fresh worktree), created Nh ago - may be in use`
+
+###### Fixed
+
+- The automatic merged-worktree cleanup no longer removes a fresh worktree whose branch was only fast-forwarded to main (for example after a sync with main) and has no commit of its own. Such a branch was reported as "merged into main, clean" and removed at once, because the fast-forward added a second reflog entry that skipped the fresh-worktree guard
+- A branch counts as having its own commits only when its reflog holds a commit, cherry-pick or revert entry; the 24h fresh guard (`--fresh-hours`) applies to every branch without them. A merged, clean branch with own commits is still removed at once, also when it was merged by fast-forward
+
 #### v0.81
 
 ##### v0.81.0
