@@ -51,22 +51,25 @@ If worktree exists: Show path and exit with hint.
 
 ### 4. Create Worktree
 
+Run these from the repo root. Write the repo name and the worktree name into the commands
+literally (no shell variables): the worktree guard checks the literal destination path.
+
 ```bash
-# Determine path (always relative to repo root, not CWD)
-REPO_ROOT=$(git rev-parse --show-toplevel)
-REPO_NAME=$(basename "$REPO_ROOT")
-WORKTREE_PATH="$(dirname "$REPO_ROOT")/${REPO_NAME}-worktrees/$ARGUMENTS"
+# Repo name (read-only lookup, use the printed name below)
+basename "$(git rev-parse --show-toplevel)"
 
 # Create directory if needed
-mkdir -p "$(dirname "$WORKTREE_PATH")"
+mkdir -p ../<repo>-worktrees
 
 # Create worktree with new branch
-git worktree add -b "hydra/$ARGUMENTS" "$WORKTREE_PATH"
+git worktree add -b hydra/<name> ../<repo>-worktrees/<name>
 
 # Bring excluded files (CLAUDE.md, CLAUDE/, GUIDES/, DOGMA-PERMISSIONS.md, .credo/, ...)
 # into the new worktree - a fresh worktree only has versioned files
-"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-setup.sh" "$WORKTREE_PATH"
+"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-setup.sh" ../<repo>-worktrees/<name>
 ```
+
+While hydra is installed and the Hydra checkbox is on, the worktree guard (`hooks/worktree-guard.sh`) denies a `git worktree add` to any other destination, so the path must be `../<repo>-worktrees/<name>`.
 
 `worktree-setup.sh` links (relative symlinks) or copies the paths of the worktree files list: the "Worktree files" list in the `### Hydra` subsection of DOGMA-PERMISSIONS.md (read via dogma's `worktree-files.sh` when dogma is installed), else the default list (link CLAUDE.md, CLAUDE/, GUIDES/, DOGMA-PERMISSIONS.md and everything unversioned under .credo/, each only if it exists). Versioned paths are skipped, existing paths are never overwritten, and untracked paths that are not ignored in the main checkout are skipped (`skipped <path> (untracked, not ignored ...)`; agents read them in the main checkout). Always run it right after `git worktree add`; report its `linked` / `copied` lines in the output.
 
