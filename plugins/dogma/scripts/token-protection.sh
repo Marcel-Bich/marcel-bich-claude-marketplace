@@ -312,7 +312,7 @@ log_debug "Checking dangerous commands..."
 # Uses broad match: git followed by anything, then remote with dangerous flags
 if echo "$COMMAND" | grep -qE '(^|\||;|&&|\|\||\s|\$\(|\(|`)(sudo\s+)?(command\s+)?([/a-z]*\/)?git\b.*\bremote\s+(-v|--verbose|show|get-url)'; then
     log_debug "BLOCKING: git remote"
-    output_block "BLOCKED: 'git remote -v/--verbose/show/get-url' can expose tokens embedded in remote URLs. Use 'git remote' (without -v) to list remote names only."
+    output_block "BLOCKED: 'git remote -v/--verbose/show/get-url' can expose tokens embedded in remote URLs. Use 'git remote' (without -v) to list remote names only. For the owner/repo scope check run: bash $SCRIPT_DIR/git-scope.sh [dir]"
 fi
 
 # Git config remote URL (also handles git -C /path config, git --no-pager config, etc.)

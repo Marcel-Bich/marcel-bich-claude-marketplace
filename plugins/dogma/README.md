@@ -142,6 +142,10 @@ When dogma runs inside Claude Code with mods support, `hooks/band.tsx` (listed u
 - **Safe dotenv variants:** `.env.example`, `.env.sample`, `.env.template` are excluded from secret detection and git-add protection
 - **Grep hook:** The Grep tool is blocked from searching in sensitive files (credential files, .env files, key files) - same rules as the Read hook
 
+### Owner/repo scope check (git-scope.sh)
+
+`git remote -v`, `git remote show`, `git remote get-url`, `git config` on remote URLs and `git ls-remote --get-url` stay blocked, because remote URLs can embed tokens. To learn which owner a repository belongs to, run `bash <plugin>/scripts/git-scope.sh [dir]`. It prints only `<host>/<owner>/<repo>` of `origin` (fallback: the first remote), for example `github.com/acme/demo`. Scheme, userinfo, port, query string and a `.git` suffix are dropped, and no error message echoes the URL. The block message names the absolute path of the installed script, so agents can run the check directly.
+
 ### Delete Guard (always on)
 
 `scripts/delete-guard.sh` (core: `bash-guard.py` + `delete-guard.py`, python3) blocks Bash commands that would delete, move away or symlink onto protected paths: `/`, every first-level directory, `/home` down to depth 2, the home directory and its direct children, mount points, devices, the working directory and its parents, whole repositories and worktrees, and every absolute path outside the temporary roots (`/tmp/X+`, `/var/tmp/X+`, `$TMPDIR/X+` and the Windows temp folders, see Temporary folders below). Unlike file protection it ignores DOGMA-PERMISSIONS.md, has no per-hook switch and no worktree exemption; only `CLAUDE_MB_DOGMA_ENABLED=false` turns it off. `CLAUDE_MB_DOGMA_PROTECTED_MOUNTS` (colon separated) adds mount points to the ones found in `/proc/self/mounts`.
