@@ -350,12 +350,13 @@ contains "show unknown falls back to balanced" "preset: balanced" "$out"
 contains "show unknown warns" "unknown preset" "$(err)"
 
 # --- 10. session start injects the main-agent prompt ------------------------
-hook_out() { # session_id source [mode] - prints additionalContext or nothing
-    local sid="$1" src="$2" mode="${3:-}"
+hook_out() { # session_id source [mode] [session-decision] - prints additionalContext or nothing
+    local sid="$1" src="$2" mode="${3:-}" dec="${4:-}"
     local modes="$TMP/hook/modes" decisions="$TMP/hook/decisions"
     mkdir -p "$modes" "$decisions" "$TMP/hook/cwd" "$TMP/hook/cfg"
     rm -f "$modes/$sid" "$decisions/$sid"
     [ -n "$mode" ] && printf '%s\n' "$mode" > "$modes/$sid"
+    [ -n "$dec" ] && printf '%s\n' "$dec" > "$decisions/$sid"
     ( cd "$TMP/hook/cwd" && printf '{"session_id":"%s","source":"%s","cwd":"%s"}' "$sid" "$src" "$TMP/hook/cwd" \
         | CLAUDE_CONFIG_DIR="$TMP/hook/cfg" CREDO_SESSION_MODES_DIR="$modes" CREDO_SESSION_DECISIONS_DIR="$decisions" \
           CREDO_SESSION_START_SHORTHANDS=false CREDO_TMUX_HINT=false \
@@ -366,10 +367,13 @@ out="$(hook_out hookA startup active)"
 contains "hook active startup: universal prompt" "$U" "$out"
 contains "hook active startup: mainagent prompt" "$M" "$out"
 contains "hook active startup: marked as preset" "Model preset 'balanced'" "$out"
+contains "hook active startup: per-spawn stage rule" 'credo-preset.sh" stage <role> <attempt>' "$out"
 out="$(hook_out hookB compact active)"
 contains "hook active after compact: mainagent prompt" "$M" "$out"
 out="$(hook_out hookC startup "")"
-lacks "hook inactive: no preset text" "Model preset" "$out"
+contains "hook open decision: ASK still injected" "NOT yet activated" "$out"
+contains "hook open decision: preset block still injected" "Model preset 'balanced'" "$out"
+lacks "hook open decision: no items knowledge" "credo workflow is ACTIVE" "$out"
 write_global <<'EOF'
 preset: bare
 presets:
@@ -384,6 +388,26 @@ out="$(hook_out hookD startup active)"
 lacks "hook bare preset: no preset block" "Model preset" "$out"
 contains "hook bare preset: credo workflow still injected" "credo workflow is ACTIVE" "$out"
 reset_cfg
+
+# declined directory - declining credo drops only the items workflow, the preset stays
+( cd "$TMP/hook/cwd" && CLAUDE_CONFIG_DIR="$TMP/hook/cfg" "$PLUGIN_DIR/scripts/credo-dir-decision.sh" set declined >/dev/null )
+out="$(hook_out hookE startup "")"
+contains "declined dir: universal prompt" "$U" "$out"
+contains "declined dir: mainagent prompt" "$M" "$out"
+contains "declined dir: preset marked" "Model preset 'balanced'" "$out"
+contains "declined dir: per-spawn stage rule" 'credo-preset.sh" stage <role> <attempt>' "$out"
+lacks "declined dir: no ASK" "NOT yet activated" "$out"
+lacks "declined dir: no items knowledge" "credo workflow is ACTIVE" "$out"
+lacks "declined dir: no items skill list" "work-item model" "$out"
+out="$(hook_out hookF compact "")"
+contains "declined dir after compact: preset still injected" "$M" "$out"
+out="$(hook_out hookG startup "" declined)"
+contains "declined session: preset still injected" "$M" "$out"
+lacks "declined session: no items knowledge" "credo workflow is ACTIVE" "$out"
+out="$(cd "$TMP/hook/cwd" && printf '{"session_id":"hookH","source":"startup","cwd":"%s"}' "$TMP/hook/cwd" \
+    | CLAUDE_CONFIG_DIR="$TMP/hook/cfg" CREDO_SESSION_START_INJECT=false bash "$HOOK" 2>/dev/null)"
+check "global off switch silences the declined dir preset" "" "$out"
+rm -rf "$TMP/hook/cfg"
 
 # --- 11. doc invariants: decision philosophy lives in the preset config --------
 SKILLS="$PLUGIN_DIR/skills"

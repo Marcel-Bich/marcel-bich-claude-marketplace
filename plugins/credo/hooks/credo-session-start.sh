@@ -35,10 +35,13 @@
 #      CREDO_SESSION_START_SHORTHANDS (default on); CREDO_SESSION_START_INJECT
 #      =false still silences the whole hook, legend included.
 #
-#   4. PRESET (active sessions). The universal-prompt and mainagent-prompt of the
-#      active model preset are appended (credo-preset.sh mainagent --field prompt).
-#      Subagents do not get them here: the main agent appends the per-stage prompt
-#      itself when it spawns one (SubagentStart carries no role or prompt).
+#   4. PRESET (every session, not gated by the credo decision). The universal-prompt
+#      and mainagent-prompt of the active model preset are appended (credo-preset.sh
+#      mainagent --field prompt), plus a one-line per-spawn rule (credo-preset.sh stage).
+#      Declining credo declines only the items workflow (mechanisms 1 and 2), so the
+#      preset keeps working in a declined directory. Subagents do not get it here: the
+#      main agent appends the per-stage prompt itself when it spawns one (SubagentStart
+#      carries no role or prompt).
 #
 # State (keyed by session_id, mirrors session-mode-set.sh / credo-decision-set.sh):
 #   mode      : ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-modes/<id>      (active|passive|autonomous)
@@ -51,7 +54,8 @@
 #   declined = decision == declined, OR dir == declined (and not active)  -> no workflow text
 #   open     = none of the above                                          -> ASK on startup/clear only
 # ("silent" / "nothing" below refers to the workflow text; the SHORTHANDS
-# legend is still emitted in every state, see mechanism 3.)
+# legend and the PRESET block are still emitted in every state, see mechanisms
+# 3 and 4.)
 # The per-dir layer makes a "No" stick: once declined for a directory, that
 # directory never ASKs again, in this or any future session.
 #
@@ -264,25 +268,27 @@ case "$source" in
         ;;
 esac
 
-# --- model preset: main-agent prompt (active sessions only) -----------------
+# --- model preset: main-agent prompt + per-spawn rule (every session) -------
 # The universal-prompt and mainagent-prompt of the active preset (credo-preset.sh)
 # reach the main agent here, at every SessionStart including the one after a
-# compaction. Missing prompt keys add nothing; the block is then omitted.
+# compaction. The per-spawn line sends the main agent to credo-preset.sh stage for
+# model and effort (same rule as the orchestration skill). Not gated by the credo
+# decision. Missing prompt keys add nothing; the block is then omitted.
 PRESET_BLOCK=""
 PRESET_SCRIPT="${_scripts_dir:-${CLAUDE_PLUGIN_ROOT:-}/scripts}/credo-preset.sh"
-if [[ "$active" == true && -x "$PRESET_SCRIPT" ]]; then
+if [[ -x "$PRESET_SCRIPT" ]]; then
     _preset_prompt="$("$PRESET_SCRIPT" mainagent --field prompt 2>/dev/null)" || _preset_prompt=""
     if [[ -n "$_preset_prompt" ]]; then
         _preset_name="$("$PRESET_SCRIPT" active 2>/dev/null)" || _preset_name="balanced"
-        PRESET_BLOCK="[credo] Model preset '${_preset_name}' - instructions for the main agent (they apply to the whole session, also after a compaction):"$'\n'"${_preset_prompt}"
+        _spawn_rule="Before each subagent spawn, run \"${PRESET_SCRIPT}\" stage <role> <attempt> (roles: explore, build, review, hard; attempt 1 for the first try of that role on an item, plus one per failed try). Pass its alias as the Agent model, its effort as effort, and append its prompt block to the Agent prompt. action back-to-human means do not spawn."
+        PRESET_BLOCK="[credo] Model preset '${_preset_name}' - instructions for the main agent (they apply to the whole session, also after a compaction):"$'\n'"${_preset_prompt}"$'\n\n'"${_spawn_rule}"
     fi
 fi
 
-# --- decision logic: assemble the output, then emit once ---------------------
+# --- decision logic: assemble the workflow text, then emit once --------------
 OUT=""
 if [[ "$active" == true ]]; then
     OUT="$KNOWLEDGE"
-    [[ -n "$PRESET_BLOCK" ]] && OUT="$OUT"$'\n\n'"$PRESET_BLOCK"
 elif [[ "$decision" == "declined" || "$dir_decision" == "declined" ]]; then
     OUT=""
 elif [[ "$mode" != "autonomous" ]]; then
@@ -290,6 +296,15 @@ elif [[ "$mode" != "autonomous" ]]; then
     case "$source" in
         startup|clear) [[ "$ask_enabled" == true ]] && OUT="$ASK" ;;
     esac
+fi
+
+# Append the PRESET block (mechanism 4) in every state, or emit it alone.
+if [[ -n "$PRESET_BLOCK" ]]; then
+    if [[ -n "$OUT" ]]; then
+        OUT="$OUT"$'\n\n'"$PRESET_BLOCK"
+    else
+        OUT="$PRESET_BLOCK"
+    fi
 fi
 
 # tmux hint - one short line when credo is active but this session does not run inside
