@@ -5,18 +5,30 @@
 # `mv`/`git mv` (a move), `cp` (a duplicating move) or `rm`/`git rm` (deleting the
 # old copy after re-writing the file elsewhere) of an item file inside the .credo/
 # status tree bypasses the helper's atomicity, no-clobber, History and entry-gate
-# logic, so it is blocked here. The helper itself (credo-item-move.sh) uses none of
-# these as its command word and is never blocked.
+# logic, so it is blocked here. The helper itself (credo-item-move.sh) is a script
+# call, not a raw move, and is never blocked, also not when chained with one.
 #
-# Detection is deliberately narrow: the command must use mv/git mv, cp, or rm/git
-# rm as a command WORD (line start, or right after && / ; / |) AND reference a path
-# in the credo item status tree (items/<N>_<name>). Anything else is allowed.
+# Detection, per command segment (the command is split at && ; | & ( ) { } and
+# newlines):
+#   - a segment whose command WORD is mv/git mv, cp or rm/git rm is a raw move;
+#   - cd/pushd segments set the working directory for the moves after them, starting
+#     from the persisted Bash cwd of the hook input; popd makes it unknown;
+#   - a raw move is blocked when its text holds an item status path
+#     (items/<digit>_<lowercase>), or when one of its operands, resolved lexically
+#     against the working directory, lands on one. Absolute operands are used as they
+#     are, so a move of a non-item file stays allowed even when the shell stands
+#     inside the item tree;
+#   - while the working directory is unknown (cd to a home or variable path, popd),
+#     the hook cwd serves as the guess for the operands, and the whole command must
+#     not touch the item tree either.
+# Anything else is allowed.
 #
 # Known false positives (accepted): a legitimate non-move touch of an item file -
 # copying one out as a backup (cp) or removing a stray temp file under an item
-# folder (rm) - is also blocked. These are rare; do such things outside the agent
-# or ask. The gain (closing the cp-duplicate and write-then-rm move bypasses)
-# outweighs it.
+# folder (rm) - is blocked, and so is a move after a cd into the item tree that
+# targets an unrelated file. These are rare; do such things outside the agent or
+# ask. The gain (closing the cp-duplicate, write-then-rm and chained-after-helper
+# bypasses) outweighs it.
 #
 # Scope: ALL session modes (no autonomy gate). This is a structural guard, not a
 # budget/pacing guard.
@@ -42,10 +54,9 @@ INPUT=$(cat 2>/dev/null) || exit 0
 
 tool_name=$(printf '%s' "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null) || tool_name=""
 cmd=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null) || cmd=""
-# cwd tracks the PERSISTED Bash working directory (it follows a `cd` from a prior
-# call), so a relative move like "mv 0042.md ../../2_done/" issued after a separate
-# "cd .credo/items/1_todo/2_go" can be caught even though its command string carries
-# no item-tree path. (An in-line "cd x && mv ..." is already caught via the cmd.)
+# cwd is the PERSISTED Bash working directory (it follows a `cd` from a prior call),
+# the start for resolving relative move operands ("mv 0042.md ../../2_done/" issued
+# after a separate "cd .credo/items/1_todo/2_go" resolves into the item tree).
 cwd=$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null) || cwd=""
 [ "$tool_name" = "null" ] && tool_name=""
 [ "$cmd" = "null" ] && cmd=""
@@ -56,40 +67,119 @@ cwd=$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null) || cwd=""
 [ -n "$cmd" ] || exit 0
 
 # --- classify ----------------------------------------------------------------
-# The helper is never a raw mv (its command word is a script path, not mv), so a
-# command that invokes credo-item-move.sh is explicitly not blocked.
-case "$cmd" in
-    *credo-item-move.sh*) exit 0 ;;
-esac
+# mv/git mv, cp, or rm/git rm as a COMMAND WORD (start of a segment). "echo mv" does
+# not match. The optional "git " prefix applies to mv and rm; cp has no git form.
+MOVE_RE='^[[:space:]]*((git[[:space:]]+)?(mv|rm)|cp)([[:space:]]|$)'
+CD_RE='^[[:space:]]*(cd|pushd)([[:space:]]|$)'
+POPD_RE='^[[:space:]]*popd([[:space:]]|$)'
 
-# mv/git mv, cp, or rm/git rm as a COMMAND WORD: at the start, or right after a
-# && / ; / | separator (optional leading "cd ... &&|;" segments are handled by the
-# same separator rule). So "cd /p && mv a b" matches, while "echo mv" does not.
-# The optional "git " prefix applies to mv and rm (git mv / git rm); cp has no git
-# form.
-is_move_cmd() {
-    printf '%s' "$1" | grep -Eq \
-        '(^|&&|;|\|)[[:space:]]*((git[[:space:]]+)?(mv|rm)|cp)([[:space:]]|$)' \
-        2>/dev/null
-}
-
-# A path in the credo item STATUS tree: items/ followed by a numbered status
-# folder (1_todo, 2_done, 3_verified, 4_archived, and their subfolders like
-# 1_clarify/2_go/3_blocked). Pattern: items/<digit>_<lowercase>. Applied to the
-# command string AND to cwd: if the agent is standing INSIDE the item status tree
-# (cwd matches), a relative move/cp/rm operates on item files even when the command
-# line shows no item-tree path. Accepted trade-off: a move of an unrelated file
-# while cwd happens to be inside the item tree is also blocked - rare, and doing it
-# from that directory via the agent is unusual.
+# A path in the credo item STATUS tree: items/ followed by a numbered status folder
+# (1_todo, 2_done, 3_verified, 4_archived, and their subfolders like 1_clarify/2_go).
 touches_item_tree() {
-    printf '%s' "$1" | grep -Eq 'items/[0-9]_[a-z]' 2>/dev/null
+    case "$1" in
+        *items/[0-9]_[a-z]*) return 0 ;;
+    esac
+    return 1
 }
 
-if is_move_cmd "$cmd" && { touches_item_tree "$cmd" || touches_item_tree "$cwd"; }; then
+# Lexical clean-up of base + path: "." and ".." are resolved, no filesystem access,
+# symlinks are not followed (a symlinked .credo keeps its .credo/items/... spelling).
+# Result in RESOLVED.
+resolve_path() { # base path
+    local part path="$2"
+    local -a parts=() stack=()
+    case "$path" in
+        /*) ;;
+        *) path="$1/$path" ;;
+    esac
+    IFS=/ read -r -a parts <<< "$path" || true
+    for part in "${parts[@]+"${parts[@]}"}"; do
+        case "$part" in
+            ""|.) ;;
+            ..) if [ "${#stack[@]}" -gt 0 ]; then unset 'stack[${#stack[@]}-1]'; fi ;;
+            *) stack+=("$part") ;;
+        esac
+    done
+    RESOLVED=""
+    if [ "${#stack[@]}" -gt 0 ]; then
+        for part in "${stack[@]}"; do RESOLVED+="/$part"; done
+    fi
+    RESOLVED="${RESOLVED:-/}"
+}
+
+# True when an operand of the raw move (segment $1), resolved against $2, is an item
+# path. Options are skipped; "--opt=value" and "-tVALUE" operands count by their value.
+operand_in_items() { # segment base
+    local args w
+    local -a words=()
+    args="$(printf '%s' "$1" | sed -E 's/^[[:space:]]*((git[[:space:]]+)?(mv|rm)|cp)([[:space:]]|$)//')"
+    read -r -a words <<< "$args" || true
+    for w in "${words[@]+"${words[@]}"}"; do
+        w="${w//\"/}"
+        w="${w//\'/}"
+        case "$w" in
+            --*=*) w="${w#*=}" ;;
+            -t?*) w="${w#-t}" ;;
+            -*) continue ;;
+        esac
+        [ -n "$w" ] || continue
+        resolve_path "$2" "$w"
+        if touches_item_tree "$RESOLVED"; then return 0; fi
+    done
+    return 1
+}
+
+# cd/pushd segment: BASE becomes the directory it leads to, or "" when that cannot be
+# known (home, variable or no target).
+step_cd() { # segment
+    local args w target=""
+    local -a words=()
+    args="$(printf '%s' "$1" | sed -E 's/^[[:space:]]*(cd|pushd)//')"
+    read -r -a words <<< "$args" || true
+    for w in "${words[@]+"${words[@]}"}"; do
+        w="${w//\"/}"
+        w="${w//\'/}"
+        case "$w" in -*) continue ;; esac
+        target="$w"
+        break
+    done
+    case "$target" in
+        ""|"~"*|"\$"*) set_unknown; return 0 ;;
+    esac
+    if [ -z "$BASE" ] && [ "${target#/}" = "$target" ]; then set_unknown; return 0; fi
+    resolve_path "$BASE" "$target"
+    BASE="$RESOLVED"
+}
+
+# The working directory cannot be followed: fall back to the hook cwd as a guess and
+# let the whole command decide as well (see the main loop).
+set_unknown() {
+    UNKNOWN=yes
+    BASE="$cwd"
+}
+
+# Segments: the command split at && ; | & ( ) { } and newlines. A failing sed falls
+# back to the whole command as one segment.
+segments="$(printf '%s\n' "$cmd" | sed -e 's/&&/\n/g' -e 's/[;|&(){}]/\n/g')" || segments="$cmd"
+
+BASE="$cwd"
+UNKNOWN=no
+hit=no
+while IFS= read -r seg; do
+    if [[ $seg =~ $CD_RE ]]; then step_cd "$seg"; continue; fi
+    if [[ $seg =~ $POPD_RE ]]; then set_unknown; continue; fi
+    [[ $seg =~ $MOVE_RE ]] || continue
+    if touches_item_tree "$seg"; then hit=yes; break; fi
+    if [ -n "$BASE" ]; then
+        if operand_in_items "$seg" "$BASE"; then hit=yes; break; fi
+    fi
+    if [ "$UNKNOWN" = yes ] && touches_item_tree "$cmd"; then hit=yes; break; fi
+done <<< "$segments"
+
+if [ "$hit" = yes ]; then
     reason="Item status changes must go through credo-item-move.sh <id> <target> (status/history/atomicity). A raw mv/git mv, cp, or rm/git rm of item files in the .credo/ status tree is blocked (this includes the write-elsewhere-then-rm and cp-duplicate bypasses). For 3_verified, only on the user's explicit instruction and only by the main agent: credo-item-move.sh <id> verified --user-authorized."
     jq -n --arg r "$reason" \
         '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}' 2>/dev/null
-    exit 0
 fi
 
 exit 0
