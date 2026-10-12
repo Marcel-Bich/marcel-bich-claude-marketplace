@@ -191,6 +191,23 @@ Every finding MUST carry concrete, checkable evidence:
 
 No evidence -> not a finding. A verdict without evidence is not acceptable.
 
+## Polish items (best-effort done)
+
+For an item with frontmatter `polish: true` (credo `items`, "Polish items") the gate still
+applies, in a lighter form:
+
+- One light audit by a fresh subagent: the diff against each DoD point, the relevant tests, and
+  the wiring of new code. It is not the full tier.
+- The auditor fixes the small findings ONCE, best effort, and records each as "Fixed now" with
+  its commit. Anything it does not fix stays a finding; it is listed under the item's
+  `## Verify` for the next verify round with the owner.
+- No second audit round and no two-FAIL loop. The emergency brake below does not apply to a
+  polish item.
+- Verdict: `pass (best effort)` with the leftover list. The item then moves to `2_done`.
+- Model and effort are unchanged: the user's setting applies.
+- Not polish: a broken function, data loss, or a security problem. Such a finding takes the
+  normal path (full tier, fix rounds, emergency brake).
+
 ## Findings handling (what happens on a failing audit)
 
 - **Core deviation:** if a finding shows the item misses its core requirement, the

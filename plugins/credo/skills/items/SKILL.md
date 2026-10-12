@@ -188,7 +188,7 @@ entry), so a question surfacing mid-build first goes through the agent decision 
 ("Clarify owner and the agent decision rule" below): the agent decides it itself per the active
 mainagent-prompt (`credo-preset.sh mainagent`) and builds on. Only a question on the fixed escalation list ("Clarify owner and
 the agent decision rule" below: user taste or preference, a change to the verbatim
-requirement, the hard safety rules, deletions of user data, installs, money) can pass
+requirement, the hard safety rules, deletions of user data, installs beyond the item's approvals (`## Freigaben`), money) can pass
 condition 1 here. An item sent back by this test gets
 `clarify_owner: human` again, because its open question is the user's by definition:
 `credo-item-move.sh <id> clarify` sets it and logs `clarify_owner <old> -> human` in the
@@ -219,6 +219,22 @@ prints, delivered at every SessionStart. This section fixes only who decides, th
 requirement and the safety calls below; the decision philosophy itself lives in the preset
 config, not here. Follow the active mainagent-prompt for every agent-owned decision.
 
+**Who decides, by owner and by mode.** Three parts:
+
+1. **Owner-owned clarify items** (`clarify_owner: human`, or the field missing) are clarified
+   with the owner in EVERY mode. The agent never decides them. In an autonomous run they are not
+   clarified at all: they stay in `1_clarify` and go into the end-of-run report.
+2. **Agent-owned clarify items** (`clarify_owner: agent`) are decided by the agent ONLY in an
+   autonomous run. In an interactive mode (active, passive) every clarify decision goes to the
+   human, agent-owned items included: the agent recommends (Recommended option first) and the user
+   decides.
+3. **Build-time details of a GO item** (questions that come up while building it) are the agent's
+   to decide in every mode, per the active mainagent-prompt, logged in the item History. They are
+   not clarify decisions, and the escalation list below still goes to the user.
+
+A repo rule in `.credo/RULES.md` (credo `rules`) can extend this; it cannot lower the safety floor.
+Where another credo text states otherwise, this section wins.
+
 **Who decides depends on the owner** (frontmatter `clarify_owner`, missing = `human`):
 
 - **Human-owned clarify items** (`clarify_owner: human` or missing) are ALWAYS clarified
@@ -227,13 +243,13 @@ config, not here. Follow the active mainagent-prompt for every agent-owned decis
   the GO: `credo-item-move.sh` refuses `-> go` for a human-owned item unless the History
   carries a `(GO: <user quote>)` line or the main agent passes `--user-authorized` on the
   user's explicit GO. A detour via `parked/*` or `3_blocked` does not get around it.
-- **Agent-owned items** (`clarify_owner: agent`, plus everything in `2_go`): uncritical
-  questions are decided by the plan agent. If no plan agent peer is known (none was
-  announced as owning this responsibility), the EXECUTING agent takes this pseudo plan role
-  for the moment, without changing its real role, and decides per the active
-  mainagent-prompt. The fixed escalation list is never a preset decision: user taste or
+- **Agent-owned items** (`clarify_owner: agent`, plus everything in `2_go`): in an autonomous
+  run, uncritical questions are decided by the plan agent. If no plan agent peer is known (none
+  was announced as owning this responsibility), the EXECUTING agent takes this pseudo plan role
+  for the moment, without changing its real role, and decides per the active mainagent-prompt.
+  In an interactive mode these questions go to the user (see "By mode"). The fixed escalation list is never a preset decision: user taste or
   preference, a change to the verbatim requirement, the hard safety rules, deleting user
-  data, installs and money go to the user. Feasible = GO: an agent-owned clarify item may
+  data, installs beyond the item's `## Freigaben` and money go to the user. Feasible = GO (autonomous runs only): an agent-owned clarify item may
   move to `2_go` with the History line `-> go <date> (GO: agent decision, <reason>)`. The
   older marker `(GO: agent per SOTA rule, <reason>)` stays valid (the move helper accepts both).
   **No slicing around the user:** an item with `parent: <id>` may only be agent-GO'd while
@@ -251,18 +267,21 @@ config, not here. Follow the active mainagent-prompt for every agent-owned decis
 
 - anything infeasible or really not good (step 3 above);
 - the user's taste or preference (look, wording, product direction);
-- deleting user data, installs, money, and the hard safety rules (credo `safety`);
+- deleting user data, installs beyond the item's `## Freigaben`, money, and the hard safety rules (credo `safety`);
 - **verbatim guard:** a question whose answer would change or narrow the user's verbatim
   requirement (the `Requirement (verbatim)` section of the item or of its `parent`) always
   goes to the user (credo `requirements-verbatim`).
 
-**By mode:** interactive (active, passive) - decide the uncritical questions, ask the rest
-via the Ask tool (one item per round, Recommended option first). Autonomous - decide the
-uncritical questions, park the rest for the end-of-run report (deferred-question flow,
-credo `session-autonomous`); never adopt a default for an escalated question.
+**By mode:** interactive (active, passive) - every clarify decision goes to the user via the Ask
+tool, agent-owned items included (one item per round, Recommended option first; the agent's
+recommendation follows the active mainagent-prompt). Autonomous - decide the uncritical questions
+of agent-owned items (GO with the agent-decision marker), park the owner-owned clarify items and
+the escalated questions for the end-of-run report (deferred-question flow, credo
+`session-autonomous`); never adopt a default for an escalated question. In every mode, build-time
+details of a GO item are the agent's to decide and log.
 
 A user GO in the user's own words is always a valid GO for any item; this rule only adds
-that agent-owned items do not wait for one.
+that, in an autonomous run, agent-owned items do not wait for one.
 
 ## Mandatory frontmatter (lean)
 
@@ -308,8 +327,8 @@ an agent NEVER self-waives to save effort (same spirit as "never self-demote / s
 grounds"). Like the blocker relations it is optional and adds no second status source - the
 folder still owns status.
 
-Two further optional fields serve parallel scheduling (credo `orchestration` skill,
-"Parallel code tracks: touches and resource gate"). Both are normally absent and, like the
+Further optional fields serve parallel scheduling (credo `orchestration` skill,
+"Parallel code tracks: touches and resource gate"). All are normally absent and, like the
 fields above, add no second status source:
 
 - `touches` (optional): a list of paths or globs the item will likely edit, e.g.
@@ -322,6 +341,14 @@ fields above, add no second status source:
 - `heavy` (optional): `heavy: true` marks model / benchmark tests or large downloads. A
   heavy item never runs in parallel to another heavy item and starts only when
   `credo-resource-check.sh --heavy` says `ok`.
+- `disk_gb` (optional): `disk_gb: 12` is the free disk in GB the item needs on the target
+  drive while it runs (model files, large downloads, big build outputs). The start checks
+  `credo-resource-check.sh --disk-gb <disk_gb>`: the free space must cover `disk_gb` plus the
+  reserve `resources.disk_reserve_gb` (credo config, default 3 GB). An item without `disk_gb`
+  needs only the reserve. Not enough space = no start; the item stays in `2_go` and is retried
+  later, like a RAM wait (credo `orchestration`, "Disk space").
+- `polish` (optional): `polish: true` marks pure polish, with a lighter audit and a best-effort
+  done (see "Polish items" below). Absent = the normal flow.
 
 Two optional fields record who owns an item's open questions (the full rule is in
 "Clarify owner and the agent decision rule" below). Like the fields above they add no
@@ -413,6 +440,29 @@ Use these English headings in this order. A blank template ships at
    the folder an item is in MUST match the target of its last History line. A mismatch is a
    detected mis-move - flag it and correct it. This is the contradiction detector, achieved
    without adding a second status source.
+
+### Freigaben - approvals for downloads and installs (optional)
+
+Only for an item that downloads or installs something (a model file, a package, a tool). The
+optional section is `## Freigaben` (the German heading is kept; "approvals" in English). It is
+filled in during clarify, BEFORE the GO, with one line per download or install, name, source
+and version when known:
+
+- `- pip: requests 2.32.3 (PyPI)`
+- `- Download: <file> from <source>`
+
+Rules:
+
+- A GO covers exactly the listed entries and nothing beyond them. Anything else that turns up at
+  build time is a question: asked interactively, parked when autonomous. It is never installed
+  on the builder's own initiative.
+- The security check stays mandatory for approved entries too: source, author, license and known
+  supply-chain problems (credo `safety`). Suspicious means nothing is installed and the item goes
+  back to `1_todo/1_clarify`.
+- Clarify fills the section before the GO, so the owner sees every download and install in the
+  GO decision.
+- No `## Freigaben` section means nothing is approved. The no-autonomous-installs rule (credo
+  `safety`) applies unchanged.
 
 ### Body-freshness invariant
 
@@ -561,6 +611,26 @@ in the body as clarified and the old open-question prose is updated or removed i
 move, not only after a code build. Leaving stale claims standing after a build or a
 clarification is a detected mis-state, exactly like the Folder<->History invariant and the
 not-started contradiction above - flag it and reconcile it in the same turn.
+
+## Polish items (optional `polish: true`)
+
+Polish is a best-effort kind of done for pure fine-tuning: wording, layout, small behavior
+details. It is set during clarify, before the GO, by the owner's words or the clarifying agent
+for an item the owner accepted as polish. It is NOT derived from `type`.
+
+- **Flow:** one build, then one light audit (credo `audit`, "Polish items"). Findings are fixed
+  once, best effort. Then the item goes to `2_done`. There is no second audit round and no
+  two-FAIL loop.
+- **Model and effort are not changed.** The user's own setting (preset or config) applies, with
+  no special tier for polish.
+- **Leftovers** are listed under `## Verify` as a list for the next verify round with the owner
+  ("best effort", not "perfect").
+- **Not polish:** a broken function, data loss, or a security problem is an error. Such an item
+  takes the normal flow, without the polish shortcut.
+- **Slicing:** when a normal item keeps producing small findings that only loop (more than 5
+  fix rounds without completion), those small findings are sliced into their own polish item in
+  `1_todo/1_clarify` (`clarify_owner: agent`, `parent: <id>`, `polish: true`, and the History line
+  `created by agent (clarify)`). The original item goes on, or goes to `done` once its core is met.
 
 ## Definition of Done (the gate into 2_done/)
 
@@ -835,7 +905,7 @@ Unlocking (`git worktree unlock <path>`) follows one rule:
 Valid transitions (folder = status):
 
 - `1_clarify -> 2_go` once the user gives an explicit GO (go-gate: only `2_go` is
-  buildable; `1_clarify` is not). For an agent-owned item (`clarify_owner: agent`) the agent
+  buildable; `1_clarify` is not). For an agent-owned item (`clarify_owner: agent`) in an autonomous run the agent
   decision rule may give the GO instead (`(GO: agent decision, <reason>)`, see "Clarify
   owner and the agent decision rule"); a human-owned item always needs the user's GO, and
   the move helper refuses it otherwise. In a presence session, clarify and propose that GO one

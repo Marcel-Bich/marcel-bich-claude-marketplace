@@ -106,6 +106,11 @@ clarify item (`clarify_owner: human` or missing - the user's own request) is nev
 autonomously: it waits for the user (or its open question becomes a deferred question,
 below).
 
+Owner-owned clarify items (`clarify_owner: human`, or the field missing) are never decided in an
+autonomous run: they stay in `1_clarify` and go into the end-of-run report for the owner (credo
+`items`, "Clarify owner and the agent decision rule"). The rules below cover agent-owned items
+and the build-time details of GO items only.
+
 Agent-owned clarify items (`clarify_owner: agent` - slices, follow-ups, build questions,
 audit findings of approved work, with `parent:`) are part of the approved work: apply the
 agent decision rule (credo `items`, "Clarify owner and the agent decision rule"). With no
@@ -113,7 +118,7 @@ plan agent peer known, you take the pseudo plan role for the moment (your real r
 not change): decide the uncritical questions per the active mainagent-prompt; GO a feasible
 item with `(GO: agent decision, <reason>)` and build it; log every decision in the item
 History and list it in the end-of-run report so the user can veto. Park the escalated
-questions (the user's taste or preference, deleting user data, installs, money, the hard
+questions (the user's taste or preference, deleting user data, installs beyond the item's `## Freigaben`, money, the hard
 safety rules, anything that would change or narrow the verbatim requirement, points the
 preset says to note and present) for the end-of-run report - never adopt a default for them.
 
@@ -393,6 +398,9 @@ and is a silent no-op when ntfy is not configured, so you never touch the topic 
 Send an immediate `high` ntfy for come-to-PC events (a deferred question, a blocker /
 showstopper, a budget cap reached, run completion, the pre-hibernate veto) and BEFORE the
 blocking action.
+A disk wait (credo `orchestration`, "Disk space") sends ONE `default` ntfy per item, "waiting for
+disk space", with the item id, the free space and the need; further waits of that item stay
+silent. It is not a come-to-PC event: the item retries itself once space is free.
 Progress is bundled into one digest per `ntfy.digest_interval_minutes`, and - when ntfy is
 configured (a `personal.ntfy_topic` is set) - sending that digest is MANDATORY per interval
 whenever there is progress; it is NOT the agent's discretion to judge it "not important
@@ -426,7 +434,7 @@ re-raised. Only if it is truly unanswered:
    (credo `items`, per the active mainagent-prompt) as the documented default - record the decision
    and its rationale in the item History / handoff so it is auditable - and continue fully
    autonomously. A question on the escalation list (the
-   user's taste or preference, deleting user data, installs, money, the hard safety rules,
+   user's taste or preference, deleting user data, installs beyond the item's `## Freigaben`, money, the hard safety rules,
    a change to the verbatim requirement) or the GO of a human-owned item is NEVER defaulted:
    park it (the item stays where it is), continue with other work, and put it into the
    end-of-run report. Do not block the run on an absent user.

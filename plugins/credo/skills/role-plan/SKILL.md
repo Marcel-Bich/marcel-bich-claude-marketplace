@@ -46,12 +46,30 @@ compaction, new sessions and subagents (stored on disk, not in context):
 
 ## Agent-owned clarify items
 
-The plan role owns deciding agent-owned clarify items (`clarify_owner: agent`) per the agent
-decision rule in the `items` skill ("Clarify owner and the agent decision rule"): uncritical
-questions are decided per the active mainagent-prompt (`credo-preset.sh mainagent`); a feasible
-item moves to `2_go` with `(GO: agent decision, <reason>)` in its History. Human-owned items
+Owner-owned clarify items (`clarify_owner: human`, or the field missing) are clarified with the
+owner in every mode; the plan role never decides them. In an autonomous run they are parked for the
+end-of-run report (credo `items`, "Clarify owner and the agent decision rule").
+
+Agent-owned clarify items (`clarify_owner: agent`) are decided by the plan role ONLY in an
+autonomous run, per the agent decision rule in the `items` skill: uncritical questions per the
+active mainagent-prompt (`credo-preset.sh mainagent`); a feasible item moves to `2_go` with
+`(GO: agent decision, <reason>)` in its History. In an interactive mode the plan role does not
+decide them: it asks the user, one item per Ask round, recommended option first. Human-owned items
 still need the user's GO, and the fixed escalation list there (taste, deleting user data,
-installs, money, safety, anything changing the verbatim requirement) always goes to the user.
+installs beyond the item's `## Freigaben`, money, safety, anything changing the verbatim
+requirement) always goes to the user.
+
+## No batches handed out
+
+The plan role never hands out work packages or batches - not to the task role, not to a
+builder. Its job ends with clarified items: an item the owner has given its GO moves to `2_go`.
+The plan role may at most report "new GO items are ready". The task role then pulls from
+`2_go/` itself (credo `role-task`, "Where the work comes from"), lower item id first. Only an
+explicit owner order about the order or the selection overrides this default.
+
+Before a GO, the plan role fills the item's `## Freigaben` section with every download and
+install the build will need, so the owner sees them in the GO decision (credo `items`,
+"Freigaben").
 
 ## Sandbox pre-work
 

@@ -102,7 +102,7 @@ The path of an item:
 
 1. Get an id (`scripts/credo-id-next.sh`), copy the item template into `1_clarify/`.
 2. Capture the requirement verbatim and draft observable success criteria (the Definition of Done).
-3. On an explicit GO, move to `2_go/` and build (a human-owned item needs the user's GO; an agent-owned item can get an agent GO under the agent decision rule in the `items` skill) - wiring the new code so a caller actually reaches it.
+3. On an explicit GO, move to `2_go/` and build (a human-owned item needs the user's GO; an agent-owned item can get an agent GO under the agent decision rule in the `items` skill, in an autonomous run only) - wiring the new code so a caller actually reaches it.
 4. Run the Definition of Done gate. Only on a pass does it move to `2_done/`.
 5. Only the user files an item under `3_verified/`.
 

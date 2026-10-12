@@ -101,6 +101,11 @@ risk: an install pulls in third-party code, so it must always be an approved dec
   verified (check its source, author, and license before relying on it).
 - If a task cannot proceed without an install, stop and ask for approval; state what you
   want to install and why, then wait. Do not install first and report later.
+- The approval can come from the item itself: the item's `## Freigaben` section (credo
+  `items`, "Freigaben") is explicit user approval, given with the GO, for exactly the entries
+  listed there. Anything not listed is not approved. Approved entries still pass the security
+  check (source, author, license, known supply-chain problems); a suspicious entry is not
+  installed and the item goes back to `1_todo/1_clarify`.
 
 ## Boundary: credo states the rules, not the delete-queue mechanism (C12)
 

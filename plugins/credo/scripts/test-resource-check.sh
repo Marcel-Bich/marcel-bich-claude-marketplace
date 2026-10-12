@@ -23,6 +23,8 @@ unset CREDO_DIR
 mem() { printf 'MemTotal:       32000000 kB\nMemAvailable:   %s kB\n' "$1" > "$TMP/meminfo"; }
 load() { printf '%s 1.00 1.00 1/100 12345\n' "$1" > "$TMP/loadavg"; }
 export CREDO_PROC_MEMINFO="$TMP/meminfo" CREDO_PROC_LOADAVG="$TMP/loadavg" CREDO_NPROC=8
+# free disk on the target drive in KB: 100 GB unless a test sets it (empty = unreadable)
+export CREDO_DISK_AVAIL_KB=104857600
 
 # plenty of RAM (16 GB), low load (0.5 per CPU)
 mem 16777216; load 4.0
@@ -72,10 +74,63 @@ out="$(CREDO_PROC_MEMINFO="$TMP/missing" CREDO_PROC_LOADAVG="$TMP/missing" "$SUT
 check "fail-safe ok" "ok/0" "$out/$rc"
 check "fail-safe note" "2" "$(grep -c 'not checked' "$TMP/err")"
 
+# free disk: only the reserve (default 3 GB) when the item has no disk_gb;
+# checked even below the agent gate (a full disk blocks every start)
+out="$(CREDO_DISK_AVAIL_KB=3145728 "$SUT" --running 0)"; rc=$?
+check "reserve only, exactly enough ok" "ok/0" "$out/$rc"
+out="$(CREDO_DISK_AVAIL_KB=2097152 "$SUT" --running 0)"; rc=$?
+check "reserve only, below gate waits" "wait:low free disk 2.00 GB < 3 GB reserve/5" "$out/$rc"
+out="$(CREDO_DISK_AVAIL_KB=2097152 "$SUT" --running 0 --json)"; rc=$?
+check "json disk fields" "wait 2.0 None" "$(printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["status"], d["disk_free_gb"], d["disk_need_gb"])')"
+
+# disk_gb plus reserve must fit
+out="$(CREDO_DISK_AVAIL_KB=6291456 "$SUT" --running 0 --disk-gb 5)"; rc=$?
+check "disk_gb 5 with 6 GB free waits" "wait:low free disk 6.00 GB < 8 GB (5 needed + 3 reserve)/5" "$out/$rc"
+out="$(CREDO_DISK_AVAIL_KB=9437184 "$SUT" --running 0 --disk-gb 5)"; rc=$?
+check "disk_gb 5 with 9 GB free ok" "ok/0" "$out/$rc"
+out="$(CREDO_DISK_AVAIL_KB=5242880 "$SUT" --running 0 --disk-gb 2.5)"; rc=$?
+check "decimal disk_gb 2.5 with 5 GB free waits" "wait:low free disk 5.00 GB < 5.5 GB (2.5 needed + 3 reserve)/5" "$out/$rc"
+
+# RAM and disk reasons together, in one wait line
+mem 2097152; load 1.0
+out="$(CREDO_DISK_AVAIL_KB=2097152 "$SUT" --running 6)"; rc=$?
+check "ram and disk reasons" "wait:low free RAM 2.00 GB < 4 GB; low free disk 2.00 GB < 3 GB reserve/5" "$out/$rc"
+mem 16777216
+
+# config: reserve from the project layer, invalid value falls back to 3
+printf 'resources:\n  disk_reserve_gb: 1\n' > "$CREDO_PROJECT"
+out="$(CREDO_DISK_AVAIL_KB=1572864 "$SUT" --running 0)"; rc=$?
+check "config disk reserve applied" "ok/0" "$out/$rc"
+printf 'resources:\n  disk_reserve_gb: lots\n' > "$CREDO_PROJECT"
+out="$(CREDO_DISK_AVAIL_KB=2097152 "$SUT" --running 0)"; rc=$?
+check "invalid disk reserve falls back to 3" "wait:low free disk 2.00 GB < 3 GB reserve/5" "$out/$rc"
+printf '' > "$CREDO_PROJECT"
+
+# fail-safe: unreadable disk (empty override, or a path df cannot read) -> ok with note
+out="$(CREDO_DISK_AVAIL_KB="" "$SUT" --running 0 2>"$TMP/err")"; rc=$?
+check "disk fail-safe ok" "ok/0" "$out/$rc"
+check "disk fail-safe note" "1" "$(grep -c 'cannot read free disk' "$TMP/err")"
+out="$(env -u CREDO_DISK_AVAIL_KB "$SUT" --running 0 --path "$TMP/no-such-dir" 2>"$TMP/err")"; rc=$?
+check "unknown path fail-safe ok" "ok/0" "$out/$rc"
+
+# leading zeros in numeric inputs: no invalid JSON (strict json parse), no odd text
+out="$(CREDO_DISK_AVAIL_KB=9437184 "$SUT" --running 05 --disk-gb 05 --json)"; rc=$?
+check "leading zeros json strict parse" "ok 5 5/0" "$(printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["status"], d["running"], d["disk_need_gb"])')/$rc"
+out="$(CREDO_DISK_AVAIL_KB=6291456 "$SUT" --running 0 --disk-gb 05)"; rc=$?
+check "leading zero disk_gb text" "wait:low free disk 6.00 GB < 8 GB (5 needed + 3 reserve)/5" "$out/$rc"
+printf 'resources:\n  disk_reserve_gb: 03\n' > "$CREDO_PROJECT"
+out="$(CREDO_DISK_AVAIL_KB=2097152 "$SUT" --running 0 --json)"; rc=$?
+check "leading zero reserve json" "wait 3" "$(printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["status"], d["disk_reserve_gb"])')"
+out="$(CREDO_DISK_AVAIL_KB=2097152 "$SUT" --running 0)"; rc=$?
+check "leading zero reserve text" "wait:low free disk 2.00 GB < 3 GB reserve/5" "$out/$rc"
+printf '' > "$CREDO_PROJECT"
+
 # bad args
 "$SUT" >/dev/null 2>&1; check "missing --running" 1 "$?"
 "$SUT" --running x >/dev/null 2>&1; check "non-numeric --running" 1 "$?"
 "$SUT" --running 1 --bogus >/dev/null 2>&1; check "unknown flag" 1 "$?"
+"$SUT" --running 1 --disk-gb x >/dev/null 2>&1; check "non-numeric --disk-gb" 1 "$?"
+"$SUT" --running 1 --path >/dev/null 2>&1; check "--path without value" 1 "$?"
 
 printf 'test-resource-check: %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

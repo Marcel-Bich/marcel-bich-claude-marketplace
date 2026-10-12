@@ -43,7 +43,8 @@ assume a mode; read the inject line.
 Ask until EVERYTHING is clear. Never assume prematurely that a request is clear. A GO for
 a human-owned item (the user's own request, `clarify_owner: human` or missing) happens only
 after EXPLICIT user confirmation. Agent-owned items (slices, follow-ups, build questions,
-audit findings - `clarify_owner: agent`) follow the agent decision rule below instead.
+audit findings - `clarify_owner: agent`) follow the agent decision rule below: an autonomous run
+decides them, an interactive mode asks the user.
 
 - Vague or open requests (for example "implement an obsidian memory graph view") are first
   researched - including on the internet where useful - and then clarified with the user:
@@ -66,20 +67,22 @@ rule"); in short:
 - **Human-owned clarify items are always clarified with the user.** The agent recommends
   per the active mainagent-prompt (`credo-preset.sh mainagent`) and puts the recommended
   option first; the user decides and gives the GO.
-- **Agent-owned items:** the plan agent - or, with no known plan agent peer, the executing
-  agent in a temporary pseudo plan role (its real role does not change) - decides
-  uncritical questions itself per the active mainagent-prompt, GOs a feasible item
-  (`(GO: agent decision, <reason>)`), logs each decision in the item History and names
-  it in the next reply so the user can veto.
+- **Agent-owned clarify items:** decided by the agent ONLY in an autonomous run (the plan agent,
+  or with no known plan agent peer the executing agent in a temporary pseudo plan role; its real
+  role does not change). Uncritical questions per the active mainagent-prompt, a feasible item
+  GO'd with `(GO: agent decision, <reason>)`, each decision logged in the item History and named
+  in the next reply so the user can veto. In an interactive mode they go to the user like any
+  clarify item: the agent recommends, the user decides.
 - **Always the user's call, on every item:** the user's taste
-  or preference, deleting user data, installs, money, the hard safety rules, and any
+  or preference, deleting user data, installs beyond the item's `## Freigaben`, money, the hard safety rules, and any
   question whose answer would change or narrow the verbatim requirement.
-- **Mode:** active and passive decide the uncritical questions and ask the rest via the Ask
-  tool; autonomous decides the uncritical questions and parks the rest for the end-of-run
-  report (credo `session-autonomous`).
+- **Mode:** active and passive ask the user for every clarify decision via the Ask tool;
+  autonomous decides the uncritical questions of agent-owned clarify items and parks the rest,
+  owner-owned clarify items included, for the end-of-run report (credo `session-autonomous`).
+  Build-time details of a GO item are decided by the agent in every mode.
 
-The over-clarify standard below applies to what goes to the user; it is not a reason to
-bring an agent-owned uncritical question to the user.
+The over-clarify standard below applies to what goes to the user. A build-time detail of a GO
+item is not a clarify question: the agent decides it and logs it.
 
 ### Rather over-clarify than under-clarify (the standard)
 
@@ -133,8 +136,9 @@ field (credo `items` skill):
 
 ## Clarify via the Ask tool (G1)
 
-The default channel for a clarification that goes to the user (human-owned items, and the
-escalated questions of agent-owned ones - see "Who decides" above) is ALWAYS the Ask tool. Short decisions and
+The default channel for a clarification that goes to the user (human-owned items, every clarify
+decision on agent-owned items in an interactive mode, and the escalated questions - see "Who
+decides" above) is ALWAYS the Ask tool. Short decisions and
 choices go through Ask. For long lists, use prose in the normal message instead - Ask
 truncates - but the decision itself still comes back through Ask where practical. Before
 raising an Ask about an existing item, apply the CLARIFY-FIRST precondition above: read the
@@ -198,8 +202,11 @@ for meta-questions like "may I continue", "do you want a break", or "which item 
 
 Unless the user has directed otherwise, act on your OWN recommendation for what comes
 next - do not hand that choice back as a question: a planning / clarify agent decides
-which open items to pull up and drives the clarify Ask rounds in the order it judges best;
-a task / build agent decides the implementation order of the GO items and implements them.
+which open items to pull up and drives the clarify Ask rounds in the order it judges best
+(every clarify decision stays with the human in an interactive mode, credo `items`); a task /
+build agent pulls the GO items from `2_go/` itself, lower item id first unless the owner gives
+another order, and implements them (credo `role-task`). A plan agent never hands out batches
+(credo `role-plan`).
 An explicit user instruction - a specific item, an order, or a scope - always overrides
 your own recommendation; absent that, your recommendation IS the plan and you proceed on it.
 
