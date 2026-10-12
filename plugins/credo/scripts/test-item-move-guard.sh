@@ -90,6 +90,44 @@ deny "item mv after popd, relative from item cwd" \
 allow "cd to home, then absolute move, cwd inside item tree" \
     "cd ~ && mv /tmp/a /tmp/b" "$ITEMS_CWD"
 
+# --- shell expansion: the operand text does not show the item path ----------------
+deny "variable assigned in the command, quoted operand" \
+    'D=.credo/items/1_todo/2_go; mv "$D/94-x.md" ../../2_done/' "$ROOT"
+deny "variable assigned in the command, unquoted operand moved to /tmp" \
+    'D=.credo/items/1_todo/2_go; mv $D/94-x.md /tmp/' "$ROOT"
+deny "cp of a variable path, variable assigned in the command" \
+    'D=.credo/items/1_todo/2_go; cp "$D/94-x.md" /tmp/b.md' "$ROOT"
+deny "export of the variable, then a move through it" \
+    'export D=.credo/items/1_todo/2_go; mv $D/94-x.md /tmp/' "$ROOT"
+deny "variable path, cwd inside the item tree" \
+    'mv "$D/94-x.md" /tmp/' "$ITEMS_CWD"
+
+# --- quoted cd paths and command wrappers the segment parser does not follow ------
+deny "quoted cd path with a space (double quotes), then move" \
+    'cd "/mnt/c/My Repo/.credo/items/1_todo/2_go" && mv 94-x.md ../../2_done/' "$ROOT"
+deny "quoted cd path with a space (single quotes), then move" \
+    "cd '/mnt/c/My Repo/.credo/items/1_todo/2_go' && mv 94-x.md ../../2_done/" "$ROOT"
+deny "quoted cd path with a space, then rm" \
+    'cd "/mnt/c/My Repo/.credo/items/1_todo/2_go" && rm 94-x.md' "$ROOT"
+deny "command cd into the item tree, then move" \
+    'command cd .credo/items/1_todo/2_go && mv 94-x.md ../../2_done/' "$ROOT"
+deny "builtin cd into the item tree, then move" \
+    'builtin cd .credo/items/1_todo/2_go && mv 94-x.md ../../2_done/' "$ROOT"
+deny "backslash cd into the item tree, then move" \
+    '\cd .credo/items/1_todo/2_go && mv 94-x.md ../../2_done/' "$ROOT"
+deny "command-wrapped item mv" \
+    'command mv .credo/items/1_todo/2_go/94-x.md .credo/items/2_done/' "$ROOT"
+deny "wrapped cd, relative move from an item cwd" \
+    'command cd ../2_go && mv 94.md ../../2_done/' "$ROOT/.credo/items/1_todo"
+
+# --- allowed: quoted plain paths and wrapped non-item moves still pass ------------
+allow "quoted paths into .credo/process, cwd inside the item tree" \
+    'mv -f "/tmp/log-tmp" "/work/project/.credo/process/requirements/log.md"' "$ITEMS_CWD"
+allow "quoted relative destination into .credo/process from item cwd" \
+    'mv -f "/tmp/log-tmp" "../../../process/requirements/log.md"' "$ITEMS_CWD"
+allow "command-wrapped move into .credo/process" \
+    'command mv -f /tmp/log-tmp .credo/process/requirements/log.md' "$ROOT"
+
 # --- fail-safe: empty input is allowed silently -----------------------------------
 out="$(printf '' | bash "$SUT" 2>&1)"; rc=$?
 check "empty stdin: exit" 0 "$rc"

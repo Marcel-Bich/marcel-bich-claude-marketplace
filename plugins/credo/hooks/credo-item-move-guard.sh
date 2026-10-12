@@ -18,9 +18,12 @@
 #     against the working directory, lands on one. Absolute operands are used as they
 #     are, so a move of a non-item file stays allowed even when the shell stands
 #     inside the item tree;
-#   - while the working directory is unknown (cd to a home or variable path, popd),
-#     the hook cwd serves as the guess for the operands, and the whole command must
-#     not touch the item tree either.
+#   - the working directory is unknown after a cd to a home or variable path, a quoted
+#     cd/pushd path, or popd; the hook cwd then serves as the guess for the operands;
+#   - shell expansion ($ or a backtick), a command wrapper (command, builtin, exec,
+#     xargs, env, sudo) or a backslash-escaped cd makes the operands unfollowable: then,
+#     and after an unknown working directory, a command that moves something and names
+#     an item path anywhere is blocked.
 # Anything else is allowed.
 #
 # Known false positives (accepted): a legitimate non-move touch of an item file -
@@ -72,6 +75,10 @@ cwd=$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null) || cwd=""
 MOVE_RE='^[[:space:]]*((git[[:space:]]+)?(mv|rm)|cp)([[:space:]]|$)'
 CD_RE='^[[:space:]]*(cd|pushd)([[:space:]]|$)'
 POPD_RE='^[[:space:]]*popd([[:space:]]|$)'
+# Shapes the segment parser does not follow exactly: shell expansion ($ or a backtick),
+# command wrappers, popd and a backslash-escaped cd. For these the whole command decides.
+RISKY_RE='[$`]|(^|[^[:alnum:]_./-])\\?(command|builtin|exec|xargs|env|sudo|popd)([[:space:]]|$)|\\cd([[:space:]]|$)'
+MOVE_WORD_RE='(^|[^[:alnum:]_./-])(mv|cp|rm)([[:space:]]|$)'
 
 # A path in the credo item STATUS tree: items/ followed by a numbered status folder
 # (1_todo, 2_done, 3_verified, 4_archived, and their subfolders like 1_clarify/2_go).
@@ -134,6 +141,9 @@ operand_in_items() { # segment base
 step_cd() { # segment
     local args w target=""
     local -a words=()
+    case "$1" in
+        *\"*|*\'*) set_unknown; return 0 ;;
+    esac
     args="$(printf '%s' "$1" | sed -E 's/^[[:space:]]*(cd|pushd)//')"
     read -r -a words <<< "$args" || true
     for w in "${words[@]+"${words[@]}"}"; do
@@ -164,17 +174,20 @@ segments="$(printf '%s\n' "$cmd" | sed -e 's/&&/\n/g' -e 's/[;|&(){}]/\n/g')" ||
 
 BASE="$cwd"
 UNKNOWN=no
+if [[ $cmd =~ $RISKY_RE ]]; then UNKNOWN=yes; fi
 hit=no
 while IFS= read -r seg; do
     if [[ $seg =~ $CD_RE ]]; then step_cd "$seg"; continue; fi
     if [[ $seg =~ $POPD_RE ]]; then set_unknown; continue; fi
     [[ $seg =~ $MOVE_RE ]] || continue
     if touches_item_tree "$seg"; then hit=yes; break; fi
-    if [ -n "$BASE" ]; then
-        if operand_in_items "$seg" "$BASE"; then hit=yes; break; fi
-    fi
-    if [ "$UNKNOWN" = yes ] && touches_item_tree "$cmd"; then hit=yes; break; fi
+    if [ -n "$BASE" ] && operand_in_items "$seg" "$BASE"; then hit=yes; break; fi
 done <<< "$segments"
+# Working directory or operands could not be followed: a command that moves something
+# and names an item path anywhere is blocked as well.
+if [ "$UNKNOWN" = yes ] && touches_item_tree "$cmd" && [[ $cmd =~ $MOVE_WORD_RE ]]; then
+    hit=yes
+fi
 
 if [ "$hit" = yes ]; then
     reason="Item status changes must go through credo-item-move.sh <id> <target> (status/history/atomicity). A raw mv/git mv, cp, or rm/git rm of item files in the .credo/ status tree is blocked (this includes the write-elsewhere-then-rm and cp-duplicate bypasses). For 3_verified, only on the user's explicit instruction and only by the main agent: credo-item-move.sh <id> verified --user-authorized."
