@@ -251,11 +251,14 @@ budget_failsafe:
 # Below gate_from_agents running agents a new agent starts without a machine
 # check; from that count on (and always for a `heavy: true` item) the check
 # answers "wait" when free RAM or the 1-min load per CPU crosses a threshold.
+# Free disk is checked at every start: the item's disk_gb plus disk_reserve_gb
+# must fit on the target drive (an item without disk_gb needs only the reserve).
 # The rules live in the credo orchestration skill; only thresholds live here.
 resources:
   gate_from_agents: 6
   min_free_ram_gb: 4
   max_load_per_cpu: 1.0
+  disk_reserve_gb: 3
 
 # --- optimisation audit (/credo:optimize) -------------------------------------
 # The audit is opt-in per repo (asked at credo setup / onboarding) and is offered

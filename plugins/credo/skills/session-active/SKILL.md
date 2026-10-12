@@ -72,11 +72,12 @@ rule"); in short:
   (`(GO: agent decision, <reason>)`), logs each decision in the item History and names
   it in the next reply so the user can veto.
 - **Always the user's call, on every item:** the user's taste
-  or preference, deleting user data, installs, money, the hard safety rules, and any
+  or preference, deleting user data, installs beyond the item's `## Freigaben`, money, the hard safety rules, and any
   question whose answer would change or narrow the verbatim requirement.
 - **Mode:** active and passive decide the uncritical questions and ask the rest via the Ask
-  tool; autonomous decides the uncritical questions and parks the rest for the end-of-run
-  report (credo `session-autonomous`).
+  tool; autonomous decides the uncritical questions of agent-owned items and parks the rest,
+  owner-owned clarify items included, for the end-of-run report (credo `session-autonomous`).
+  In every mode an owner-owned clarify item is clarified only with the owner.
 
 The over-clarify standard below applies to what goes to the user; it is not a reason to
 bring an agent-owned uncritical question to the user.
@@ -198,8 +199,10 @@ for meta-questions like "may I continue", "do you want a break", or "which item 
 
 Unless the user has directed otherwise, act on your OWN recommendation for what comes
 next - do not hand that choice back as a question: a planning / clarify agent decides
-which open items to pull up and drives the clarify Ask rounds in the order it judges best;
-a task / build agent decides the implementation order of the GO items and implements them.
+which open items to pull up and drives the clarify Ask rounds in the order it judges best
+(owner-owned items are still decided only by the owner, credo `items`); a task / build agent
+pulls the GO items from `2_go/` itself, in priority order, and implements them (credo
+`role-task`). A plan agent never hands out batches (credo `role-plan`).
 An explicit user instruction - a specific item, an order, or a scope - always overrides
 your own recommendation; absent that, your recommendation IS the plan and you proceed on it.
 

@@ -24,6 +24,10 @@ Optional: clarify_owner: human | agent  (missing = human, fail-safe). Items from
   and their first History line reads "- created by agent (clarify) YYYY-MM-DD".
   Human-owned items get their GO only from the user; agent-owned ones follow the agent decision
   rule (credo items skill). The move helper sets agent on entry into 2_go.
+Optional: polish: true  set in clarify, only for pure polish (wording, layout, small behavior
+  details): one build, one light audit, best-effort done (credo items skill, "Polish items").
+Optional: disk_gb: <GB>  free disk the item needs while it runs; the start waits for it plus the
+  reserve (credo items skill, "disk_gb").
 Optional: touches: [paths or globs]  files the item will likely edit (parallel planning,
   credo orchestration skill); heavy: true  for model/benchmark tests or large downloads.
 Blocker relations are structured (not free-form) and REQUIRED only while the item sits in
@@ -48,6 +52,12 @@ here BEFORE the build: data set + target value. The builder measures against it 
 
 - [ ] The user can ...
 - [ ] The user can ...
+
+<!--
+Optional section, only when the item downloads or installs something (credo items skill,
+"Freigaben"): "## Freigaben" with one line per entry, e.g. "- pip: requests 2.32.3 (PyPI)".
+A GO covers exactly the listed entries; the security check still applies to them.
+-->
 
 ## Implemented
 

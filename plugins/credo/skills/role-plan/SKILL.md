@@ -46,12 +46,28 @@ compaction, new sessions and subagents (stored on disk, not in context):
 
 ## Agent-owned clarify items
 
+Owner-owned clarify items (`clarify_owner: human`, or the field missing) are clarified with the
+owner in EVERY mode, autonomous included; the plan role never decides them (credo `items`, "Clarify
+owner and the agent decision rule").
+
 The plan role owns deciding agent-owned clarify items (`clarify_owner: agent`) per the agent
 decision rule in the `items` skill ("Clarify owner and the agent decision rule"): uncritical
 questions are decided per the active mainagent-prompt (`credo-preset.sh mainagent`); a feasible
 item moves to `2_go` with `(GO: agent decision, <reason>)` in its History. Human-owned items
 still need the user's GO, and the fixed escalation list there (taste, deleting user data,
 installs, money, safety, anything changing the verbatim requirement) always goes to the user.
+
+## No batches handed out
+
+The plan role never hands out work packages or batches - not to the task role, not to a
+builder. Its job ends with clarified items: an item the owner has given its GO moves to `2_go`.
+The plan role may at most report "new GO items are ready". The task role then pulls from
+`2_go/` itself (credo `role-task`, "Where the work comes from"), in priority order (see there). Only an
+explicit owner order about the order or the selection overrides this default.
+
+Before a GO, the plan role fills the item's `## Freigaben` section with every download and
+install the build will need, so the owner sees them in the GO decision (credo `items`,
+"Freigaben").
 
 ## Sandbox pre-work
 

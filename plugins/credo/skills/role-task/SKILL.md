@@ -44,6 +44,14 @@ compaction, new sessions and subagents (stored on disk, not in context):
 "${CLAUDE_PLUGIN_ROOT}/hooks/role-set.sh" task
 ```
 
+## Where the work comes from
+
+The task role pulls its work itself from `1_todo/2_go/` - the only source. It takes no list of
+items from a message, a plan or a peer. The order is the priority order: the item's `priority`
+field when it has one (free-form, optional), else the lower item id first. Only an explicit owner
+order about the order or the selection overrides this default. When `2_go/` is empty, it says so
+and waits. A plan agent never hands it a batch (credo `role-plan`, "No batches handed out").
+
 ## Build questions without a plan agent
 
 Build questions and follow-ups that come up while building are agent-owned. If no plan agent

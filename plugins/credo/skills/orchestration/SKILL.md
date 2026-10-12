@@ -41,8 +41,11 @@ two unattended benchmark runs on real items. The numbers are current measurement
 be tuned; values marked tentative have too few trials yet. Deviate only when the work
 clearly calls for it, and say why.
 
-1. **Plan once per batch** with a planning subagent. Order by dependencies: tooling, then
-   shared foundations, then features. Cut batches by SHARED SURFACES, not only by files:
+1. **Plan once per batch** with a planning subagent. The batch itself is pulled by the task
+   agent from `2_go/` (credo `role-task`, "Where the work comes from"); no plan agent hands
+   out batches (credo `role-plan`, "No batches handed out"). The planning subagent reads the
+   pulled items and proposes the cut and the order; it selects no items of its own. Order by
+   dependencies: tooling, then shared foundations, then features. Cut batches by SHARED SURFACES, not only by files:
    two items that each added an element to the same UI bar conflicted although they
    touched different modules. Central registry files (command, route, menu or plugin
    registries, shared indexes, a single CHANGELOG) are shared surfaces: items touching the
@@ -96,7 +99,7 @@ the security block):
   "Clarify owner and the agent decision rule"): the builder decides uncritical ones itself
   per the mainagent-prompt in its brief and logs them in the item History; it returns
   `{status: needs_decision, question}` only for the escalated ones (the user's taste or
-  preference, deleting user data, installs, money, safety, a change to the verbatim
+  preference, deleting user data, installs beyond the item's `## Freigaben`, money, safety, a change to the verbatim
   requirement, and points the preset says to note and present). Items it creates (slices,
   follow-ups, build questions) get `clarify_owner: agent`, `parent: <id>` and a
   `created by agent` first History line; while the parent is not GO'd they stay
@@ -120,6 +123,10 @@ the security block):
   raise this limit for a specific item explicitly; record that in the item History. Each
   new audit with new findings still counts toward the limit; when the brake fires, say so
   in the next reply or report.
+- **Polish items** (`polish: true`, credo `items`, "Polish items"): no fix round loop. One light
+  audit, one best-effort fix pass, leftovers into `## Verify`, then done. The model and effort
+  stay as the user set them. A normal item with more than 5 fix rounds of small findings
+  without completion is sliced: the small findings become a polish item in `1_todo/1_clarify`.
 - This is not return-and-resume (below): that keeps a subagent's context for a mid-task
   decision; a post-audit fix round always starts fresh.
 
@@ -167,6 +174,25 @@ currently running (add `--heavy` for a heavy item). It prints `ok` (exit 0) or
 - On `wait`: start no new agent. Re-check when the next running agent finishes (its
   completion notification) - no polling loop, no sleep loop.
 - Fail-safe: unreadable system values never block (`ok` plus a note on stderr).
+
+### Disk space - `disk_gb` and the reserve
+
+Free disk is checked at every start, also below the agent gate: a full drive stalls every
+track. Pass the item's `disk_gb` (credo `items` skill) with the check:
+
+```
+"${CLAUDE_PLUGIN_ROOT}/scripts/credo-resource-check.sh" --running <N> --disk-gb <disk_gb> --path <target>
+```
+
+- `--path` is any path on the target drive (the repo or worktree the track writes to).
+- The free space must cover `disk_gb` plus `resources.disk_reserve_gb` (credo config,
+  default 3 GB). An item without `disk_gb` needs only the reserve.
+- On `wait:low free disk ...` the item does not start. It stays in `2_go` and is retried
+  when the next running agent finishes, like a RAM wait (no polling loop).
+- Autonomous mode: the first disk wait of an item sends ONE ntfy "waiting for disk space"
+  (`credo-ntfy-send.sh`, credo `session-autonomous`, "Per-task and per-question ntfy", at
+  `default` priority). Re-checks of the same wait stay silent until the item starts.
+- Fail-safe: an unreadable disk value never blocks (`ok` plus a note on stderr).
 
 ### Heavy items - `heavy: true`
 
@@ -273,7 +299,8 @@ longer applies; in every other mode ask the user first via the Ask tool (credo `
 
 Subagents inherit the same hard security rules as the main agent, with no exceptions:
 - Install nothing (no pip / npm / apt / system / global installs) without explicit
-  prior approval.
+  prior approval. The approval is the item's `## Freigaben` section (credo `items`), and
+  it covers only the entries listed there.
 - Read no secrets: no credential files, tokens, key material, or shell history.
 - The same filesystem-protection and deletion rules apply. A subagent may not do what
   the main agent may not do.

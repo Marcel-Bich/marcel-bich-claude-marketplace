@@ -184,9 +184,9 @@ Parked work goes under `items/parked/{hold,future}` (external / not-GO'd blocks)
 
 **Who decides (clarify owner).** How an agent decides an open question comes from the active model preset: its `mainagent-prompt` (section 3.4). This guide fixes only who decides, the GO line requirement and the safety calls: a human-owned item is decided by the user, an agent-owned item by the agent per the active mainagent-prompt, and the user always decides taste, deletions of user data, installs, money and any change to the verbatim requirement.
 
-- Human-owned clarify items are always clarified with the user. The agent recommends (Recommended option first); the user decides and gives the GO.
+- Human-owned clarify items are always clarified with the user. The agent recommends (Recommended option first); the user decides and gives the GO. This holds in every mode: an autonomous run never decides them, it leaves them in `1_clarify` for the end-of-run report.
 - Agent-owned items (and every item in `2_go`): the plan agent decides uncritical questions itself - or, with no known plan agent peer, the executing agent in a temporary pseudo plan role, without changing its real role. Each decision is logged in the item History and named in the next reply or report, so the user can veto it.
-- Always the user's call: anything infeasible or really not good, the user's taste or preference, deleting user data, installs, money, the hard safety rules, and any question that would change or narrow the user's verbatim requirement.
+- Always the user's call: anything infeasible or really not good, the user's taste or preference, deleting user data, installs beyond the item's `## Freigaben` section, money, the hard safety rules, and any question that would change or narrow the user's verbatim requirement.
 - Interactive modes decide the uncritical questions and ask the rest via the Ask tool; autonomous mode decides the uncritical questions and parks the rest for the end-of-run report.
 
 The full rule is in the `items` skill ("Clarify owner and the agent decision rule").

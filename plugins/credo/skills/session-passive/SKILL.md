@@ -85,7 +85,7 @@ build rather than still half-specified.
 This is the defining passive-mode rule. Do NOT over-ask. Bring only the genuinely
 ambiguous items to the user, through the Ask tool - human-owned clarify items and the
 escalated questions of agent-owned ones (taste, infeasible or really not good, deletion of
-user data, installs, money, safety, a change to the verbatim requirement). Anything you can resolve yourself
+user data, installs beyond the item's `## Freigaben`, money, safety, a change to the verbatim requirement). Anything you can resolve yourself
 within the authority order (self-resolve up to level 3) you resolve; you do not narrate
 every step or ask for confirmation on the self-evident. Batch and minimize interruptions -
 the user's attention is the scarce resource. Each item you do bring still gets its own Ask
