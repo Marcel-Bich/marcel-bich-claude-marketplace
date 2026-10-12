@@ -2663,9 +2663,16 @@ def rotate_relay_log(max_bytes=LOG_MAX_BYTES):
         if (st.st_dev, st.st_ino) != (cur.st_dev, cur.st_ino) or st.st_size <= max_bytes:
             return False
         os.replace(path, path + ".1")
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        except OSError:
+            os.replace(path + ".1", path)   # roll back: stderr still writes to the old file
+            raise
         try:
             os.dup2(fd, 2)
+        except OSError:
+            os.replace(path + ".1", path)   # roll back: fd 2 never left the old file
+            raise
         finally:
             os.close(fd)
     except OSError:
@@ -2675,10 +2682,11 @@ def rotate_relay_log(max_bytes=LOG_MAX_BYTES):
 
 def prune_pending_for(store, cfg):
     """Drop the pending repairs whose address is no longer a configured peer. The pairings
-    are never touched. Returns the number dropped; a failure is logged and counts as 0."""
+    are never touched. Returns the number dropped; a failure (unreadable store, or a config
+    that does not parse, e.g. a non-numeric listen_port) is logged and counts as 0."""
     try:
         return store.prune_pending(peer_keys(cfg))
-    except OSError as exc:
+    except (OSError, ValueError, TypeError) as exc:
         log("pending repairs not pruned: %s" % exc)
         return 0
 

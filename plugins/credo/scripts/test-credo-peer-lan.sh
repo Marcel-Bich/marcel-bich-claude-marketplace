@@ -6214,11 +6214,27 @@ def cli(cfg, *args):
     return p.returncode, p.stdout
 
 
-def rotate_child(cfg, stderr_path):
+CHILD_OPEN_FAIL = r'''
+import errno, importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("credo_peer_lan", sys.argv[1])
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+real_open = os.open
+def failing_open(path, *args, **kwargs):
+    if path == mod.relay_log_path():
+        raise OSError(errno.EMFILE, "injected open failure")
+    return real_open(path, *args, **kwargs)
+os.open = failing_open
+rotated = mod.rotate_relay_log()
+sys.stderr.write("after failed rotation\n"); sys.stderr.flush()
+sys.stdout.write("rotated=%s\n" % rotated)
+'''
+
+
+def rotate_child(cfg, stderr_path, code=CHILD):
     """Run the rotation in a fresh process whose stderr is stderr_path (fd 2)."""
     env = dict(os.environ, CREDO_PEER_LAN_CONFIG=cfg)
     with open(stderr_path, "ab") as err:
-        p = subprocess.run([sys.executable, "-c", CHILD, daemon], env=env,
+        p = subprocess.run([sys.executable, "-c", code, daemon], env=env,
                            stdout=subprocess.PIPE, stderr=err, text=True, timeout=60)
     return p.stdout.strip()
 
@@ -6341,6 +6357,40 @@ res("PH rotate: a process whose stderr is another file rotates nothing",
     out4 == "rotated=False" and os.path.getsize(rlog) == 6 * MB + 1
     and os.path.getsize(prev) == prev_size, out4)
 
+# open of the fresh log fails after the rename: the rename is rolled back, nothing is lost
+fbase = os.path.join(root, "rotf", "credo")
+fcfg = os.path.join(fbase, "peer-lan.json")
+write_cfg(fcfg, [])
+flog = os.path.join(fbase, "peer-lan.log")
+with open(flog, "wb") as fh:
+    fh.write(b"x" * (6 * MB) + b"\n")
+outf = rotate_child(fcfg, flog, CHILD_OPEN_FAIL)
+res("PH rotate: a failed open of the fresh log rolls the rename back (no rotation)",
+    outf == "rotated=False" and not os.path.exists(flog + ".1")
+    and read_bytes(flog).endswith(b"after failed rotation\n")
+    and os.path.getsize(flog) == 6 * MB + 1 + len(b"after failed rotation\n"), outf)
+outr = rotate_child(fcfg, flog)
+res("PH rotate: the next rotation succeeds after the failed one",
+    outr == "rotated=True" and os.path.getsize(flog + ".1") > 6 * MB
+    and read_bytes(flog) == b"after rotation\n", outr)
+
+# a config that does not parse (non-numeric or null listen_port) never crashes pairs
+for bad in ("abc", None):
+    pbase = os.path.join(root, "pbad-%s" % (bad or "null"), "credo")
+    pcfg = os.path.join(pbase, "peer-lan.json")
+    write_json(pcfg, {"this_machine": "box-1", "listen_port": bad,
+                      "peers": [DEAD_SLOT]})
+    pkd = os.path.join(pbase, "peer-lan-keys")
+    os.makedirs(pkd, mode=0o700)
+    write_json(os.path.join(pkd, "pending-repair.json"), [pending_entry(DEAD_SLOT, LIVE_SLOT)])
+    env = dict(os.environ, CREDO_PEER_LAN_CONFIG=pcfg)
+    p = subprocess.run([sys.executable, daemon, "pairs"], env=env, capture_output=True,
+                       text=True, timeout=60)
+    res("PH pairs: listen_port %r does not crash pairs, the pending repair is kept" % (bad,),
+        p.returncode == 0 and "Traceback" not in p.stderr
+        and "PENDING REPAIR at %s:" % DEAD_SLOT in p.stdout,
+        (p.returncode, p.stderr[-300:]))
+
 # --- daemon start: oversized log is cut, the pending repair of a non-peer is dropped
 base = os.path.join(root, "st", "credo")
 scfg = os.path.join(base, "peer-lan.json")
@@ -6404,7 +6454,7 @@ while IFS= read -r line; do
     esac
 done < "$PH_RES"
 case "$(cat "$TMP/ph-err.txt")" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL PH: traceback\n%s\n' "$(cat "$TMP/ph-err.txt")" ;; esac
-check "PH: expected number of results" "28" "$(grep -cE '^(PASS|FAIL) ' "$PH_RES")"
+check "PH: expected number of results" "32" "$(grep -cE '^(PASS|FAIL) ' "$PH_RES")"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
