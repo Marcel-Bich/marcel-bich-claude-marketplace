@@ -4924,7 +4924,7 @@ class Daemon(object):
         marked = False
         with self.chan_lock:
             fails = self.link_retry.get(key, (0, 0.0))[0] + 1
-            backoff = min(self.roster_interval * (2 ** (fails - 1)), self.roster_interval * 6)
+            backoff = self.roster_interval * min(2 ** min(fails - 1, 3), 6)  # capped, no overflow on long outages
             self.link_retry[key] = (fails, time.monotonic() + backoff)
             if silent:
                 n = self.link_refused.get(key, 0) + 1

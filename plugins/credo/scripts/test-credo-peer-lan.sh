@@ -3146,6 +3146,14 @@ def z1_open_link_error():
         and C._get_channel(keyb) is None, "errs=%r retry=%r pending=%r"
         % (errs, C.link_retry.get(keyb), keyb in C.link_pending))
     del C._register_channel
+    C.link_retry[keyb] = (5000, 0.0)
+    try:
+        C._link_failed(keyb, "test", silent=False)
+        long_ok = C.link_retry[keyb][1] - time.monotonic() <= C.roster_interval * 6 + 1
+    except OverflowError:
+        long_ok = False
+    res("Z1: a peer that failed thousands of times keeps the capped backoff (no overflow)", long_ok,
+        "retry=%r" % (C.link_retry.get(keyb),))
     C.link_retry.pop(keyb, None)
     wire(C, B_ADDR, B, C_ADDR)
     cur = C._get_channel(keyb)
@@ -3345,7 +3353,7 @@ while IFS= read -r line; do
     esac
 done <<< "$RH_OUT"
 case "$RH_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL RH: traceback\n%s\n' "$RH_OUT" ;; esac
-check "RH: expected number of hardening results" "112" "$(printf '%s\n' "$RH_OUT" | grep -cE '^(PASS|FAIL) ')"
+check "RH: expected number of hardening results" "113" "$(printf '%s\n' "$RH_OUT" | grep -cE '^(PASS|FAIL) ')"
 
 # --- PK: per-peer pairing keys (module level, socketpairs, no LAN) -------------
 # Acceptance for the pairing layer. Each result line counts on its own.

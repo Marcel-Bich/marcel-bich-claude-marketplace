@@ -6,6 +6,12 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.82
 
+#### v0.82.3
+
+##### Fixed
+
+- A LAN peer that stays unreachable for hours no longer crashes the link thread on every retry: the link backoff overflowed after about a thousand failed attempts (`OverflowError`), so each attempt wrote a full traceback to the relay log and the backoff was never recorded
+
 #### v0.82.2
 
 ##### Fixed
