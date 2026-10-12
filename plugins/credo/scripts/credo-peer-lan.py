@@ -1889,6 +1889,10 @@ PAIR_X_BITS = 320
 PAIR_TAG = "credo-peer-lan-pair-v1"
 PAIR_HANDSHAKE_TIMEOUT = 10.0
 PENDING_REPAIR_MAX = 16
+# old addresses kept reserved per paired id after it moved (PairStore.pin): an unpaired
+# device can never take them over, so a moved pairing never opens a token-only slot
+RETIRED_SLOTS_MAX = 16
+RETIRED_TTL = 7 * 24 * 3600   # a moved-from address stays reserved this long (seconds)
 PEER_ID_RE = re.compile(r"[0-9a-f]{32}")
 DH_HEX_RE = re.compile(r"[1-9a-f][0-9a-f]{0,511}")
 KEY_HEX_RE = re.compile(r"[0-9a-f]{64}")
@@ -1962,7 +1966,7 @@ class PairLink(object):
         self.tx_label, self.rx_label = tx_label, rx_label
         self.tx_seq = 0
         self.rx_seq = 0
-        # (pid, pub, key, slot, machine) still to be stored: a new pairing is written
+        # (pid, pub, key, slot, machine, follow) still to be stored: a new pairing is written
         # only once the whole handshake (both proofs AND the ack) went through
         self.to_pin = to_pin
 
@@ -2187,8 +2191,17 @@ class PairStore(object):
                 and KEY_HEX_RE.fullmatch(key) and isinstance(slot, str)):
             return None
         m = d.get("machine")
-        return {"id": pid, "pub": pub, "key": key, "slot": slot,
-                "machine": m[:60] if isinstance(m, str) else ""}
+        out = {"id": pid, "pub": pub, "key": key, "slot": slot,
+               "machine": m[:60] if isinstance(m, str) else ""}
+        retired = d.get("retired")
+        if isinstance(retired, list):
+            ents = [{"slot": e["slot"], "ts": e["ts"]} for e in retired
+                    if isinstance(e, dict) and isinstance(e.get("slot"), str)
+                    and 0 < len(e["slot"]) <= 80
+                    and isinstance(e.get("ts"), int) and not isinstance(e.get("ts"), bool)]
+            if ents:
+                out["retired"] = ents[-RETIRED_SLOTS_MAX:]
+        return out
 
     def get(self, pid, strict=False):
         pid = peer_id_str(pid)
@@ -2215,28 +2228,58 @@ class PairStore(object):
         return out
 
     def by_slot(self, slot):
-        for r in self.records():
+        """The paired record bound to slot: the record whose current slot it is, else
+        the record that still reserves it as a retired address (see pin)."""
+        recs = self.records()
+        for r in recs:
             if r["slot"] == slot:
+                return r
+        for r in recs:
+            if slot in live_retired(r):
                 return r
         return None
 
-    def pin(self, pid, pub, key, slot, machine=""):
+    def pin(self, pid, pub, key, slot, machine="", follow=False):
         """Store the pairing of pid at slot (or refresh its machine label). A slot
         belongs to at most one paired id and a paired id to exactly one slot: False
         (nothing written) when another id already holds the slot, so two first
-        contacts racing for one slot can never both get it, and also when pid is
-        already bound to ANOTHER slot - a paired id is never moved silently (its old
-        slot would be left unbound for anyone); only `pair-reset` moves it."""
+        contacts racing for one slot can never both get it. A paired id is never moved
+        silently: only with follow=True (the caller checked the key proof and the
+        address) does pid move to slot. Its old address then stays reserved for it
+        (retired), and a retired reservation of another paired id is taken over. Any
+        other move is refused; only `pair-reset` moves a pairing otherwise."""
         with self.lock:
             other = self.by_slot(slot)
-            if other is not None and other["id"] != pid:
+            if other is not None and other["id"] != pid and (not follow or other["slot"] == slot):
                 return False
             cur = self.get(pid, strict=True)   # unreadable: raise, never overwrite it
-            if cur is not None and (cur["slot"] != slot or cur["pub"] != pub or cur["key"] != key):
+            if cur is not None and (cur["pub"] != pub or cur["key"] != key):
                 return False
-            self._write("peer-%s.json" % pid, {"id": pid, "pub": pub, "key": key, "slot": slot,
-                                              "machine": str(machine or "")[:60]})
+            if cur is None and follow:
+                return False
+            if cur is not None and cur["slot"] != slot and not follow:
+                return False
+            now = int(time.time())
+            held = [e for e in (cur.get("retired", []) if cur is not None else [])
+                    if e["slot"] != slot and now - e["ts"] < RETIRED_TTL]
+            if cur is not None and cur["slot"] != slot:
+                held.append({"slot": cur["slot"], "ts": now})
+            rec = {"id": pid, "pub": pub, "key": key, "slot": slot,
+                   "machine": str(machine or "")[:60]}
+            if held:
+                rec["retired"] = held[-RETIRED_SLOTS_MAX:]
+            self._write("peer-%s.json" % pid, rec)
+            if other is not None and other["id"] != pid:
+                self._drop_retired(other, slot)
             return True
+
+    def _drop_retired(self, rec, slot):
+        """Release the retired reservation of slot held by rec's id (a proven move took it)."""
+        out = {k: rec[k] for k in ("id", "pub", "key", "slot", "machine")}
+        left = [e for e in rec.get("retired", []) if e["slot"] != slot]
+        if left:
+            out["retired"] = left
+        self._write("peer-%s.json" % rec["id"], out)
 
     # -- pending repairs (a new id or key at a paired slot, refused) ---------------
     def pending(self, strict=False):
@@ -2311,7 +2354,9 @@ class PairStore(object):
             return bool(slot) and (slot == sel or slot.rsplit(":", 1)[0] == sel)
 
         gone = [r for r in self.records()
-                if hit_id(r["id"]) or hit_slot(r["slot"]) or (r["machine"] and r["machine"] == sel)]
+                if hit_id(r["id"]) or hit_slot(r["slot"])
+                or any(hit_slot(s) for s in live_retired(r))
+                or (r["machine"] and r["machine"] == sel)]
         cur = self.pending(strict=True)   # read before anything is removed
         slots = set(r["slot"] for r in gone)
         ids = set(r["id"] for r in gone)
@@ -2861,6 +2906,24 @@ def _switch(var, cfg_value, default):
     if raw in ("1", "true", "yes", "on"):
         return True
     return cfg_value if isinstance(cfg_value, bool) else default
+
+
+def follow_address_enabled():
+    """CREDO_PEER_LAN_FOLLOW_ADDRESS (default on): a paired peer whose key proof succeeds
+    from a new allowlisted address moves its pairing there. 0/false/no/off keeps the
+    refusal and the pending repair (pair-reset)."""
+    raw = str(os.environ.get("CREDO_PEER_LAN_FOLLOW_ADDRESS", "1")).strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def live_retired(rec, now=None):
+    """Addresses still reserved for the paired id of rec: moved-from addresses younger
+    than RETIRED_TTL. Nothing is reserved while CREDO_PEER_LAN_FOLLOW_ADDRESS is off, so
+    that setting behaves exactly as before the reservations existed."""
+    if not follow_address_enabled():
+        return []
+    now = time.time() if now is None else now
+    return [e["slot"] for e in rec.get("retired", []) if now - e["ts"] < RETIRED_TTL]
 
 
 def meta_publication(cfg):
@@ -3856,6 +3919,7 @@ class Daemon(object):
         # neither is set it is detected once in a background thread (see start()) so
         # the slow powershell probe under WSL never blocks the roster loop.
         self.advertise_host = cfg.get("advertise_host")
+        self.advertise_pinned = bool(self.advertise_host)   # pinned: never refreshed
         self.advertise_port = int(cfg.get("advertise_port", self.listen_port))
         self.roster_interval = float(
             cfg.get("roster_interval", DEFAULT_ROSTER_INTERVAL)
@@ -4027,6 +4091,28 @@ class Daemon(object):
         else:
             log("self-address not detected; rosters omit the advertise fields")
 
+    def _refresh_advertise_host(self, net):
+        """Follow a changed self address (DHCP): new hellos and rosters advertise the
+        current one. Under WSL that is the ip of the netinfo this recheck already read
+        (the Windows host LAN address), so a recheck runs no second powershell probe;
+        natively it stays the route lookup of detect_self_ip, as at start. An undetected
+        or non-LAN address keeps the last known one; a configured advertise_host is never
+        refreshed (see advertise_pinned)."""
+        if self.wsl:
+            ip = net.get("ip") if isinstance(net, dict) else None
+        else:
+            try:
+                ip = detect_self_ip()
+            except Exception as exc:
+                log("self-address detection failed: %s" % exc)
+                return
+        if not ip or not is_lan_ipv4(ip) or ip == self.advertise_host:
+            return
+        old = self.advertise_host
+        self.advertise_host = ip
+        log("advertising self address %s:%d in rosters (was %s)"
+            % (ip, self.advertise_port, old or "none"))
+
     # -- network watcher (allowlist state) ------------------------------------
     def _netwatch_loop(self):
         """Detect the network at start and then every network_recheck_interval
@@ -4045,13 +4131,16 @@ class Daemon(object):
         config's networks/windows_profiles so `bind` applies without a restart), log
         every transition, prune remotes that are no longer allowed, and (WSL) sync
         the Windows firewall data file. Returns the new state."""
+        net = detect_network()
+        if not self.advertise_pinned:
+            self._refresh_advertise_host(net)
         fresh = load_config()
         merged = dict(self.cfg)
         for key in ("networks", "windows_profiles"):
             merged.pop(key, None)
             if isinstance(fresh, dict) and key in fresh:
                 merged[key] = fresh[key]
-        state = compute_lan_state(merged, detect_network(), self.peers, self.wsl)
+        state = compute_lan_state(merged, net, self.peers, self.wsl)
         key = (
             state["enabled"],
             state["network"],
@@ -4442,13 +4531,42 @@ class Daemon(object):
         except OSError:
             pass
 
+    def _may_follow(self, src, hello, slot, rec):
+        """May a paired peer whose key proof succeeds on this link move its pairing to
+        slot, the address it advertises? The advertised address must be the slot and sit
+        inside the allowlist. A direct connection must come from that address, so a
+        relayed link never moves a pairing. Behind the WSL NAT gateway the source cannot
+        show the address, so there the key proof (checked by the caller) and the rule
+        that no other paired peer's current slot or reservation is taken over decide.
+        CREDO_PEER_LAN_FOLLOW_ADDRESS=0 turns it off."""
+        if not follow_address_enabled():
+            return False
+        host = slot.rsplit(":", 1)[0]
+        if hello.get("advertise_host") != host:
+            return False
+        if not peer_allowed_outbound(host, self.lan_state):
+            return False
+        if self._is_wsl_gw(src):
+            return self._gateway_slot_ok(slot, rec)
+        return src == host
+
+    def _may_take_over(self, bound, pid, src, hello, slot):
+        """slot is only reserved (retired) for bound's id, while that id lives at another
+        address: a proven move of pid to slot may take the reservation over. The key
+        proof still decides after the challenge (see _pair_accept)."""
+        if not pid or bound["slot"] == slot or self._is_wsl_gw(src):
+            return False   # behind the NAT gateway the claim is unverifiable: no takeover
+        rec = self.pairs.get(pid)
+        return rec is not None and rec["slot"] != slot and self._may_follow(src, hello, slot, rec)
+
     def _pair_accept(self, conn, src, slot, machine, hello, rest):
         """Pairing step of an inbound link keyed by slot. Returns (pair, rest):
         pair = a PairLink (authenticated paired peer), None (unpaired, token-only) or
         False (refused; a signed refusal was sent). A slot bound to a paired id only
         goes to a link proving that id's key against our fresh challenge; a paired id
         never gets in without that proof (no downgrade); a new id at a paired slot is
-        refused and surfaced as a pending repair."""
+        refused and surfaced as a pending repair. A proven paired id at a new address
+        follows its pairing when _may_follow allows it (stored after the ack)."""
         bound = self._bound(slot)
         ident = self._ident()
         if bound is not None and (ident is None or bound.get("unknown")):
@@ -4461,7 +4579,8 @@ class Daemon(object):
         pid = peer_id_str(hello.get("pid"))
         if pid == ident["id"]:
             pid = ""   # our own id is never a peer (a copied config dir, or a probe)
-        if bound is not None and bound["id"] != pid:
+        if (bound is not None and bound["id"] != pid
+                and not self._may_take_over(bound, pid, src, hello, slot)):
             if pid:
                 self._pair_conflict(slot, bound, pid, machine, "a new peer id")
             else:
@@ -4517,14 +4636,16 @@ class Daemon(object):
                            % (src, pid[:8]))
             self._send_refusal(conn, "pairing failed")
             return False, rest
-        if rec is not None and rec["slot"] != slot:
-            # a proven paired id at a slot that is not its own: never moved silently
+        follow = rec is not None and rec["slot"] != slot
+        if follow and not self._may_follow(src, hello, slot, rec):
+            # a proven paired id at a slot that is not its own, and not a move we may
+            # follow: never moved silently (pending repair; only pair-reset moves it)
             self._pair_moved(slot, rec, machine)
             self._send_refusal(conn, "pairing required")
             return False, rest
         to_pin = None
-        if rec is None or rec["machine"] != machine[:60]:
-            to_pin = (pid, pub, key, slot, machine)   # stored once the ack went out
+        if rec is None or follow or rec["machine"] != machine[:60]:
+            to_pin = (pid, pub, key, slot, machine, follow)   # stored once the ack went out
         return PairLink(pid, pair_session_key(key, pid, ident["id"], c_open, c_acc, expect),
                         "a2o", "o2a", to_pin=to_pin), rest
 
@@ -4535,10 +4656,11 @@ class Daemon(object):
         repair. A failing disk also drops the link (logged; the next link retries)."""
         if pair is None or not pair.to_pin:
             return True
-        pid, pub, key, slot, machine = pair.to_pin
+        pid, pub, key, slot, machine, follow = pair.to_pin
         try:
-            new = self.pairs.get(pid) is None
-            stored = self.pairs.pin(pid, pub, key, slot, machine)
+            old = self.pairs.get(pid)
+            new = old is None
+            stored = self.pairs.pin(pid, pub, key, slot, machine, follow=follow)
         except OSError as exc:
             self._pair_log(("store", slot), "pairing with %s at %s not stored (%s); link dropped"
                            % (pid[:8], slot, exc))
@@ -4555,6 +4677,9 @@ class Daemon(object):
         self._sync_pair_copies()
         if new:
             log("paired with peer %s (%r) at %s: pairing key stored" % (pid[:8], machine, slot))
+        elif follow:
+            log("paired peer %s (%r) followed its address: %s -> %s (key proof ok, address in "
+                "the allowlist)" % (pid[:8], machine, old["slot"], slot))
         return True
 
     def _sync_pair_copies(self):
@@ -4621,7 +4746,7 @@ class Daemon(object):
         }).encode("utf-8"))
         to_pin = None
         if rec is None or rec["machine"] != machine[:60]:
-            to_pin = (a_id, pub, k, key, machine)   # stored once the ack arrived
+            to_pin = (a_id, pub, k, key, machine, False)   # stored once the ack arrived
         return PairLink(a_id, pair_session_key(k, ident["id"], a_id, c_open, c_acc, expect),
                         "o2a", "a2o", to_pin=to_pin), ""
 
@@ -4879,6 +5004,44 @@ class Daemon(object):
         finally:
             self._drop_channel(ch, reason)
 
+    def _gateway_claim(self, src, hello, lp):
+        """Behind the WSL NAT gateway every inbound link comes from the gateway, so the
+        advertised address is the only sign that an UNCONFIGURED paired peer moved. Such
+        a claim is only a candidate slot when the hello names a paired id whose pairing
+        sits at another address; the key proof, not the claim, decides (see _pair_accept
+        and _may_follow). Returns (host, port) or None."""
+        if not follow_address_enabled() or not self._is_wsl_gw(src):
+            return None
+        host = hello.get("advertise_host")
+        if not isinstance(host, str) or not is_lan_ipv4(host):
+            return None
+        try:
+            port = int(hello.get("advertise_port") or lp)
+        except (TypeError, ValueError):
+            return None
+        rec = self.pairs.get(peer_id_str(hello.get("pid")))
+        if rec is None or rec["slot"] == "%s:%d" % (host, port):
+            return None
+        if not self._gateway_slot_ok("%s:%d" % (host, port), rec):
+            return None
+        return (host, port)
+
+    def _gateway_slot_ok(self, slot, rec):
+        """Behind the WSL NAT gateway a claimed address may only be a free allowlisted
+        address or the paired peer's own earlier one. Never an address configured for a
+        peer (paired or not), never one held by another paired peer's slot or reservation:
+        those are never taken over behind the gateway."""
+        if slot in live_retired(rec):
+            return True
+        if self._configured_addr((slot.rsplit(":", 1)[0], int(slot.rsplit(":", 1)[1]))):
+            return False
+        other = self.pairs.by_slot(slot)
+        return other is None or other["id"] == rec["id"]
+
+    def _configured_addr(self, addr):
+        """True when addr (host, port) is a configured peer address."""
+        return any(p["host"] == addr[0] and p["port"] == addr[1] for p in self.peers)
+
     def _link_addr(self, src, hello):
         """Peer address an inbound link is keyed by. Resolved like a roster, but a
         claim to an address we can reach ourselves must be proven by the socket
@@ -4886,6 +5049,9 @@ class Daemon(object):
         address, which can never collide with another configured peer."""
         state = self.lan_state
         lp = int(hello.get("listen_port") or DEFAULT_PORT)
+        claim = self._gateway_claim(src, hello, lp)
+        if claim is not None and self._link_claim_ok(src, claim, state):
+            return claim, self._configured_addr(claim)
         cand, known = self._resolve_peer_addr(
             src, lp, hello.get("advertise_host"), hello.get("advertise_port"))
         if self._link_claim_ok(src, cand, state):
