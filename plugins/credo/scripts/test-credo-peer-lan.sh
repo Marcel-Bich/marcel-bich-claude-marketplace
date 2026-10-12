@@ -4575,18 +4575,26 @@ def pk_n_more():
     h = E._link_hello(C_ADDR)
     res("PK n: a refreshed self address is advertised in the next hello",
         h.get("advertise_host") == NEW and E.advertise_host == NEW, "hello=%r" % h)
-    # 3. an undetected self address keeps the last known one
+    # 3. the recheck takes the self address from the netinfo it already read (WSL: one
+    #    powershell per check, no second probe); an undetected address keeps the last one
+    calls = []
     real = mod.detect_self_ip
-    mod.detect_self_ip = lambda: None
-    os.environ["CREDO_PEER_LAN_NETINFO"] = json.dumps(
-        {"ip": NEW2, "subnet": "192.168.1.0/24", "gateway_mac": MAC, "wsl_nat_gateway": GW})
+    mod.detect_self_ip = lambda: calls.append(1) or NEW3
     try:
+        os.environ["CREDO_PEER_LAN_NETINFO"] = json.dumps(
+            {"ip": NEW2, "subnet": "192.168.1.0/24", "gateway_mac": MAC, "wsl_nat_gateway": GW})
         E.recheck_network()
+        took = E.advertise_host
+        os.environ["CREDO_PEER_LAN_NETINFO"] = json.dumps(
+            {"ip": None, "subnet": "192.168.1.0/24", "gateway_mac": MAC, "wsl_nat_gateway": GW})
+        E.recheck_network()
+        kept = E.advertise_host
     finally:
         mod.detect_self_ip = real
         os.environ.pop("CREDO_PEER_LAN_NETINFO", None)
-    res("PK n: an undetected self address keeps the last known one", E.advertise_host == NEW,
-        "adv=%r" % E.advertise_host)
+    res("PK n: a recheck takes the self address from the netinfo it already read (no second probe)",
+        took == NEW2 and calls == [], "adv=%r calls=%r" % (took, calls))
+    res("PK n: an undetected self address keeps the last known one", kept == NEW2, "adv=%r" % kept)
     # 4. WSL NAT: the claimed address behind the gateway is followed only to the
     #    peer's own earlier address, and a gateway claim never takes over another reservation
     A2 = new_daemon([B_ADDR, Q_ADDR], "box-a2", wsl=True, adv=C_ADDR)
@@ -4602,11 +4610,47 @@ def pk_n_more():
     wire(P2, C_ADDR, A2, GW)
     res("PK n: a gateway claim of the peer's own earlier address is followed",
         rec(A2, P2.peer_id)["slot"] == KEYB, "rec=%r" % rec(A2, P2.peer_id))
+    # the owner's topology: an UNCONFIGURED peer's claimed new address behind the gateway
+    # (the key proof is the identity check, the claim itself cannot be verified there)
+    NEW3KEY = "%s:48610" % NEW3
     refresh_self_ip(P2, NEW3)
     wire(P2, C_ADDR, A2, GW)
-    res("PK n: a gateway claim of an unverified new address is refused",
-        rec(A2, P2.peer_id)["slot"] == KEYB and any(e["fix"] == P2.peer_id for e in A2.pairs.pending()),
-        "rec=%r pending=%r" % (rec(A2, P2.peer_id), A2.pairs.pending()))
+    res("PK n: behind the WSL gateway a proven move to a new allowlisted address follows",
+        rec(A2, P2.peer_id)["slot"] == NEW3KEY, "rec=%r pending=%r" % (rec(A2, P2.peer_id), A2.pairs.pending()))
+    # another paired peer's current slot behind the gateway is never taken over
+    S61, S62 = "192.168.1.61", "192.168.1.62"
+    K61, K62 = "%s:48610" % S61, "%s:48610" % S62
+    R2 = new_daemon([C_ADDR], "box-r2", adv=S61)
+    wire(R2, C_ADDR, A2, S61)
+    refresh_self_ip(P2, S61)
+    wire(P2, C_ADDR, A2, GW)
+    ch61 = A2._get_channel(K61)
+    res("PK n: behind the WSL gateway a claim of another paired peer's slot is refused",
+        rec(A2, P2.peer_id)["slot"] == NEW3KEY and rec(A2, R2.peer_id)["slot"] == K61
+        and ch61 is not None and ch61.pair_id == R2.peer_id
+        and any(e["slot"] == K61 for e in A2.pairs.pending()),
+        "p2=%r r2=%r" % (rec(A2, P2.peer_id), rec(A2, R2.peer_id)))
+    # ... and never another peer's retired reservation either (the earlier links are dead
+    # by now, as their TCP connections would be; they would otherwise fill the inbound cap)
+    for c in [c for c in A2.channels.values() if c.direction == "in" and not c.closed]:
+        A2._drop_channel(c, "connection closed")
+    refresh_self_ip(R2, S62)
+    wire(R2, C_ADDR, A2, S62)
+    res("PK n: precondition: the other peer moved on and its old address is reserved for it",
+        rec(A2, R2.peer_id)["slot"] == K62 and A2._bound(K61)["id"] == R2.peer_id,
+        "r2=%r" % rec(A2, R2.peer_id))
+    wire(P2, C_ADDR, A2, GW)
+    res("PK n: behind the WSL gateway a claim of another peer's retired address is refused",
+        rec(A2, P2.peer_id)["slot"] == NEW3KEY and rec(A2, R2.peer_id)["slot"] == K62,
+        "p2=%r r2=%r" % (rec(A2, P2.peer_id), rec(A2, R2.peer_id)))
+    # a gateway claim whose key proof fails moves nothing
+    NEW4 = "192.168.1.60"
+    bad = mod.frame_for("tok", {"kind": "link", "auth": "0" * 64})
+    s = link_in(A2, GW, hello("box-p2", adv=NEW4, chal="b" * 32, pid=P2.peer_id,
+                              dh=P2.pairs.identity()["pub"]), follow=bad.encode())
+    res("PK n: a gateway claim with a bad key proof is refused and nothing moves",
+        not acked(s) and rec(A2, P2.peer_id)["slot"] == NEW3KEY
+        and A2._get_channel("%s:48610" % NEW4) is None, "frames=%r" % frames_of(s))
     gwb = {"slot": "192.168.1.65:48610", "id": "f" * 32}
     res("PK n: a gateway source never takes over another peer's reservation, a direct one may",
         A2._may_take_over(gwb, P2.peer_id, GW, {"advertise_host": "192.168.1.66"}, "192.168.1.66:48610") is False
@@ -4651,7 +4695,7 @@ while IFS= read -r line; do
     esac
 done <<< "$PK_OUT"
 case "$PK_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL PK: traceback\n%s\n' "$PK_OUT" ;; esac
-check "PK: expected number of pairing results" "146" "$(printf '%s\n' "$PK_OUT" | grep -cE '^(PASS|FAIL) ')"
+check "PK: expected number of pairing results" "151" "$(printf '%s\n' "$PK_OUT" | grep -cE '^(PASS|FAIL) ')"
 
 # --- RO: an OLD peer (no link support) is marked after a few refusals; rosters keep -
 # flowing over fresh connections. The fake old relay reads one line per connection,

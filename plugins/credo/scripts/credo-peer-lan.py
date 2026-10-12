@@ -4091,20 +4091,19 @@ class Daemon(object):
         else:
             log("self-address not detected; rosters omit the advertise fields")
 
-    def _refresh_advertise_host(self):
-        """Follow a changed self address (DHCP): new hellos and rosters advertise the
-        address detected now. An undetected address keeps the last known one; a
-        configured advertise_host is never refreshed (see advertise_pinned)."""
-        try:
-            ip = detect_self_ip()
-        except Exception as exc:
-            log("self-address detection failed: %s" % exc)
+    def _refresh_advertise_host(self, net):
+        """Follow a changed self address (DHCP): new hellos and rosters advertise the ip
+        of the netinfo this recheck already read (the default-route adapter; under WSL
+        the Windows host LAN address), so a recheck runs no second probe. An undetected
+        or non-LAN address keeps the last known one; a configured advertise_host is never
+        refreshed (see advertise_pinned)."""
+        ip = net.get("ip") if isinstance(net, dict) else None
+        if not ip or not is_lan_ipv4(ip) or ip == self.advertise_host:
             return
-        if ip and ip != self.advertise_host:
-            old = self.advertise_host
-            self.advertise_host = ip
-            log("advertising self address %s:%d in rosters (was %s)"
-                % (ip, self.advertise_port, old or "none"))
+        old = self.advertise_host
+        self.advertise_host = ip
+        log("advertising self address %s:%d in rosters (was %s)"
+            % (ip, self.advertise_port, old or "none"))
 
     # -- network watcher (allowlist state) ------------------------------------
     def _netwatch_loop(self):
@@ -4124,15 +4123,16 @@ class Daemon(object):
         config's networks/windows_profiles so `bind` applies without a restart), log
         every transition, prune remotes that are no longer allowed, and (WSL) sync
         the Windows firewall data file. Returns the new state."""
+        net = detect_network()
         if not self.advertise_pinned:
-            self._refresh_advertise_host()
+            self._refresh_advertise_host(net)
         fresh = load_config()
         merged = dict(self.cfg)
         for key in ("networks", "windows_profiles"):
             merged.pop(key, None)
             if isinstance(fresh, dict) and key in fresh:
                 merged[key] = fresh[key]
-        state = compute_lan_state(merged, detect_network(), self.peers, self.wsl)
+        state = compute_lan_state(merged, net, self.peers, self.wsl)
         key = (
             state["enabled"],
             state["network"],
@@ -4525,11 +4525,12 @@ class Daemon(object):
 
     def _may_follow(self, src, hello, slot, rec):
         """May a paired peer whose key proof succeeds on this link move its pairing to
-        slot, the address it connects from? Only when the peer advertises exactly that
-        address and the address is inside the allowlist. A direct connection must come
-        from that address, so a relayed link never moves a pairing. Behind the WSL NAT
-        gateway the source proves nothing, so only the peer's own earlier address (still
-        reserved for it) may be followed to. CREDO_PEER_LAN_FOLLOW_ADDRESS=0 turns it off."""
+        slot, the address it advertises? The advertised address must be the slot and sit
+        inside the allowlist. A direct connection must come from that address, so a
+        relayed link never moves a pairing. Behind the WSL NAT gateway the source cannot
+        show the address, so there the key proof (checked by the caller) and the rule
+        that no other paired peer's current slot or reservation is taken over decide.
+        CREDO_PEER_LAN_FOLLOW_ADDRESS=0 turns it off."""
         if not follow_address_enabled():
             return False
         host = slot.rsplit(":", 1)[0]
@@ -4538,7 +4539,8 @@ class Daemon(object):
         if not peer_allowed_outbound(host, self.lan_state):
             return False
         if self._is_wsl_gw(src):
-            return slot in live_retired(rec)
+            other = self.pairs.by_slot(slot)
+            return other is None or other["id"] == rec["id"]
         return src == host
 
     def _may_take_over(self, bound, pid, src, hello, slot):
@@ -4995,6 +4997,26 @@ class Daemon(object):
         finally:
             self._drop_channel(ch, reason)
 
+    def _gateway_claim(self, src, hello, lp):
+        """Behind the WSL NAT gateway every inbound link comes from the gateway, so the
+        advertised address is the only sign that an UNCONFIGURED paired peer moved. Such
+        a claim is only a candidate slot when the hello names a paired id whose pairing
+        sits at another address; the key proof, not the claim, decides (see _pair_accept
+        and _may_follow). Returns (host, port) or None."""
+        if not self._is_wsl_gw(src):
+            return None
+        host = hello.get("advertise_host")
+        if not isinstance(host, str) or not is_lan_ipv4(host):
+            return None
+        try:
+            port = int(hello.get("advertise_port") or lp)
+        except (TypeError, ValueError):
+            return None
+        rec = self.pairs.get(peer_id_str(hello.get("pid")))
+        if rec is None or rec["slot"] == "%s:%d" % (host, port):
+            return None
+        return (host, port)
+
     def _link_addr(self, src, hello):
         """Peer address an inbound link is keyed by. Resolved like a roster, but a
         claim to an address we can reach ourselves must be proven by the socket
@@ -5004,6 +5026,10 @@ class Daemon(object):
         lp = int(hello.get("listen_port") or DEFAULT_PORT)
         cand, known = self._resolve_peer_addr(
             src, lp, hello.get("advertise_host"), hello.get("advertise_port"))
+        if not known:
+            claim = self._gateway_claim(src, hello, lp)
+            if claim is not None and self._link_claim_ok(src, claim, state):
+                return claim, False
         if self._link_claim_ok(src, cand, state):
             return cand, known
         self._refuse_log(

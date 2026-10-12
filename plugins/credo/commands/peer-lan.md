@@ -291,7 +291,9 @@ The machine name stays a display label.
   peer address. A link that proves a paired id's key but serves another address is
   refused, the old address stays bound, and it is surfaced as a pending repair whose
   command is `pair-reset <peer id>` - the manual way to move a paired peer (a proven
-  move to a new address follows automatically, see Setup step 9).
+  move to a new allowlisted address follows automatically, see Setup step 9; behind the
+  WSL NAT gateway the key proof and the allowlist decide, as the source cannot show the
+  address).
 - **Paired slots.** A slot bound to a paired peer goes only to a link that proves that
   peer's key, whether or not the peer is online, from the WSL gateway, loopback or
   anywhere else. A paired peer never falls
