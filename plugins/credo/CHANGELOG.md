@@ -4,6 +4,28 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ## v0
 
+### v0.83
+
+#### v0.83.0
+
+##### Added
+
+- Items: optional `## Freigaben` section (approvals) lists the downloads and installs a GO covers; nothing outside the list is approved, and the security check still applies to listed entries
+- Items: optional `polish: true` for pure polish (wording, layout, small behavior details): one build, one light audit, fixes once best effort, then done; leftovers go to `## Verify`
+- Items: optional `disk_gb` (free disk in GB a running item needs); the start waits until the free space covers it plus the reserve
+- `credo-resource-check.sh` gains `--disk-gb` and `--path`, checks free disk at every start, and reads the reserve from `resources.disk_reserve_gb` (default 3 GB)
+- A paired LAN peer whose DHCP address changes follows its pairing without confirmation once its key proof succeeds from its newly advertised, allowlisted address (behind the WSL NAT gateway the key proof decides, and no other peer's address, slot or reservation is ever taken over); the old address stays reserved for 7 days, and `CREDO_PEER_LAN_FOLLOW_ADDRESS=0` keeps the refusal and the pending repair (`pair-reset`)
+
+##### Changed
+
+- The task role pulls GO items from `1_todo/2_go` itself; the plan role never hands out batches and reports at most "new GO items are ready"
+- Owner-owned clarify items (`clarify_owner: human` or missing) are clarified only with the owner in every mode; agent-owned clarify items are decided by the agent only in autonomous runs, interactive modes ask the user; build-time details of a GO item stay with the agent
+
+##### Fixed
+
+- The item move guard blocks a raw move only when an item file of the status tree is its source or destination. Moves of other `.credo/` files, such as the requirements log, pass even when the shell stands inside the item tree. Commands with shell variables, command wrappers or a quoted `cd` still block a move that names an item path anywhere.
+- A raw move of an item file chained after a `credo-item-move.sh` call in the same command is now blocked; before, the helper call exempted the whole command.
+
 ### v0.82
 
 #### v0.82.4
