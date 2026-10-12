@@ -412,6 +412,13 @@ def peer_to_string(peer, default_port):
     return "%s:%d" % (peer["host"], int(peer["port"]))
 
 
+def peer_keys(cfg):
+    """The "host:port" key of every configured peer (the slot form a pairing is bound to)."""
+    default_port = int(cfg.get("listen_port", DEFAULT_PORT))
+    peers = normalize_peers(cfg.get("peers", []), default_port)
+    return set("%s:%d" % (p["host"], p["port"]) for p in peers)
+
+
 # ---------------------------------------------------------------------------
 # self-address detection + reachability probe (active setup help, so the user
 # never has to figure out which IP to enter on the other machines)
@@ -680,21 +687,40 @@ def print_self_address(cfg):
         print("Find it with: ip route get 1.1.1.1 (use the 'src' address).")
 
 
+# A peer behind NAT cannot be reached from the side that cannot dial it: the peer must dial
+# in (init on its side) and the return channel carries the traffic back.
+NAT_ADD_HINT = (
+    "WARNING - %s is not reachable from this machine right now. If that machine sits "
+    "behind NAT, do not keep this address here. Run init with this machine's address on "
+    "that machine instead. It then dials this one and the return channel carries the traffic."
+)
+NAT_PENDING_HINT = (
+    "  The address is not reachable from this machine right now. If that machine sits "
+    "behind NAT, remove it here (init --remove) and let that machine run init with this "
+    "machine's address instead. Its return channel then carries the link."
+)
+
+
 def probe_all_peers(cfg):
+    """Print the reachability of every configured peer. Returns the set of "host:port"
+    keys that are not reachable from here right now."""
     default_port = int(cfg.get("listen_port", DEFAULT_PORT))
     peers = normalize_peers(cfg.get("peers", []), default_port)
     if not peers:
         print("No peers configured yet.")
-        return
+        return set()
     print("Peer reachability:")
+    down = set()
     for p in peers:
         if probe_peer(p["host"], p["port"]):
             print("  %s:%d - reachable" % (p["host"], p["port"]))
         else:
+            down.add("%s:%d" % (p["host"], p["port"]))
             print(
                 "  %s:%d - not reachable (check that the peer is running and its "
                 "port is open)" % (p["host"], p["port"])
             )
+    return down
 
 
 # ---------------------------------------------------------------------------
@@ -2239,6 +2265,18 @@ class PairStore(object):
             self._write(self.PENDING, cur[-PENDING_REPAIR_MAX:])
             return True
 
+    def prune_pending(self, keep_slots):
+        """Drop the pending repairs whose slot is not in keep_slots (the configured peer
+        addresses). Pairings are never touched. Returns the number dropped; the file is
+        written only when something is dropped."""
+        with self.lock:
+            cur = self.pending(strict=True)   # unreadable: raise, never drop blindly
+            keep = [e for e in cur if e["slot"] in keep_slots]
+            if len(keep) == len(cur):
+                return 0
+            self._write(self.PENDING, keep)
+            return len(cur) - len(keep)
+
     def plan_reset(self, selector):
         """(records, pending entries) that reset(selector) would remove. Changes nothing."""
         sel = str(selector or "").strip()
@@ -2609,6 +2647,40 @@ def pidfile_daemon(pf=None):
 def relay_log_path():
     """The relay log next to the config (the file the autostart hook appends to)."""
     return os.path.join(os.path.dirname(config_path()), "peer-lan.log")
+
+
+LOG_MAX_BYTES = 5 * 1024 * 1024
+
+
+def rotate_relay_log(max_bytes=LOG_MAX_BYTES):
+    """Keep the relay log bounded. When stderr (fd 2) is the relay log and it is larger
+    than max_bytes, it moves to peer-lan.log.1 (one backup, an older one is replaced) and
+    stderr continues in a fresh peer-lan.log. Returns True when it rotated. Never raises:
+    rotation is housekeeping and must not stop the daemon."""
+    path = relay_log_path()
+    try:
+        cur, st = os.stat(path), os.fstat(2)
+        if (st.st_dev, st.st_ino) != (cur.st_dev, cur.st_ino) or st.st_size <= max_bytes:
+            return False
+        os.replace(path, path + ".1")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            os.dup2(fd, 2)
+        finally:
+            os.close(fd)
+    except OSError:
+        return False
+    return True
+
+
+def prune_pending_for(store, cfg):
+    """Drop the pending repairs whose address is no longer a configured peer. The pairings
+    are never touched. Returns the number dropped; a failure is logged and counts as 0."""
+    try:
+        return store.prune_pending(peer_keys(cfg))
+    except OSError as exc:
+        log("pending repairs not pruned: %s" % exc)
+        return 0
 
 
 def spawn_detached_daemon():
@@ -3816,6 +3888,7 @@ class Daemon(object):
         self._lan_key = None
         self.rejected_warned = set()  # inbound source IPs rejected (logged once each)
         self.outbound_skip_warned = set()  # peers skipped by the outbound gate
+        self.roster_down = {}  # "host:port" -> last roster send error logged for it (down peers)
         self.deliver_rejected_warned = set()  # sources whose deliver was rejected (once)
         self.dup_session_warned = set()  # roster sessionIds skipped as duplicates (once)
         self._win_allow_path = None
@@ -3897,6 +3970,10 @@ class Daemon(object):
         self._cleanup_stale_descriptors()
         self._cleanup_stale_sockets()
         self._sync_pair_copies()
+        rotate_relay_log()   # an oversized log from an earlier run is cut before this one writes
+        dropped = prune_pending_for(self.pairs, self.cfg)
+        if dropped:
+            log("dropped %d pending repair(s) for addresses that are no longer peers" % dropped)
         self.srv.listen(32)
         self._write_pidfile()
         log(
@@ -5314,11 +5391,25 @@ class Daemon(object):
             elif self.advertise_host:
                 out = dict(payload, advertise_host=self.advertise_host,
                            advertise_port=self.advertise_port)
+            addr = "%s:%d" % (host, port)
             try:
                 self.send_frame(host, port, out, allow_raw=raw_ok)
             except Exception as exc:
-                log("roster to %s:%s failed: %s" % (host, port, exc))
+                self._roster_failed(addr, str(exc))
+            else:
+                self._roster_recovered(addr)
         return len(targets)
+
+    def _roster_failed(self, addr, why):
+        """A roster send to a configured peer failed. Logged once when the peer goes down
+        (or the error changes), not on every roster interval."""
+        if self.roster_down.get(addr) != why:
+            self.roster_down[addr] = why
+            log("roster to %s failed: %s" % (addr, why))
+
+    def _roster_recovered(self, addr):
+        if self.roster_down.pop(addr, None) is not None:
+            log("roster to %s ok again" % addr)
 
     def _resolve_peer_addr(self, src_ip, listen_port, adv_host=None, adv_port=None):
         """Map an inbound roster to the peer ADDRESS its replies/messages forward to,
@@ -5803,6 +5894,7 @@ class Daemon(object):
 
     def _janitor_loop(self):
         while not self.stop.wait(self.roster_interval):
+            rotate_relay_log()
             now = time.monotonic()
             with self.lock:
                 dead_machines = set()
@@ -6205,6 +6297,7 @@ def run_init(args):
     except Exception as exc:
         log("init: could not write %s: %s" % (path, exc))
         return 1
+    prune_pending_for(PairStore(keys_dir_for(cfg)), cfg)
 
     print("Wrote %s" % path)
     print("  this_machine: %s" % cfg["this_machine"])
@@ -6221,7 +6314,11 @@ def run_init(args):
     print("")
     print_self_address(cfg)
     print("")
-    probe_all_peers(cfg)
+    down = probe_all_peers(cfg)
+    for p in added:
+        key = "%s:%d" % (p["host"], p["port"])
+        if key in down:
+            print(NAT_ADD_HINT % key)
     net = detect_network()
     state = compute_lan_state(cfg, net, normalize_peers(cfg["peers"], default_port), is_wsl())
     print("")
@@ -6306,17 +6403,21 @@ def run_check(_args):
     state = current_state(cfg)
     print_lan_status(cfg, state)
     print("")
-    probe_all_peers(cfg)
+    down = probe_all_peers(cfg)
     check_firewall_hint(cfg, state)
     print("")
-    print_pairs(cfg)
+    print_pairs(cfg, down)
     return 0
 
 
-def print_pairs(cfg):
+def print_pairs(cfg, down=frozenset()):
     """Pairing state: this installation's id, the paired peers and any pending
-    repair with the one command that accepts it. Never prints a key."""
+    repair with the one command that accepts it. Never prints a key. Pending repairs of
+    addresses that are no longer configured peers are dropped first; down holds the
+    "host:port" keys not reachable from here (their pending repair gets the NAT hint)."""
     store = PairStore(keys_dir_for(cfg))
+    if cfg:
+        prune_pending_for(store, cfg)
     print("Pairing (per-peer keys, trust on first use): %s" % store.path)
     unreadable = None
     try:
@@ -6347,6 +6448,8 @@ def print_pairs(cfg):
               "Codex peer lives there), accept it with: credo-peer-lan.py pair-reset %s"
               % (e["slot"], e["reason"], (e["new_id"] or "none")[:8], e["machine"],
                  (e["old_id"] or "none")[:8], e["fix"]))
+        if e["slot"] in down:
+            print(NAT_PENDING_HINT)
     return pend
 
 

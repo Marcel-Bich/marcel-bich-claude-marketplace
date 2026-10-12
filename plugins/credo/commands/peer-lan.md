@@ -314,7 +314,9 @@ The machine name stays a display label.
   claiming a paired slot, or a paired id showing up at another address, is refused,
   logged once with the exact command, and kept as a pending repair in
   `peer-lan-keys/pending-repair.json`; `pairs`, `check` and `status` show it and the
-  session-start hook tells the agent. Accept it with ONE command on the machine that
+  session-start hook tells the agent. A pending repair whose address is no longer a
+  configured peer is dropped (at the next daemon start, `init`, `check` or `pairs`); the
+  pairing itself is never touched. Accept it with ONE command on the machine that
   reports it (only after confirming that peer really was reinstalled or reset), and
   the next link pairs again automatically:
   ```bash
@@ -629,10 +631,19 @@ allowlist-scoped firewall rule (the old rule allowed the whole LocalSubnet).
      (`--replace`/`--remove` are mutually exclusive; both are token-less like plain
      `init`. On native Linux, `init` also warns if `ufw` is active and the port is not
      yet allowed.)
+
+     An address that is not reachable from this machine right now is still added, but
+     `init` prints a WARNING. If that machine sits behind NAT, do not keep its address
+     here: run `init <this machine's address>` on that machine instead. It then dials
+     this one and the return channel carries the traffic. `init --remove` also drops a
+     pending repair of the removed address.
   2. Start the daemon (detached; it logs to `peer-lan.log` next to the config):
      ```bash
      "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" start
      ```
+     The log is rotated when it exceeds 5 MB: the old file moves to `peer-lan.log.1`
+     (one backup, an older one is replaced) and logging continues in a fresh
+     `peer-lan.log`, also while the daemon runs.
   3. Open the LAN port:
      - **Under WSL only** (detect with `grep -qi microsoft /proc/version` or a set
        `$WSL_DISTRO_NAME`): open the Windows port with a SINGLE elevated UAC prompt.
@@ -764,6 +775,9 @@ allowlist-scoped firewall rule (the old rule allowed the whole LocalSubnet).
   ```bash
   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" check
   ```
+  A PENDING REPAIR whose address is not reachable from this machine gets the NAT hint
+  (see `init`): if that peer sits behind NAT, remove the address here and let it run
+  `init` towards this machine.
 
 - **status**
   ```bash

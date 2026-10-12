@@ -44,6 +44,10 @@
 #   - served profiles (AQ): the machine config's profiles list selects which profiles
 #     the one relay serves (absent = all), the state and the profiles subcommand, and a
 #     sibling profile never creates a second config.
+#   - peer hygiene (PH): init warns about an address not reachable from here (and still
+#     adds it), pending repairs follow their configured address (check, pairs, init
+#     --remove, daemon start), the relay log rotates at 5 MB (also while the daemon runs),
+#     and a peer that stays down logs its failed roster once, plus once on recovery.
 #
 # Usage: bash test-credo-peer-lan.sh
 
@@ -3831,7 +3835,7 @@ def pk_h():
     # the user accepts the new key with one command (CLI, against C's key dir)
     cfgp = os.path.join(root, "pk-h.json")
     with open(cfgp, "w") as fh:
-        json.dump({"keys_dir": ck, "this_machine": "box-c"}, fh)
+        json.dump({"keys_dir": ck, "this_machine": "box-c", "peers": [B_ADDR]}, fh)
     env = dict(os.environ, CREDO_PEER_LAN_CONFIG=cfgp)
     st = subprocess.run([sys.executable, daemon_path, "pairs"], env=env,
                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
@@ -6087,6 +6091,320 @@ while IFS= read -r line; do
 done <<< "$PR_OUT"
 case "$PR_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL PR: traceback\n%s\n' "$PR_OUT" ;; esac
 check "PR: expected number of results" "17" "$(printf '%s\n' "$PR_OUT" | grep -cE '^(PASS|FAIL) ')"
+
+# --- PH: peer hygiene (init warning, pending repair pruning, log rotation, roster log) -
+# A peer this machine cannot reach is warned about by init; a pending repair follows its
+# address (dropped once the address is no longer a configured peer, at daemon start,
+# check, pairs, init); the relay log is rotated at 5 MB (also while the daemon runs); a
+# peer that stays down logs its failed roster once, and once more when it recovers.
+PH_RES="$TMP/ph-results.txt"
+PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+    "$PY" - "$DAEMON" "$TMP/ph" >"$PH_RES" 2>"$TMP/ph-err.txt" <<'PYEOF'
+import json, os, socket, subprocess, sys, threading, time
+
+daemon, root = sys.argv[1], sys.argv[2]
+MB = 1024 * 1024
+PAIR_ID = "ab" * 16
+NEW_ID = "ef" * 16
+OUTSIDE_SLOT = "192.0.2.42:48610"
+CHILD = r'''
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("credo_peer_lan", sys.argv[1])
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+rotated = mod.rotate_relay_log()
+sys.stderr.write("after rotation\n"); sys.stderr.flush()
+sys.stdout.write("rotated=%s\n" % rotated)
+'''
+
+
+def res(name, cond, detail=""):
+    print(("PASS " if cond else "FAIL ") + name + ("" if cond else " %r" % (detail,)))
+
+
+def free_port():
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+def write_json(path, obj):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as fh:
+        json.dump(obj, fh)
+
+
+def read_bytes(path):
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
+def write_cfg(path, peers, extra=None):
+    cfg = {"this_machine": "box-1", "listen_host": "127.0.0.1", "listen_port": free_port(),
+           "peers": peers}
+    cfg.update(extra or {})
+    write_json(path, cfg)
+
+
+def count(path, needle):
+    try:
+        with open(path, errors="replace") as fh:
+            return sum(1 for line in fh if needle in line)
+    except OSError:
+        return 0
+
+
+def wait_for(cond, timeout=20.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def drain_server(port):
+    """A loopback listener that reads every frame until EOF (a peer that is up)."""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", port))
+    srv.listen(8)
+
+    def serve():
+        while True:
+            try:
+                conn, _ = srv.accept()
+            except OSError:
+                return
+            try:
+                while conn.recv(65536):
+                    pass
+            except OSError:
+                pass
+            conn.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return srv
+
+
+def pairing_setup(base, live_slot):
+    kd = os.path.join(base, "peer-lan-keys")
+    os.makedirs(kd, mode=0o700, exist_ok=True)
+    rec = os.path.join(kd, "peer-%s.json" % PAIR_ID)
+    write_json(rec, {"id": PAIR_ID, "pub": "abc123", "key": "cd" * 32, "slot": live_slot,
+                     "machine": "box-1"})
+    return kd, rec
+
+
+def pending_entry(slot, live_slot):
+    return {"slot": slot, "old_id": PAIR_ID, "new_id": NEW_ID, "machine": "box-2",
+            "reason": "paired peer bound to %s" % live_slot, "fix": PAIR_ID}
+
+
+def pending_slots(kd):
+    with open(os.path.join(kd, "pending-repair.json")) as fh:
+        return [e["slot"] for e in json.load(fh)]
+
+
+def cli(cfg, *args):
+    env = dict(os.environ, CREDO_PEER_LAN_CONFIG=cfg)
+    p = subprocess.run([sys.executable, daemon] + list(args), env=env, capture_output=True,
+                       text=True, timeout=60)
+    return p.returncode, p.stdout
+
+
+def rotate_child(cfg, stderr_path):
+    """Run the rotation in a fresh process whose stderr is stderr_path (fd 2)."""
+    env = dict(os.environ, CREDO_PEER_LAN_CONFIG=cfg)
+    with open(stderr_path, "ab") as err:
+        p = subprocess.run([sys.executable, "-c", CHILD, daemon], env=env,
+                           stdout=subprocess.PIPE, stderr=err, text=True, timeout=60)
+    return p.stdout.strip()
+
+
+def start_daemon(cfg, sock, log):
+    env = dict(os.environ, CREDO_PEER_LAN_CONFIG=cfg, CREDO_PEER_LAN_SOCKDIR=sock)
+    with open(log, "ab") as fh:
+        return subprocess.Popen([sys.executable, daemon, "daemon"], env=env,
+                                stdin=subprocess.DEVNULL, stdout=fh, stderr=fh)
+
+
+def stop(proc):
+    if proc.poll() is None:
+        proc.terminate()
+    try:
+        proc.wait(15)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+live = free_port()
+dead = free_port()   # stays closed: the unreachable peer
+LIVE_SLOT = "127.0.0.1:%d" % live
+DEAD_SLOT = "127.0.0.1:%d" % dead
+live_srv = drain_server(live)
+
+# --- init: an unreachable address is warned about, still added; a reachable one is not
+base = os.path.join(root, "init", "credo")
+icfg = os.path.join(base, "peer-lan.json")
+rc, out = cli(icfg, "init", DEAD_SLOT, LIVE_SLOT)
+res("PH init warns about an address that is not reachable from here",
+    "WARNING - %s is not reachable from this machine right now" % DEAD_SLOT in out, out)
+res("PH init does not warn about a reachable address",
+    "WARNING - %s" % LIVE_SLOT not in out, out)
+res("PH init still adds the unreachable address (warn, do not refuse)",
+    rc == 0 and DEAD_SLOT in read_bytes(icfg).decode(), rc)
+
+# --- check / pairs / init --remove: pending repairs follow their configured address
+base = os.path.join(root, "chk", "credo")
+cfg = os.path.join(base, "peer-lan.json")
+write_cfg(cfg, [DEAD_SLOT, LIVE_SLOT])
+kd, rec = pairing_setup(base, LIVE_SLOT)
+snap = read_bytes(rec)
+write_json(os.path.join(kd, "pending-repair.json"),
+           [pending_entry(DEAD_SLOT, LIVE_SLOT), pending_entry(LIVE_SLOT, LIVE_SLOT),
+            pending_entry(OUTSIDE_SLOT, LIVE_SLOT)])
+rc, out = cli(cfg, "check")
+lines = out.splitlines()
+HINT = "The address is not reachable from this machine right now"
+
+
+def line_after(marker):
+    for i, line in enumerate(lines):
+        if marker in line:
+            return lines[i + 1] if i + 1 < len(lines) else ""
+    return None
+
+
+res("PH check: the unreachable pending repair is followed by the NAT hint",
+    rc == 0 and HINT in (line_after("PENDING REPAIR at %s:" % DEAD_SLOT) or ""), out)
+res("PH check: a reachable pending repair gets no NAT hint",
+    line_after("PENDING REPAIR at %s:" % LIVE_SLOT) is not None
+    and HINT not in (line_after("PENDING REPAIR at %s:" % LIVE_SLOT) or ""), out)
+res("PH check: the NAT hint is printed once (only for the unreachable address)",
+    out.count(HINT) == 1, out.count(HINT))
+res("PH check: a pending repair of an address that is no longer a peer is dropped",
+    OUTSIDE_SLOT not in out and pending_slots(kd) == [DEAD_SLOT, LIVE_SLOT], pending_slots(kd))
+res("PH check: the pairing record is untouched", read_bytes(rec) == snap)
+
+cfg_obj = json.load(open(cfg))
+cfg_obj["peers"] = [DEAD_SLOT]
+write_json(cfg, cfg_obj)
+rc, out = cli(cfg, "pairs")
+res("PH pairs: the pending repair of a removed peer is dropped",
+    "PENDING REPAIR at %s:" % LIVE_SLOT not in out and pending_slots(kd) == [DEAD_SLOT],
+    pending_slots(kd))
+res("PH pairs: the pending repair of the remaining peer is still shown",
+    "PENDING REPAIR at %s:" % DEAD_SLOT in out, out)
+res("PH pairs: no NAT hint, pairs does not probe reachability", HINT not in out, out)
+res("PH pairs: the pairing record is untouched", read_bytes(rec) == snap)
+
+rc, out = cli(cfg, "init", "--remove", DEAD_SLOT)
+res("PH init --remove drops the pending repair of the removed address",
+    rc == 0 and pending_slots(kd) == [], pending_slots(kd))
+res("PH init --remove leaves the pairing record untouched", read_bytes(rec) == snap)
+
+# --- log rotation: a fresh process whose stderr is the relay log
+base = os.path.join(root, "rot", "credo")
+rcfg = os.path.join(base, "peer-lan.json")
+write_cfg(rcfg, [])
+rlog = os.path.join(base, "peer-lan.log")
+prev = rlog + ".1"
+with open(rlog, "wb") as fh:
+    fh.write(b"x" * (6 * MB) + b"\n")
+out1 = rotate_child(rcfg, rlog)
+res("PH rotate: an oversized log moves to peer-lan.log.1 when it is stderr",
+    out1 == "rotated=True" and os.path.getsize(prev) == 6 * MB + 1, out1)
+res("PH rotate: stderr continues in a fresh log with only the new lines",
+    read_bytes(rlog) == b"after rotation\n", read_bytes(rlog)[:60])
+with open(prev, "wb") as fh:
+    fh.write(b"OLD BACKUP\n")
+with open(rlog, "wb") as fh:
+    fh.write(b"x" * (6 * MB) + b"\n")
+out2 = rotate_child(rcfg, rlog)
+res("PH rotate: an older backup is replaced by the new one",
+    out2 == "rotated=True" and read_bytes(prev)[:4] == b"xxxx"
+    and os.path.getsize(prev) == 6 * MB + 1, out2)
+with open(rlog, "wb") as fh:
+    fh.write(b"y" * MB + b"\n")
+prev_size = os.path.getsize(prev)
+out3 = rotate_child(rcfg, rlog)
+res("PH rotate: a log under the cap is not rotated",
+    out3 == "rotated=False" and os.path.getsize(prev) == prev_size
+    and os.path.getsize(rlog) > MB, out3)
+with open(rlog, "wb") as fh:
+    fh.write(b"z" * (6 * MB) + b"\n")
+out4 = rotate_child(rcfg, os.path.join(base, "other.log"))
+res("PH rotate: a process whose stderr is another file rotates nothing",
+    out4 == "rotated=False" and os.path.getsize(rlog) == 6 * MB + 1
+    and os.path.getsize(prev) == prev_size, out4)
+
+# --- daemon start: oversized log is cut, the pending repair of a non-peer is dropped
+base = os.path.join(root, "st", "credo")
+scfg = os.path.join(base, "peer-lan.json")
+write_cfg(scfg, [])
+skd, srec = pairing_setup(base, LIVE_SLOT)
+srec_snap = read_bytes(srec)
+write_json(os.path.join(skd, "pending-repair.json"), [pending_entry(DEAD_SLOT, LIVE_SLOT)])
+slog = os.path.join(base, "peer-lan.log")
+with open(slog, "wb") as fh:
+    fh.write(b"x" * (6 * MB) + b"\n")
+sock = os.path.join(root, "st", "sock")
+os.makedirs(sock, exist_ok=True)
+proc = start_daemon(scfg, sock, slog)
+up = wait_for(lambda: count(slog, "listening on") > 0)
+res("PH start: the daemon comes up with an oversized log present", up, up)
+res("PH start: an oversized log is rotated before the daemon writes",
+    os.path.exists(slog + ".1") and os.path.getsize(slog + ".1") == 6 * MB + 1,
+    os.path.getsize(slog + ".1") if os.path.exists(slog + ".1") else None)
+res("PH start: the pending repair of an address that is no longer a peer is dropped",
+    pending_slots(skd) == [] and count(slog, "dropped 1 pending repair") > 0, pending_slots(skd))
+res("PH start: the pairing record is untouched", read_bytes(srec) == srec_snap)
+stop(proc)
+
+# --- roster log: a peer that stays down is logged once, and once when it recovers
+base = os.path.join(root, "ros", "credo")
+gcfg = os.path.join(base, "peer-lan.json")
+write_cfg(gcfg, [DEAD_SLOT], {"roster_interval": 0.2})
+glog = os.path.join(base, "peer-lan.log")
+gsock = os.path.join(root, "ros", "sock")
+os.makedirs(gsock, exist_ok=True)
+FAILED = "roster to %s failed" % DEAD_SLOT
+RECOVERED = "roster to %s ok again" % DEAD_SLOT
+proc = start_daemon(gcfg, gsock, glog)
+wait_for(lambda: count(glog, FAILED) > 0)
+time.sleep(1.5)   # about seven more roster intervals with the peer still down
+res("PH roster: a peer that stays down logs its failed roster once",
+    count(glog, FAILED) == 1, count(glog, FAILED))
+dead_srv = drain_server(dead)
+wait_for(lambda: count(glog, RECOVERED) > 0)
+time.sleep(1.0)
+res("PH roster: the recovery is logged once", count(glog, RECOVERED) == 1,
+    count(glog, RECOVERED))
+res("PH roster: no failure is logged again after the recovery",
+    count(glog, FAILED) == 1, count(glog, FAILED))
+with open(glog, "ab") as fh:   # push the running daemon's log past the cap
+    fh.write(b"x" * (6 * MB) + b"\n")
+rotated = wait_for(lambda: os.path.exists(glog + ".1"))
+time.sleep(0.5)
+res("PH rotation: the running daemon rotates an oversized log", rotated
+    and os.path.getsize(glog + ".1") >= 6 * MB, rotated)
+res("PH rotation: the daemon keeps logging into the fresh file",
+    os.path.getsize(glog) < MB, os.path.getsize(glog))
+stop(proc)
+dead_srv.close()
+live_srv.close()
+PYEOF
+while IFS= read -r line; do
+    case "$line" in
+        PASS\ *) PASS=$((PASS + 1)) ;;
+        FAIL\ *) FAIL=$((FAIL + 1)); printf '%s\n' "$line" ;;
+    esac
+done < "$PH_RES"
+case "$(cat "$TMP/ph-err.txt")" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL PH: traceback\n%s\n' "$(cat "$TMP/ph-err.txt")" ;; esac
+check "PH: expected number of results" "28" "$(grep -cE '^(PASS|FAIL) ' "$PH_RES")"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
