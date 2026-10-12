@@ -12,4 +12,4 @@ bump: minor
 ### Changed
 
 - The task role pulls GO items from `1_todo/2_go` itself; the plan role never hands out batches and reports at most "new GO items are ready"
-- Owner-owned clarify items (`clarify_owner: human` or missing) are clarified only with the owner in every mode, autonomous runs included; the agent decides agent-owned items and build-time details only
+- Owner-owned clarify items (`clarify_owner: human` or missing) are clarified only with the owner in every mode; agent-owned clarify items are decided by the agent only in autonomous runs, interactive modes ask the user; build-time details of a GO item stay with the agent

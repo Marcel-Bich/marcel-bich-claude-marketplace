@@ -219,14 +219,21 @@ prints, delivered at every SessionStart. This section fixes only who decides, th
 requirement and the safety calls below; the decision philosophy itself lives in the preset
 config, not here. Follow the active mainagent-prompt for every agent-owned decision.
 
-**Owner-owned clarify items are never decided by the agent, in ANY mode.** A clarify item the
-owner owns (`clarify_owner: human`, or the field missing) is clarified only with the owner: in an
-interactive mode via the Ask tool; in autonomous mode it is not clarified in the run at all, it
-stays in `1_clarify` and goes into the end-of-run report. The agent decides only (a) agent-owned
-items (its own slices, follow-ups and audit findings, with a GO'd `parent`) and (b) the
-build-time detail questions of a GO item. A repo rule in `.credo/RULES.md` (credo `rules`) can
-extend this; it cannot lower the safety floor. Where another credo text states otherwise, this
-section wins.
+**Who decides, by owner and by mode.** Three parts:
+
+1. **Owner-owned clarify items** (`clarify_owner: human`, or the field missing) are clarified
+   with the owner in EVERY mode. The agent never decides them. In an autonomous run they are not
+   clarified at all: they stay in `1_clarify` and go into the end-of-run report.
+2. **Agent-owned clarify items** (`clarify_owner: agent`) are decided by the agent ONLY in an
+   autonomous run. In an interactive mode (active, passive) every clarify decision goes to the
+   human, agent-owned items included: the agent recommends (Recommended option first) and the user
+   decides.
+3. **Build-time details of a GO item** (questions that come up while building it) are the agent's
+   to decide in every mode, per the active mainagent-prompt, logged in the item History. They are
+   not clarify decisions, and the escalation list below still goes to the user.
+
+A repo rule in `.credo/RULES.md` (credo `rules`) can extend this; it cannot lower the safety floor.
+Where another credo text states otherwise, this section wins.
 
 **Who decides depends on the owner** (frontmatter `clarify_owner`, missing = `human`):
 
@@ -236,13 +243,13 @@ section wins.
   the GO: `credo-item-move.sh` refuses `-> go` for a human-owned item unless the History
   carries a `(GO: <user quote>)` line or the main agent passes `--user-authorized` on the
   user's explicit GO. A detour via `parked/*` or `3_blocked` does not get around it.
-- **Agent-owned items** (`clarify_owner: agent`, plus everything in `2_go`): uncritical
-  questions are decided by the plan agent. If no plan agent peer is known (none was
-  announced as owning this responsibility), the EXECUTING agent takes this pseudo plan role
-  for the moment, without changing its real role, and decides per the active
-  mainagent-prompt. The fixed escalation list is never a preset decision: user taste or
+- **Agent-owned items** (`clarify_owner: agent`, plus everything in `2_go`): in an autonomous
+  run, uncritical questions are decided by the plan agent. If no plan agent peer is known (none
+  was announced as owning this responsibility), the EXECUTING agent takes this pseudo plan role
+  for the moment, without changing its real role, and decides per the active mainagent-prompt.
+  In an interactive mode these questions go to the user (see "By mode"). The fixed escalation list is never a preset decision: user taste or
   preference, a change to the verbatim requirement, the hard safety rules, deleting user
-  data, installs beyond the item's `## Freigaben` and money go to the user. Feasible = GO: an agent-owned clarify item may
+  data, installs beyond the item's `## Freigaben` and money go to the user. Feasible = GO (autonomous runs only): an agent-owned clarify item may
   move to `2_go` with the History line `-> go <date> (GO: agent decision, <reason>)`. The
   older marker `(GO: agent per SOTA rule, <reason>)` stays valid (the move helper accepts both).
   **No slicing around the user:** an item with `parent: <id>` may only be agent-GO'd while
@@ -265,15 +272,16 @@ section wins.
   requirement (the `Requirement (verbatim)` section of the item or of its `parent`) always
   goes to the user (credo `requirements-verbatim`).
 
-**By mode:** interactive (active, passive) - decide the uncritical questions of agent-owned
-items, ask the owner-owned clarify items and the escalated questions via the Ask tool (one item
-per round, Recommended option first). Autonomous - decide the uncritical questions of agent-owned
-items, park the owner-owned clarify items and the escalated questions for the end-of-run report
-(deferred-question flow, credo `session-autonomous`); never adopt a default for an escalated
-question.
+**By mode:** interactive (active, passive) - every clarify decision goes to the user via the Ask
+tool, agent-owned items included (one item per round, Recommended option first; the agent's
+recommendation follows the active mainagent-prompt). Autonomous - decide the uncritical questions
+of agent-owned items (GO with the agent-decision marker), park the owner-owned clarify items and
+the escalated questions for the end-of-run report (deferred-question flow, credo
+`session-autonomous`); never adopt a default for an escalated question. In every mode, build-time
+details of a GO item are the agent's to decide and log.
 
 A user GO in the user's own words is always a valid GO for any item; this rule only adds
-that agent-owned items do not wait for one.
+that, in an autonomous run, agent-owned items do not wait for one.
 
 ## Mandatory frontmatter (lean)
 
@@ -897,7 +905,7 @@ Unlocking (`git worktree unlock <path>`) follows one rule:
 Valid transitions (folder = status):
 
 - `1_clarify -> 2_go` once the user gives an explicit GO (go-gate: only `2_go` is
-  buildable; `1_clarify` is not). For an agent-owned item (`clarify_owner: agent`) the agent
+  buildable; `1_clarify` is not). For an agent-owned item (`clarify_owner: agent`) in an autonomous run the agent
   decision rule may give the GO instead (`(GO: agent decision, <reason>)`, see "Clarify
   owner and the agent decision rule"); a human-owned item always needs the user's GO, and
   the move helper refuses it otherwise. In a presence session, clarify and propose that GO one

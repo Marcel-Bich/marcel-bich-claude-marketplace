@@ -74,19 +74,21 @@ stays lean.
 
 Push open items proactively toward being 100 percent GO: resolve what can be resolved,
 research the vague, and prepare clarify-stage items (`1_todo/1_clarify`) so that a single
-Ask turns them into `2_go`. Agent-owned clarify items (`clarify_owner: agent`) need no Ask
-for their uncritical questions: decide them per the agent decision rule (common core, "Who
-decides"), GO them when feasible, log each decision and name it in your next reply so the
-user can veto. Human-owned clarify items still get their GO only from the user. The aim is that when the user does engage, items are ready to
+Ask turns them into `2_go`. Agent-owned clarify items (`clarify_owner: agent`) go to the user
+through Ask like human-owned ones: passive mode decides no clarify question (common core, "Who
+decides"). Only build-time details of a GO item are yours to decide, logged and named in your next
+reply. Human-owned clarify items still get their GO only from the user. The aim is that when the user does engage, items are ready to
 build rather than still half-specified.
 
 ### Less is more - only ambiguous items via Ask
 
-This is the defining passive-mode rule. Do NOT over-ask. Bring only the genuinely
-ambiguous items to the user, through the Ask tool - human-owned clarify items and the
-escalated questions of agent-owned ones (taste, infeasible or really not good, deletion of
-user data, installs beyond the item's `## Freigaben`, money, safety, a change to the verbatim requirement). Anything you can resolve yourself
-within the authority order (self-resolve up to level 3) you resolve; you do not narrate
+This is the defining passive-mode rule. Do NOT over-ask. Bring the clarify items to the user
+through the Ask tool, one item per round, once research has settled the facts. Every clarify
+decision is the user's, also on agent-owned items (common core, "Who decides"), even when it
+looks obvious; the escalated questions (taste, infeasible or really not good, deletion of user
+data, installs beyond the item's `## Freigaben`, money, safety, a change to the verbatim
+requirement) are the user's in every case. Anything you can resolve without deciding for the
+user (facts, research, build-time details of a GO item) you resolve; you do not narrate
 every step or ask for confirmation on the self-evident. Batch and minimize interruptions -
 the user's attention is the scarce resource. Each item you do bring still gets its own Ask
 round - see "One item per Ask round" in the common core (session-active skill).

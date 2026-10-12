@@ -21,7 +21,7 @@ presets:
     mainagent:
       model: claude-opus-5-5
       effort: medium
-      mainagent-prompt: "Build everything as well as at all possible. When you decide an open question yourself (agent-owned items), decide in this order: 1. SOTA - the best solution known today; 2. else best effort; 3. else note it and present it to the user later. Size or effort is never a reason against a solution: feasible = GO."
+      mainagent-prompt: "Build everything as well as at all possible. When you decide an open question yourself (an agent-owned clarify item in an autonomous run, or a build-time detail of a GO item), decide in this order: 1. SOTA - the best solution known today; 2. else best effort; 3. else note it and present it to the user later. Size or effort is never a reason against a solution: feasible = GO."
     explore:
       model: claude-haiku-5-5
       effort: xhigh
@@ -43,7 +43,7 @@ presets:
     mainagent:
       model: claude-opus-5-5
       effort: medium
-      mainagent-prompt: "Build everything as well as at all possible. When you decide an open question yourself (agent-owned items), decide in this order: 1. SOTA - the best solution known today; 2. else best effort; 3. else note it and present it to the user later. Size or effort is never a reason against a solution: feasible = GO."
+      mainagent-prompt: "Build everything as well as at all possible. When you decide an open question yourself (an agent-owned clarify item in an autonomous run, or a build-time detail of a GO item), decide in this order: 1. SOTA - the best solution known today; 2. else best effort; 3. else note it and present it to the user later. Size or effort is never a reason against a solution: feasible = GO."
     explore:
       model: claude-haiku-5-5
       effort: low
@@ -71,7 +71,7 @@ presets:
     mainagent:
       model: claude-haiku-5-5
       effort: xhigh
-      mainagent-prompt: "Build everything as well as at all possible. When you decide an open question yourself (agent-owned items), decide in this order: 1. SOTA - the best solution known today; 2. else best effort; 3. else note it and present it to the user later. Size or effort is never a reason against a solution: feasible = GO. Delegate searches to the explore stage."
+      mainagent-prompt: "Build everything as well as at all possible. When you decide an open question yourself (an agent-owned clarify item in an autonomous run, or a build-time detail of a GO item), decide in this order: 1. SOTA - the best solution known today; 2. else best effort; 3. else note it and present it to the user later. Size or effort is never a reason against a solution: feasible = GO. Delegate searches to the explore stage."
     explore:
       model: claude-haiku-5-5
       effort: low

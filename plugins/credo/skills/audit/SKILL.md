@@ -206,8 +206,7 @@ applies, in a lighter form:
 - Verdict: `pass (best effort)` with the leftover list. The item then moves to `2_done`.
 - Model and effort are unchanged: the user's setting applies.
 - Not polish: a broken function, data loss, or a security problem. Such a finding takes the
-  normal path (full tier, fix rounds, emergency brake). A polish item that meets a `full`
-  condition in "Audit depth" is not polish either.
+  normal path (full tier, fix rounds, emergency brake).
 
 ## Findings handling (what happens on a failing audit)
 

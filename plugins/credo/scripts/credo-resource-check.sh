@@ -45,6 +45,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# decimal number without leading zeros ("05" -> 5, "1.0" -> 1); keeps JSON valid
+norm() { awk -v v="$1" 'BEGIN { printf "%s", v + 0 }'; }
+
 RUNNING=""
 HEAVY=0
 MODE="text"
@@ -80,6 +83,10 @@ if [ -n "$DISK_NEED" ] && ! [[ "$DISK_NEED" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
     echo "credo-resource-check: --disk-gb needs a number" >&2
     exit 1
 fi
+RUNNING="$((10#$RUNNING))"
+if [ -n "$DISK_NEED" ]; then
+    DISK_NEED="$(norm "$DISK_NEED")"
+fi
 
 # config value, falling back to the default when absent or not a number
 cfg() {
@@ -93,10 +100,10 @@ cfg() {
 }
 
 GATE="$(cfg gate_from_agents 6)"
-GATE="${GATE%%.*}"
-MIN_RAM="$(cfg min_free_ram_gb 4)"
+GATE="$((10#${GATE%%.*}))"
+MIN_RAM="$(norm "$(cfg min_free_ram_gb 4)")"
 MAX_LOAD="$(cfg max_load_per_cpu 1.0)"
-DISK_RESERVE="$(cfg disk_reserve_gb 3)"
+DISK_RESERVE="$(norm "$(cfg disk_reserve_gb 3)")"
 
 STATUS="ok"
 REASON=""
@@ -113,7 +120,7 @@ emit() {
         printf '{"status":"%s","reason":"%s","checked":%s,"running":%s,"heavy":%s,' \
             "$STATUS" "$REASON" "$CHECKED" "$RUNNING" "$([ "$HEAVY" = 1 ] && echo true || echo false)"
         printf '"gate_from_agents":%s,"min_free_ram_gb":%s,"max_load_per_cpu":%s,' \
-            "$GATE" "$MIN_RAM" "$MAX_LOAD"
+            "$GATE" "$MIN_RAM" "$(norm "$MAX_LOAD")"
         printf '"mem_available_gb":%s,"load1":%s,"nproc":%s,"load_per_cpu":%s,' \
             "${MEM_GB:-null}" "${LOAD1:-null}" "${NCPU:-null}" "${LPC:-null}"
         printf '"disk_free_gb":%s,"disk_need_gb":%s,"disk_reserve_gb":%s}\n' \

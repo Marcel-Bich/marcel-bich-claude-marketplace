@@ -182,8 +182,8 @@ These two interleave; run them together.
   item never sits in `2_go`. An item may move into `2_go` ONLY if ALL of these hold:
   - **G1 - provable GO.** A human-owned item (`clarify_owner: human` or missing) needs an
     explicit, item-scoped user GO (date + the user as source); agents never self-GO a
-    human-owned item. An agent-owned item (`clarify_owner: agent`) may get an agent GO under
-    the agent decision rule (`items` skill, "Clarify owner and the agent decision rule"). The
+    human-owned item. An agent-owned item (`clarify_owner: agent`) may get an agent GO (autonomous run
+    only) under the agent decision rule (`items` skill, "Clarify owner and the agent decision rule"). The
     `-> go` History line must cite the GO source, e.g.
     `-> go 2026-08-04 (GO: user, <short context>)` or
     `-> go 2026-08-04 (GO: agent decision, <reason>)`.

@@ -41,11 +41,12 @@ two unattended benchmark runs on real items. The numbers are current measurement
 be tuned; values marked tentative have too few trials yet. Deviate only when the work
 clearly calls for it, and say why.
 
-1. **Plan once per batch** with a planning subagent. The batch itself is pulled by the task
-   agent from `2_go/` (credo `role-task`, "Where the work comes from"); no plan agent hands
-   out batches (credo `role-plan`, "No batches handed out"). The planning subagent reads the
-   pulled items and proposes the cut and the order; it selects no items of its own. Order by
-   dependencies: tooling, then shared foundations, then features. Cut batches by SHARED SURFACES, not only by files:
+1. **Cut the batch once.** The task agent cuts its own batch from `2_go/` (credo `role-task`,
+   "Where the work comes from"). The plan role never hands out batches; it only reports that new
+   GO items are ready (credo `role-plan`, "No batches handed out"). Order: an explicit owner order
+   first, else the lower item id first. A planning subagent may analyse the cut, but the task agent
+   decides it. Order by dependencies: tooling, then shared foundations, then features. Cut batches
+   by SHARED SURFACES, not only by files:
    two items that each added an element to the same UI bar conflicted although they
    touched different modules. Central registry files (command, route, menu or plugin
    registries, shared indexes, a single CHANGELOG) are shared surfaces: items touching the
@@ -164,11 +165,12 @@ latest at GO.
 
 Before every spawn, run
 `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-resource-check.sh" --running <N>` with N = agents
-currently running (add `--heavy` for a heavy item). It prints `ok` (exit 0) or
+currently running (add `--heavy` for a heavy item; add `--disk-gb <disk_gb> --path <target>`
+when the item has `disk_gb`, see "Disk space" below). It prints `ok` (exit 0) or
 `wait:<reason>` (exit 5).
 
-- Below `resources.gate_from_agents` running agents (default 6) it answers `ok` without
-  looking at the machine. From that count on it checks free RAM
+- Below `resources.gate_from_agents` running agents (default 6) it checks no RAM and no load.
+  From that count on it checks free RAM
   (`resources.min_free_ram_gb`, default 4) and the 1-minute load per CPU
   (`resources.max_load_per_cpu`, default 1.0). Thresholds live in the credo config.
 - On `wait`: start no new agent. Re-check when the next running agent finishes (its
@@ -189,9 +191,9 @@ track. Pass the item's `disk_gb` (credo `items` skill) with the check:
   default 3 GB). An item without `disk_gb` needs only the reserve.
 - On `wait:low free disk ...` the item does not start. It stays in `2_go` and is retried
   when the next running agent finishes, like a RAM wait (no polling loop).
-- Autonomous mode: the first disk wait of an item sends ONE ntfy "waiting for disk space"
-  (`credo-ntfy-send.sh`, credo `session-autonomous`, "Per-task and per-question ntfy", at
-  `default` priority). Re-checks of the same wait stay silent until the item starts.
+- Autonomous mode: the first disk wait of an item sends ONE ntfy "waiting for disk space" per
+  item (`credo-ntfy-send.sh`, credo `session-autonomous`, "Per-task and per-question ntfy", at
+  `default` priority). Further waits of that item stay silent.
 - Fail-safe: an unreadable disk value never blocks (`ok` plus a note on stderr).
 
 ### Heavy items - `heavy: true`
@@ -463,10 +465,11 @@ Proven pattern for a subagent that hits a question it cannot answer:
 
 1. The subagent returns `{status: needs_decision, question: <the question>}` instead of
    guessing or finishing with a wrong assumption.
-2. The main agent obtains the answer: for an uncritical question on an agent-owned item it
-   decides itself by the agent decision rule (as the plan agent, or in the pseudo plan role
-   when no plan agent peer is known - credo `items`) and logs the decision; otherwise from
-   the user, from the verbatim requirements log, or, when the user is away, from a
+2. The main agent obtains the answer. A build-time detail of a GO item it decides itself per
+   the mainagent-prompt and logs it. A clarify question on an agent-owned item it decides itself
+   ONLY in an autonomous run (as the plan agent, or in the pseudo plan role when no plan agent
+   peer is known - credo `items`), and logs it; in an interactive mode it goes to the user.
+   Otherwise from the user, from the verbatim requirements log, or, when the user is away, from a
    documented default (escalated questions are parked, never defaulted - credo
    `session-autonomous`).
 3. The main agent passes the answer back to the SAME subagent via SendMessage to its

@@ -36,7 +36,7 @@ export CREDO_PROJECT="$TMP/project/.credo/config"
 # The approved built-in texts (English, see the spec "Built-in texts").
 U='Read the source (rules, skill, code, tests) before you decide or change anything - never answer a rule question from memory or a handoff.'
 UB=' Save tokens without lowering quality: keep reports short, do not re-read files you already have.'
-M='Build everything as well as at all possible. When you decide an open question yourself (agent-owned items), decide in this order: 1. SOTA - the best solution known today; 2. else best effort; 3. else note it and present it to the user later. Size or effort is never a reason against a solution: feasible = GO.'
+M='Build everything as well as at all possible. When you decide an open question yourself (an agent-owned clarify item in an autonomous run, or a build-time detail of a GO item), decide in this order: 1. SOTA - the best solution known today; 2. else best effort; 3. else note it and present it to the user later. Size or effort is never a reason against a solution: feasible = GO.'
 MB=' Delegate searches to the explore stage.'
 E='Locate only: return file:line findings and short facts. No fixes, no long excerpts.'
 B='If the project has tests, write the failing test first. Report what you changed (file:line) and the test result.'

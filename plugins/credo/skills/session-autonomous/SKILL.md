@@ -398,9 +398,9 @@ and is a silent no-op when ntfy is not configured, so you never touch the topic 
 Send an immediate `high` ntfy for come-to-PC events (a deferred question, a blocker /
 showstopper, a budget cap reached, run completion, the pre-hibernate veto) and BEFORE the
 blocking action.
-A disk wait (credo `orchestration`, "Disk space") sends ONE `default` ntfy per item and wait
-episode, "waiting for disk space", with the item id, the free space and the need. It is not a
-come-to-PC event: the item retries itself once space is free.
+A disk wait (credo `orchestration`, "Disk space") sends ONE `default` ntfy per item, "waiting for
+disk space", with the item id, the free space and the need; further waits of that item stay
+silent. It is not a come-to-PC event: the item retries itself once space is free.
 Progress is bundled into one digest per `ntfy.digest_interval_minutes`, and - when ntfy is
 configured (a `personal.ntfy_topic` is set) - sending that digest is MANDATORY per interval
 whenever there is progress; it is NOT the agent's discretion to judge it "not important

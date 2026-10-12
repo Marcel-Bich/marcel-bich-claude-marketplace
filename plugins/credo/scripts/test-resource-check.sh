@@ -113,6 +113,18 @@ check "disk fail-safe note" "1" "$(grep -c 'cannot read free disk' "$TMP/err")"
 out="$(env -u CREDO_DISK_AVAIL_KB "$SUT" --running 0 --path "$TMP/no-such-dir" 2>"$TMP/err")"; rc=$?
 check "unknown path fail-safe ok" "ok/0" "$out/$rc"
 
+# leading zeros in numeric inputs: no invalid JSON (strict json parse), no odd text
+out="$(CREDO_DISK_AVAIL_KB=9437184 "$SUT" --running 05 --disk-gb 05 --json)"; rc=$?
+check "leading zeros json strict parse" "ok 5 5/0" "$(printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["status"], d["running"], d["disk_need_gb"])')/$rc"
+out="$(CREDO_DISK_AVAIL_KB=6291456 "$SUT" --running 0 --disk-gb 05)"; rc=$?
+check "leading zero disk_gb text" "wait:low free disk 6.00 GB < 8 GB (5 needed + 3 reserve)/5" "$out/$rc"
+printf 'resources:\n  disk_reserve_gb: 03\n' > "$CREDO_PROJECT"
+out="$(CREDO_DISK_AVAIL_KB=2097152 "$SUT" --running 0 --json)"; rc=$?
+check "leading zero reserve json" "wait 3" "$(printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["status"], d["disk_reserve_gb"])')"
+out="$(CREDO_DISK_AVAIL_KB=2097152 "$SUT" --running 0)"; rc=$?
+check "leading zero reserve text" "wait:low free disk 2.00 GB < 3 GB reserve/5" "$out/$rc"
+printf '' > "$CREDO_PROJECT"
+
 # bad args
 "$SUT" >/dev/null 2>&1; check "missing --running" 1 "$?"
 "$SUT" --running x >/dev/null 2>&1; check "non-numeric --running" 1 "$?"
