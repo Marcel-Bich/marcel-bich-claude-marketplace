@@ -1,35 +1,39 @@
 ---
 name: disable
 description: >
-  Disable credo for the current directory. Use when the user wants to stop credo here - for
-  example "stop using credo here", "disable credo for this repo", "turn credo off here", "no
-  credo in this directory", "credo hier aus", "credo hier deaktivieren", "credo hier abschalten"
-  - or runs the /credo:disable command. It persists a per-directory declined decision (so the
-  SessionStart onboarding ASK and the [credo] prompt line stay silent here across future
-  sessions), clears the active session mode for the current session, and switches keep-alive
-  autonomy off (same effect as switching to active/passive). Fully reversible via /credo:enable.
+  Disable the credo items workflow for the current directory. Use when the user wants to stop
+  credo's workflow here - for example "stop using credo here", "disable credo for this repo",
+  "turn credo off here", "no credo in this directory", "credo hier aus", "credo hier
+  deaktivieren", "credo hier abschalten" - or runs the /credo:disable command. It persists a
+  per-directory declined decision (so the SessionStart onboarding ASK and the workflow text stay
+  silent here across future sessions), clears the active session mode for the current session,
+  and switches keep-alive autonomy off (same effect as switching to active/passive). Model presets
+  and the shorthand legend stay on. Fully reversible via /credo:enable.
 ---
 
-# Disable credo here
+# Disable the credo workflow here
 
-Switch credo off for the directory the user is working in. This is a per-directory opt-out: it
-makes credo stop advertising itself here (no onboarding ASK, no `[credo]` prompt line) and winds
-down any active credo state for the current session. It does NOT uninstall the plugin and it is
-fully reversible.
+Switch the credo items workflow off for the directory the user is working in. This is a
+per-directory opt-out. It makes the items workflow stop here (no onboarding ASK, no workflow
+text) and winds down any active workflow state for the current session. It does NOT uninstall the
+plugin and it is fully reversible.
 
-The chat-shorthand legend (`dd` / `vf` / `cf` / `???` / `cc-up` / `exclude`) stays on here: it is
-pure user-intent parsing injected into the model context only, not workflow advertising.
+Two things stay on here, because they are not part of the items workflow. They are the model presets (the
+main-agent prompt and the per-spawn rule for `credo-preset.sh stage`) and the chat-shorthand
+legend (`dd` / `vf` / `cf` / `???` / `cc-up` / `exclude`). Both are pure model-choice and
+user-intent parsing, not workflow advertising. Someone who wants none of credo's features removes
+the plugin instead; this skill does not do that.
 
 ## When to use
 
 - The user runs `/credo:disable`.
-- The user says, in any wording, that they want credo off for this directory / repo - for
-  example "stop using credo here", "disable credo for this repo", "turn credo off here", "credo
+- The user says, in any wording, that they want the credo workflow off for this directory / repo -
+  for example "stop using credo here", "disable credo for this repo", "turn credo off here", "credo
   hier aus", "credo hier deaktivieren".
 
 If the user clearly means globally uninstalling credo (not just this directory), do not use this
-skill - explain that this only silences credo for the current directory and that removing the
-plugin is a separate `claude plugin` action.
+skill - explain that this only switches the items workflow off for the current directory (presets
+and shorthands stay on) and that removing the plugin is a separate `claude plugin` action.
 
 ## What it does (run both)
 
@@ -43,8 +47,9 @@ an error, report it plainly and continue with the other.
    "${CLAUDE_PLUGIN_ROOT}/scripts/credo-dir-decision.sh" set declined
    ```
 
-   This is what makes the onboarding ASK and the `[credo]` prompt line stay silent here in this
-   and every future session, until it is re-enabled.
+   This is what makes the onboarding ASK and the items workflow text stay silent here in this and
+   every future session, until it is re-enabled. It does not touch the model presets or the
+   shorthand legend.
 
 2. Clear the active session mode for THIS session and switch keep-alive autonomy off, in one
    step. `session-mode-set.sh clear` removes this session's mode file and runs the same keep-alive
@@ -63,9 +68,9 @@ an error, report it plainly and continue with the other.
 
 Confirm in one or two short sentences, for example:
 
-> credo disabled for this directory - the onboarding question and the `[credo]` line stay silent
-> here, the active session mode is cleared, and keep-alive autonomy is off. Reversible any time
-> with `/credo:enable` (or by setting a session mode with `/credo:session-active` or
-> `/credo:session-passive`).
+> credo workflow disabled for this directory - the onboarding question and the workflow text stay
+> silent here, the active session mode is cleared, and keep-alive autonomy is off. Model presets and
+> the shorthand legend keep working. Reversible any time with `/credo:enable` (or by setting a
+> session mode with `/credo:session-active` or `/credo:session-passive`).
 
-Do not do anything else - this skill only disables credo for the directory.
+Do not do anything else - this skill only disables the items workflow for the directory.

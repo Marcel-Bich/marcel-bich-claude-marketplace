@@ -35,13 +35,14 @@
 #      CREDO_SESSION_START_SHORTHANDS (default on); CREDO_SESSION_START_INJECT
 #      =false still silences the whole hook, legend included.
 #
-#   4. PRESET (every session, not gated by the credo decision). The universal-prompt
-#      and mainagent-prompt of the active model preset are appended (credo-preset.sh
-#      mainagent --field prompt), plus a one-line per-spawn rule (credo-preset.sh stage).
-#      Declining credo declines only the items workflow (mechanisms 1 and 2), so the
-#      preset keeps working in a declined directory. Subagents do not get it here: the
-#      main agent appends the per-stage prompt itself when it spawns one (SubagentStart
-#      carries no role or prompt).
+#   4. PRESET (every session, not gated by the credo decision or the task backend).
+#      The universal-prompt and mainagent-prompt of the active model preset are
+#      appended (credo-preset.sh mainagent --field prompt), plus a one-line per-spawn
+#      rule (credo-preset.sh stage). Declining credo declines only the items workflow
+#      (mechanisms 1 and 2), so the preset keeps working in a declined directory and
+#      under the gsd backend. Subagents do not get it here. The main agent appends the
+#      per-stage prompt itself when it spawns one (SubagentStart carries no role or
+#      prompt).
 #
 # State (keyed by session_id, mirrors session-mode-set.sh / credo-decision-set.sh):
 #   mode      : ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-modes/<id>      (active|passive|autonomous)
@@ -144,8 +145,9 @@ fi
 # --- gating: whole-hook backend gate + a dedicated ASK toggle ---------------
 # Backend is resolved via credo-config.sh (env CREDO_TASK_BACKEND > .credo/config
 # cascade > default credo); any error falls back to credo. When the backend is
-# gsd, the ENTIRE credo SessionStart hook stands down (no ASK, no KNOWLEDGE):
-# GSD is the task system, so advertising the credo item workflow would mislead.
+# gsd, the credo workflow text stands down (no ASK, no KNOWLEDGE): GSD is the task
+# system, so advertising the credo item workflow would mislead. The preset block
+# and the shorthand legend still apply there.
 emit() {
     jq -n --arg ctx "$1" \
         '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}, suppressOutput: true}' 2>/dev/null
@@ -171,9 +173,36 @@ fi
 
 backend="$("${HOOK_DIR}/../scripts/credo-config.sh" backend 2>/dev/null || echo credo)"
 [[ -n "$backend" ]] || backend="credo"
-# gsd: no credo workflow text at all, but the shorthand legend still applies.
+
+# --- model preset: main-agent prompt + per-spawn rule (every session) -------
+# The universal-prompt and mainagent-prompt of the active preset (credo-preset.sh)
+# reach the main agent here, at every SessionStart including the one after a
+# compaction. The per-spawn line sends the main agent to credo-preset.sh stage for
+# model and effort (same rule as the orchestration skill). Not gated by the credo
+# decision or the task backend. Missing prompt keys add nothing; the block is then
+# omitted.
+PRESET_BLOCK=""
+PRESET_SCRIPT="${_scripts_dir:-${CLAUDE_PLUGIN_ROOT:-}/scripts}/credo-preset.sh"
+if [[ -x "$PRESET_SCRIPT" ]]; then
+    _preset_prompt="$("$PRESET_SCRIPT" mainagent --field prompt 2>/dev/null)" || _preset_prompt=""
+    if [[ -n "$_preset_prompt" ]]; then
+        _preset_name="$("$PRESET_SCRIPT" active 2>/dev/null)" || _preset_name="balanced"
+        _spawn_rule="Before each subagent spawn, run \"${PRESET_SCRIPT}\" stage <role> <attempt> (roles explore, build, review and hard; attempt 1 for the first try of that role on an item, plus one per failed try). Pass its alias as the Agent model, its effort as effort, and append its prompt block to the Agent prompt. action back-to-human means do not spawn."
+        PRESET_BLOCK="[credo] Model preset '${_preset_name}' - instructions for the main agent (they apply to the whole session, also after a compaction):"$'\n'"${_preset_prompt}"$'\n\n'"${_spawn_rule}"
+    fi
+fi
+
+# gsd: no credo workflow text at all; the preset block and the shorthand legend still apply.
 if [[ "$backend" == "gsd" ]]; then
-    [[ -n "$SHORTHANDS" ]] && emit "$SHORTHANDS"
+    OUT="$PRESET_BLOCK"
+    if [[ -n "$SHORTHANDS" ]]; then
+        if [[ -n "$OUT" ]]; then
+            OUT="$OUT"$'\n\n'"$SHORTHANDS"
+        else
+            OUT="$SHORTHANDS"
+        fi
+    fi
+    [[ -n "$OUT" ]] && emit "$OUT"
     exit 0
 fi
 
@@ -267,23 +296,6 @@ case "$source" in
         fi
         ;;
 esac
-
-# --- model preset: main-agent prompt + per-spawn rule (every session) -------
-# The universal-prompt and mainagent-prompt of the active preset (credo-preset.sh)
-# reach the main agent here, at every SessionStart including the one after a
-# compaction. The per-spawn line sends the main agent to credo-preset.sh stage for
-# model and effort (same rule as the orchestration skill). Not gated by the credo
-# decision. Missing prompt keys add nothing; the block is then omitted.
-PRESET_BLOCK=""
-PRESET_SCRIPT="${_scripts_dir:-${CLAUDE_PLUGIN_ROOT:-}/scripts}/credo-preset.sh"
-if [[ -x "$PRESET_SCRIPT" ]]; then
-    _preset_prompt="$("$PRESET_SCRIPT" mainagent --field prompt 2>/dev/null)" || _preset_prompt=""
-    if [[ -n "$_preset_prompt" ]]; then
-        _preset_name="$("$PRESET_SCRIPT" active 2>/dev/null)" || _preset_name="balanced"
-        _spawn_rule="Before each subagent spawn, run \"${PRESET_SCRIPT}\" stage <role> <attempt> (roles: explore, build, review, hard; attempt 1 for the first try of that role on an item, plus one per failed try). Pass its alias as the Agent model, its effort as effort, and append its prompt block to the Agent prompt. action back-to-human means do not spawn."
-        PRESET_BLOCK="[credo] Model preset '${_preset_name}' - instructions for the main agent (they apply to the whole session, also after a compaction):"$'\n'"${_preset_prompt}"$'\n\n'"${_spawn_rule}"
-    fi
-fi
 
 # --- decision logic: assemble the workflow text, then emit once --------------
 OUT=""
