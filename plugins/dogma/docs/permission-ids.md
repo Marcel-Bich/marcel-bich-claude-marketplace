@@ -37,6 +37,7 @@ Rules:
 | `§2w1t` | Git Permissions | May run `git commit` autonomously | `git-permissions.sh` |
 | `§bww9` | Git Permissions | May run `git push` autonomously | `git-permissions.sh` |
 | `§0lgy` | File Operations | May delete files autonomously (rm, unlink, git clean) | `file-protection.sh` |
+| `§b4dk` | File Operations | Discard uncommitted changes autonomously (git restore, reset --hard, checkout -- file, switch --discard-changes, stash drop\|clear). A missing line counts as `[?]` (`DOGMA_ASK_IF_MISSING_IDS` in `lib-permissions.sh`), independent of `§0lgy` | `file-protection.sh` (`bash-guard.py` marks the commands), `notice-applies-discard.sh` (update notice) |
 | `§pq4z` | Workflow / Testing | run tests before commit | Claude (instructions) |
 | `§zn2t` | Workflow / Testing | run tests before push | Claude (instructions) |
 | `§r308` | Workflow / Testing | run tests on tasklist completion | Claude (instructions) |

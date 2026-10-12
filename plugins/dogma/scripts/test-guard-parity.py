@@ -78,7 +78,8 @@ def fill(root):
     # W: an allow-all project whose path contains a /home/<user> segment (outside the fake home)
     work = home / "work"
     dirs = {"P": work / "perm-project", "N": work / "noperm-project", "X": work / "allow-project" / "proj",
-            "W": root / "home" / "someone" / "proj"}
+            "W": root / "home" / "someone" / "proj", "D": work / "discard-off", "E": work / "discard-on",
+            "F": work / "discard-missing"}
     home.mkdir(parents=True)
     for directory in dirs.values():
         directory.mkdir(parents=True)
@@ -87,7 +88,16 @@ def fill(root):
         "- [?] (§bww9) May git push\n</permissions>\n", encoding="utf-8")
     (dirs["X"] / "DOGMA-PERMISSIONS.md").write_text(
         "<permissions>\n- [x] (§6gpt) May git add\n- [x] (§2w1t) May git commit\n"
-        "- [x] (§bww9) May git push\n- [x] (§0lgy) May delete files\n</permissions>\n", encoding="utf-8")
+        "- [x] (§bww9) May git push\n- [x] (§0lgy) May delete files\n"
+        "- [x] (§b4dk) Discard uncommitted changes\n</permissions>\n", encoding="utf-8")
+    (dirs["D"] / "DOGMA-PERMISSIONS.md").write_text(
+        "<permissions>\n- [x] (§0lgy) May delete files\n- [ ] (§b4dk) Discard uncommitted changes\n"
+        "</permissions>\n", encoding="utf-8")
+    (dirs["E"] / "DOGMA-PERMISSIONS.md").write_text(
+        "<permissions>\n- [ ] (§0lgy) May delete files\n- [x] (§b4dk) Discard uncommitted changes\n"
+        "</permissions>\n", encoding="utf-8")
+    (dirs["F"] / "DOGMA-PERMISSIONS.md").write_text(
+        "<permissions>\n- [x] (§0lgy) May delete files\n</permissions>\n", encoding="utf-8")
     (dirs["W"] / "DOGMA-PERMISSIONS.md").write_text(
         (dirs["X"] / "DOGMA-PERMISSIONS.md").read_text(encoding="utf-8"), encoding="utf-8")
     (dirs["X"] / ".git" / "hooks").mkdir(parents=True)

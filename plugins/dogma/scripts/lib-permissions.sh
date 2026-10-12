@@ -606,6 +606,23 @@ check_permission() {
     esac
 }
 
+# Settings whose line is missing in an existing DOGMA-PERMISSIONS.md count as [?] (ask),
+# not as auto. Space-separated ids; add an id only with an explicit decision, every other
+# setting keeps auto (docs/permission-ids.md).
+DOGMA_ASK_IF_MISSING_IDS="§b4dk"
+
+# Mode of a setting that no file or inherited block defines: ask for the ids listed in
+# DOGMA_ASK_IF_MISSING_IDS, else auto. Usage: perm_missing_mode "§xxxx|text" (or "§xxxx")
+perm_missing_mode() {
+    local spec="$1" id
+    for id in $DOGMA_ASK_IF_MISSING_IDS; do
+        case "$spec" in
+            "$id"|"$id|"*) echo "ask"; return 0 ;;
+        esac
+    done
+    echo "auto"
+}
+
 # Get permission mode (extended states: auto/ask/deny/one/all)
 # Returns: "auto", "ask", "deny", "one", or "all"
 # If pattern not found, returns "auto" (allow by default)
@@ -628,7 +645,8 @@ check_permission() {
 #     - "### Subsection Name" -> extracts until next ## or ### or </permissions>
 #     - "## Section Name" -> extracts until next ## or </permissions> (includes ### subsections)
 #   - A setting the file / section does not define is taken from the inherited block
-#     (DOGMA_INHERIT_SECTION, set by load_permissions) when there is one.
+#     (DOGMA_INHERIT_SECTION, set by load_permissions) when there is one; otherwise
+#     perm_missing_mode decides (auto, or ask for the ids in DOGMA_ASK_IF_MISSING_IDS).
 get_permission_mode() {
     local arg1="$1"
     local arg2="${2:-}"
@@ -669,8 +687,10 @@ get_permission_mode() {
         return
     fi
 
-    dogma_debug_log "Permission not found: $pattern - auto by default"
-    echo "auto"
+    local missing
+    missing=$(perm_missing_mode "$pattern")
+    dogma_debug_log "Permission not found: $pattern - $missing by default"
+    echo "$missing"
 }
 
 # Get missing permissions message

@@ -2,8 +2,11 @@
 # Dogma: File Protection Hook
 # Blocks dangerous file deletion commands
 #
-# Blocked: rm, del, unlink, git clean, rmdir
-# Allowed: git rm --cached, git reset (safe operations)
+# Blocked: rm, del, unlink, git clean, rmdir (delete setting §0lgy)
+# Blocked: git restore, git reset --hard, git checkout (discard), git switch --discard-changes,
+#          git stash drop|clear (discard setting §b4dk, a missing line counts as [?])
+# Allowed: git rm --cached, git reset (the text fallback without python3 allows every git reset;
+#          with python3 reset --hard counts as a discard, see above)
 #
 # Which DOGMA-PERMISSIONS.md applies: see lib-permissions.sh load_permissions (the
 # command's target > credo pinned project > session folder, plus inheritance).
@@ -76,6 +79,12 @@ report_delete() {
         REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
         output_ask "$REASON_MSG"
     fi
+    if [ "$BLOCK_KIND" = "discard" ]; then
+        # A discard is not a file to delete later: deny with the reason only, no TO-DELETE.md entry
+        REASON_MSG="dogma: $BLOCKED ${TARGET:-command} discards uncommitted changes and is denied. Change [ ] to [?] or [x] in ${DELETE_SRC:-${PERMS_FILE:-a DOGMA-PERMISSIONS.md (none found)}} to allow it."
+        REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
+        output_deny "$REASON_MSG"
+    fi
     # Deny mode: Write to TO-DELETE.md and deny
     TO_DELETE_FILE="$PWD/TO-DELETE.md"
     TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
@@ -103,9 +112,38 @@ HEADER
 # === SHELL-AWARE CHECK (python3) ===
 # bash-guard.py finds deletes and data-destroying commands however they are written
 # (wrappers, quoting, nested shells, git reset --hard, archive/sync source deletion,
-# inline interpreter code ...) together with the directories they run in; the
-# strictest delete setting over those directories applies.
+# inline interpreter code ...) together with the directories they run in. Two groups are
+# decided on their own: the deletes under the delete setting (§0lgy), and the git discards of
+# uncommitted changes under the discard setting (§b4dk, a missing line counts as [?]). The
+# stricter group decides.
+
+# Decide one group of findings (a JSON array of deletes) under one setting. Sets GROUP_MODE,
+# GROUP_SRC, GROUP_LABEL and GROUP_TARGET (the first entry of the group).
+# Usage: decide_group <entries JSON> <spec> <mode when no file applies>
+decide_group() {
+    local entries="$1" spec="$2" missing="$3"
+    GROUP_MODE="auto"; GROUP_SRC=""; GROUP_LABEL=""; GROUP_TARGET=""
+    [ "$entries" != "[]" ] || return 0
+    mapfile -t GROUP_DIRS < <(printf '%s' "$entries" | jq -r '[.[].dirs[]] | unique | .[]')
+    [ "${#GROUP_DIRS[@]}" -gt 0 ] || GROUP_DIRS=("")
+    dogma_strictest_mode "$spec" "$missing" "${GROUP_DIRS[@]}"
+    GROUP_MODE="$DOGMA_STRICT_MODE"
+    GROUP_SRC="$DOGMA_STRICT_SRC"
+    GROUP_LABEL="$(printf '%s' "$entries" | jq -r '.[0].label')"
+    GROUP_TARGET="$(printf '%s' "$entries" | jq -r '.[0].target')"
+}
+
+# Rank of a mode for the "stricter group wins" choice (deny > ask > auto)
+group_rank() {
+    case "$1" in
+        deny) echo 2 ;;
+        ask) echo 1 ;;
+        *) echo 0 ;;
+    esac
+}
+
 dogma_session_from_input "$INPUT"
+BLOCK_KIND="delete"
 if [ "$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)" = "Bash" ] && \
     FINDINGS="$(dogma_bash_findings "$INPUT")"; then
     # The analysis refused the command (or ran out of time): deny here too, so a
@@ -115,21 +153,34 @@ if [ "$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)" = "Bash" ] && 
         output_deny "$BLOCKED_REASON"
     fi
     [ "$(printf '%s' "$FINDINGS" | jq '.deletes | length')" -gt 0 ] || exit 0
+    DELETE_ENTRIES="$(printf '%s' "$FINDINGS" | jq -c '[.deletes[] | select(.discard != true)]')"
+    DISCARD_ENTRIES="$(printf '%s' "$FINDINGS" | jq -c '[.deletes[] | select(.discard == true)]')"
     # Deletes that stay inside a temp root (/tmp, /var/tmp, $TMPDIR, Windows temp folders) are always
     # allowed, whatever the delete setting; anything unsure keeps the setting below (delete-guard.py).
+    # Discards get no temp-root exemption: they always follow their own setting.
     EVENT_CWD="$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)"
-    if [ "$(printf '%s' "$FINDINGS" | python3 -I "$SCRIPT_DIR/delete-guard.py" --temp-only "$EVENT_CWD" 2>/dev/null)" = "temp" ]; then
-        exit 0
+    if [ "$DELETE_ENTRIES" != "[]" ] && [ "$(printf '{"deletes": %s}' "$DELETE_ENTRIES" | python3 -I "$SCRIPT_DIR/delete-guard.py" --temp-only "$EVENT_CWD" 2>/dev/null)" = "temp" ]; then
+        DELETE_ENTRIES="[]"
     fi
-    mapfile -t DIRS < <(printf '%s' "$FINDINGS" | jq -r '[.deletes[].dirs[]] | unique | .[]')
-    [ "${#DIRS[@]}" -gt 0 ] || DIRS=("")
-    dogma_strictest_mode "§0lgy|delete files" deny "${DIRS[@]}"
-    DELETE_MODE="$DOGMA_STRICT_MODE"
-    DELETE_SRC="$DOGMA_STRICT_SRC"
+    decide_group "$DELETE_ENTRIES" "§0lgy|delete files" deny
+    DELETE_MODE="$GROUP_MODE"
+    DELETE_SRC="$GROUP_SRC"
+    BLOCKED="$GROUP_LABEL"
+    TARGET="$GROUP_TARGET"
+    decide_group "$DISCARD_ENTRIES" "§b4dk|discard uncommitted changes" deny
+    if [ "$(group_rank "$GROUP_MODE")" -gt "$(group_rank "$DELETE_MODE")" ]; then
+        DELETE_MODE="$GROUP_MODE"
+        DELETE_SRC="$GROUP_SRC"
+        BLOCKED="$GROUP_LABEL"
+        TARGET="$GROUP_TARGET"
+        BLOCK_KIND="discard"
+    fi
     [ "$DELETE_MODE" = "auto" ] && exit 0
-    BLOCKED="$(printf '%s' "$FINDINGS" | jq -r '.deletes[0].label')"
-    TARGET="$(printf '%s' "$FINDINGS" | jq -r '.deletes[0].target')"
-    REASON="Deletes files permanently"
+    if [ "$BLOCK_KIND" = "discard" ]; then
+        REASON="Discards uncommitted changes"
+    else
+        REASON="Deletes files permanently"
+    fi
     report_delete
 fi
 

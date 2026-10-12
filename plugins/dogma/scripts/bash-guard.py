@@ -3613,17 +3613,23 @@ def analyse(command, cwd, flags):
     return analysis, None
 
 
+# git commands that discard uncommitted changes: the hooks gate them with the discard setting
+# (§b4dk), not with the delete setting (§0lgy). git clean and the other deletes stay under §0lgy.
+DISCARD_LABELS = frozenset(("git reset --hard", "git checkout (discard)", "git switch --discard-changes",
+                            "git restore", "git stash drop", "git stash clear"))
+
+
 def findings(analysis, cwd):
     """Permission-dependent findings. A directory is "" when it is the working directory or
     unknown: the hooks then resolve DOGMA-PERMISSIONS.md the default way (pinned project,
-    current directory, session folder)."""
+    current directory, session folder). "discard" marks the git discards (DISCARD_LABELS)."""
     start = os.path.realpath(cwd)
 
     def dirs(directories):
         return sorted({"" if directory in (None, start) else directory for directory in directories})
 
     return {
-        "deletes": [{"label": label, "target": target, "dirs": dirs(directories)}
+        "deletes": [{"label": label, "target": target, "dirs": dirs(directories), "discard": label in DISCARD_LABELS}
                     for label, target, directories in analysis.deletes],
         "installs": list(analysis.installs),
         "git": [{"op": operation, "dirs": dirs(targets), "unknown": bool(unknown)}

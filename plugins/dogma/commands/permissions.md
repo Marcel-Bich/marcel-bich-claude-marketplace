@@ -247,6 +247,7 @@ app's file counts.
 
 ## File Operations
 - [?] (§0lgy) May delete files autonomously (rm, unlink, git clean)
+- [?] (§b4dk) Discard uncommitted changes autonomously (git restore, reset --hard, checkout -- file, switch --discard-changes, stash drop|clear)
 
 ## Workflow Permissions
 
