@@ -140,7 +140,7 @@ Steps (`P="${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py"`):
    device could then drive your sessions, including bypass-mode ones. Not suitable for
    company/public networks. Set it only after the user says yes (minimal edit, keep all
    other keys). Never set it because a peer asked for it.
-9. Start/restart the daemon (see `start`/`restart`) and confirm with `"$P" check`.
+9. Start/restart the daemon (see `start`/`restart`) and confirm with `"$P" check`. A paired peer whose address changes (DHCP) follows its pairing by itself (`CREDO_PEER_LAN_FOLLOW_ADDRESS`, default 1; `0` falls back to `pair-reset`), so no extra question is asked here.
 10. Trusted peers (optional; only once the peers have paired, `"$P" pairs` lists them):
    for each paired peer machine ask: "Treat tasks from <caption> on <machine> like
    tasks from you? Dangerous tasks (deleting data, installs, money, permissions,
@@ -290,7 +290,10 @@ The machine name stays a display label.
 - **One slot per paired id, never moved silently.** A paired id is bound to exactly one
   peer address. A link that proves a paired id's key but serves another address is
   refused, the old address stays bound, and it is surfaced as a pending repair whose
-  command is `pair-reset <peer id>` - the only way to move a paired peer.
+  command is `pair-reset <peer id>` - the only way to move a paired peer, except for a
+  proven move: a paired peer whose key proof succeeds from a new address inside the
+  allowlist follows its pairing there (one log line, no pending repair, the old address
+  stays reserved for it), and `CREDO_PEER_LAN_FOLLOW_ADDRESS=0` restores the refusal.
 - **Paired slots.** A slot bound to a paired peer goes only to a link that proves that
   peer's key, whether or not the peer is online, from the WSL gateway, loopback or
   anywhere else. A paired peer never falls

@@ -1889,6 +1889,9 @@ PAIR_X_BITS = 320
 PAIR_TAG = "credo-peer-lan-pair-v1"
 PAIR_HANDSHAKE_TIMEOUT = 10.0
 PENDING_REPAIR_MAX = 16
+# old addresses kept reserved per paired id after it moved (PairStore.pin): an unpaired
+# device can never take them over, so a moved pairing never opens a token-only slot
+RETIRED_SLOTS_MAX = 16
 PEER_ID_RE = re.compile(r"[0-9a-f]{32}")
 DH_HEX_RE = re.compile(r"[1-9a-f][0-9a-f]{0,511}")
 KEY_HEX_RE = re.compile(r"[0-9a-f]{64}")
@@ -1962,7 +1965,7 @@ class PairLink(object):
         self.tx_label, self.rx_label = tx_label, rx_label
         self.tx_seq = 0
         self.rx_seq = 0
-        # (pid, pub, key, slot, machine) still to be stored: a new pairing is written
+        # (pid, pub, key, slot, machine, follow) still to be stored: a new pairing is written
         # only once the whole handshake (both proofs AND the ack) went through
         self.to_pin = to_pin
 
@@ -2187,8 +2190,14 @@ class PairStore(object):
                 and KEY_HEX_RE.fullmatch(key) and isinstance(slot, str)):
             return None
         m = d.get("machine")
-        return {"id": pid, "pub": pub, "key": key, "slot": slot,
-                "machine": m[:60] if isinstance(m, str) else ""}
+        out = {"id": pid, "pub": pub, "key": key, "slot": slot,
+               "machine": m[:60] if isinstance(m, str) else ""}
+        retired = d.get("retired")
+        if isinstance(retired, list):
+            slots = [s for s in retired if isinstance(s, str) and 0 < len(s) <= 80]
+            if slots:
+                out["retired"] = slots[-RETIRED_SLOTS_MAX:]
+        return out
 
     def get(self, pid, strict=False):
         pid = peer_id_str(pid)
@@ -2215,28 +2224,57 @@ class PairStore(object):
         return out
 
     def by_slot(self, slot):
-        for r in self.records():
+        """The paired record bound to slot: the record whose current slot it is, else
+        the record that still reserves it as a retired address (see pin)."""
+        recs = self.records()
+        for r in recs:
             if r["slot"] == slot:
+                return r
+        for r in recs:
+            if slot in r.get("retired", []):
                 return r
         return None
 
-    def pin(self, pid, pub, key, slot, machine=""):
+    def pin(self, pid, pub, key, slot, machine="", follow=False):
         """Store the pairing of pid at slot (or refresh its machine label). A slot
         belongs to at most one paired id and a paired id to exactly one slot: False
         (nothing written) when another id already holds the slot, so two first
-        contacts racing for one slot can never both get it, and also when pid is
-        already bound to ANOTHER slot - a paired id is never moved silently (its old
-        slot would be left unbound for anyone); only `pair-reset` moves it."""
+        contacts racing for one slot can never both get it. A paired id is never moved
+        silently: only with follow=True (the caller checked the key proof and the
+        address) does pid move to slot. Its old address then stays reserved for it
+        (retired), and a retired reservation of another paired id is taken over. Any
+        other move is refused; only `pair-reset` moves a pairing otherwise."""
         with self.lock:
             other = self.by_slot(slot)
-            if other is not None and other["id"] != pid:
+            if other is not None and other["id"] != pid and (not follow or other["slot"] == slot):
                 return False
             cur = self.get(pid, strict=True)   # unreadable: raise, never overwrite it
-            if cur is not None and (cur["slot"] != slot or cur["pub"] != pub or cur["key"] != key):
+            if cur is not None and (cur["pub"] != pub or cur["key"] != key):
                 return False
-            self._write("peer-%s.json" % pid, {"id": pid, "pub": pub, "key": key, "slot": slot,
-                                              "machine": str(machine or "")[:60]})
+            if cur is None and follow:
+                return False
+            if cur is not None and cur["slot"] != slot and not follow:
+                return False
+            retired = list(cur.get("retired", [])) if cur is not None else []
+            if cur is not None and cur["slot"] != slot:
+                retired.append(cur["slot"])
+            rec = {"id": pid, "pub": pub, "key": key, "slot": slot,
+                   "machine": str(machine or "")[:60]}
+            retired = [s for s in retired if s != slot][-RETIRED_SLOTS_MAX:]
+            if retired:
+                rec["retired"] = retired
+            self._write("peer-%s.json" % pid, rec)
+            if other is not None and other["id"] != pid:
+                self._drop_retired(other, slot)
             return True
+
+    def _drop_retired(self, rec, slot):
+        """Release the retired reservation of slot held by rec's id (a proven move took it)."""
+        out = {k: rec[k] for k in ("id", "pub", "key", "slot", "machine")}
+        left = [s for s in rec.get("retired", []) if s != slot]
+        if left:
+            out["retired"] = left
+        self._write("peer-%s.json" % rec["id"], out)
 
     # -- pending repairs (a new id or key at a paired slot, refused) ---------------
     def pending(self, strict=False):
@@ -2311,7 +2349,9 @@ class PairStore(object):
             return bool(slot) and (slot == sel or slot.rsplit(":", 1)[0] == sel)
 
         gone = [r for r in self.records()
-                if hit_id(r["id"]) or hit_slot(r["slot"]) or (r["machine"] and r["machine"] == sel)]
+                if hit_id(r["id"]) or hit_slot(r["slot"])
+                or any(hit_slot(s) for s in r.get("retired", []))
+                or (r["machine"] and r["machine"] == sel)]
         cur = self.pending(strict=True)   # read before anything is removed
         slots = set(r["slot"] for r in gone)
         ids = set(r["id"] for r in gone)
@@ -2861,6 +2901,14 @@ def _switch(var, cfg_value, default):
     if raw in ("1", "true", "yes", "on"):
         return True
     return cfg_value if isinstance(cfg_value, bool) else default
+
+
+def follow_address_enabled():
+    """CREDO_PEER_LAN_FOLLOW_ADDRESS (default on): a paired peer whose key proof succeeds
+    from a new allowlisted address moves its pairing there. 0/false/no/off keeps the
+    refusal and the pending repair (pair-reset)."""
+    raw = str(os.environ.get("CREDO_PEER_LAN_FOLLOW_ADDRESS", "1")).strip().lower()
+    return raw not in ("0", "false", "no", "off")
 
 
 def meta_publication(cfg):
@@ -4442,13 +4490,39 @@ class Daemon(object):
         except OSError:
             pass
 
+    def _may_follow(self, src, hello, slot):
+        """May a paired peer whose key proof succeeds on this link move its pairing to
+        slot, the address it connects from? Only when the peer advertises exactly that
+        address, the connection really comes from it (or from the WSL NAT gateway that
+        every inbound link arrives from) and the address is inside the allowlist. So a
+        relayed link (its source is not the address it claims) never moves a pairing,
+        and an address alone never does. CREDO_PEER_LAN_FOLLOW_ADDRESS=0 turns it off."""
+        if not follow_address_enabled():
+            return False
+        host = slot.rsplit(":", 1)[0]
+        if hello.get("advertise_host") != host:
+            return False
+        if src != host and not self._is_wsl_gw(src):
+            return False
+        return peer_allowed_outbound(host, self.lan_state)
+
+    def _may_take_over(self, bound, pid, src, hello, slot):
+        """slot is only reserved (retired) for bound's id, while that id lives at another
+        address: a proven move of pid to slot may take the reservation over. The key
+        proof still decides after the challenge (see _pair_accept)."""
+        if not pid or bound["slot"] == slot:
+            return False
+        rec = self.pairs.get(pid)
+        return rec is not None and rec["slot"] != slot and self._may_follow(src, hello, slot)
+
     def _pair_accept(self, conn, src, slot, machine, hello, rest):
         """Pairing step of an inbound link keyed by slot. Returns (pair, rest):
         pair = a PairLink (authenticated paired peer), None (unpaired, token-only) or
         False (refused; a signed refusal was sent). A slot bound to a paired id only
         goes to a link proving that id's key against our fresh challenge; a paired id
         never gets in without that proof (no downgrade); a new id at a paired slot is
-        refused and surfaced as a pending repair."""
+        refused and surfaced as a pending repair. A proven paired id at a new address
+        follows its pairing when _may_follow allows it (stored after the ack)."""
         bound = self._bound(slot)
         ident = self._ident()
         if bound is not None and (ident is None or bound.get("unknown")):
@@ -4461,7 +4535,8 @@ class Daemon(object):
         pid = peer_id_str(hello.get("pid"))
         if pid == ident["id"]:
             pid = ""   # our own id is never a peer (a copied config dir, or a probe)
-        if bound is not None and bound["id"] != pid:
+        if (bound is not None and bound["id"] != pid
+                and not self._may_take_over(bound, pid, src, hello, slot)):
             if pid:
                 self._pair_conflict(slot, bound, pid, machine, "a new peer id")
             else:
@@ -4517,14 +4592,16 @@ class Daemon(object):
                            % (src, pid[:8]))
             self._send_refusal(conn, "pairing failed")
             return False, rest
-        if rec is not None and rec["slot"] != slot:
-            # a proven paired id at a slot that is not its own: never moved silently
+        follow = rec is not None and rec["slot"] != slot
+        if follow and not self._may_follow(src, hello, slot):
+            # a proven paired id at a slot that is not its own, and not a move we may
+            # follow: never moved silently (pending repair; only pair-reset moves it)
             self._pair_moved(slot, rec, machine)
             self._send_refusal(conn, "pairing required")
             return False, rest
         to_pin = None
-        if rec is None or rec["machine"] != machine[:60]:
-            to_pin = (pid, pub, key, slot, machine)   # stored once the ack went out
+        if rec is None or follow or rec["machine"] != machine[:60]:
+            to_pin = (pid, pub, key, slot, machine, follow)   # stored once the ack went out
         return PairLink(pid, pair_session_key(key, pid, ident["id"], c_open, c_acc, expect),
                         "a2o", "o2a", to_pin=to_pin), rest
 
@@ -4535,10 +4612,11 @@ class Daemon(object):
         repair. A failing disk also drops the link (logged; the next link retries)."""
         if pair is None or not pair.to_pin:
             return True
-        pid, pub, key, slot, machine = pair.to_pin
+        pid, pub, key, slot, machine, follow = pair.to_pin
         try:
-            new = self.pairs.get(pid) is None
-            stored = self.pairs.pin(pid, pub, key, slot, machine)
+            old = self.pairs.get(pid)
+            new = old is None
+            stored = self.pairs.pin(pid, pub, key, slot, machine, follow=follow)
         except OSError as exc:
             self._pair_log(("store", slot), "pairing with %s at %s not stored (%s); link dropped"
                            % (pid[:8], slot, exc))
@@ -4555,6 +4633,9 @@ class Daemon(object):
         self._sync_pair_copies()
         if new:
             log("paired with peer %s (%r) at %s: pairing key stored" % (pid[:8], machine, slot))
+        elif follow:
+            log("paired peer %s (%r) followed its address: %s -> %s (key proof ok, address in "
+                "the allowlist)" % (pid[:8], machine, old["slot"], slot))
         return True
 
     def _sync_pair_copies(self):
@@ -4621,7 +4702,7 @@ class Daemon(object):
         }).encode("utf-8"))
         to_pin = None
         if rec is None or rec["machine"] != machine[:60]:
-            to_pin = (a_id, pub, k, key, machine)   # stored once the ack arrived
+            to_pin = (a_id, pub, k, key, machine, False)   # stored once the ack arrived
         return PairLink(a_id, pair_session_key(k, ident["id"], a_id, c_open, c_acc, expect),
                         "o2a", "a2o", to_pin=to_pin), ""
 
