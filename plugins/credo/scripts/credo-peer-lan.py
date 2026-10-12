@@ -1892,6 +1892,7 @@ PENDING_REPAIR_MAX = 16
 # old addresses kept reserved per paired id after it moved (PairStore.pin): an unpaired
 # device can never take them over, so a moved pairing never opens a token-only slot
 RETIRED_SLOTS_MAX = 16
+RETIRED_TTL = 7 * 24 * 3600   # a moved-from address stays reserved this long (seconds)
 PEER_ID_RE = re.compile(r"[0-9a-f]{32}")
 DH_HEX_RE = re.compile(r"[1-9a-f][0-9a-f]{0,511}")
 KEY_HEX_RE = re.compile(r"[0-9a-f]{64}")
@@ -2194,9 +2195,12 @@ class PairStore(object):
                "machine": m[:60] if isinstance(m, str) else ""}
         retired = d.get("retired")
         if isinstance(retired, list):
-            slots = [s for s in retired if isinstance(s, str) and 0 < len(s) <= 80]
-            if slots:
-                out["retired"] = slots[-RETIRED_SLOTS_MAX:]
+            ents = [{"slot": e["slot"], "ts": e["ts"]} for e in retired
+                    if isinstance(e, dict) and isinstance(e.get("slot"), str)
+                    and 0 < len(e["slot"]) <= 80
+                    and isinstance(e.get("ts"), int) and not isinstance(e.get("ts"), bool)]
+            if ents:
+                out["retired"] = ents[-RETIRED_SLOTS_MAX:]
         return out
 
     def get(self, pid, strict=False):
@@ -2231,7 +2235,7 @@ class PairStore(object):
             if r["slot"] == slot:
                 return r
         for r in recs:
-            if slot in r.get("retired", []):
+            if slot in live_retired(r):
                 return r
         return None
 
@@ -2255,14 +2259,15 @@ class PairStore(object):
                 return False
             if cur is not None and cur["slot"] != slot and not follow:
                 return False
-            retired = list(cur.get("retired", [])) if cur is not None else []
+            now = int(time.time())
+            held = [e for e in (cur.get("retired", []) if cur is not None else [])
+                    if e["slot"] != slot and now - e["ts"] < RETIRED_TTL]
             if cur is not None and cur["slot"] != slot:
-                retired.append(cur["slot"])
+                held.append({"slot": cur["slot"], "ts": now})
             rec = {"id": pid, "pub": pub, "key": key, "slot": slot,
                    "machine": str(machine or "")[:60]}
-            retired = [s for s in retired if s != slot][-RETIRED_SLOTS_MAX:]
-            if retired:
-                rec["retired"] = retired
+            if held:
+                rec["retired"] = held[-RETIRED_SLOTS_MAX:]
             self._write("peer-%s.json" % pid, rec)
             if other is not None and other["id"] != pid:
                 self._drop_retired(other, slot)
@@ -2271,7 +2276,7 @@ class PairStore(object):
     def _drop_retired(self, rec, slot):
         """Release the retired reservation of slot held by rec's id (a proven move took it)."""
         out = {k: rec[k] for k in ("id", "pub", "key", "slot", "machine")}
-        left = [s for s in rec.get("retired", []) if s != slot]
+        left = [e for e in rec.get("retired", []) if e["slot"] != slot]
         if left:
             out["retired"] = left
         self._write("peer-%s.json" % rec["id"], out)
@@ -2350,7 +2355,7 @@ class PairStore(object):
 
         gone = [r for r in self.records()
                 if hit_id(r["id"]) or hit_slot(r["slot"])
-                or any(hit_slot(s) for s in r.get("retired", []))
+                or any(hit_slot(s) for s in live_retired(r))
                 or (r["machine"] and r["machine"] == sel)]
         cur = self.pending(strict=True)   # read before anything is removed
         slots = set(r["slot"] for r in gone)
@@ -2909,6 +2914,16 @@ def follow_address_enabled():
     refusal and the pending repair (pair-reset)."""
     raw = str(os.environ.get("CREDO_PEER_LAN_FOLLOW_ADDRESS", "1")).strip().lower()
     return raw not in ("0", "false", "no", "off")
+
+
+def live_retired(rec, now=None):
+    """Addresses still reserved for the paired id of rec: moved-from addresses younger
+    than RETIRED_TTL. Nothing is reserved while CREDO_PEER_LAN_FOLLOW_ADDRESS is off, so
+    that setting behaves exactly as before the reservations existed."""
+    if not follow_address_enabled():
+        return []
+    now = time.time() if now is None else now
+    return [e["slot"] for e in rec.get("retired", []) if now - e["ts"] < RETIRED_TTL]
 
 
 def meta_publication(cfg):
@@ -3904,6 +3919,7 @@ class Daemon(object):
         # neither is set it is detected once in a background thread (see start()) so
         # the slow powershell probe under WSL never blocks the roster loop.
         self.advertise_host = cfg.get("advertise_host")
+        self.advertise_pinned = bool(self.advertise_host)   # pinned: never refreshed
         self.advertise_port = int(cfg.get("advertise_port", self.listen_port))
         self.roster_interval = float(
             cfg.get("roster_interval", DEFAULT_ROSTER_INTERVAL)
@@ -4075,6 +4091,21 @@ class Daemon(object):
         else:
             log("self-address not detected; rosters omit the advertise fields")
 
+    def _refresh_advertise_host(self):
+        """Follow a changed self address (DHCP): new hellos and rosters advertise the
+        address detected now. An undetected address keeps the last known one; a
+        configured advertise_host is never refreshed (see advertise_pinned)."""
+        try:
+            ip = detect_self_ip()
+        except Exception as exc:
+            log("self-address detection failed: %s" % exc)
+            return
+        if ip and ip != self.advertise_host:
+            old = self.advertise_host
+            self.advertise_host = ip
+            log("advertising self address %s:%d in rosters (was %s)"
+                % (ip, self.advertise_port, old or "none"))
+
     # -- network watcher (allowlist state) ------------------------------------
     def _netwatch_loop(self):
         """Detect the network at start and then every network_recheck_interval
@@ -4093,6 +4124,8 @@ class Daemon(object):
         config's networks/windows_profiles so `bind` applies without a restart), log
         every transition, prune remotes that are no longer allowed, and (WSL) sync
         the Windows firewall data file. Returns the new state."""
+        if not self.advertise_pinned:
+            self._refresh_advertise_host()
         fresh = load_config()
         merged = dict(self.cfg)
         for key in ("networks", "windows_profiles"):
@@ -4490,30 +4523,32 @@ class Daemon(object):
         except OSError:
             pass
 
-    def _may_follow(self, src, hello, slot):
+    def _may_follow(self, src, hello, slot, rec):
         """May a paired peer whose key proof succeeds on this link move its pairing to
         slot, the address it connects from? Only when the peer advertises exactly that
-        address, the connection really comes from it (or from the WSL NAT gateway that
-        every inbound link arrives from) and the address is inside the allowlist. So a
-        relayed link (its source is not the address it claims) never moves a pairing,
-        and an address alone never does. CREDO_PEER_LAN_FOLLOW_ADDRESS=0 turns it off."""
+        address and the address is inside the allowlist. A direct connection must come
+        from that address, so a relayed link never moves a pairing. Behind the WSL NAT
+        gateway the source proves nothing, so only the peer's own earlier address (still
+        reserved for it) may be followed to. CREDO_PEER_LAN_FOLLOW_ADDRESS=0 turns it off."""
         if not follow_address_enabled():
             return False
         host = slot.rsplit(":", 1)[0]
         if hello.get("advertise_host") != host:
             return False
-        if src != host and not self._is_wsl_gw(src):
+        if not peer_allowed_outbound(host, self.lan_state):
             return False
-        return peer_allowed_outbound(host, self.lan_state)
+        if self._is_wsl_gw(src):
+            return slot in live_retired(rec)
+        return src == host
 
     def _may_take_over(self, bound, pid, src, hello, slot):
         """slot is only reserved (retired) for bound's id, while that id lives at another
         address: a proven move of pid to slot may take the reservation over. The key
         proof still decides after the challenge (see _pair_accept)."""
-        if not pid or bound["slot"] == slot:
-            return False
+        if not pid or bound["slot"] == slot or self._is_wsl_gw(src):
+            return False   # behind the NAT gateway the claim is unverifiable: no takeover
         rec = self.pairs.get(pid)
-        return rec is not None and rec["slot"] != slot and self._may_follow(src, hello, slot)
+        return rec is not None and rec["slot"] != slot and self._may_follow(src, hello, slot, rec)
 
     def _pair_accept(self, conn, src, slot, machine, hello, rest):
         """Pairing step of an inbound link keyed by slot. Returns (pair, rest):
@@ -4593,7 +4628,7 @@ class Daemon(object):
             self._send_refusal(conn, "pairing failed")
             return False, rest
         follow = rec is not None and rec["slot"] != slot
-        if follow and not self._may_follow(src, hello, slot):
+        if follow and not self._may_follow(src, hello, slot, rec):
             # a proven paired id at a slot that is not its own, and not a move we may
             # follow: never moved silently (pending repair; only pair-reset moves it)
             self._pair_moved(slot, rec, machine)

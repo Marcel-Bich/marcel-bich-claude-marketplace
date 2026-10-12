@@ -4436,13 +4436,27 @@ guard("PK m", pk_m)
 # ---------------------------------------------------------------- (n) a moved pairing follows its address
 NEW, NEW2, NEW3, OUT = "192.168.1.57", "192.168.1.58", "192.168.1.59", "10.9.9.9"
 KEYNEW, NEWKEY2 = "%s:48610" % NEW, "%s:48610" % NEW2
+def refresh_self_ip(d, ip):
+    """Drive the real refresh path, nothing is assigned by hand: the detected self
+    address and the netinfo change to ip, then recheck_network() (the netwatch call)."""
+    d.cfg["networks"] = CFG["networks"]
+    os.environ["CREDO_PEER_LAN_NETINFO"] = json.dumps(
+        {"ip": ip, "subnet": "192.168.1.0/24", "gateway_mac": MAC, "wsl_nat_gateway": GW})
+    real = mod.detect_self_ip
+    mod.detect_self_ip = lambda: ip
+    try:
+        d.recheck_network()
+    finally:
+        mod.detect_self_ip = real
+        os.environ.pop("CREDO_PEER_LAN_NETINFO", None)
+
 def pk_n():
     A, P = pair_ap()
     if rec(A, P.peer_id) is None or rec(P, A.peer_id) is None:
         res("PK n: precondition: A and P paired", False, "not paired")
         return
-    # P's DHCP lease changes: it connects from NEW and advertises NEW
-    P.advertise_host = NEW
+    # P's DHCP lease changes: the refresh path runs, then P connects from NEW
+    refresh_self_ip(P, NEW)
     del logs[:]
     wire(P, C_ADDR, A, NEW)
     ra = rec(A, P.peer_id)
@@ -4486,7 +4500,7 @@ def pk_n():
         not acked(s) and A._get_channel(NEWKEY2) is None and rec(A, P.peer_id)["slot"] == KEYNEW,
         "frames=%r rec=%r" % (frames_of(s), rec(A, P.peer_id)))
     # a proven move to an address outside the allowlist is refused, surfaced as pending
-    P.advertise_host = OUT
+    refresh_self_ip(P, OUT)
     wire(P, C_ADDR, A, OUT)
     res("PK n: a proven move outside the allowlist is refused and nothing moves",
         rec(A, P.peer_id)["slot"] == KEYNEW and A._get_channel("%s:48610" % OUT) is None,
@@ -4495,7 +4509,7 @@ def pk_n():
         any(e["slot"] == "%s:48610" % OUT and e["fix"] == P.peer_id for e in A.pairs.pending()),
         "pending=%r" % A.pairs.pending())
     # a relayed link: the hello claims NEW3, the connection comes from NEW2 (not the claim)
-    P.advertise_host = NEW3
+    refresh_self_ip(P, NEW3)
     wire(P, C_ADDR, A, NEW2)
     res("PK n: a relayed link never moves the pairing onto the relaying address",
         rec(A, P.peer_id)["slot"] == KEYNEW and A._get_channel(NEWKEY2) is None
@@ -4505,7 +4519,7 @@ def pk_n():
     os.environ["CREDO_PEER_LAN_FOLLOW_ADDRESS"] = "0"
     try:
         A2, P2 = pair_ap()
-        P2.advertise_host = NEW
+        refresh_self_ip(P2, NEW)
         del logs[:]
         wire(P2, C_ADDR, A2, NEW)
     finally:
@@ -4524,20 +4538,20 @@ def pk_n():
     rr = rec(A, R.peer_id)
     res("PK n: precondition: a third paired peer is bound to .61",
         rr is not None and rr["slot"] == K61, "rec=%r" % rr)
-    R.advertise_host = S62
+    refresh_self_ip(R, S62)
     wire(R, C_ADDR, A, S62)
     rr = rec(A, R.peer_id)
     res("PK n: the third peer follows to .62 and .61 stays reserved for it",
-        rr is not None and rr["slot"] == K62 and K61 in rr.get("retired", []), "rec=%r" % rr)
+        rr is not None and rr["slot"] == K62 and K61 in mod.live_retired(rr), "rec=%r" % rr)
     ch61 = A._get_channel(K61)
     if ch61 is not None:
         A._drop_channel(ch61, "moved")
-    P.advertise_host = S61
+    refresh_self_ip(P, S61)
     wire(P, C_ADDR, A, S61)
     rp2, rr = rec(A, P.peer_id), rec(A, R.peer_id)
     res("PK n: a proven pairing takes over the retired address of another paired id",
         rp2 is not None and rp2["slot"] == K61 and A._bound(K61)["id"] == P.peer_id
-        and K61 not in rr.get("retired", []) and rr["slot"] == K62,
+        and K61 not in mod.live_retired(rr) and rr["slot"] == K62,
         "p=%r r=%r" % (rp2, rr))
     # the store refuses a slot held by another id (current), and never moves silently
     okc = A.pairs.pin(R.peer_id, rr["pub"], rr["key"], K61, "", follow=True)
@@ -4546,6 +4560,88 @@ def pk_n():
         okc is False and okm is False and rec(A, P.peer_id)["slot"] == K61
         and rec(A, R.peer_id)["slot"] == K62, "okc=%r okm=%r" % (okc, okm))
 guard("PK n", pk_n)
+
+def pk_n_more():
+    # 1. a configured advertise_host is never refreshed (the config pins it)
+    D = mod.Daemon({"this_machine": "box-d", "token": "tok", "peers": [C_ADDR],
+                    "listen_port": 48610, "advertise_host": B_ADDR, "keys_dir": keys("box-d")})
+    D.lan_state = mod.compute_lan_state(CFG, NET, D.peers, False)
+    refresh_self_ip(D, NEW)
+    res("PK n: a configured advertise_host is never refreshed", D.advertise_host == B_ADDR,
+        "adv=%r" % D.advertise_host)
+    # 2. a refreshed self address is advertised by the next hello
+    E = new_daemon([C_ADDR], "box-e", adv=B_ADDR)
+    refresh_self_ip(E, NEW)
+    h = E._link_hello(C_ADDR)
+    res("PK n: a refreshed self address is advertised in the next hello",
+        h.get("advertise_host") == NEW and E.advertise_host == NEW, "hello=%r" % h)
+    # 3. an undetected self address keeps the last known one
+    real = mod.detect_self_ip
+    mod.detect_self_ip = lambda: None
+    os.environ["CREDO_PEER_LAN_NETINFO"] = json.dumps(
+        {"ip": NEW2, "subnet": "192.168.1.0/24", "gateway_mac": MAC, "wsl_nat_gateway": GW})
+    try:
+        E.recheck_network()
+    finally:
+        mod.detect_self_ip = real
+        os.environ.pop("CREDO_PEER_LAN_NETINFO", None)
+    res("PK n: an undetected self address keeps the last known one", E.advertise_host == NEW,
+        "adv=%r" % E.advertise_host)
+    # 4. WSL NAT: the claimed address behind the gateway is followed only to the
+    #    peer's own earlier address, and a gateway claim never takes over another reservation
+    A2 = new_daemon([B_ADDR, Q_ADDR], "box-a2", wsl=True, adv=C_ADDR)
+    P2 = new_daemon([C_ADDR], "box-p2", adv=B_ADDR)
+    wire(P2, C_ADDR, A2, B_ADDR)
+    res("PK n: precondition: the WSL acceptor pairs the peer at its address",
+        rec(A2, P2.peer_id) is not None and rec(A2, P2.peer_id)["slot"] == KEYB, "rec=%r" % rec(A2, P2.peer_id))
+    refresh_self_ip(P2, NEW2)
+    wire(P2, C_ADDR, A2, NEW2)
+    res("PK n: a WSL acceptor follows a move verified by its own source",
+        rec(A2, P2.peer_id)["slot"] == NEWKEY2, "rec=%r" % rec(A2, P2.peer_id))
+    refresh_self_ip(P2, B_ADDR)
+    wire(P2, C_ADDR, A2, GW)
+    res("PK n: a gateway claim of the peer's own earlier address is followed",
+        rec(A2, P2.peer_id)["slot"] == KEYB, "rec=%r" % rec(A2, P2.peer_id))
+    refresh_self_ip(P2, NEW3)
+    wire(P2, C_ADDR, A2, GW)
+    res("PK n: a gateway claim of an unverified new address is refused",
+        rec(A2, P2.peer_id)["slot"] == KEYB and any(e["fix"] == P2.peer_id for e in A2.pairs.pending()),
+        "rec=%r pending=%r" % (rec(A2, P2.peer_id), A2.pairs.pending()))
+    gwb = {"slot": "192.168.1.65:48610", "id": "f" * 32}
+    res("PK n: a gateway source never takes over another peer's reservation, a direct one may",
+        A2._may_take_over(gwb, P2.peer_id, GW, {"advertise_host": "192.168.1.66"}, "192.168.1.66:48610") is False
+        and A2._may_take_over(gwb, P2.peer_id, "192.168.1.66", {"advertise_host": "192.168.1.66"},
+                              "192.168.1.66:48610") is True)
+    # 5. FOLLOW_ADDRESS=0: no reservation is consulted (today's behaviour)
+    A3, P3 = pair_ap()
+    refresh_self_ip(P3, NEW)
+    wire(P3, C_ADDR, A3, NEW)
+    res("PK n: precondition: the move is followed and KEYB reserved", rec(A3, P3.peer_id)["slot"] == KEYNEW
+        and A3._bound(KEYB) is not None, "rec=%r" % rec(A3, P3.peer_id))
+    os.environ["CREDO_PEER_LAN_FOLLOW_ADDRESS"] = "0"
+    try:
+        free = A3._bound(KEYB) is None and A3.pairs.by_slot(KEYB) is None
+        plain = acked(link_in(A3, B_ADDR, hello("box-q", adv=B_ADDR)))
+    finally:
+        os.environ.pop("CREDO_PEER_LAN_FOLLOW_ADDRESS", None)
+    res("PK n: FOLLOW_ADDRESS=0 ignores the reservation (an unpaired link at the old address works)",
+        free and plain, "free=%r plain=%r" % (free, plain))
+    # 6. a reservation is released after 7 days, a younger one holds, at most 16 are kept
+    A4, P4 = pair_ap()
+    refresh_self_ip(P4, NEW)
+    wire(P4, C_ADDR, A4, NEW)
+    st, rec4, now = A4.pairs, rec(A4, P4.peer_id), int(time.time())
+    st._write("peer-%s.json" % P4.peer_id, dict(rec4, retired=[{"slot": KEYB, "ts": now - 6 * 86400}]))
+    young = A4._bound(KEYB) is not None
+    st._write("peer-%s.json" % P4.peer_id, dict(rec4, retired=[{"slot": KEYB, "ts": now - 8 * 86400}]))
+    expired = A4._bound(KEYB) is None
+    res("PK n: a reservation younger than 7 days holds, an older one is released",
+        young and expired, "young=%r expired=%r" % (young, expired))
+    st._write("peer-%s.json" % P4.peer_id, dict(rec4, retired=[
+        {"slot": "192.168.1.%d:48610" % (100 + i), "ts": now} for i in range(20)]))
+    res("PK n: at most 16 reservations are kept", len(rec(A4, P4.peer_id).get("retired", [])) == 16,
+        "n=%r" % len(rec(A4, P4.peer_id).get("retired", [])))
+guard("PK n more", pk_n_more)
 PYEOF
 PK_OUT="$("$PY" "$TMP/PK/pktest.py" "$DAEMON" "$TMP/PK" 2>&1)"
 while IFS= read -r line; do
@@ -4555,7 +4651,7 @@ while IFS= read -r line; do
     esac
 done <<< "$PK_OUT"
 case "$PK_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL PK: traceback\n%s\n' "$PK_OUT" ;; esac
-check "PK: expected number of pairing results" "134" "$(printf '%s\n' "$PK_OUT" | grep -cE '^(PASS|FAIL) ')"
+check "PK: expected number of pairing results" "146" "$(printf '%s\n' "$PK_OUT" | grep -cE '^(PASS|FAIL) ')"
 
 # --- RO: an OLD peer (no link support) is marked after a few refusals; rosters keep -
 # flowing over fresh connections. The fake old relay reads one line per connection,

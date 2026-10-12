@@ -290,10 +290,8 @@ The machine name stays a display label.
 - **One slot per paired id, never moved silently.** A paired id is bound to exactly one
   peer address. A link that proves a paired id's key but serves another address is
   refused, the old address stays bound, and it is surfaced as a pending repair whose
-  command is `pair-reset <peer id>` - the only way to move a paired peer, except for a
-  proven move: a paired peer whose key proof succeeds from a new address inside the
-  allowlist follows its pairing there (one log line, no pending repair, the old address
-  stays reserved for it), and `CREDO_PEER_LAN_FOLLOW_ADDRESS=0` restores the refusal.
+  command is `pair-reset <peer id>` - the manual way to move a paired peer (a proven
+  move to a new address follows automatically, see Setup step 9).
 - **Paired slots.** A slot bound to a paired peer goes only to a link that proves that
   peer's key, whether or not the peer is online, from the WSL gateway, loopback or
   anywhere else. A paired peer never falls
