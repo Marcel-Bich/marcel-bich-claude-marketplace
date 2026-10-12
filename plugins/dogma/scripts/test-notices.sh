@@ -33,6 +33,22 @@ export DOGMA_SESSION_DIR="$TEST_TMP_DIR/session" DOGMA_CREDO_CONFIG=none
 # Isolated profile: seen state never touches the real config dir.
 export CLAUDE_CONFIG_DIR="$TEST_TMP_DIR/config"
 unset CLAUDE_PLUGIN_ROOT CLAUDE_MB_DOGMA_ENABLED CLAUDE_MB_DOGMA_NOTICES
+
+# The tests below are about the listing and seen mechanics with one plugin notice. They run
+# against a copy of the plugin whose notices.json holds only the test-commands entry; the real
+# notices.json (dogma-discard-uncommitted and all) is checked in the block marked "Discard setting".
+NP_REAL="$NP"
+PLUGIN_COPY="$TEST_TMP_DIR/plugin"
+mkdir -p "$PLUGIN_COPY"
+cp -R "$SCRIPT_DIR" "$PLUGIN_COPY/scripts"
+cp -R "$SCRIPT_DIR/../hooks" "$PLUGIN_COPY/hooks"
+python3 -c '
+import json, sys
+notices = [n for n in json.load(open(sys.argv[1], encoding="utf-8")) if n.get("id") == sys.argv[3]]
+json.dump(notices, open(sys.argv[2], "w", encoding="utf-8"))
+' "$SCRIPT_DIR/../notices.json" "$PLUGIN_COPY/notices.json" "$ID"
+NP="$PLUGIN_COPY/scripts/notices-pending.sh"
+HOOK="$PLUGIN_COPY/hooks/notices-inject.sh"
 unset CLAUDE_MB_DOGMA_SOURCE CLAUDE_MB_DOGMA_SOURCE_FETCH CLAUDE_MB_DOGMA_NOTICES_MAX_AGE_DAYS
 # Isolated git config: no user/system insteadOf, sshCommand or hooks leak into the tests.
 : > "$TEST_TMP_DIR/gitconfig"
@@ -118,6 +134,19 @@ printf '%s' "$PERMS_WITH_SECTION" > "$REPO_SEC/DOGMA-PERMISSIONS.md"
 capture "$NP" "$REPO_SEC"
 run_test "with Test Commands section: exit 4" "4" "$RC"
 run_test "with Test Commands section: no output" "" "$OUT"
+
+# Discard setting (§b4dk): the dogma-discard-uncommitted notice applies while the file lacks the id
+REPO_DISC="$TEST_TMP_DIR/repo-discard-missing"
+make_repo "$REPO_DISC"
+printf '<permissions>\n## File Operations\n- [x] (§0lgy) May delete files autonomously\n</permissions>\n' > "$REPO_DISC/DOGMA-PERMISSIONS.md"
+capture "$NP_REAL" "$REPO_DISC"
+run_test "discard notice: file without §b4dk -> listed" "1" "$(printf '%s\n' "$OUT" | grep -c '^id=dogma-discard-uncommitted$')"
+run_test "discard notice: action is /dogma:permissions" "1" "$(printf '%s\n' "$OUT" | grep -A3 '^id=dogma-discard-uncommitted$' | grep -c '^action=/dogma:permissions$')"
+REPO_DISC_SET="$TEST_TMP_DIR/repo-discard-set"
+make_repo "$REPO_DISC_SET"
+printf '<permissions>\n## File Operations\n- [ ] (§b4dk) Discard uncommitted changes\n</permissions>\n' > "$REPO_DISC_SET/DOGMA-PERMISSIONS.md"
+capture "$NP_REAL" "$REPO_DISC_SET"
+run_test "discard notice: file with §b4dk -> not listed" "0" "$(printf '%s\n' "$OUT" | grep -c '^id=dogma-discard-uncommitted$')"
 
 # Stable id (§ly5v): a reworded heading in another subsection still counts as present
 REPO_ID="$TEST_TMP_DIR/repo-id"

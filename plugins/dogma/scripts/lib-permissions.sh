@@ -562,6 +562,13 @@ perm_lookup_inherited() {
 # Which file defines a setting after load_permissions? Prints PERMS_FILE when its
 # block defines the spec, DOGMA_INHERIT_FILE when only the inherited block does,
 # else PERMS_FILE (the setting is missing everywhere and defaults).
+# Does the loaded file (or the file it inherits from) have a line for the setting? Usage: perm_defined <spec>
+perm_defined() {
+    local spec="$1"
+    perm_lookup "${PERMS_SECTION:-}" "$spec" "${PERMS_SECTION:-}" >/dev/null 2>&1 && return 0
+    [ -n "${DOGMA_INHERIT_FILE:-}" ] && perm_lookup_inherited "$spec" >/dev/null 2>&1
+}
+
 perm_defining_file() {
     local spec="$1"
     if [ -n "${DOGMA_INHERIT_FILE:-}" ] \
@@ -606,6 +613,23 @@ check_permission() {
     esac
 }
 
+# Settings whose line is missing in an existing DOGMA-PERMISSIONS.md count as [?] (ask),
+# not as auto. Space-separated ids; add an id only with an explicit decision, every other
+# setting keeps auto (docs/permission-ids.md).
+DOGMA_ASK_IF_MISSING_IDS="§b4dk"
+
+# Mode of a setting that no file or inherited block defines: ask for the ids listed in
+# DOGMA_ASK_IF_MISSING_IDS, else auto. Usage: perm_missing_mode "§xxxx|text" (or "§xxxx")
+perm_missing_mode() {
+    local spec="$1" id
+    for id in $DOGMA_ASK_IF_MISSING_IDS; do
+        case "$spec" in
+            "$id"|"$id|"*) echo "ask"; return 0 ;;
+        esac
+    done
+    echo "auto"
+}
+
 # Get permission mode (extended states: auto/ask/deny/one/all)
 # Returns: "auto", "ask", "deny", "one", or "all"
 # If pattern not found, returns "auto" (allow by default)
@@ -628,7 +652,8 @@ check_permission() {
 #     - "### Subsection Name" -> extracts until next ## or ### or </permissions>
 #     - "## Section Name" -> extracts until next ## or </permissions> (includes ### subsections)
 #   - A setting the file / section does not define is taken from the inherited block
-#     (DOGMA_INHERIT_SECTION, set by load_permissions) when there is one.
+#     (DOGMA_INHERIT_SECTION, set by load_permissions) when there is one; otherwise
+#     perm_missing_mode decides (auto, or ask for the ids in DOGMA_ASK_IF_MISSING_IDS).
 get_permission_mode() {
     local arg1="$1"
     local arg2="${2:-}"
@@ -669,8 +694,10 @@ get_permission_mode() {
         return
     fi
 
-    dogma_debug_log "Permission not found: $pattern - auto by default"
-    echo "auto"
+    local missing
+    missing=$(perm_missing_mode "$pattern")
+    dogma_debug_log "Permission not found: $pattern - $missing by default"
+    echo "$missing"
 }
 
 # Get missing permissions message
@@ -732,16 +759,21 @@ dogma_findings_blocked() {
 # directory means "no explicit target": the default lookup applies (credo pinned
 # project, current dir, session folder).
 # Sets DOGMA_STRICT_MODE and DOGMA_STRICT_SRC (the defining file, empty when none).
+# DOGMA_STRICT_UNDEFINED is "true" when the deciding file has no line for the setting
+# (the mode is then the missing default, see perm_missing_mode).
 # Usage: dogma_strictest_mode <spec> <mode when no file applies> <dir>...
 dogma_strictest_mode() {
-    local spec="$1" missing="$2" dir mode src rank best=-1
+    local spec="$1" missing="$2" dir mode src rank best=-1 undefined=""
     shift 2
     DOGMA_STRICT_MODE="auto"
     DOGMA_STRICT_SRC=""
+    DOGMA_STRICT_UNDEFINED=""
     for dir in "$@"; do
+        undefined=""
         if load_permissions "$dir"; then
             mode="$(get_permission_mode "$PERMS_SECTION" "$spec")"
             src="$(perm_defining_file "$spec")"
+            perm_defined "$spec" || undefined="true"
         else
             mode="$missing"
             src=""
@@ -755,6 +787,7 @@ dogma_strictest_mode() {
             best="$rank"
             DOGMA_STRICT_MODE="$mode"
             DOGMA_STRICT_SRC="$src"
+            DOGMA_STRICT_UNDEFINED="$undefined"
         fi
     done
 }

@@ -679,6 +679,98 @@ run_test "record hook: end to end with test-commands.sh" "ws-build" "$r"
 echo ""
 
 # ============================================================================
+# 9. Discard setting (§b4dk): a missing line in an existing file counts as [?]
+# ============================================================================
+echo "--- Discard setting: missing line = ask ---"
+
+DISC_SPEC="§b4dk|discard uncommitted changes"
+PERMS_DISC_NO="$TEST_TMP_DIR/disc-no.md"
+cat > "$PERMS_DISC_NO" <<'EOF'
+<permissions>
+## File Operations
+- [x] (§0lgy) May delete files autonomously (rm, unlink, git clean)
+</permissions>
+EOF
+PERMS_NO_DELETE="$TEST_TMP_DIR/no-delete.md"
+cat > "$PERMS_NO_DELETE" <<'EOF'
+<permissions>
+- [x] (§6gpt) May run `git add` autonomously
+</permissions>
+EOF
+
+# 9.1 missing line -> ask, other settings keep their default (auto)
+run_test "discard: missing line in existing file -> ask" "ask" "$(get_permission_mode "$DISC_SPEC" "$PERMS_DISC_NO")"
+run_test "discard: missing line, delete [x] in same file -> still ask (independent)" "ask" "$(get_permission_mode "$DISC_SPEC" "$PERMS_DISC_NO")"
+run_test "discard: missing line, file without any discard line -> ask" "ask" "$(get_permission_mode "$DISC_SPEC" "$PERMS_NO_DELETE")"
+run_test "discard: perm_missing_mode -> ask" "ask" "$(perm_missing_mode "$DISC_SPEC")"
+run_test "delete: missing line keeps auto (other settings unchanged)" "auto" "$(get_permission_mode "§0lgy|delete files" "$PERMS_NO_DELETE")"
+run_test "perm_missing_mode: other setting -> auto" "auto" "$(perm_missing_mode "§0lgy|delete files")"
+run_test "perm_missing_mode: bare id -> ask" "ask" "$(perm_missing_mode "§b4dk")"
+
+# 9.2 explicit lines win over the missing default
+PERMS_DISC_SET="$TEST_TMP_DIR/disc-set.md"
+cat > "$PERMS_DISC_SET" <<'EOF'
+<permissions>
+- [x] (§b4dk) Discard uncommitted changes (git restore, reset --hard)
+</permissions>
+EOF
+PERMS_DISC_OFF="$TEST_TMP_DIR/disc-off.md"
+printf '<permissions>\n- [ ] (§b4dk) Discard uncommitted changes\n</permissions>\n' > "$PERMS_DISC_OFF"
+PERMS_DISC_ASK="$TEST_TMP_DIR/disc-ask.md"
+printf '<permissions>\n- [?] (§b4dk) Discard uncommitted changes\n</permissions>\n' > "$PERMS_DISC_ASK"
+PERMS_DISC_TEXT="$TEST_TMP_DIR/disc-text.md"
+printf '<permissions>\n- [x] discard uncommitted changes (old file without id)\n</permissions>\n' > "$PERMS_DISC_TEXT"
+run_test "discard: explicit [x] -> auto" "auto" "$(get_permission_mode "$DISC_SPEC" "$PERMS_DISC_SET")"
+run_test "discard: explicit [ ] -> deny" "deny" "$(get_permission_mode "$DISC_SPEC" "$PERMS_DISC_OFF")"
+run_test "discard: explicit [?] -> ask" "ask" "$(get_permission_mode "$DISC_SPEC" "$PERMS_DISC_ASK")"
+run_test "discard: old text line without id -> auto (text fallback)" "auto" "$(get_permission_mode "$DISC_SPEC" "$PERMS_DISC_TEXT")"
+
+# 9.3 inheritance: a missing line is taken from the session folder's file first
+(
+    SESS="$TEST_TMP_DIR/disc-sess"
+    PJ="$TEST_TMP_DIR/disc-proj"
+    mkdir -p "$SESS" "$PJ"
+    printf '<permissions>\n- [x] (§b4dk) Discard uncommitted changes\n</permissions>\n' > "$SESS/DOGMA-PERMISSIONS.md"
+    printf '<permissions>\n- [x] (§0lgy) May delete files\n</permissions>\n' > "$PJ/DOGMA-PERMISSIONS.md"
+    export DOGMA_SESSION_DIR="$SESS"
+    cd "$PJ"
+    load_permissions "$PJ"
+    run_test "discard inherit: missing in project, [x] in session -> auto" "auto" "$(get_permission_mode "$PERMS_SECTION" "$DISC_SPEC")"
+)
+(
+    SESS2="$TEST_TMP_DIR/disc-sess2"
+    PJ2="$TEST_TMP_DIR/disc-proj2"
+    mkdir -p "$SESS2" "$PJ2"
+    printf '<permissions>\n- [x] (§0lgy) May delete files\n</permissions>\n' > "$SESS2/DOGMA-PERMISSIONS.md"
+    printf '<permissions>\n- [x] (§0lgy) May delete files\n</permissions>\n' > "$PJ2/DOGMA-PERMISSIONS.md"
+    export DOGMA_SESSION_DIR="$SESS2"
+    cd "$PJ2"
+    load_permissions "$PJ2"
+    run_test "discard inherit: missing everywhere -> ask" "ask" "$(get_permission_mode "$PERMS_SECTION" "$DISC_SPEC")"
+)
+
+# 9.4 perm_defined and the "undefined" flag of dogma_strictest_mode (used for the add-the-line text)
+(
+    export DOGMA_SESSION_DIR="$TEST_TMP_DIR/disc-nosess"
+    mkdir -p "$DOGMA_SESSION_DIR" "$TEST_TMP_DIR/disc-line" "$TEST_TMP_DIR/disc-noline"
+    printf '<permissions>\n- [x] (§b4dk) Discard uncommitted changes\n</permissions>\n' > "$TEST_TMP_DIR/disc-line/DOGMA-PERMISSIONS.md"
+    printf '<permissions>\n- [x] (§0lgy) May delete files\n</permissions>\n' > "$TEST_TMP_DIR/disc-noline/DOGMA-PERMISSIONS.md"
+    load_permissions "$TEST_TMP_DIR/disc-line"
+    perm_defined "$DISC_SPEC" && r=defined || r=undefined
+    run_test "perm_defined: line with the id -> defined" "defined" "$r"
+    dogma_strictest_mode "$DISC_SPEC" deny "$TEST_TMP_DIR/disc-line"
+    run_test "strictest: defined line -> not undefined" "" "$DOGMA_STRICT_UNDEFINED"
+    load_permissions "$TEST_TMP_DIR/disc-noline"
+    perm_defined "$DISC_SPEC" && r=defined || r=undefined
+    run_test "perm_defined: no line, no session file -> undefined" "undefined" "$r"
+    dogma_strictest_mode "$DISC_SPEC" deny "$TEST_TMP_DIR/disc-noline"
+    run_test "strictest: missing line -> mode ask" "ask" "$DOGMA_STRICT_MODE"
+    run_test "strictest: missing line -> undefined flag" "true" "$DOGMA_STRICT_UNDEFINED"
+    dogma_strictest_mode "$DISC_SPEC" deny "$TEST_TMP_DIR/no-such-dir"
+    run_test "strictest: no file -> missing mode (deny), no undefined flag" "deny|" "$DOGMA_STRICT_MODE|$DOGMA_STRICT_UNDEFINED"
+)
+
+# ============================================================================
 # Results
 # ============================================================================
 # counted from the results file: tests inside ( ... ) subshells count too

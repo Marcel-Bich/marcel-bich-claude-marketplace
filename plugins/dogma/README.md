@@ -54,6 +54,7 @@ Control Claude's autonomy with `DOGMA-PERMISSIONS.md` in your project root:
 - [x] (§2w1t) May run `git commit` autonomously   # auto
 - [?] (§bww9) May run `git push` autonomously     # ask first
 - [?] (§0lgy) May delete files autonomously       # ask first
+- [?] (§b4dk) Discard uncommitted changes         # ask first (a missing line counts as [?])
 </permissions>
 ```
 

@@ -991,6 +991,28 @@ done
 
 ### 5.2 Decision Tree
 
+**Pre-check for every case: discard setting `(§b4dk)`**
+
+Project files written before the setting existed have no line for "Discard uncommitted changes" (`(§b4dk)`). Without it, `git restore`, `git reset --hard`, `git checkout <path>` and `git stash drop|clear` ask first (a missing line counts as `[?]`). Check it before the cases below, whatever the source says:
+
+```bash
+DISCARD_LINE_MISSING="false"
+if [ "$HAS_PROJECT_PERMS" = "true" ] && ! grep -q "(§b4dk)" "DOGMA-PERMISSIONS.md"; then
+    DISCARD_LINE_MISSING="true"
+fi
+```
+
+If `DISCARD_LINE_MISSING` is "true", ask this (also when source and project are otherwise identical, and when only the project file exists):
+```
+DOGMA-PERMISSIONS.md has no setting for discarding uncommitted changes yet.
+Without it, these git commands ask first (default [?]).
+
+Would you like to add it now?
+1. Yes, run /dogma:permissions (Recommended) - adds the setting with default [?]
+2. Skip for now
+```
+Option 1 runs /dogma:permissions (5.3), which covers the whole file, so the cases below are skipped. Option 2 continues with the cases below as before.
+
 **Case 1: Both source and project have DOGMA-PERMISSIONS.md**
 
 ```bash
@@ -1040,6 +1062,10 @@ Would you like to set up permissions for this project?
 1. Yes, run /dogma:permissions (Recommended)
 2. Skip permissions for now
 ```
+
+**Case 5: Only the project has DOGMA-PERMISSIONS.md (no source file)**
+
+Nothing to compare. Without the `(§b4dk)` line the pre-check above asks; with it, no question is asked.
 
 ### 5.3 Execute Permission Setup
 

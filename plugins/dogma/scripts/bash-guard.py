@@ -3090,7 +3090,7 @@ class Analysis:
                 or sub == "mergetool" and any(arg in ("-t", "--tool") for arg in rest) \
                 or sub == "commit" and any(long_option(arg, "template", 3) for arg in rest) and False:
             raise Deny("dogma: git %s runs arbitrary commands; let the user run it." % sub)
-        label = self.git_destruction(sub, rest, options)
+        label = self.git_destruction(sub, rest, options, targets)
         if label and self.git_alt:
             raise Deny("dogma: destructive git command with --work-tree, --git-dir or GIT_DIR/GIT_WORK_TREE cannot be "
                        "checked; blocked.")
@@ -3107,7 +3107,18 @@ class Analysis:
             target = operands[-1] if operands and not label.endswith(" " + operands[-1]) else ""
             self.deletes.append((label, target, set(targets)))
 
-    def git_destruction(self, sub, rest, options):
+    def checkout_path(self, rest, targets):
+        """One operand of git checkout that names an existing file or folder (relative to a directory the
+        command runs in) overwrites the working copy: a discard. A branch name with no such path is not."""
+        if any(arg in ("-b", "-B") or long_option(arg, "orphan", 3) for arg in rest):
+            return False
+        names = [arg for arg in rest if not arg.startswith("-")]
+        if len(names) != 1:
+            return False
+        bases = [directory if directory else self.event_cwd for directory in targets] or [self.event_cwd]
+        return any(os.path.lexists(os.path.join(base, names[0])) for base in bases)
+
+    def git_destruction(self, sub, rest, options, targets=()):
         def has(*names):
             return any(arg in names for arg in rest)
 
@@ -3126,6 +3137,8 @@ class Analysis:
             return "git reset --hard"
         if sub == "checkout" and ("--" in rest or "." in operands or short("f")
                                   or any(long_option(arg, "force", 2) for arg in options) or len(operands) > 1):
+            return "git checkout (discard)"
+        if sub == "checkout" and self.checkout_path(rest, targets):
             return "git checkout (discard)"
         if sub == "switch" and (short("f") or any(long_option(arg, "force", 2) or long_option(arg, "discard-changes", 3)
                                                   for arg in options)):
@@ -3613,17 +3626,23 @@ def analyse(command, cwd, flags):
     return analysis, None
 
 
+# git commands that discard uncommitted changes: the hooks gate them with the discard setting
+# (§b4dk), not with the delete setting (§0lgy). git clean and the other deletes stay under §0lgy.
+DISCARD_LABELS = frozenset(("git reset --hard", "git checkout (discard)", "git switch --discard-changes",
+                            "git restore", "git stash drop", "git stash clear"))
+
+
 def findings(analysis, cwd):
     """Permission-dependent findings. A directory is "" when it is the working directory or
     unknown: the hooks then resolve DOGMA-PERMISSIONS.md the default way (pinned project,
-    current directory, session folder)."""
+    current directory, session folder). "discard" marks the git discards (DISCARD_LABELS)."""
     start = os.path.realpath(cwd)
 
     def dirs(directories):
         return sorted({"" if directory in (None, start) else directory for directory in directories})
 
     return {
-        "deletes": [{"label": label, "target": target, "dirs": dirs(directories)}
+        "deletes": [{"label": label, "target": target, "dirs": dirs(directories), "discard": label in DISCARD_LABELS}
                     for label, target, directories in analysis.deletes],
         "installs": list(analysis.installs),
         "git": [{"op": operation, "dirs": dirs(targets), "unknown": bool(unknown)}

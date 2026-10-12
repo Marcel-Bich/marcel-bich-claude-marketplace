@@ -72,6 +72,13 @@ Ask the user about each permission using AskUserQuestion. For each permission of
 - ask: Claude prompts for confirmation before delete
 - deny: Deletion commands are logged to TO-DELETE.md for manual deletion
 
+**Discard uncommitted changes** (id `§b4dk`, default ask)
+- auto: Claude can run git restore, git reset --hard, git checkout <path>, git switch --discard-changes, git stash drop or clear
+- ask: Claude asks for confirmation before it discards uncommitted work (default when the line is missing)
+- deny: these commands are blocked
+
+Independent of the delete setting above (`git clean` stays with the delete setting).
+
 ## Step 3: Workflow Permissions
 
 Ask about workflow automation settings.
@@ -247,6 +254,7 @@ app's file counts.
 
 ## File Operations
 - [?] (§0lgy) May delete files autonomously (rm, unlink, git clean)
+- [?] (§b4dk) Discard uncommitted changes autonomously (git restore, reset --hard, checkout -- file, switch --discard-changes, stash drop|clear)
 
 ## Workflow Permissions
 
