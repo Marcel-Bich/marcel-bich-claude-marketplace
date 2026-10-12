@@ -8,6 +8,24 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.82
 
+##### v0.82.4
+
+###### Changed
+
+- The preset block carries a one-line rule for every subagent spawn. It points to `credo-preset.sh stage <role> <attempt>`, which supplies the model, effort and prompt.
+- `init` warns when an added peer address is not reachable from this machine; a peer behind NAT should run `init` towards this machine instead, and the return channel carries the traffic
+- A pending repair is dropped once its address is no longer a configured peer (daemon start, `init`, `check`, `pairs`); the pairing itself is never touched
+- `check` adds a hint under a pending repair whose address is not reachable from this machine
+
+###### Fixed
+
+- Declining credo in a directory, or for a session, no longer hides the model preset. The SessionStart hook keeps injecting the preset instructions; only the items workflow stays off there.
+- The preset block also reaches the main agent in a session that has not made a credo decision yet, and under the gsd task backend.
+- The `/credo:disable` description states that model presets and shorthands stay on.
+- `/credo:disable` also records the current session as declined, so a session that was already active stops getting the workflow text on resume and compact.
+- A roster send to an unreachable peer is logged once when the peer goes down and once when it recovers, instead of on every roster interval
+- `peer-lan.log` is rotated to a single `peer-lan.log.1` backup when it exceeds 5 MB, so the log no longer grows without bound
+
 ##### v0.82.3
 
 ###### Fixed
