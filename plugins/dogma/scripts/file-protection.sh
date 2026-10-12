@@ -75,7 +75,12 @@ INPUT=$(cat 2>/dev/null || true)
 report_delete() {
     if [ "$DELETE_MODE" = "ask" ]; then
         # Ask mode: Prompt user for confirmation
-        REASON_MSG="dogma: $BLOCKED ${TARGET:-command} requires confirmation. Change [?] to [x] in ${DELETE_SRC:-$PERMS_FILE} to allow automatically."
+        if [ "$BLOCK_KIND" = "discard" ] && [ "$BLOCK_UNDEFINED" = "true" ]; then
+            # The file has no line for the discard setting yet: the step is to add it (default [?]), not to change it
+            REASON_MSG="dogma: $BLOCKED ${TARGET:-command} discards uncommitted changes and needs confirmation. ${DELETE_SRC:-${PERMS_FILE:-a DOGMA-PERMISSIONS.md}} has no line for (§b4dk) yet: add \`- [?] (§b4dk) Discard uncommitted changes\` to its <permissions> block, or run /dogma:sync or /dogma:permissions. Until then this asks; set [x] to allow it."
+        else
+            REASON_MSG="dogma: $BLOCKED ${TARGET:-command} requires confirmation. Change [?] to [x] in ${DELETE_SRC:-$PERMS_FILE} to allow automatically."
+        fi
         REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
         output_ask "$REASON_MSG"
     fi
@@ -122,13 +127,14 @@ HEADER
 # Usage: decide_group <entries JSON> <spec> <mode when no file applies>
 decide_group() {
     local entries="$1" spec="$2" missing="$3"
-    GROUP_MODE="auto"; GROUP_SRC=""; GROUP_LABEL=""; GROUP_TARGET=""
+    GROUP_MODE="auto"; GROUP_SRC=""; GROUP_LABEL=""; GROUP_TARGET=""; GROUP_UNDEFINED=""
     [ "$entries" != "[]" ] || return 0
     mapfile -t GROUP_DIRS < <(printf '%s' "$entries" | jq -r '[.[].dirs[]] | unique | .[]')
     [ "${#GROUP_DIRS[@]}" -gt 0 ] || GROUP_DIRS=("")
     dogma_strictest_mode "$spec" "$missing" "${GROUP_DIRS[@]}"
     GROUP_MODE="$DOGMA_STRICT_MODE"
     GROUP_SRC="$DOGMA_STRICT_SRC"
+    GROUP_UNDEFINED="$DOGMA_STRICT_UNDEFINED"
     GROUP_LABEL="$(printf '%s' "$entries" | jq -r '.[0].label')"
     GROUP_TARGET="$(printf '%s' "$entries" | jq -r '.[0].target')"
 }
@@ -144,6 +150,7 @@ group_rank() {
 
 dogma_session_from_input "$INPUT"
 BLOCK_KIND="delete"
+BLOCK_UNDEFINED=""
 if [ "$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)" = "Bash" ] && \
     FINDINGS="$(dogma_bash_findings "$INPUT")"; then
     # The analysis refused the command (or ran out of time): deny here too, so a
@@ -174,6 +181,7 @@ if [ "$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)" = "Bash" ] && 
         BLOCKED="$GROUP_LABEL"
         TARGET="$GROUP_TARGET"
         BLOCK_KIND="discard"
+        BLOCK_UNDEFINED="$GROUP_UNDEFINED"
     fi
     [ "$DELETE_MODE" = "auto" ] && exit 0
     if [ "$BLOCK_KIND" = "discard" ]; then

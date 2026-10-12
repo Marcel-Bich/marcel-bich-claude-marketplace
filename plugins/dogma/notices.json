@@ -9,7 +9,7 @@
   {
     "id": "dogma-discard-uncommitted",
     "since": "1.46.0",
-    "text": "dogma has a new DOGMA-PERMISSIONS.md setting (§b4dk) for discarding uncommitted changes: git restore, git reset --hard, git checkout on paths or with -f, git switch --discard-changes and git stash drop|clear. Until now these commands were governed by the delete setting (§0lgy) or not checked at all. This repo's file does not have the setting yet, so these commands ask first. Run /dogma:permissions or /dogma:sync to add it.",
+    "text": "dogma has a new DOGMA-PERMISSIONS.md setting (§b4dk) for discarding uncommitted changes: git restore, git reset --hard, git checkout on paths or with -f, git switch --discard-changes and git stash drop|clear. Until now these commands were governed by the delete setting (§0lgy) or not checked at all. This repo's file does not have the setting yet, so these commands ask first. Run /dogma:permissions to add it; /dogma:sync asks about it as well.",
     "action": "/dogma:permissions",
     "applies": "scripts/notice-applies-discard.sh"
   }

@@ -749,6 +749,27 @@ run_test "discard: old text line without id -> auto (text fallback)" "auto" "$(g
     run_test "discard inherit: missing everywhere -> ask" "ask" "$(get_permission_mode "$PERMS_SECTION" "$DISC_SPEC")"
 )
 
+# 9.4 perm_defined and the "undefined" flag of dogma_strictest_mode (used for the add-the-line text)
+(
+    export DOGMA_SESSION_DIR="$TEST_TMP_DIR/disc-nosess"
+    mkdir -p "$DOGMA_SESSION_DIR" "$TEST_TMP_DIR/disc-line" "$TEST_TMP_DIR/disc-noline"
+    printf '<permissions>\n- [x] (§b4dk) Discard uncommitted changes\n</permissions>\n' > "$TEST_TMP_DIR/disc-line/DOGMA-PERMISSIONS.md"
+    printf '<permissions>\n- [x] (§0lgy) May delete files\n</permissions>\n' > "$TEST_TMP_DIR/disc-noline/DOGMA-PERMISSIONS.md"
+    load_permissions "$TEST_TMP_DIR/disc-line"
+    perm_defined "$DISC_SPEC" && r=defined || r=undefined
+    run_test "perm_defined: line with the id -> defined" "defined" "$r"
+    dogma_strictest_mode "$DISC_SPEC" deny "$TEST_TMP_DIR/disc-line"
+    run_test "strictest: defined line -> not undefined" "" "$DOGMA_STRICT_UNDEFINED"
+    load_permissions "$TEST_TMP_DIR/disc-noline"
+    perm_defined "$DISC_SPEC" && r=defined || r=undefined
+    run_test "perm_defined: no line, no session file -> undefined" "undefined" "$r"
+    dogma_strictest_mode "$DISC_SPEC" deny "$TEST_TMP_DIR/disc-noline"
+    run_test "strictest: missing line -> mode ask" "ask" "$DOGMA_STRICT_MODE"
+    run_test "strictest: missing line -> undefined flag" "true" "$DOGMA_STRICT_UNDEFINED"
+    dogma_strictest_mode "$DISC_SPEC" deny "$TEST_TMP_DIR/no-such-dir"
+    run_test "strictest: no file -> missing mode (deny), no undefined flag" "deny|" "$DOGMA_STRICT_MODE|$DOGMA_STRICT_UNDEFINED"
+)
+
 # ============================================================================
 # Results
 # ============================================================================

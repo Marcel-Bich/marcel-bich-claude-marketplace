@@ -283,5 +283,20 @@ PROBES = (
     ("git restore notes.txt", "X", ALLOW),
     ("git reset --hard", "X", ALLOW),
     ("git switch --discard-changes main", "X", ALLOW),
+    # git checkout with one operand: an existing path is a discard, a branch name is not ("notes.txt" and
+    # "src/" exist in D, E, F and P; "main" and "feature/x" are branch names there)
+    ("git checkout notes.txt", "D", DENY),
+    ("git checkout src/", "D", DENY),
+    ("git checkout --ours notes.txt", "D", DENY),
+    ("git checkout main", "D", ALLOW),
+    ("git checkout feature/x", "D", ALLOW),
+    ("git checkout -b feature/x", "D", ALLOW),
+    ("git checkout notes.txt", "E", ALLOW),
+    ("git checkout src/", "E", ALLOW),
+    ("git checkout main", "E", ALLOW),
+    ("git checkout notes.txt", "F", DENY),
+    ("git checkout main", "F", ALLOW),
+    ("git checkout notes.txt", "P", DENY),
+    ("git checkout main", "P", ALLOW),
 )
 # fmt: on

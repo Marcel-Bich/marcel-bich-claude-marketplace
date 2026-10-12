@@ -16,10 +16,5 @@ SPEC="§b4dk|discard uncommitted changes"
 # the current directory is the target: no credo pin lookup here (notices-pending.sh
 # already ran its context resolution and starts this script there)
 load_permissions "$(pwd)" || exit 1
-if perm_lookup "${PERMS_SECTION:-}" "$SPEC" "${PERMS_SECTION:-}" >/dev/null 2>&1; then
-    exit 1
-fi
-if [ -n "${DOGMA_INHERIT_FILE:-}" ] && perm_lookup_inherited "$SPEC" >/dev/null 2>&1; then
-    exit 1
-fi
+perm_defined "$SPEC" && exit 1
 exit 0

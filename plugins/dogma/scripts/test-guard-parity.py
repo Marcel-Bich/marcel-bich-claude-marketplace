@@ -98,6 +98,12 @@ def fill(root):
         "</permissions>\n", encoding="utf-8")
     (dirs["F"] / "DOGMA-PERMISSIONS.md").write_text(
         "<permissions>\n- [x] (§0lgy) May delete files\n</permissions>\n", encoding="utf-8")
+    # a file and a folder in the discard fixtures: "git checkout <path>" is a discard only for an existing
+    # path, "git checkout main" stays a branch switch
+    for name in ("D", "E", "F", "P"):
+        (dirs[name] / "notes.txt").write_text("fixture\n", encoding="utf-8")
+    for name in ("D", "E"):
+        (dirs[name] / "src").mkdir()
     (dirs["W"] / "DOGMA-PERMISSIONS.md").write_text(
         (dirs["X"] / "DOGMA-PERMISSIONS.md").read_text(encoding="utf-8"), encoding="utf-8")
     (dirs["X"] / ".git" / "hooks").mkdir(parents=True)
@@ -323,6 +329,34 @@ def long_json():
     return json.dumps({"spec": {"template": {"spec": {"containers": items}}}}, separators=(",", ":"))
 
 
+def unit_discard_reason(runner):
+    """[(ok, line)]: the discard ask/deny text. A missing (§b4dk) line says to ADD it (or run /dogma:sync),
+    a present [ ] line says to change it; neither says "Change [?] to [x]" for a missing line."""
+    cwd_missing = str(runner.dirs["F"])
+    cwd_off = str(runner.dirs["D"])
+    env = dict(runner.env, DOGMA_SESSION_DIR=cwd_missing)
+    results = []
+    for cwd, want_decision, must, must_not in (
+            (cwd_missing, "ask", ("has no line for (§b4dk)", "add `- [?] (§b4dk)", "/dogma:sync"),
+             ("Change [?] to [x]",)),
+            (cwd_off, "deny", ("Change [ ] to [?] or [x]",), ("has no line for",))):
+        event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                            "tool_input": {"command": "git restore notes.txt"}, "cwd": cwd, "session_id": ""})
+        result = subprocess.run(["bash", str(runner.scripts / "file-protection.sh")], input=event,
+                                capture_output=True, text=True, cwd=cwd, env=dict(env, DOGMA_SESSION_DIR=cwd),
+                                timeout=30)
+        try:
+            output = json.loads(result.stdout)["hookSpecificOutput"]
+            decision, reason = output["permissionDecision"], output["permissionDecisionReason"]
+        except (ValueError, KeyError, TypeError):
+            decision, reason = "no json", result.stdout.strip()[:200]
+        ok = decision == want_decision and all(text in reason for text in must) and \
+            not any(text in reason for text in must_not)
+        results.append((ok, "discard reason (%s, want %s): %s" % (os.path.basename(cwd), want_decision,
+                                                                   reason[:300])))
+    return results
+
+
 def unit_perf():
     """[(ok, line)]: long and pathological arguments are analysed well below the hook timeout."""
     import importlib.util
@@ -481,7 +515,7 @@ def main():
                     failed.append("FAIL " + line)
         if only in (None, "unit"):
             for ok, line in (unit_legacy_cwd() + unit_perf() + unit_scope_hint(runner) + unit_read_content(runner)
-                             + unit_mounts(runner)):
+                             + unit_mounts(runner) + unit_discard_reason(runner)):
                 passed, total = counts.get("unit", (0, 0))
                 counts["unit"] = (passed + ok, total + 1)
                 if not ok:

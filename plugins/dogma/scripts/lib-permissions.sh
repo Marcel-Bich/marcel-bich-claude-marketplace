@@ -562,6 +562,13 @@ perm_lookup_inherited() {
 # Which file defines a setting after load_permissions? Prints PERMS_FILE when its
 # block defines the spec, DOGMA_INHERIT_FILE when only the inherited block does,
 # else PERMS_FILE (the setting is missing everywhere and defaults).
+# Does the loaded file (or the file it inherits from) have a line for the setting? Usage: perm_defined <spec>
+perm_defined() {
+    local spec="$1"
+    perm_lookup "${PERMS_SECTION:-}" "$spec" "${PERMS_SECTION:-}" >/dev/null 2>&1 && return 0
+    [ -n "${DOGMA_INHERIT_FILE:-}" ] && perm_lookup_inherited "$spec" >/dev/null 2>&1
+}
+
 perm_defining_file() {
     local spec="$1"
     if [ -n "${DOGMA_INHERIT_FILE:-}" ] \
@@ -752,16 +759,21 @@ dogma_findings_blocked() {
 # directory means "no explicit target": the default lookup applies (credo pinned
 # project, current dir, session folder).
 # Sets DOGMA_STRICT_MODE and DOGMA_STRICT_SRC (the defining file, empty when none).
+# DOGMA_STRICT_UNDEFINED is "true" when the deciding file has no line for the setting
+# (the mode is then the missing default, see perm_missing_mode).
 # Usage: dogma_strictest_mode <spec> <mode when no file applies> <dir>...
 dogma_strictest_mode() {
-    local spec="$1" missing="$2" dir mode src rank best=-1
+    local spec="$1" missing="$2" dir mode src rank best=-1 undefined=""
     shift 2
     DOGMA_STRICT_MODE="auto"
     DOGMA_STRICT_SRC=""
+    DOGMA_STRICT_UNDEFINED=""
     for dir in "$@"; do
+        undefined=""
         if load_permissions "$dir"; then
             mode="$(get_permission_mode "$PERMS_SECTION" "$spec")"
             src="$(perm_defining_file "$spec")"
+            perm_defined "$spec" || undefined="true"
         else
             mode="$missing"
             src=""
@@ -775,6 +787,7 @@ dogma_strictest_mode() {
             best="$rank"
             DOGMA_STRICT_MODE="$mode"
             DOGMA_STRICT_SRC="$src"
+            DOGMA_STRICT_UNDEFINED="$undefined"
         fi
     done
 }
