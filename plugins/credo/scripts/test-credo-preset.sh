@@ -350,17 +350,22 @@ contains "show unknown falls back to balanced" "preset: balanced" "$out"
 contains "show unknown warns" "unknown preset" "$(err)"
 
 # --- 10. session start injects the main-agent prompt ------------------------
-hook_out() { # session_id source [mode] [session-decision] [task-backend] - prints additionalContext or nothing
+hook_run() { # session_id source [task-backend] - runs the hook on the current state, prints additionalContext
+    local sid="$1" src="$2" backend="${3:-}"
+    local modes="$TMP/hook/modes" decisions="$TMP/hook/decisions"
+    ( cd "$TMP/hook/cwd" && printf '{"session_id":"%s","source":"%s","cwd":"%s"}' "$sid" "$src" "$TMP/hook/cwd" \
+        | CLAUDE_CONFIG_DIR="$TMP/hook/cfg" CREDO_SESSION_MODES_DIR="$modes" CREDO_SESSION_DECISIONS_DIR="$decisions" \
+          CREDO_SESSION_START_SHORTHANDS=false CREDO_TMUX_HINT=false CREDO_TASK_BACKEND="$backend" \
+          bash "$HOOK" 2>/dev/null ) | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null
+}
+hook_out() { # session_id source [mode] [session-decision] [task-backend] - sets the state, then runs the hook
     local sid="$1" src="$2" mode="${3:-}" dec="${4:-}" backend="${5:-}"
     local modes="$TMP/hook/modes" decisions="$TMP/hook/decisions"
     mkdir -p "$modes" "$decisions" "$TMP/hook/cwd" "$TMP/hook/cfg"
     rm -f "$modes/$sid" "$decisions/$sid"
     [ -n "$mode" ] && printf '%s\n' "$mode" > "$modes/$sid"
     [ -n "$dec" ] && printf '%s\n' "$dec" > "$decisions/$sid"
-    ( cd "$TMP/hook/cwd" && printf '{"session_id":"%s","source":"%s","cwd":"%s"}' "$sid" "$src" "$TMP/hook/cwd" \
-        | CLAUDE_CONFIG_DIR="$TMP/hook/cfg" CREDO_SESSION_MODES_DIR="$modes" CREDO_SESSION_DECISIONS_DIR="$decisions" \
-          CREDO_SESSION_START_SHORTHANDS=false CREDO_TMUX_HINT=false CREDO_TASK_BACKEND="$backend" \
-          bash "$HOOK" 2>/dev/null ) | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null
+    hook_run "$sid" "$src" "$backend"
 }
 reset_cfg
 out="$(hook_out hookA startup active)"
@@ -428,6 +433,24 @@ contains "gsd: shorthand legend still appended" "USER SHORTHANDS" "$out"
 contains "gsd: preset block still before the legend" "Model preset 'balanced'" "$out"
 rm -rf "$TMP/hook/cfg"
 
+# /credo:disable in an already active session. The disable steps also record the session as
+# declined, so resume and compact do not bring the workflow back (an accepted session is active)
+out="$(hook_out hookL startup active accepted)"
+contains "disable active: workflow text before disable" "credo workflow is ACTIVE" "$out"
+# The three calls the disable skill makes (dir decision, session mode clear, session decision)
+( cd "$TMP/hook/cwd" && CLAUDE_CONFIG_DIR="$TMP/hook/cfg" "$PLUGIN_DIR/scripts/credo-dir-decision.sh" set declined >/dev/null )
+CLAUDE_CONFIG_DIR="$TMP/hook/cfg" CREDO_SESSION_MODES_DIR="$TMP/hook/modes" CLAUDE_CODE_SESSION_ID=hookL "$PLUGIN_DIR/hooks/session-mode-set.sh" clear >/dev/null
+CLAUDE_CONFIG_DIR="$TMP/hook/cfg" CREDO_SESSION_DECISIONS_DIR="$TMP/hook/decisions" CLAUDE_CODE_SESSION_ID=hookL "$PLUGIN_DIR/scripts/credo-decision-set.sh" declined >/dev/null
+check "disable steps: session decision is declined" "declined" "$(cat "$TMP/hook/decisions/hookL")"
+out="$(hook_run hookL resume)"
+contains "disabled resume: preset still injected" "$M" "$out"
+lacks "disabled resume: no KNOWLEDGE" "credo workflow is ACTIVE" "$out"
+lacks "disabled resume: no ASK" "NOT yet activated" "$out"
+out="$(hook_run hookL compact)"
+contains "disabled compact: preset still injected" "$M" "$out"
+lacks "disabled compact: no KNOWLEDGE" "credo workflow is ACTIVE" "$out"
+rm -rf "$TMP/hook/cfg"
+
 # --- 11. doc invariants: decision philosophy lives in the preset config --------
 SKILLS="$PLUGIN_DIR/skills"
 for f in items orchestration session-active session-autonomous role-plan migrate; do
@@ -457,6 +480,9 @@ contains "disable skill: presets stay on" "model presets" "$(cat "$SKILLS/disabl
 lacks "disable skill: no prompt-line claim" "prompt line" "$(cat "$SKILLS/disable/SKILL.md")"
 contains "disable command: presets stay on" "model presets" "$(cat "$PLUGIN_DIR/commands/disable.md")"
 lacks "disable command: no prompt-line claim" "prompt line" "$(cat "$PLUGIN_DIR/commands/disable.md")"
+contains "disable command: session decision recorded" 'Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-decision-set.sh:*)' "$(cat "$PLUGIN_DIR/commands/disable.md")"
+contains "disable command: shorthands stay on" "model presets and shorthands stay on" "$(cat "$PLUGIN_DIR/commands/disable.md")"
+contains "disable skill: session decision recorded" 'credo-decision-set.sh" declined' "$(cat "$SKILLS/disable/SKILL.md")"
 contains "setup: unset preset (exit 3) reads as nothing chosen" "exit 3, the key is unset" "$(cat "$PLUGIN_DIR/commands/setup.md")"
 lacks "setup: no builtin source wording" '`builtin:` means nothing' "$(cat "$PLUGIN_DIR/commands/setup.md")"
 

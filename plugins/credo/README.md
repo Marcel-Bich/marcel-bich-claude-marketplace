@@ -34,7 +34,7 @@ credo is built from small, composable pieces:
 | `/credo:sandbox-promote` | Promote an accepted sandbox artifact from `.credo/sandbox-tmp/` to `.credo/sandbox/` |
 | `/credo:explain` | Explain something in depth (what/why/example/consequences) |
 | `/credo:optimize` | Run the opt-in optimisation audit for this repo (read-only scan, findings offered one by one) |
-| `/credo:disable` | Switch the credo items workflow off for this directory (silence onboarding and the workflow text here; model presets and shorthands stay on, reversible) |
+| `/credo:disable` | Switch the credo items workflow off for this directory and this session (silence onboarding and the workflow text here; model presets and shorthands stay on, reversible) |
 | `/credo:enable` | Enable credo for this directory (opt in; overrides a previous decline) |
 | `/credo:self-restart` | Restart this session and resume exactly the same session in the same profile (e.g. to load plugin updates); `check` (dry run), `run --user-confirmed` / `run --announce 300` (autonomous only) `[--update]`, both only with `--no-background-work` after checking that no own background subagent or shell still runs, `cancel`, `status` |
 | `/credo:self-reload` | After a plugin update, the cheap first try: type `/reload-plugins` and `/reload-skills` into this session's own tmux pane once it is idle, then `.` to wake it (60 s fallback re-send); the woken turn checks whether the reload was enough, else `/credo:self-restart --update` (cc-up); `check`, `run --auto` (autonomous only) / `run --user-confirmed` (after an Ask yes) `[--update]`, `cancel`, `status`; no background work of any kind blocks it |

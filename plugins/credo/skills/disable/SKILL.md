@@ -6,9 +6,9 @@ description: >
   "turn credo off here", "no credo in this directory", "credo hier aus", "credo hier
   deaktivieren", "credo hier abschalten" - or runs the /credo:disable command. It persists a
   per-directory declined decision (so the SessionStart onboarding ASK and the workflow text stay
-  silent here across future sessions), clears the active session mode for the current session,
-  and switches keep-alive autonomy off (same effect as switching to active/passive). Model presets
-  and the shorthand legend stay on. Fully reversible via /credo:enable.
+  silent here across future sessions), records the current session as declined, clears its active
+  session mode, and switches keep-alive autonomy off (same effect as switching to active/passive).
+  Model presets and the shorthand legend stay on. Fully reversible via /credo:enable.
 ---
 
 # Disable the credo workflow here
@@ -35,7 +35,7 @@ If the user clearly means globally uninstalling credo (not just this directory),
 skill - explain that this only switches the items workflow off for the current directory (presets
 and shorthands stay on) and that removing the plugin is a separate `claude plugin` action.
 
-## What it does (run both)
+## What it does (run all three)
 
 Run these steps, then confirm briefly. Each step is independent and failure-safe; if one prints
 an error, report it plainly and continue with the other.
@@ -64,13 +64,23 @@ an error, report it plainly and continue with the other.
    With no mode file and a declined directory, the session-mode inject line stays silent (no
    `[credo-mode]` and no `[credo]` bootstrap line).
 
+3. Record the current session's credo decision as declined. Without this, a session that was
+   already active (decision `accepted`) would get the workflow text again on resume and compact,
+   because the hook counts an accepted session as active. The session id is resolved from
+   `CLAUDE_CODE_SESSION_ID`, the same way step 2 resolves it:
+
+   ```bash
+   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-decision-set.sh" declined
+   ```
+
 ## Confirm
 
 Confirm in one or two short sentences, for example:
 
-> credo workflow disabled for this directory - the onboarding question and the workflow text stay
-> silent here, the active session mode is cleared, and keep-alive autonomy is off. Model presets and
-> the shorthand legend keep working. Reversible any time with `/credo:enable` (or by setting a
+> credo workflow disabled for this directory and this session - the onboarding question and the
+> workflow text stay silent here, the active session mode is cleared, and keep-alive autonomy is
+> off. Model presets and the shorthand legend keep working. Reversible any time with `/credo:enable` (or by setting a
 > session mode with `/credo:session-active` or `/credo:session-passive`).
 
-Do not do anything else - this skill only disables the items workflow for the directory.
+Do not do anything else - this skill only disables the items workflow for the directory and the
+current session.
