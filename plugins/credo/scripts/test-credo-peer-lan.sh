@@ -4570,7 +4570,7 @@ def pk_n_more():
     res("PK n: a configured advertise_host is never refreshed", D.advertise_host == B_ADDR,
         "adv=%r" % D.advertise_host)
     # 2. a refreshed self address is advertised by the next hello
-    E = new_daemon([C_ADDR], "box-e", adv=B_ADDR)
+    E = new_daemon([C_ADDR], "box-e", wsl=True, adv=B_ADDR)
     refresh_self_ip(E, NEW)
     h = E._link_hello(C_ADDR)
     res("PK n: a refreshed self address is advertised in the next hello",
@@ -4595,6 +4595,20 @@ def pk_n_more():
     res("PK n: a recheck takes the self address from the netinfo it already read (no second probe)",
         took == NEW2 and calls == [], "adv=%r calls=%r" % (took, calls))
     res("PK n: an undetected self address keeps the last known one", kept == NEW2, "adv=%r" % kept)
+    # native: the advertised address keeps its route-lookup source (detect_self_ip), as before
+    N = new_daemon([C_ADDR], "box-n", adv=B_ADDR)
+    ncalls = []
+    real = mod.detect_self_ip
+    mod.detect_self_ip = lambda: ncalls.append(1) or NEW3
+    try:
+        os.environ["CREDO_PEER_LAN_NETINFO"] = json.dumps(
+            {"ip": NEW2, "subnet": "192.168.1.0/24", "gateway_mac": MAC, "wsl_nat_gateway": GW})
+        N.recheck_network()
+    finally:
+        mod.detect_self_ip = real
+        os.environ.pop("CREDO_PEER_LAN_NETINFO", None)
+    res("PK n: a native recheck advertises the route-lookup address (detect_self_ip), as before",
+        N.advertise_host == NEW3 and ncalls == [1], "adv=%r calls=%r" % (N.advertise_host, ncalls))
     # 4. WSL NAT: the claimed address behind the gateway is followed only to the
     #    peer's own earlier address, and a gateway claim never takes over another reservation
     A2 = new_daemon([B_ADDR, Q_ADDR], "box-a2", wsl=True, adv=C_ADDR)
@@ -4628,7 +4642,7 @@ def pk_n_more():
     res("PK n: behind the WSL gateway a claim of another paired peer's slot is refused",
         rec(A2, P2.peer_id)["slot"] == NEW3KEY and rec(A2, R2.peer_id)["slot"] == K61
         and ch61 is not None and ch61.pair_id == R2.peer_id
-        and any(e["slot"] == K61 for e in A2.pairs.pending()),
+        and any(e["new_id"] == P2.peer_id for e in A2.pairs.pending()),
         "p2=%r r2=%r" % (rec(A2, P2.peer_id), rec(A2, R2.peer_id)))
     # ... and never another peer's retired reservation either (the earlier links are dead
     # by now, as their TCP connections would be; they would otherwise fill the inbound cap)
@@ -4685,6 +4699,46 @@ def pk_n_more():
         {"slot": "192.168.1.%d:48610" % (100 + i), "ts": now} for i in range(20)]))
     res("PK n: at most 16 reservations are kept", len(rec(A4, P4.peer_id).get("retired", [])) == 16,
         "n=%r" % len(rec(A4, P4.peer_id).get("retired", [])))
+    # 7. one configured peer: every gateway link resolves to that one address (the single-peer
+    #    shortcut), so the gateway claim must still be consulted before it
+    A5 = new_daemon([B_ADDR], "box-a5", wsl=True, adv=C_ADDR)
+    P5 = new_daemon([C_ADDR], "box-p5", adv=B_ADDR)
+    wire(P5, C_ADDR, A5, B_ADDR)
+    res("PK n: precondition: one configured peer, paired at its address",
+        rec(A5, P5.peer_id) is not None and rec(A5, P5.peer_id)["slot"] == KEYB,
+        "rec=%r" % rec(A5, P5.peer_id))
+    refresh_self_ip(P5, NEW2)
+    wire(P5, C_ADDR, A5, GW)
+    res("PK n: with one configured peer, a proven move behind the WSL gateway follows",
+        rec(A5, P5.peer_id)["slot"] == NEWKEY2 and A5._get_channel(NEWKEY2) is not None,
+        "rec=%r" % rec(A5, P5.peer_id))
+    # 8. FOLLOW_ADDRESS=0: no gateway claim is consulted, today's behaviour exactly
+    A6 = new_daemon([B_ADDR], "box-a6", wsl=True, adv=C_ADDR)
+    P6 = new_daemon([C_ADDR], "box-p6", adv=B_ADDR)
+    wire(P6, C_ADDR, A6, B_ADDR)
+    refresh_self_ip(P6, NEW3)
+    os.environ["CREDO_PEER_LAN_FOLLOW_ADDRESS"] = "0"
+    try:
+        claim_off = A6._gateway_claim(GW, hello("box-p6", adv=NEW3, pid=P6.peer_id, chal="a" * 32,
+                                               dh=P6.pairs.identity()["pub"]), 48610)
+        wire(P6, C_ADDR, A6, GW)
+    finally:
+        os.environ.pop("CREDO_PEER_LAN_FOLLOW_ADDRESS", None)
+    res("PK n: FOLLOW_ADDRESS=0 consults no gateway claim and the pairing does not move",
+        claim_off is None and rec(A6, P6.peer_id)["slot"] == KEYB and A6._get_channel(NEW3KEY) is None,
+        "claim=%r rec=%r" % (claim_off, rec(A6, P6.peer_id)))
+    # 9. behind the gateway a claim of an address configured for ANOTHER peer (here an unpaired
+    #    legacy relay) is refused, even though the peer's own pairing is at a configured address
+    A7 = new_daemon([B_ADDR, Q_ADDR], "box-a7", wsl=True, adv=C_ADDR)
+    P7 = new_daemon([C_ADDR], "box-p7", adv=B_ADDR)
+    wire(P7, C_ADDR, A7, B_ADDR)
+    refresh_self_ip(P7, Q_ADDR)
+    wire(P7, C_ADDR, A7, GW)
+    ch7 = A7._get_channel(KEYQ)
+    res("PK n: behind the WSL gateway a claim of an address configured for another peer is refused",
+        rec(A7, P7.peer_id)["slot"] == KEYB and (ch7 is None or ch7.pair_id != P7.peer_id)
+        and any(e["slot"] == KEYQ for e in A7.pairs.pending()),
+        "rec=%r pending=%r" % (rec(A7, P7.peer_id), A7.pairs.pending()))
 guard("PK n more", pk_n_more)
 PYEOF
 PK_OUT="$("$PY" "$TMP/PK/pktest.py" "$DAEMON" "$TMP/PK" 2>&1)"
@@ -4695,7 +4749,7 @@ while IFS= read -r line; do
     esac
 done <<< "$PK_OUT"
 case "$PK_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL PK: traceback\n%s\n' "$PK_OUT" ;; esac
-check "PK: expected number of pairing results" "151" "$(printf '%s\n' "$PK_OUT" | grep -cE '^(PASS|FAIL) ')"
+check "PK: expected number of pairing results" "156" "$(printf '%s\n' "$PK_OUT" | grep -cE '^(PASS|FAIL) ')"
 
 # --- RO: an OLD peer (no link support) is marked after a few refusals; rosters keep -
 # flowing over fresh connections. The fake old relay reads one line per connection,

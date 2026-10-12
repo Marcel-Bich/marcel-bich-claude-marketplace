@@ -4092,12 +4092,20 @@ class Daemon(object):
             log("self-address not detected; rosters omit the advertise fields")
 
     def _refresh_advertise_host(self, net):
-        """Follow a changed self address (DHCP): new hellos and rosters advertise the ip
-        of the netinfo this recheck already read (the default-route adapter; under WSL
-        the Windows host LAN address), so a recheck runs no second probe. An undetected
+        """Follow a changed self address (DHCP): new hellos and rosters advertise the
+        current one. Under WSL that is the ip of the netinfo this recheck already read
+        (the Windows host LAN address), so a recheck runs no second powershell probe;
+        natively it stays the route lookup of detect_self_ip, as at start. An undetected
         or non-LAN address keeps the last known one; a configured advertise_host is never
         refreshed (see advertise_pinned)."""
-        ip = net.get("ip") if isinstance(net, dict) else None
+        if self.wsl:
+            ip = net.get("ip") if isinstance(net, dict) else None
+        else:
+            try:
+                ip = detect_self_ip()
+            except Exception as exc:
+                log("self-address detection failed: %s" % exc)
+                return
         if not ip or not is_lan_ipv4(ip) or ip == self.advertise_host:
             return
         old = self.advertise_host
@@ -4539,8 +4547,7 @@ class Daemon(object):
         if not peer_allowed_outbound(host, self.lan_state):
             return False
         if self._is_wsl_gw(src):
-            other = self.pairs.by_slot(slot)
-            return other is None or other["id"] == rec["id"]
+            return self._gateway_slot_ok(slot, rec)
         return src == host
 
     def _may_take_over(self, bound, pid, src, hello, slot):
@@ -5003,7 +5010,7 @@ class Daemon(object):
         a claim is only a candidate slot when the hello names a paired id whose pairing
         sits at another address; the key proof, not the claim, decides (see _pair_accept
         and _may_follow). Returns (host, port) or None."""
-        if not self._is_wsl_gw(src):
+        if not follow_address_enabled() or not self._is_wsl_gw(src):
             return None
         host = hello.get("advertise_host")
         if not isinstance(host, str) or not is_lan_ipv4(host):
@@ -5015,7 +5022,25 @@ class Daemon(object):
         rec = self.pairs.get(peer_id_str(hello.get("pid")))
         if rec is None or rec["slot"] == "%s:%d" % (host, port):
             return None
+        if not self._gateway_slot_ok("%s:%d" % (host, port), rec):
+            return None
         return (host, port)
+
+    def _gateway_slot_ok(self, slot, rec):
+        """Behind the WSL NAT gateway a claimed address may only be a free allowlisted
+        address or the paired peer's own earlier one. Never an address configured for a
+        peer (paired or not), never one held by another paired peer's slot or reservation:
+        those are never taken over behind the gateway."""
+        if slot in live_retired(rec):
+            return True
+        if self._configured_addr((slot.rsplit(":", 1)[0], int(slot.rsplit(":", 1)[1]))):
+            return False
+        other = self.pairs.by_slot(slot)
+        return other is None or other["id"] == rec["id"]
+
+    def _configured_addr(self, addr):
+        """True when addr (host, port) is a configured peer address."""
+        return any(p["host"] == addr[0] and p["port"] == addr[1] for p in self.peers)
 
     def _link_addr(self, src, hello):
         """Peer address an inbound link is keyed by. Resolved like a roster, but a
@@ -5024,12 +5049,11 @@ class Daemon(object):
         address, which can never collide with another configured peer."""
         state = self.lan_state
         lp = int(hello.get("listen_port") or DEFAULT_PORT)
+        claim = self._gateway_claim(src, hello, lp)
+        if claim is not None and self._link_claim_ok(src, claim, state):
+            return claim, self._configured_addr(claim)
         cand, known = self._resolve_peer_addr(
             src, lp, hello.get("advertise_host"), hello.get("advertise_port"))
-        if not known:
-            claim = self._gateway_claim(src, hello, lp)
-            if claim is not None and self._link_claim_ok(src, claim, state):
-                return claim, False
         if self._link_claim_ok(src, cand, state):
             return cand, known
         self._refuse_log(
