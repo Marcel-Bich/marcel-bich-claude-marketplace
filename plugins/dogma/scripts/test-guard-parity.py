@@ -444,9 +444,14 @@ def unit_todelete_entry(runner):
          todelete_entry('rm "$S"', variable), bare),
         ("discard", "[ ]", 'F=notes.txt && git restore "$F"', "deny",
          "discards uncommitted changes and is denied", False, None, None),
-        # F1 - a refused operand with an unassigned variable gets the retry hint, no entry is written
-        ("refused-variable", "[ ]", 'rm -rf "$PROJ/build"', "deny", "cannot be resolved before running", True,
-         None, None),
+        # F1 - an unset variable is "" as a candidate: "$PROJ/build" is /build, a hard path (no entry, no setting)
+        ("refused-variable", "[ ]", 'rm -rf "$PROJ/build"', "deny", "of a protected path (/build)", False, None, None),
+        # F1b - a variable with a deep candidate only: "" + the deep path follows the setting and is logged
+        ("unset-deep", "[ ]", 'rm -rf "$PROJ/deep/project/dir/build"', "deny", "BLOCKED by dogma", True,
+         todelete_entry("rm $PROJ/deep/project/dir/build", 'rm -rf "$PROJ/deep/project/dir/build"'), None),
+        # F1b - a literal assignment is resolved: a deep project path is no hard target, the setting logs it
+        ("literal-deep", "[ ]", 'R=/home/myuser/proj/old/renders && rm -- "$R/final.mp4"', "deny", "BLOCKED by dogma",
+         True, todelete_entry("rm $R/final.mp4", 'R=/home/myuser/proj/old/renders && rm -- "$R/final.mp4"'), None),
         # F2 - the variable sits in a later delete of the group, the first target is literal
         ("any-variable", "[ ]", 'S=/tmp/x/fx && rm -rf build && rm -rf "$S"', "deny", "BLOCKED by dogma", True,
          todelete_entry(None, 'S=/tmp/x/fx && rm -rf build && rm -rf "$S"'), None),
@@ -521,22 +526,24 @@ MOUNTS_FIXTURE = (
 )
 # (expected, command, CLAUDE_MB_DOGMA_PROTECTED_MOUNTS) run through the bash-guard hook in process;
 # {H} is the fake home. A network share or USB stick below /mnt or /media protects its mount point
-# (at any depth) and the levels down to depth 3; deeper files are ordinary. A mount below the home
-# and a declared mount protect their whole subtree.
+# (at any depth), the levels down to depth 4 and the first level below the mount point; deeper files are
+# ordinary (the delete setting decides). A mount found in /proc/self/mounts below the home (a cloud drive)
+# protects its mount point and first level the same way; a declared mount protects its whole subtree.
 MOUNT_CASES = (
     ("allow", "rm /mnt/nas/share/old/x.bin", ""),
-    ("allow", "rm -r /mnt/nas/share/tmpdir", ""),
-    ("allow", "rm -rf /media/usb/folder/x", ""),
+    ("deny", "rm -r /mnt/nas/share/tmpdir", ""),
+    ("deny", "rm -rf /media/usb/folder/x", ""),
     ("deny", "rm -rf /mnt/nas", ""),
     ("deny", "rm -rf /mnt/nas/share", ""),
     ("deny", "rm -rf /media/usb", ""),
     ("deny", "rm -rf /media/usb/folder", ""),
     ("deny", "rm -rf /mnt/nas/deep/share", ""),
-    ("allow", "rm -r /mnt/nas/deep/share/old", ""),
+    ("deny", "rm -r /mnt/nas/deep/share/old", ""),
     ("allow", "rm -rf /mnt/c/Users/alice/workspace/proj/old", ""),
     ("deny", "rm -rf /mnt/c", ""),
     ("deny", "rm -rf {H}/gdrive", ""),
-    ("deny", "rm -rf {H}/gdrive/old/x.bin", ""),
+    ("allow", "rm -rf {H}/gdrive/old/x.bin", ""),
+    ("deny", "rm -rf {H}/gdrive/old", ""),
     ("deny", "rm -rf /mnt/vault/a/b/c/x", "/mnt/vault"),
     ("allow", "rm -rf /mnt/vault2/a/b/c/x", "/mnt/vault"),
     ("allow", "rm -rf /mnt/c/Users/alice/workspace/proj/old", "/mnt/c"),

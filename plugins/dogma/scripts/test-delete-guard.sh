@@ -14,7 +14,7 @@ T="$(mktemp -d)"
 case "$T" in /tmp/?*) ;; *) echo "refusing: mktemp gave $T"; exit 1 ;; esac
 trap 'rm -rf -- "$T"' EXIT
 FH="$T/home/u"                      # fake HOME
-mkdir -p "$FH/proj/sub" "$T/plain/dir"
+mkdir -p "$FH/proj/sub" "$T/plain/dir" "$T/repo/.git"   # repo: a whole repository root (hard)
 ln -s "$FH" "$T/lnk"                # /tmp/... symlink pointing at the (fake) home
 ln -s "$T/plain" "$T/oklnk"         # harmless symlink inside the temp dir
 
@@ -73,16 +73,17 @@ expect deny  "$T" "rm -rf lnk/../u"
 expect deny  "$T" "unlink $T/lnk/../u/.bashrc"
 expect deny  "$T" "mv $T/lnk/../u $T/plain/x"
 expect allow "$T" "rm -rf $T/oklnk/../plain/dir"
-# a component before ".." that does not exist yet: where ".." leads is unknown
-expect deny  "$T" "mv $T/lnk $T/later && rm -rf $T/later/../u"
-expect deny  "$T" "rm -rf $T/nope/../plain/dir"
+# a component before ".." that does not exist yet: where ".." leads is unknown (unsure, not a hard deny)
+expect allow "$T" "mv $T/lnk $T/later && rm -rf $T/later/../u"
+expect allow "$T" "rm -rf $T/nope/../plain/dir"
 # env/sudo/doas options by the shared parser (working directory of the wrapped command)
 expect deny  "$T" "env --chdir=$FH rm -rf proj"
 expect deny  "$T" "env -iC $FH rm -rf proj"
 expect deny  "$T" "env -S '-C $FH' rm -rf proj"
 expect deny  "$T" "sudo -D$FH rm -rf proj"
 expect deny  "$T" "sudo --chd $FH rm -rf proj"
-expect deny  "$T" "env --frobnicate x rm -rf proj"
+# an unknown option or a login shell makes the working directory unknown: relative targets are unsure
+expect allow "$T" "env --frobnicate x rm -rf proj"
 expect allow "$T" "env -C $T/plain rm -rf dir"
 expect allow "$T" "sudo -u root rm -rf $T/plain/dir"
 expect allow "$T" "env -C $FH true; rm -rf $T/plain/dir"
@@ -90,8 +91,8 @@ expect allow "$T" "env -C $FH true; rm -rf $T/plain/dir"
 expect deny  "$T" "env -S 'rm\\_-rf\\_$FH'"
 expect deny  "$T" "env -S '-C\\_$FH rm -rf proj'"
 expect deny  "$T" "env -S 'rm\\_-rf\\_\\q$FH'"
-expect deny  "$T" "sudo -i rm -rf proj"
-expect deny  "$T" "sudo -iu root rm -rf proj"
+expect allow "$T" "sudo -i rm -rf proj"
+expect allow "$T" "sudo -iu root rm -rf proj"
 expect allow "$T" "env -S 'rm\\_-rf\\_$T/plain/dir'"
 # POSIXLY_CORRECT: the options end at the first operand, so "-t ~" are sources
 expect deny  "$T" "POSIXLY_CORRECT=1 mv $T/plain/a -t ~ $T/plain/b"
@@ -101,19 +102,21 @@ expect deny  "$FH" "rm -rf proj"
 
 # --- find
 expect deny  "$T" "find $T/lnk -delete"
-expect deny  "$T" "find -L $T/plain -delete"
-expect deny  "$T" "find $T/plain -follow -name x -delete"
+# find -L follows links while deleting: the start points are checked, the rest is unsure
+expect allow "$T" "find -L $T/plain -delete"
+expect allow "$T" "find $T/plain -follow -name x -delete"
 expect allow "$T" "find $T/plain -name '*.tmp' -delete"
 expect deny  "$T" "find ~ -name x -exec rm {} \\;"
 
-# --- unresolvable targets (strict) and safe mktemp variables
-expect deny  "$T" "rm -rf \"\$NOPE_UNSET_VAR\""
-expect deny  "$T" "rm -rf \$(cat list.txt)"
-expect deny  "$T" "rm -rf \`cat list.txt\`"
-expect deny  "$T" "eval \"rm -rf \$X\""
-expect deny  "$T" "find . -name '*.o' | xargs rm"
+# --- unresolvable targets: no hard denial since v1.46 (the delete setting decides, see the
+# permission section below); a shell variable that is not resolved for sure is "unsure"
+expect allow "$T" "rm -rf \"\$NOPE_UNSET_VAR\""
+expect allow "$T" "rm -rf \$(cat list.txt)"
+expect allow "$T" "rm -rf \`cat list.txt\`"
+expect allow "$T" "eval \"rm -rf \$X\""
+expect allow "$T" "find . -name '*.o' | xargs rm"
 expect allow "$T" "D=\$(mktemp -d); touch \"\$D/a\"; rm -rf \"\$D\""
-expect deny  "$T" "D=\$(mktemp -d); D=\$HOME; rm -rf \"\$D\""
+expect deny  "$T" "D=\$(mktemp -d); D=\$HOME; rm -rf \"\$D\""   # D=\$HOME: HOME is a candidate of D
 expect deny  "$T" "bash -c 'rm -rf ~/.config'"
 
 # --- mv sources
@@ -154,7 +157,8 @@ expect deny  "$T" "bash -lc \"rm -rf ~/proj\""
 expect deny  "$FH" "git clean -fdx"
 expect allow "$T/plain" "git clean -fdx"
 expect deny  "$FH" "rm -rf \"\$PWD\""
-expect deny  "$T" "rm -rf \${HOME%/}"
+# a parameter expansion is not resolved for sure (unsure)
+expect allow "$T" "rm -rf \${HOME%/}"
 
 # --- legacy destructive rules kept
 expect deny  "$T" "dd if=/dev/zero of=/dev/sda"
@@ -163,7 +167,7 @@ expect deny  "$T" "rsync -a --delete $T/plain/ ~/"
 
 # --- python under an import alias is the same call; the bare words stay no deletion
 expect deny  "$T" "python3 -c \"import os as o; o.remove('/home/u/.bashrc')\""
-expect deny  "$T" "python3 -c \"import os as o; o.removedirs('/home/u/a/b')\""
+expect allow "$T" "python3 -c \"import os as o; o.removedirs('/home/u/a/b')\""  # depth 4: follows the setting
 expect deny  "$T" "python3 -c \"import os as o; o.remove(o.path.expanduser('~/.bashrc'))\""
 expect deny  "$T" "python3 -c \"import shutil as s; s.move('/home/u/git', '/tmp/x')\""
 expect deny  "$T" "python3 -c \"import shutil as s; s.rmtree('/home/u/git')\""
@@ -232,11 +236,11 @@ expect allow "$T" "rm /mnt/d/data/proj/models/x.gguf"
 expect allow "$T" "rm -r /mnt/d/data/proj/old"
 expect allow "$T" "rm -rf /media/usb/x/y/old"
 # a network share or USB stick (any filesystem, not declared): the mount point and the levels down to
-# depth 3 stay refused, deeper files are ordinary. These results do not depend on the host's
-# /proc/self/mounts: a mount point up to depth 3 is refused by the depth rule anyway
+# depth 4 stay refused, deeper files are ordinary. These results do not depend on the host's
+# /proc/self/mounts: a mount point up to depth 4 is refused by the depth rule anyway
 expect allow "$T" "rm /mnt/nas/share/old/x.bin"
-expect allow "$T" "rm -r /mnt/nas/share/tmpdir"
-expect allow "$T" "rm -rf /media/usb/folder/x"
+expect deny  "$T" "rm -r /mnt/nas/share/tmpdir"
+expect deny  "$T" "rm -rf /media/usb/folder/x"
 expect deny  "$T" "rm -rf /mnt"
 expect deny  "$T" "rm -rf /mnt/d"
 expect deny  "$T" "rm -rf /mnt/d/data"
@@ -252,22 +256,24 @@ expect deny  "$T" "rm -rf /mnt/c/Users/alice"
 expect deny  "$T" "rm -rf /mnt/c/Users/alice/Documents"
 expect allow "$T" "rm -rf /mnt/c/Users/alice/workspace/proj/old"
 expect deny  "$T" "rm -rf /etc/x"
-expect deny  "$T" "rm -rf /opt/x/y/z"
+expect allow "$T" "rm -rf /opt/x/y/z"    # depth 4 outside the hard list: the setting decides
 # a declared mount keeps its whole subtree protected; a sibling with a longer name is ordinary
 PM="/mnt/vault"
 expect deny  "$T" "rm -rf /mnt/vault"
 expect deny  "$T" "rm -rf /mnt/vault/a/b/c/x"
 expect allow "$T" "rm -rf /mnt/vault2/a/b/c/x"
 PM=""
-# a home that itself sits below /mnt keeps the strict rule for its own files (the path is only analysed)
+# a home that itself sits below /mnt: its home, parent and first level are hard, deeper files follow the setting
 run_home() { # home command -> deny or allow
     local out
     out="$(jq -n --arg c "$2" --arg d "$T" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
         HOME="$1" CLAUDE_MB_DOGMA_ENABLED=true CLAUDE_MB_DOGMA_PROTECTED_MOUNTS="" bash "$HOOK" 2>/dev/null)"
     case "$out" in *'"deny"'*) echo deny ;; *) echo allow ;; esac
 }
+got="$(run_home /mnt/d/home-u "rm -rf /mnt/d/home-u/proj")"
+if [ "$got" = deny ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL want deny got $got: home first level below /mnt"; fi
 got="$(run_home /mnt/d/home-u "rm -rf /mnt/d/home-u/proj/old")"
-if [ "$got" = deny ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL want deny got $got: home below /mnt"; fi
+if [ "$got" = allow ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL want allow got $got: home below /mnt, deeper file"; fi
 got="$(run_home /mnt/d/home-u "rm -rf /mnt/d/data/proj/old")"
 if [ "$got" = allow ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL want allow got $got: project below /mnt with home below /mnt"; fi
 
@@ -442,6 +448,149 @@ expect allow "$T" "printf 'echo hi' > $T/plain/x.sh && bash -n $T/plain/x.sh"
 expect allow "$T" "printf 'echo hi' > $T/plain/x.sh && sh -n $T/plain/x.sh"
 expect deny  "$T" "printf 'echo hi' > $T/plain/x.sh && bash $T/plain/x.sh"
 expect deny  "$T" "printf 'echo hi' > $T/plain/x.sh && bash +n $T/plain/x.sh"
+
+# --- hard list by depth (v1.46): outside the temp roots an absolute path of depth <= 3 is hard,
+# below /mnt and /media depth <= 4; deeper paths follow the delete setting (the permission section)
+expect deny  "$T" "rm -rf /usr/local"
+expect deny  "$T" "rm -rf /home/alice"
+expect deny  "$T" "rm -rf /home/alice/.ssh"
+expect deny  "$T" "rm -rf /var/lib/x"
+expect deny  "$T" "rm -rf /opt/a/b"
+expect deny  "$T" "rm -rf /mnt/c"
+expect deny  "$T" "rm -rf /mnt/c/Users/alice/Pictures"
+expect deny  "$T" "rm -rf /mnt/nas/share/folder"
+expect deny  "$T" "rm -rf $T/repo"             # a whole repository root
+expect allow "$T" "rm -rf /mnt/c/Users/alice/work/proj/old"
+expect allow "$T" "rm -rf /home/alice/proj/old/build"
+expect allow "$T" "rm -rf /home/alice/proj/old"
+
+# --- literal variables (v1.46): a variable target is judged by its candidate values. Candidates: the
+# environment value (set: always; unset or empty: the empty value, unless a certain literal assignment
+# governs the use) and every literal value the command gives to the name, anywhere (also after ||, in a
+# pipe, in a subshell, as prefix, in a for loop or printf -v). Any candidate on the hard list makes the
+# target hard. A certain single value that is not hard follows the setting; a value that is not certain is
+# unsure. A literal with ~, $HOME or $NAME is expanded once (its candidates), a glob stays a glob; a literal with
+# a backtick, a blank or a backslash is unknown and no candidate.
+expect deny  "$T" "R=/home; rm -rf \"\$R\""
+expect deny  "$T" "R=/home && rm -rf \"\$R\""
+expect deny  "$T" "R='/home'; rm -rf \"\$R\""
+expect deny  "$T" "R=$FH/proj; rm -rf \"\$R\""
+expect deny  "$T" "R=$T/repo; rm -rf \"\$R\""
+expect allow "$T" "R=$FH/proj/sub/renders; rm -- \"\$R/final.mp4\""   # the peer repro: a deep project folder
+expect deny  "$T" "R=/home | rm -rf \"\$R\""
+expect deny  "$T" "R=/home || rm -rf \"\$R\""
+expect deny  "$T" "R=/home; R=$FH/proj/sub; rm -rf \"\$R\""           # /home is a candidate too
+expect deny  "$T" "rm -rf \"\$R\"; R=/home"                             # used before the assignment: still a candidate
+expect deny  "$T" "R=~; rm -rf \"\$R\""                                 # ~ is expanded: HOME is a candidate
+expect deny  "$T" "R=\$HOME; rm -rf \"\$R\""                            # $HOME is expanded: HOME is a candidate
+expect deny  "$T" "R=/ho*; rm -rf \"\$R\""                              # a glob is matched: /ho* reaches /home
+expect deny  "$T" "if true; then R=/home; fi; rm -rf \"\$R\""
+expect deny  "$T" "(R=/home); rm -rf \"\$R\""
+
+# --- variable targets that are hard whatever the delete setting says (an unset variable is "", so
+# "$UNSET/x" is /x, depth 1; a default word is a candidate; each candidate counts)
+expect deny  "$T" 'rm -rf "$DGL_UNSET"/*'
+expect deny  "$T" 'rm -rf "$DGL_UNSET/"'
+expect deny  "$T" 'rm -rf $DGL_UNSET/home'
+expect deny  "$T" 'rm -rf "$DGL_UNSET/x"'
+expect deny  "$T" 'cd ~ && rm -rf "$DGL_UNSET"*'
+expect deny  "$T" 'rm -rf "${DGL_UNSET:-/}"'
+expect deny  "$T" 'R=/home rm -rf "$R"/*'
+expect deny  "$T" "bash -c 'rm -rf \"\$DGL_UNSET\"/*'"
+expect deny  "$T" 'X=; rm -rf "$X"/*'
+expect deny  "$T" 'X=""; rm -rf "$X/home"'
+expect deny  "$T" 'R=/home; rm -rf "$R"'
+expect deny  "$T" 'R=/tmp; R=/home; rm -rf "$R"'
+expect deny  "$T" 'R=/home; R=/home; rm -rf "$R"'
+expect deny  "$T" 'R=/home || true; rm -rf "$R"'
+expect deny  "$T" 'R=/home | cat; rm -rf "$R"'
+expect deny  "$T" '(R=/home); rm -rf "$R"'
+expect deny  "$T" 'for R in /home; do rm -rf "$R"; done'
+expect deny  "$T" 'R=/home; read R; rm -rf "$R"'
+expect deny  "$T" 'printf -v R /home; rm -rf "$R"'
+# a literal with ~, $HOME, $NAME or a default is expanded once: its candidates count (v1.46.3)
+expect deny  "$T" 'R=~; rm -rf "$R"'
+expect deny  "$T" 'R="$HOME"; rm -rf "$R"'
+expect deny  "$T" 'S=/home; T=$S; rm -rf "$T"'
+expect deny  "$T" 'for R in "$HOME"; do rm -rf "$R"; done'
+expect deny  "$T" 'R=${S:-/home}; rm -rf "$R"'
+# a glob in a literal is matched like a glob: /ho* reaches /home (depth 1)
+expect deny  "$T" "R='/ho*'; rm -rf \$R"
+# more candidate values than the limit: a hard deny with a reason (fail closed), not an unsure target
+many=$(for i in $(seq 1 70); do printf 'R=/d%s; ' "$i"; done)
+got="$(jq -n --arg c "${many}rm -rf \"\$R\"" --arg d "$T" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+    HOME="$FH" CLAUDE_MB_DOGMA_ENABLED=true CLAUDE_MB_DOGMA_PROTECTED_MOUNTS="" bash "$HOOK" 2>/dev/null)"
+case "$got" in *'"deny"'*'possible values'*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); echo "FAIL want deny with the candidate limit reason: $got" ;; esac
+# the same targets with the variable set in the environment (a set environment value always counts)
+export DGL_HARD=/home
+expect deny  "$T" 'rm -rf "$DGL_HARD"/x'
+unset DGL_HARD
+export DGL_DEEP="$FH/proj/sub/renders"
+expect allow "$T" 'rm -rf "$DGL_DEEP/x"'
+unset DGL_DEEP
+# an unset variable with a deep value is no hard target: "" + /deep/project/dir/x follows the setting
+expect allow "$T" 'rm -rf "$DGL_UNSET_BUT/deep/project/dir/x"'
+
+# --- unsure run-time forms: a literal eval text is walked, python paths that cannot be read stay unsure
+expect deny  "$T" "eval \"rm -rf ~\""
+expect allow "$T" "eval \"rm x\""
+expect allow "$T" "python3 -c \"import os; os.remove(sys.argv[1])\""
+
+# ~+ is the working directory: the directory itself and its parent stay hard
+expect deny  "$T/plain/dir" "rm -rf ~+"
+expect deny  "$FH/proj/sub" "rm -rf ~+/.."
+
+# --- non-delete protections stay hard whatever the setting
+expect deny  "$T" "git commit --no-verify -m x"
+expect deny  "$T" "echo x > $FH/proj/.git/hooks/pre-commit"
+expect deny  "$T" "echo \"\$GITHUB_TOKEN\""
+expect deny  "$T" "cp $T/plain/dir/x $T/plain/DOGMA-PERMISSIONS.md"
+
+# --- the delete setting (file-protection.sh behind delete-guard.sh): [x] runs, [?] asks, [ ] denies and
+# writes TO-DELETE.md. The hard list is denied before the setting and stays denied with [x].
+PERM="$T/perm"
+for box in x q d; do
+    case "$box" in x) mark=x ;; q) mark='?' ;; d) mark=' ' ;; esac
+    mkdir -p "$PERM/$box"
+    printf '<permissions>\n- [%s] (§0lgy) May delete files\n- [ ] (§b4dk) Discard uncommitted changes\n</permissions>\n' \
+        "$mark" > "$PERM/$box/DOGMA-PERMISSIONS.md"
+done
+
+# chain <folder> <command> -> deny-hard (delete-guard.sh), deny, ask or allow (file-protection.sh)
+chain() {
+    local input out
+    input="$(jq -n --arg c "$2" --arg d "$1" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}')"
+    out="$(printf '%s' "$input" | HOME="$FH" CLAUDE_MB_DOGMA_ENABLED=true DOGMA_CREDO_CONFIG=none \
+        DOGMA_SESSION_DIR="$1" bash "$HOOK" 2>/dev/null)"
+    case "$out" in *'"deny"'*) echo deny-hard; return ;; esac
+    # run in the folder itself, like the hooks in a session (file-protection.sh exempts a hydra worktree by cwd)
+    out="$(cd "$1" && printf '%s' "$input" | HOME="$FH" CLAUDE_MB_DOGMA_ENABLED=true CLAUDE_MB_DOGMA_FILE_PROTECTION=true \
+        DOGMA_CREDO_CONFIG=none DOGMA_SESSION_DIR="$1" bash "$HERE/file-protection.sh" 2>/dev/null)"
+    case "$out" in *'"deny"'*) echo deny ;; *'"ask"'*) echo ask ;; *) echo allow ;; esac
+}
+expect_chain() { # want folder command
+    local got
+    got="$(chain "$2" "$3")"
+    if [ "$got" = "$1" ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); printf 'FAIL want %s got %s: %s (folder %s)\n' "$1" "$got" "$3" "$2"; fi
+}
+# setting_rows <command> <want in [x]> <want in [?]> <want in [ ]>
+setting_rows() {
+    expect_chain "$2" "$PERM/x" "$1"
+    expect_chain "$3" "$PERM/q" "$1"
+    expect_chain "$4" "$PERM/d" "$1"
+}
+setting_rows 'rm -rf "$NOPE_UNSET_VAR/x"' deny-hard deny-hard deny-hard   # "" + /x is /x, depth 1: hard
+setting_rows 'rm -rf "$NOPE_UNSET_BUT/deep/project/dir/x"' allow ask deny
+setting_rows 'R=/home rm -rf "$R"/*' deny-hard deny-hard deny-hard
+setting_rows 'rm "$(cat list.txt)"' allow ask deny
+setting_rows "find . -name '*.o' | xargs rm" allow ask deny
+setting_rows "eval \"rm $FH/proj/old/x\"" allow ask deny   # literal eval text is walked: an ordinary target
+setting_rows "R=$FH/proj/sub/renders; rm -- \"\$R/final.mp4\"" allow ask deny
+setting_rows "rm -rf $FH/proj/sub/old/build" allow ask deny
+setting_rows "R=/home; rm -rf \"\$R\"" deny-hard deny-hard deny-hard
+setting_rows "rm -rf /home/alice" deny-hard deny-hard deny-hard
+[ -s "$PERM/d/TO-DELETE.md" ] && [ ! -e "$PERM/x/TO-DELETE.md" ] && [ ! -e "$PERM/q/TO-DELETE.md" ] \
+    && PASS=$((PASS + 1)) || { FAIL=$((FAIL + 1)); echo "FAIL TO-DELETE.md only in the [ ] folder"; }
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

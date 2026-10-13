@@ -81,8 +81,10 @@ fi
 # Read JSON input from stdin
 INPUT=$(cat 2>/dev/null || true)
 
-# Dogma cannot resolve a shell variable in a target ($NAME, $1, ${...}). delete-guard.py does not follow
-# assignments in the same command (deliberately), so the owner retries with the literal path.
+# Dogma cannot resolve a shell variable in a target ($NAME, $1, ${...}) to one value. A target built on it is
+# judged by its candidate values in bash-guard.py (the environment value or empty, and every literal value the
+# command gives to the name): a hard candidate denies, otherwise the delete setting decides, so the owner
+# allows it or retries with the literal path.
 has_shell_variable() {
     [[ "$1" =~ \$[A-Za-z_0-9{] ]]
 }
@@ -200,8 +202,9 @@ BLOCK_UNDEFINED=""
 BLOCK_VARIABLE=""
 if [ "$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)" = "Bash" ] && \
     FINDINGS="$(dogma_bash_findings "$INPUT")"; then
-    # The analysis refused the command (or ran out of time): deny here too, so a
-    # finding is never silently skipped.
+    # The analysis refused the command (a hard-list path, a non-delete rule, a parse failure or a
+    # timeout): deny here too, so a finding is never silently skipped. Unsure delete targets are
+    # findings, not refusals: they follow the delete setting below.
     BLOCKED_REASON="$(dogma_findings_blocked "$FINDINGS")"
     if [ -n "$BLOCKED_REASON" ]; then
         # The refused operand is named in the reason, so a shell variable there gets the retry hint too
