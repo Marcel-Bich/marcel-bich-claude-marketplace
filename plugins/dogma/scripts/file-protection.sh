@@ -71,15 +71,40 @@ fi
 # Read JSON input from stdin
 INPUT=$(cat 2>/dev/null || true)
 
+# Dogma cannot resolve a shell variable in a target ($NAME, $1, ${...}). delete-guard.py does not follow
+# assignments in the same command (deliberately), so the owner retries with the literal path.
+has_shell_variable() {
+    [[ "$1" =~ \$[A-Za-z_0-9{] ]]
+}
+
+# The Bash command as one line for a TO-DELETE.md entry. Newlines become " ; ", backticks become
+# single quotes (a backtick would end the inline code span), and the text is capped at 300 characters.
+todelete_command_text() {
+    local text="$1" quote="'"
+    text="${text//$'\n'/ ; }"
+    text="${text//\`/$quote}"
+    if [ "${#text}" -gt 300 ]; then
+        text="${text:0:300}..."
+    fi
+    printf '%s' "$text"
+}
+
 # Block (ask or deny + TO-DELETE.md) per DELETE_MODE; BLOCKED/TARGET/REASON describe it.
 report_delete() {
+    # A discard keeps its own reason. A delete with a shell-variable target gets the hint, and in
+    # TO-DELETE.md the command too, because "rm $S" alone does not tell the owner what was meant.
+    local variable_target="" hint=""
+    if [ "$BLOCK_KIND" = "delete" ] && has_shell_variable "$TARGET"; then
+        variable_target="true"
+        hint=" The target uses a shell variable dogma cannot resolve - retry with the literal path."
+    fi
     if [ "$DELETE_MODE" = "ask" ]; then
         # Ask mode: Prompt user for confirmation
         if [ "$BLOCK_KIND" = "discard" ] && [ "$BLOCK_UNDEFINED" = "true" ]; then
             # The file has no line for the discard setting yet: the step is to add it (default [?]), not to change it
             REASON_MSG="dogma: $BLOCKED ${TARGET:-command} discards uncommitted changes and needs confirmation. ${DELETE_SRC:-${PERMS_FILE:-a DOGMA-PERMISSIONS.md}} has no line for (§b4dk) yet: add \`- [?] (§b4dk) Discard uncommitted changes\` to its <permissions> block, or run /dogma:sync or /dogma:permissions. Until then this asks; set [x] to allow it."
         else
-            REASON_MSG="dogma: $BLOCKED ${TARGET:-command} requires confirmation. Change [?] to [x] in ${DELETE_SRC:-$PERMS_FILE} to allow automatically."
+            REASON_MSG="dogma: $BLOCKED ${TARGET:-command} requires confirmation. Change [?] to [x] in ${DELETE_SRC:-$PERMS_FILE} to allow automatically.$hint"
         fi
         REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
         output_ask "$REASON_MSG"
@@ -106,10 +131,14 @@ HEADER
     fi
 
     # Append as checklist item (so checklist-tracking picks it up)
-    echo "- [ ] \`$BLOCKED ${TARGET:-unknown}\` - $REASON ($TIMESTAMP)" >> "$TO_DELETE_FILE"
+    ENTRY="- [ ] \`$BLOCKED ${TARGET:-unknown}\` - $REASON ($TIMESTAMP)"
+    if [ -n "$variable_target" ]; then
+        ENTRY="$ENTRY - command: \`$(todelete_command_text "$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)")\`"
+    fi
+    echo "$ENTRY" >> "$TO_DELETE_FILE"
 
     # Deny with info message
-    REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} logged to TO-DELETE.md. Change [ ] to [x] or [?] in ${DELETE_SRC:-${PERMS_FILE:-a DOGMA-PERMISSIONS.md (none found)}}."
+    REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} logged to TO-DELETE.md. Change [ ] to [x] or [?] in ${DELETE_SRC:-${PERMS_FILE:-a DOGMA-PERMISSIONS.md (none found)}}.$hint"
     REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
     output_deny "$REASON_MSG"
 }
