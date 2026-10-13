@@ -137,6 +137,84 @@ check "rounding is half-up, not floor or half-even" "2.3" "$(limit_round1 2.25)"
 check "single-pass averages" "50.0 5.0 - 2.4 - -" "$(history_averages "$NOW")"
 check "no history -> empty" "" "$(HISTORY_FILE=$TEST_DIR/none.jsonl get_avg_peak '."5h".api' 168)"
 
+echo ">>> averages: a dip that recovers (30,28,30,29,30) is no consumption (running max)"
+HISTORY_FILE="$TEST_DIR/jitter.jsonl"
+H0=$((NOW - 4 * 3600))
+{
+    for v in 30 28 30 29 30; do jq -cn --arg ts "$(date -u -d "@$H0" +%Y-%m-%dT%H:%M:%SZ)" --argjson v "$v" '{ts:$ts,"5h":{api:$v},"7d":{api:1}}'; H0=$((H0 + 3600)); done
+} > "$HISTORY_FILE"
+check "jitter adds no consumption" "0.0" "$(get_avg_rate '."5h".api' 24 "$NOW")"
+
+echo ">>> averages: samples of two windows interleaved (different resets_at) are not consumption"
+# In the observed data, samples of a second window (resets_at later, value 1-2) sat
+# between samples of the first window (97 -> 98). The jump 2 -> 96 between the
+# two windows was counted as 94 points of consumption.
+HISTORY_FILE="$TEST_DIR/interleave.jsonl"
+W0=$((NOW - 3600))
+RA=$(iso $((NOW + 86400)))
+RB=$(iso $((NOW + 3 * 86400)))
+{
+    jq -cn --arg ts "$(date -u -d "@$((W0 + 0))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$RA" '{ts:$ts,"5h":{api:0},"7d":{api:90,reset:$r}}'
+    jq -cn --arg ts "$(date -u -d "@$((W0 + 600))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$RA" '{ts:$ts,"5h":{api:0},"7d":{api:95,reset:$r}}'
+    jq -cn --arg ts "$(date -u -d "@$((W0 + 1200))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$RB" '{ts:$ts,"5h":{api:0},"7d":{api:1,reset:$r}}'
+    jq -cn --arg ts "$(date -u -d "@$((W0 + 1800))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$RB" '{ts:$ts,"5h":{api:0},"7d":{api:2,reset:$r}}'
+    jq -cn --arg ts "$(date -u -d "@$((W0 + 2400))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$RA" '{ts:$ts,"5h":{api:0},"7d":{api:96,reset:$r}}'
+    jq -cn --arg ts "$(date -u -d "@$((W0 + 3000))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$RA" '{ts:$ts,"5h":{api:0},"7d":{api:97,reset:$r}}'
+} > "$HISTORY_FILE"
+# window A: 90 is its baseline, then +5 (95), +1 (96), +1 (97); window B starts
+# later than A, so its first value 1 counts as a restart, then +1 (2) -> 9 over 1h
+check "interleaved windows: consumption per window only" "9.0" "$(get_avg_rate '."7d".api' 24 "$((W0 + 3600))")"
+
+echo ">>> averages: a reset flipping hh:29:59.9 / hh:30:00.1 is one window (5h peak)"
+# In the observed data the 5h resets_at alternates across the half hour, and hour
+# buckets split one window into several segments, so the completed peaks shrink.
+HISTORY_FILE="$TEST_DIR/flip.jsonl"
+B=$(( (NOW / 3600 - 3) * 3600 + 1800 ))
+FA="$(date -u -d "@$((B - 1))" +%Y-%m-%dT%H:%M:%S).926553+00:00"
+FB="$(date -u -d "@$B" +%Y-%m-%dT%H:%M:%S).146200+00:00"
+FW2="$(date -u -d "@$((B + 3600))" +%Y-%m-%dT%H:%M:%S).000000+00:00"
+FW3=$(iso $((NOW + 3600)))
+T0=$((NOW - 3 * 3600))
+{
+    jq -cn --arg ts "$(date -u -d "@$((T0 + 0))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$FA" '{ts:$ts,"5h":{api:10,reset:$r}}'
+    jq -cn --arg ts "$(date -u -d "@$((T0 + 600))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$FB" '{ts:$ts,"5h":{api:30,reset:$r}}'
+    jq -cn --arg ts "$(date -u -d "@$((T0 + 1200))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$FA" '{ts:$ts,"5h":{api:60,reset:$r}}'
+    jq -cn --arg ts "$(date -u -d "@$((T0 + 1800))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$FW2" '{ts:$ts,"5h":{api:5,reset:$r}}'
+    jq -cn --arg ts "$(date -u -d "@$((T0 + 2400))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$FW2" '{ts:$ts,"5h":{api:40,reset:$r}}'
+    jq -cn --arg ts "$(date -u -d "@$((T0 + 3000))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$FW3" '{ts:$ts,"5h":{api:10,reset:$r}}'
+} > "$HISTORY_FILE"
+# completed windows peak at 60 and 40 (the running window at 10 is excluded)
+check "half-hour flip keeps one window (avg peak 50)" "50.0" "$(get_avg_peak '."5h".api' 168)"
+
+echo ">>> averages: unparsable or missing ts lines are skipped, the other samples still count"
+# Same fixture as the peak test (peaks 60 and 40, rate 5.0 over 20 h) with three bad lines:
+# a non-date ts, a missing ts, and a 7d value that would add 8 points if it were read.
+HISTORY_FILE="$TEST_DIR/badts.jsonl"
+H0=$((NOW - 20 * 3600))
+{
+    for v in 10 30 60; do jq -cn --arg ts "$(date -u -d "@$H0" +%Y-%m-%dT%H:%M:%SZ)" --argjson v "$v" '{ts:$ts,"5h":{api:$v},"7d":{api:1}}'; H0=$((H0 + 3600)); done
+    echo '{"ts":"not-a-date","5h":{"api":99},"7d":{"api":9}}'
+    for v in 5 25 40; do jq -cn --arg ts "$(date -u -d "@$H0" +%Y-%m-%dT%H:%M:%SZ)" --argjson v "$v" '{ts:$ts,"5h":{api:$v},"7d":{api:2}}'; H0=$((H0 + 3600)); done
+    echo '{"5h":{"api":99},"7d":{"api":9}}'
+    for v in 2 10; do jq -cn --arg ts "$(date -u -d "@$H0" +%Y-%m-%dT%H:%M:%SZ)" --argjson v "$v" '{ts:$ts,"5h":{api:$v},"7d":{api:3}}'; H0=$((H0 + 3600)); done
+} > "$HISTORY_FILE"
+check "bad ts lines: avg peak still 50.0" "50.0" "$(get_avg_peak '."5h".api' 168)"
+check "bad ts lines: avg usage per hour still 5.0" "5.0" "$(get_avg_rate '."5h".api' 24 "$NOW")"
+check "bad ts lines: single-pass averages unchanged" "50.0 5.0 - 2.4 - -" "$(history_averages "$NOW")"
+
+echo ">>> averages: the first sample with resets_at is no restart (legacy 45 -> resets_at 47 -> 50 is 5)"
+# A sample without resets_at followed by the first sample that has one is a data
+# format change, not a window reset: the neighbours decide (47 - 45 = 2), then 50 - 47 = 3.
+HISTORY_FILE="$TEST_DIR/legacy.jsonl"
+L0=$((NOW - 3600))
+LR=$(iso $((NOW + 86400)))
+{
+    jq -cn --arg ts "$(date -u -d "@$L0" +%Y-%m-%dT%H:%M:%SZ)" '{ts:$ts,"5h":{api:45}}'
+    jq -cn --arg ts "$(date -u -d "@$((L0 + 600))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$LR" '{ts:$ts,"5h":{api:47,reset:$r}}'
+    jq -cn --arg ts "$(date -u -d "@$((L0 + 1200))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$LR" '{ts:$ts,"5h":{api:50,reset:$r}}'
+} > "$HISTORY_FILE"
+check "null -> resets_at uses the neighbours (5 over 1 h)" "5.0" "$(get_avg_rate '."5h".api' 24 "$((L0 + 3600))")"
+
 echo ">>> refresh-usage honours the stored backoff (no API call, no credentials read)"
 mkdir -p "$PLUGIN_DATA_DIR"
 jq -n --argjson r $((NOW + 300)) '{consecutive_failures: 2, last_rate_limit: "x", retry_at: $r}' \

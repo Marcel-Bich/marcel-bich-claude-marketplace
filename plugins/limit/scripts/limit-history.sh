@@ -171,36 +171,71 @@ append_history() {
 # Two meaningful replacements, both from the account-wide API utilization:
 #   get_avg_peak <field> <hours>   average peak per completed window
 #   get_avg_rate <field> <hours>   average consumption per hour (idle included)
-# Windows are segmented where the utilization drops sharply (same rule as the
-# reset detection: > 20 points, or below half of a value >= 10) or where the
-# recorded resets_at changes.
+# Samples are grouped by their recorded resets_at (minute resolution), so samples
+# of different windows interleaved in one file never count as consumption.
+# Inside a window, consumption is measured against its running max. A sharp drop
+# (more than 20 points, or below half of a value >= 10) is a restart, and a dip
+# below the max is noise. A window's first sample counts as a restart from 0 only
+# when the previous sample had another resets_at (a real window change). Entering a
+# window from a sample without resets_at, or from the first sample of the history,
+# uses the neighbouring samples instead, because that is a data format change.
+# A window whose resets_at has passed is a completed window. The last segment of an
+# open window is still running and is not a completed peak.
+# Samples without resets_at form one window and use the same running-max rule, so
+# jitter in them is no consumption either. This is intended.
+# Lines with a missing or unparsable ts are skipped; the other samples still count.
 
 _HISTORY_JQ_SEGMENT='
     def drop(p; c): (p - c) > 20 or (p >= 10 and c < p / 2);
-    def rhour: if type == "string"
+    def rmin: if type == "string"
         then (sub("\\.[0-9]+"; "") | sub("[+]00:00$"; "Z") | (fromdateiso8601? // null)
-              | if . == null then null else ((. + 1800) / 3600 | floor) end)
+              | if . == null then null else ((. + 30) / 60 | floor) end)
         else null end;
     def series(f; rf; cutoff):
-        [.[] | select((.ts | fromdateiso8601) > cutoff)
-             | {t: (.ts | fromdateiso8601), v: (f // null), r: (rf | rhour)}
+        [.[] | (.ts | fromdateiso8601?) as $t
+             | select($t != null and $t > cutoff)
+             | {t: $t, v: (f // null), r: (rf | rmin)}
              | select(.v != null)] | sort_by(.t);
-    def segments:
-        reduce .[] as $e ({segs: [], prev: null};
-            if .prev == null or drop(.prev.v; $e.v)
-               or ($e.r != null and .prev.r != null and $e.r != .prev.r)
-            then .segs += [[$e]] else .segs[-1] += [$e] end
-            | .prev = $e) | .segs;
-    def avgpeak:
-        segments | .[:-1] | map(map(.v) | max)
+    def runs:
+        reduce .[] as $e ({m: null, segs: []};
+            if .m == null then {m: $e.v, segs: [$e.v]}
+            elif drop(.m; $e.v) then {m: $e.v, segs: (.segs + [$e.v])}
+            elif $e.v > .m then {m: $e.v, segs: (.segs[:-1] + [$e.v])}
+            else . end);
+    # Consumption in time order. The first sample of a window is a restart from 0 only
+    # when the previous sample belonged to another window and both had resets_at. Entering
+    # a window from a sample without resets_at (or the first sample of the history)
+    # compares with the neighbour instead. A window already seen continues from its
+    # running max, so interleaved windows never count a switch between them.
+    def consumed:
+        reduce .[] as $e ({prev: null, st: {}, used: 0};
+            ($e.r | tostring) as $k
+            | if .prev == null then {prev: $e, st: {($k): $e.v}, used: 0}
+              elif .st[$k] != null then
+                .st[$k] as $m
+                | (if drop($m; $e.v) then {add: $e.v, m: $e.v}
+                   elif $e.v > $m then {add: ($e.v - $m), m: $e.v}
+                   else {add: 0, m: $m} end) as $u
+                | .used += $u.add | .st[$k] = $u.m | .prev = $e
+              else
+                (if .prev.r != null and $e.r != null then $e.v
+                 elif drop(.prev.v; $e.v) then $e.v
+                 elif $e.v > .prev.v then $e.v - .prev.v
+                 else 0 end) as $add
+                | .used += $add | .st[$k] = $e.v | .prev = $e
+              end);
+    def avgpeak($now):
+        . as $s
+        | [group_by(.r)[] as $g
+            | ($g | runs | .segs) as $sg
+            | (if $g[0].r != null then ($g[0].r * 60 <= $now) else ($g[-1].t != $s[-1].t) end) as $done
+            | (if $done then $sg else $sg[:-1] end)[]]
         | if length > 0 then add / length else null end;
     def avgrate($now):
         . as $s
         | if ($s | length) < 2 then null
           else
-            (reduce range(1; $s | length) as $i (0;
-                . + ($s[$i].v as $c | $s[$i - 1].v as $p
-                     | if drop($p; $c) then $c elif $c < $p then 0 else $c - $p end))) as $used
+            ($s | consumed | .used) as $used
             | (($now - $s[0].t) / 3600) as $span
             | if $span <= 0 then null else $used / $span end
           end;
@@ -218,12 +253,12 @@ _hist_reset_field() {
 # Average peak of completed windows within the last <hours> (the still running
 # window is excluded). Empty when no window has completed yet.
 get_avg_peak() {
-    local field="$1" hours="${2:-168}"
+    local field="$1" hours="${2:-168}" now="${3:-$(date +%s)}"
     [[ -f "$HISTORY_FILE" ]] || { echo ""; return; }
     local cutoff result
-    cutoff=$(($(date +%s) - hours * 3600))
-    result=$(jq -rs --argjson cutoff "$cutoff" "${_HISTORY_JQ_SEGMENT}"'
-        series('"$field"'; '"$(_hist_reset_field "$field")"'; $cutoff) | avgpeak
+    cutoff=$((now - hours * 3600))
+    result=$(jq -rs --argjson cutoff "$cutoff" --argjson now "$now" "${_HISTORY_JQ_SEGMENT}"'
+        series('"$field"'; '"$(_hist_reset_field "$field")"'; $cutoff) | avgpeak($now)
     ' "$HISTORY_FILE" 2>/dev/null)
     if [[ -z "$result" || "$result" == "null" ]]; then echo ""; else limit_round1 "$result"; fi
 }
@@ -254,12 +289,12 @@ history_averages() {
     local raw
     raw=$(jq -rs --argjson now "$now" "${_HISTORY_JQ_SEGMENT}"'
         . as $all
-        | [ ($all | series(."5h".api; ."5h".reset; $now - 168*3600) | avgpeak),
+        | [ ($all | series(."5h".api; ."5h".reset; $now - 168*3600) | avgpeak($now)),
             ($all | series(."5h".api; ."5h".reset; $now - 24*3600) | avgrate($now)),
-            ($all | series(."7d".api; ."7d".reset; $now - 672*3600) | avgpeak),
+            ($all | series(."7d".api; ."7d".reset; $now - 672*3600) | avgpeak($now)),
             ($all | series(."7d".api; ."7d".reset; $now - 168*3600) | avgrate($now) | if . == null then null else . * 24 end),
-            ($all | series(.opus; null; $now - 672*3600) | avgpeak),
-            ($all | series(.sonnet; null; $now - 672*3600) | avgpeak) ]
+            ($all | series(.opus; null; $now - 672*3600) | avgpeak($now)),
+            ($all | series(.sonnet; null; $now - 672*3600) | avgpeak($now)) ]
         | map(if . == null then "-" else tostring end) | join(" ")
     ' "$HISTORY_FILE" 2>/dev/null) || raw=""
     [[ -n "$raw" ]] || { echo "- - - - - -"; return; }

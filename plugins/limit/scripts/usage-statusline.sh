@@ -590,6 +590,12 @@ format_reset_datetime() {
 # Usage: format_limit_line <label> <percentage> <reset_at> [highscore_mode]
 # Supports decimal percentages (e.g., 12.3%, 0.1%)
 # If highscore_mode=1, shows [HIGHSCORE!] at 100%
+# Averages are right-aligned to 5 characters ("100.0" is the widest value), so a
+# label keeps its width when a value grows from 9.9 to 10.0 or 99.9 to 100.0.
+format_avg_value() {
+    printf '%5s' "$1"
+}
+
 format_limit_line() {
     local label="$1"
     local pct="$2"
@@ -1975,8 +1981,8 @@ format_output() {
             fi
             global_5h_line="$(format_limit_line "5h all" "$five_pct" "$five_hour_reset")${five_reset_note}${stale_note}"
             if [[ "$SHOW_AVERAGE" == "true" ]]; then
-                [[ "$avg_5h_peak" != "-" ]] && global_5h_line="${global_5h_line} ${global_5h_color}[AvgPeak:${avg_5h_peak}%]${global_5h_color_reset}"
-                [[ "$avg_5h_rate" != "-" ]] && global_5h_line="${global_5h_line} ${global_5h_color}[Avg:${avg_5h_rate}%/h]${global_5h_color_reset}"
+                [[ "$avg_5h_peak" != "-" ]] && global_5h_line="${global_5h_line} ${global_5h_color}[AvgPeak:$(format_avg_value "$avg_5h_peak")%]${global_5h_color_reset}"
+                [[ "$avg_5h_rate" != "-" ]] && global_5h_line="${global_5h_line} ${global_5h_color}[Avg:$(format_avg_value "$avg_5h_rate")%/h]${global_5h_color_reset}"
             fi
             lines+=("$global_5h_line")
             # Local 5h directly below global 5h - shows highscore-based percentage
@@ -2002,8 +2008,8 @@ format_output() {
             fi
             global_7d_line="$(format_limit_line "7d all" "$seven_pct" "$seven_day_reset")${seven_reset_note}"
             if [[ "$SHOW_AVERAGE" == "true" ]]; then
-                [[ "$avg_7d_peak" != "-" ]] && global_7d_line="${global_7d_line} ${global_7d_color}[AvgPeak:${avg_7d_peak}%]${global_7d_color_reset}"
-                [[ "$avg_7d_rate" != "-" ]] && global_7d_line="${global_7d_line} ${global_7d_color}[Avg:${avg_7d_rate}%/d]${global_7d_color_reset}"
+                [[ "$avg_7d_peak" != "-" ]] && global_7d_line="${global_7d_line} ${global_7d_color}[AvgPeak:$(format_avg_value "$avg_7d_peak")%]${global_7d_color_reset}"
+                [[ "$avg_7d_rate" != "-" ]] && global_7d_line="${global_7d_line} ${global_7d_color}[Avg:$(format_avg_value "$avg_7d_rate")%/d]${global_7d_color_reset}"
             fi
             lines+=("$global_7d_line")
             # Local 7d directly below global 7d - shows highscore-based percentage
@@ -2029,7 +2035,7 @@ format_output() {
             fi
             opus_line="$(format_limit_line "7d Opus" "$opus_pct" "$opus_reset")"
             if [[ "$SHOW_AVERAGE" == "true" ]] && [[ "$avg_opus" != "-" ]]; then
-                opus_line="${opus_line} ${opus_color}[AvgPeak:${avg_opus}%]${opus_color_reset}"
+                opus_line="${opus_line} ${opus_color}[AvgPeak:$(format_avg_value "$avg_opus")%]${opus_color_reset}"
             fi
             lines+=("$opus_line")
         fi
@@ -2048,7 +2054,7 @@ format_output() {
                 fi
                 sonnet_line="$(format_limit_line "7d Sonnet" "$sonnet_pct" "$sonnet_reset")"
                 if [[ "$SHOW_AVERAGE" == "true" ]] && [[ "$avg_sonnet" != "-" ]]; then
-                    sonnet_line="${sonnet_line} ${sonnet_color}[AvgPeak:${avg_sonnet}%]${sonnet_color_reset}"
+                    sonnet_line="${sonnet_line} ${sonnet_color}[AvgPeak:$(format_avg_value "$avg_sonnet")%]${sonnet_color_reset}"
                 fi
                 lines+=("$sonnet_line")
             fi
