@@ -39,7 +39,6 @@ ENV: CLAUDE_MB_DOGMA_TOKEN_PROTECTION, CLAUDE_MB_DOGMA_FILE_PROTECTION,
      added to the mounts found in /proc/self/mounts and can only widen protection).
 """
 
-import ast
 import codecs
 import fnmatch
 import glob
@@ -1071,59 +1070,6 @@ def plain_output(target):
     return target == "/dev/null" or not target.startswith(("/dev/", "/proc/", "/sys/"))
 
 
-# open() modes that only read, and the keyword arguments of open() that cannot change what it does
-# (opener= can open with any flags, so it is no read)
-READ_OPEN_MODES = {"r", "rb", "rt", "br", "tr"}
-READ_OPEN_KEYWORDS = {"file", "mode", "encoding", "errors", "newline", "buffering", "closefd"}
-# open('p', 'rb') with a read mode as the last positional argument: the mode is blanked before the strings of the
-# code are joined, otherwise the join would invent the path "p" + "rb" (a write check on a file that is not named)
-READ_OPEN_MODE_RE = re.compile(r"""(\bopen\s*\(\s*(["'])[^"'\n]*\2\s*,\s*)(["'])(?:rb?|rt|br|tr)\3(?=\s*\))""")
-
-
-def read_open_path(node):
-    """The literal path of an open() call that only reads (no mode, or a read mode), else None."""
-    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "open"):
-        return None
-    if len(node.args) > 2 or any(isinstance(arg, ast.Starred) for arg in node.args):
-        return None
-    if any(keyword.arg not in READ_OPEN_KEYWORDS for keyword in node.keywords):  # None: **kwargs
-        return None
-    fields = dict(zip(("file", "mode"), node.args))
-    fields.update({keyword.arg: keyword.value for keyword in node.keywords})
-    path, mode = fields.get("file"), fields.get("mode")
-    if not (isinstance(path, ast.Constant) and isinstance(path.value, str)):
-        return None
-    if mode is not None and not (isinstance(mode, ast.Constant) and mode.value in READ_OPEN_MODES):
-        return None
-    return path.value
-
-
-def read_only_paths(code):
-    """Literal paths that inline python only opens for reading: every occurrence of the string in the code is
-    the path of such an open() call. Code that does not parse, rebinds open() or imports a name open gives none,
-    so its paths are judged as writes."""
-    try:
-        tree = ast.parse(code)
-    except (SyntaxError, ValueError, RecursionError):
-        return set()
-    nodes = list(ast.walk(tree))
-    for node in nodes:
-        if isinstance(node, ast.Name) and node.id == "open" and not isinstance(node.ctx, ast.Load):
-            return set()
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == "open":
-            return set()
-        if isinstance(node, ast.alias) and "open" in (node.name, node.asname):
-            return set()
-    texts, reads = {}, {}
-    for node in nodes:
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            texts[node.value] = texts.get(node.value, 0) + 1
-        path = read_open_path(node)
-        if path is not None:
-            reads[path] = reads.get(path, 0) + 1
-    return {path for path, count in reads.items() if count == texts.get(path, 0)}
-
-
 def resolved(path):
     """The file a path names after symlinks (the path itself when it cannot be resolved)."""
     try:
@@ -1592,8 +1538,10 @@ class Analysis:
                 if ">>" not in operator:
                     self.protect_overwrite([target], directories, "overwrite", unresolved_ok=not bare)
                     # a redirect without a command truncates its file; after a compound command (done, }, fi,
-                    # a closing parenthesis) it is bare too, but /dev/null has nothing to truncate
-                    if bare and os.path.normpath(target) != "/dev/null":
+                    # a closing parenthesis) it is bare too. Only the literal /dev/null target (after quote
+                    # removal) is exempt: no normalized form, so "/dev//null" or "x/../../dev/null" through a
+                    # symlink still counts as a file
+                    if bare and target != "/dev/null":
                         self.deletes.append(("truncate", target, set(directories)))
         if verb in SHELLS | {"sh"} or INTERPRETER_RE.match(verb or "-"):
             for body, quoted in bodies:
@@ -3409,7 +3357,7 @@ class Analysis:
     def code(self, code, directories, depth, nesting=0):
         # a backslash-newline is a line continuation (python: os.\<newline>remove(...) is os.remove(...))
         code = CONT_RE.sub("", code)
-        joined = re.sub(r"([\"'])\s*(?:\+|\.\.?|<>|,)\s*([\"'])", "", READ_OPEN_MODE_RE.sub(r"\1\3\3", code))
+        joined = re.sub(r"([\"'])\s*(?:\+|\.\.?|<>|,)\s*([\"'])", "", code)
         # string literals with whitespace are text (a message, file content, shell text written
         # to a file): the call detection below reads the code without them. A literal without
         # whitespace stays (getattr(os, 'remove'), __import__('os')); literals are still checked
@@ -3495,18 +3443,16 @@ class Analysis:
                 raise Deny("dogma: inline code references credential files or agent configuration.")
             if CODE_FRAGMENT_RE.search(code):
                 raise Deny("dogma: inline code references credential files or agent configuration.")
-        reading = read_only_paths(code)
         for literal in literals:
             if not literal:
                 continue
             if re.search(r"[/.~]", literal) and not re.search(r"\s", literal):
-                # a path only opened for reading is a read; the path and the file behind a symlink both count
-                kind = "read" if literal in reading else "write"
                 for directory in directories:
                     path = self.join(directory, os.path.expanduser(literal))
                     if path:
+                        # the path as written and the file it names through symlinks (checked in addition)
                         for item in dict.fromkeys((path, resolved(path))):
-                            self.check_location(item, kind, self.flags.get("token_protection", True), False)
+                            self.check_location(item, "write", self.flags.get("token_protection", True), False)
             first = literal.split(None, 1)[0] if literal.split() else ""
             # a list element of an exec call was judged as its command line already (exec_commands)
             if may_run and os.path.basename(first) in EXEC_VERBS and literal not in exec_pure:
