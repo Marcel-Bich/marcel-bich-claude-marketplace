@@ -86,6 +86,28 @@ CASES = (
     ("allow", "N", "ls x >/dev/null&& echo a"),
     ("allow", "N", "(ls x 2>/dev/null)"),
     ("deny", "N", "echo x >~/.bashrc; echo a"),
+    # a redirect to /dev/null after a compound command (loop, group, subshell, if, case) is no truncate
+    ("allow", "N", "for f in a b; do echo $f; done 2>/dev/null"),
+    ("allow", "N", "for f in a b; do echo $f; done >/dev/null 2>&1"),
+    ("allow", "N", "{ echo a; } 2>/dev/null"),
+    ("allow", "N", "{ echo a; } &>/dev/null"),
+    ("allow", "N", "{ echo a; } 2>/dev//null"),
+    ("allow", "N", "( echo a ) 2>/dev/null"),
+    ("allow", "N", "if true; then echo a; fi 2>/dev/null"),
+    ("allow", "N", "case x in x) echo a;; esac 2>/dev/null"),
+    ("allow", "N", "while false; do echo a; done 2>/dev/null"),
+    ("allow", "N", "{ echo a; } 2>/dev/null | sort"),
+    ("allow", "N", "> /dev/null"),
+    # the same compound forms into a real file still truncate it, and append never truncates
+    ("deny", "N", "for f in a b; do echo $f; done > important.txt"),
+    ("deny", "N", "{ echo a; } > important.txt"),
+    ("deny", "N", "( echo a ) > important.txt"),
+    ("deny", "N", "if true; then echo a; fi > important.txt"),
+    ("deny", "N", "case x in x) echo a;; esac > important.txt"),
+    ("deny", "N", "while false; do echo a; done > important.txt"),
+    ("allow", "N", "{ echo a; } >> important.txt"),
+    ("deny", "N", "{ echo a; } 2>/dev/null > important.txt"),
+    ("deny", "N", "{ echo a; } >/dev/null 2>important.txt"),
 
     # --- must stay blocked
     ("deny", "N", "git remote -v"),
@@ -660,6 +682,31 @@ CASES = (
     ("allow", "N", "python3 -c \"open(file='/home/myuser/git/notes.txt', mode='a').write('x')\""),
     ("allow", "N", "python3 -c \"open(mode='a', file='/home/myuser/git/notes.txt').write('x')\""),
     ("allow", "N", "python3 -c \"print(open(file='/home/myuser/.bashrc', mode='r').read())\""),
+    # open() without a write mode, or with "r" or "rb", reads a dogma hook file (the own-file rule is for writes)
+    ("allow", "N", "python3 -c 'import json; print(len(json.load(open(\"{H}/dogma-link/hooks/hooks.json\"))))'"),
+    ("allow", "N", "python3 -c \"print(open('{H}/dogma-link/hooks/hooks.json', 'r').read()[:9])\""),
+    ("allow", "N", "python3 -c \"print(open('{H}/dogma-link/hooks/hooks.json', 'rb').read()[:9])\""),
+    ("allow", "N", "python3 -c \"print(open(file='{H}/dogma-link/hooks/hooks.json', mode='r').read()[:9])\""),
+    ("allow", "N", "python3 - <<'PY'\nimport json\nprint(json.load(open('{H}/dogma-link/hooks/hooks.json')))\nPY"),
+    # write, append, exclusive create and update modes, pathlib writes and file operations stay blocked
+    ("deny", "N", "python3 -c \"open('{H}/dogma-link/hooks/hooks.json', 'a').write('x')\""),
+    ("deny", "N", "python3 -c \"open('{H}/dogma-link/hooks/hooks.json', 'w').write('[]')\""),
+    ("deny", "N", "python3 -c \"open('{H}/dogma-link/hooks/hooks.json', 'x').write('[]')\""),
+    ("deny", "N", "python3 -c \"open('{H}/dogma-link/hooks/hooks.json', 'r+').write('[]')\""),
+    ("deny", "N", "python3 -c \"open('{H}/dogma-link/hooks/hooks.json', 'rb+').write(b'[]')\""),
+    ("deny", "N", "python3 -c \"open(file='{H}/dogma-link/hooks/hooks.json', mode='w').write('[]')\""),
+    ("deny", "N", "python3 -c \"from pathlib import Path; Path('{H}/dogma-link/hooks/hooks.json').write_text('[]')\""),
+    ("deny", "N", "python3 -c \"from pathlib import Path; Path('{H}/dogma-link/hooks/hooks.json').write_bytes(b'[]')\""),
+    ("deny", "N", "python3 -c \"import shutil; shutil.copy('/tmp/x.json', '{H}/dogma-link/hooks/hooks.json')\""),
+    ("deny", "N", "python3 -c \"import os; os.remove('{H}/dogma-link/hooks/hooks.json')\""),
+    ("allow", "N", "python3 -c \"print(open('{H}/dogma-link/hooks/hooks.json', encoding='utf-8').read()[:9])\""),
+    # a read-looking call is no read when its name is built into a write path, or when it passes opener=
+    ("deny", "N", "python3 -c \"open('{H}/dogma-link/hooks/hooks.json', 'r').read(); "
+                  "open('{H}/dogma-link/hooks/hooks' + '.json' + 'r', 'w').write('[]')\""),
+    ("deny", "N", "python3 -c \"open('{H}/dogma-link/hooks/hooks.json', 'r', opener=lambda p, f: 0)\""),
+    # a file read and written back in the same call is a write
+    ("deny", "N", "python3 -c \"a = open('{H}/dogma-link/hooks/hooks.json').read(); "
+                  "open('{H}/dogma-link/hooks/hooks.json', 'w').write(a)\""),
     # private Codex and Claude config homes: everything is readable except credentials and secrets
     ("allow", "N", "ls {CH}/myplugin"),
     ("allow", "N", "cat {CH}/myplugin/state.json"),
