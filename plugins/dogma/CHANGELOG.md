@@ -6,6 +6,14 @@ Changelog of the dogma plugin. Newest first. Months group releases; no day dates
 
 ### v1.46
 
+#### v1.46.2
+
+##### Fixed
+
+- A delete blocked because its target is a shell variable now logs the original command in TO-DELETE.md, so the entry says what was meant
+- Deny and ask messages for such targets tell the agent to retry with the literal path
+- Block messages stay valid JSON for targets with backslashes, quotes or control characters, and TO-DELETE.md entries stay on one line
+
 #### v1.46.1
 
 ##### Fixed
