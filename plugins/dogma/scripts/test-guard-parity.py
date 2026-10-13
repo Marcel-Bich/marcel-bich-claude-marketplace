@@ -126,6 +126,9 @@ def fill(root):
     (worktree / ".git").write_text("gitdir: /nonexistent/.git/worktrees/cx-d1\n", encoding="utf-8")
     plugin = home / ".claude" / "plugins" / "cache" / "test-market" / "dogma" / "0.0.0"
     shutil.copytree(HERE.parent, plugin, ignore=shutil.ignore_patterns("__pycache__", "guard-cases", "TO-DELETE.md"))
+    # the installed plugin under a name that does not mention the config home (a path with ".claude" is
+    # refused as agent configuration before the own-file rule applies)
+    (home / "dogma-link").symlink_to(plugin)
     return home, dirs, plugin
 
 

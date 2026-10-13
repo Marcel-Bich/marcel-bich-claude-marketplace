@@ -86,6 +86,34 @@ CASES = (
     ("allow", "N", "ls x >/dev/null&& echo a"),
     ("allow", "N", "(ls x 2>/dev/null)"),
     ("deny", "N", "echo x >~/.bashrc; echo a"),
+    # a redirect to /dev/null after a compound command (loop, group, subshell, if, case) is no truncate
+    ("allow", "N", "for f in a b; do echo $f; done 2>/dev/null"),
+    ("allow", "N", "for f in a b; do echo $f; done >/dev/null 2>&1"),
+    ("allow", "N", "{ echo a; } 2>/dev/null"),
+    ("allow", "N", "{ echo a; } &>/dev/null"),
+    ("allow", "N", "{ echo a; } 2>&1 | cat"),
+    ("allow", "N", "( echo a ) 2>/dev/null"),
+    ("allow", "N", "if true; then echo a; fi 2>/dev/null"),
+    ("allow", "N", "case x in x) echo a;; esac 2>/dev/null"),
+    ("allow", "N", "while false; do echo a; done 2>/dev/null"),
+    ("allow", "N", "{ echo a; } 2>/dev/null | sort"),
+    ("allow", "N", "> /dev/null"),
+    # the same compound forms into a real file still truncate it, and append never truncates
+    ("deny", "N", "for f in a b; do echo $f; done > important.txt"),
+    ("deny", "N", "{ echo a; } > important.txt"),
+    ("deny", "N", "( echo a ) > important.txt"),
+    ("deny", "N", "if true; then echo a; fi > important.txt"),
+    ("deny", "N", "case x in x) echo a;; esac > important.txt"),
+    ("deny", "N", "while false; do echo a; done > important.txt"),
+    ("allow", "N", "{ echo a; } >> important.txt"),
+    ("deny", "N", "{ echo a; } 2>/dev/null > important.txt"),
+    ("deny", "N", "{ echo a; } >/dev/null 2>important.txt"),
+    # only the literal /dev/null is exempt: a normalized or dotdot form of it names a file (a symlink on the way
+    # makes "x/../../dev/null" a different file), so it is recorded as a truncate
+    ("deny", "N", "{ echo a; } 2>/dev//null"),
+    ("deny", "N", "{ echo a; } >{R}/link/../../dev/null"),
+    ("deny", "N", "{ echo a; } >/x/../dev/null"),
+    ("deny", "N", "for f in a b; do echo $f; done >/tmp/../dev/null"),
 
     # --- must stay blocked
     ("deny", "N", "git remote -v"),
@@ -660,6 +688,61 @@ CASES = (
     ("allow", "N", "python3 -c \"open(file='/home/myuser/git/notes.txt', mode='a').write('x')\""),
     ("allow", "N", "python3 -c \"open(mode='a', file='/home/myuser/git/notes.txt').write('x')\""),
     ("allow", "N", "python3 -c \"print(open(file='/home/myuser/.bashrc', mode='r').read())\""),
+    # write, append, exclusive create and update modes, pathlib writes and file operations on a dogma hook file
+    # (reached through a symlink, the path as written is no hook file)
+    ("deny", "N", "python3 -c \"open('{H}/dogma-link/hooks/hooks.json', 'a').write('x')\""),
+    ("deny", "N", "python3 -c \"open('{H}/dogma-link/hooks/hooks.json', 'w').write('[]')\""),
+    ("deny", "N", "python3 -c \"open('{H}/dogma-link/hooks/hooks.json', 'x').write('[]')\""),
+    ("deny", "N", "python3 -c \"open('{H}/dogma-link/hooks/hooks.json', 'r+').write('[]')\""),
+    ("deny", "N", "python3 -c \"open('{H}/dogma-link/hooks/hooks.json', 'rb+').write(b'[]')\""),
+    ("deny", "N", "python3 -c \"open(file='{H}/dogma-link/hooks/hooks.json', mode='w').write('[]')\""),
+    ("deny", "N", "python3 -c \"from pathlib import Path; Path('{H}/dogma-link/hooks/hooks.json').write_text('[]')\""),
+    ("deny", "N", "python3 -c \"from pathlib import Path; Path('{H}/dogma-link/hooks/hooks.json').write_bytes(b'[]')\""),
+    ("deny", "N", "python3 -c \"import shutil; shutil.copy('/tmp/x.json', '{H}/dogma-link/hooks/hooks.json')\""),
+    ("deny", "N", "python3 -c \"import os; os.remove('{H}/dogma-link/hooks/hooks.json')\""),
+    # a read in the same call does not make a write to the same file a read: a name built by concatenation, an
+    # opener= argument, a second write call, a rebound open() or a delete after the read
+    ("deny", "N", "python3 -c \"open('{H}/dogma-link/hooks/hooks.json', 'r').read(); "
+                  "open('{H}/dogma-link/hooks/hooks' + '.json' + 'r', 'w').write('[]')\""),
+    ("deny", "N", "python3 -c \"open('{H}/dogma-link/hooks/hooks.json', 'r', opener=lambda p, f: 0)\""),
+    ("deny", "N", "python3 -c \"a = open('{H}/dogma-link/hooks/hooks.json').read(); "
+                  "open('{H}/dogma-link/hooks/hooks.json', 'w').write(a)\""),
+    ("deny", "N", "python3 -c \"open('{N}/DOGMA-PERM' 'ISSIONS.md').read(); "
+                  "open('{N}/DOGMA-PERMISSIONS.md', mode='w').write('x')\""),
+    ("deny", "N", "python3 -c \"open('{N}/DOGMA-PERM' + 'ISSIONS.md').read(); open('{N}/DOGMA-PERMISSIONS.md', 'w')\""),
+    ("deny", "N", "python3 -c \"import builtins; builtins.open('{H}/dogma-link/hooks/hooks.json', 'w').write('[]')\""),
+    ("deny", "N", "python3 -c \"import builtins; setattr(builtins, 'open', lambda *a, **k: None); "
+                  "open('{H}/dogma-link/hooks/hooks.json', 'w')\""),
+    ("deny", "N", "python3 -c \"import os; open('{H}/dogma-link/hooks/hooks.json').read(); "
+                  "os.remove('{H}/dogma-link/hooks/hooks.json')\""),
+    ("deny", "N", "python3 -c \"import os; open('{N}/DOGMA-PERMISSIONS.md').read(); os.unlink('{N}/DOGMA-PERMISSIONS.md')\""),
+    # string literals joined by implicit concatenation or by + name the protected file all the same, as
+    # candidates next to the literals as written (write, append and delete alike)
+    ("deny", "N", "python3 -c \"open('{N}/DOGMA-PERM' 'ISSIONS.md', 'w').write('x')\""),
+    ("deny", "N", "python3 -c \"open('{N}/DOGMA-PERM' + 'ISSIONS.md', 'w').write('x')\""),
+    ("deny", "N", "python3 -c \"open('{N}/DOGMA-PERM' 'ISSIONS.md', mode='a').write('x')\""),
+    ("deny", "N", "python3 -c \"open(f'{N}/DOGMA-PERM' f'ISSIONS.md', 'w').write('x')\""),
+    # each part alone names nothing protected ("{H}/dogma-", "{N}/.git"); only the joined name is a protected file
+    ("deny", "N", "python3 -c \"open('{H}/dogma-' 'link/hooks/hooks.json', 'w').write('[]')\""),
+    ("deny", "N", "python3 -c \"open('{H}/dogma-' + 'link/hooks/hooks.json', 'a').write('[]')\""),
+    ("deny", "N", "python3 -c \"open('{N}/.git' '/hooks/pre-commit', 'w').write('x')\""),
+    ("deny", "N", "python3 -c \"open('{N}/.git/' + 'hooks/pre-commit', 'w').write('x')\""),
+    ("deny", "N", "python3 - <<'PY'\nopen('{N}/DOGMA-PERM' 'ISSIONS.md', 'w').write('x')\nPY"),
+    ("deny", "N", "python3 -c \"import os; os.remove('{N}/DOGMA-PERM' 'ISSIONS.md')\""),
+    ("deny", "N", "python3 -c \"import os; os.remove('{N}/DOGMA-PERM' + 'ISSIONS.md')\""),
+    ("deny", "N", "python3 -c \"import os; os.remove('{H}/dogma-' 'link/hooks/hooks.json')\""),
+    ("deny", "N", "python3 -c \"import os; os.unlink('{N}/.git' '/hooks/pre-commit')\""),
+    ("deny", "N", "ruby -e \"File.write('{N}/DOGMA-PERM' 'ISSIONS.md', 'x')\""),
+    # mixed quote kinds inside one join: the joined name must still end at its own closing quote
+    ("deny", "N", "python3 - <<'PY'\nopen('{N}/DOGMA-PERM' + \"ISSIONS.md\", 'w').write('x')\nPY"),
+    ("deny", "N", "python3 - <<'PY'\nopen('{N}/DOGMA-PERM'\"ISSIONS.md\", 'w').write('x')\nPY"),
+    ("deny", "N", "python3 - <<'PY'\nopen('{N}/DOGMA-' \"PERM\" + 'ISSIONS.md', 'w').write('x')\nPY"),
+    ("deny", "N", "python3 - <<'PY'\nopen('{N}/.git' + \"/config\", 'w').write('x')\nPY"),
+    ("deny", "N", "python3 - <<'PY'\nopen('{N}/.git'\"/config\", 'w').write('x')\nPY"),
+    # ordinary concatenation that forms no protected path passes
+    ("allow", "N", "python3 -c \"print('hello ' + 'world')\""),
+    ("allow", "N", "python3 -c \"open('/home/myuser/git/notes' '.txt', 'w').write('x')\""),
+    ("allow", "N", "python3 -c \"name = 'report' + '-' + 'summary.txt'; open(name, 'w').write('x')\""),
     # private Codex and Claude config homes: everything is readable except credentials and secrets
     ("allow", "N", "ls {CH}/myplugin"),
     ("allow", "N", "cat {CH}/myplugin/state.json"),

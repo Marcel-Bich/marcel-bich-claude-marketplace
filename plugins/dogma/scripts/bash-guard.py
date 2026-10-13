@@ -311,6 +311,30 @@ CODE_ENV_DUMP_RE = re.compile(
     r"process\.env(?!\s*[.\[])|%ENV\b|\bENV(?!\s*(?:\[|\.fetch\b|\.key\?|\.include\?|\.delete\b))\b(?![A-Za-z_])|"
     r"getenv\(\s*\)|\$_(?:ENV|SERVER)\b(?!\s*\[)")
 CODE_STRING_RE = re.compile(r"\"((?:[^\"\\\n]|\\.)*)\"|'((?:[^'\\\n]|\\.)*)'")
+# a plain string literal (optional prefix, either quote kind) and a run of them joined by implicit concatenation
+# or by an operator; the quote kinds of a run may differ: 'a' + "b" and 'a'"b" are one name. A run that a comma
+# joins too (ARG_RUN_RE) is an extra reading: the arguments of one call, os.path.join('a', "b"). Its last argument
+# can be a mode, so the name is also read without the comma (STRING_RUN_RE).
+STRING_TOKEN = r"[rRbBfFuU]{0,2}(?:\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*')"
+STRING_RUN_RE = re.compile(STRING_TOKEN + r"(?:\s*(?:(?:\+|\.|<>)\s*)?" + STRING_TOKEN + r")+")
+ARG_RUN_RE = re.compile(STRING_TOKEN + r"(?:\s*(?:(?:\+|\.|<>|,)\s*)?" + STRING_TOKEN + r")+")
+
+
+def join_runs(code, run_re):
+    """(text, names): the code with each run of joined string literals replaced by one single-quoted literal of
+    their joined content, and the list of those contents. The names are candidates for the path checks only;
+    the literals as written are checked as well."""
+    names = []
+
+    def join(match):
+        content = "".join(m.group(1) if m.group(1) is not None else m.group(2)
+                          for m in CODE_STRING_RE.finditer(match.group(0)))
+        names.append(content)
+        return "'" + re.sub(r"\\.|'", lambda m: m.group(0) if len(m.group(0)) == 2 else "\\'", content) + "'"
+
+    return run_re.sub(join, code), names
+
+
 CODE_NAME_RE = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
 INSTALL_RULES = {
     "npm": ({"install", "i", "add", "isntall", "in"}, True),
@@ -1070,6 +1094,14 @@ def plain_output(target):
     return target == "/dev/null" or not target.startswith(("/dev/", "/proc/", "/sys/"))
 
 
+def resolved(path):
+    """The file a path names after symlinks (the path itself when it cannot be resolved)."""
+    try:
+        return os.path.realpath(path)
+    except (OSError, ValueError):
+        return path
+
+
 def tokenize(text):
     try:
         return shlex.split(text, posix=True), True
@@ -1529,7 +1561,11 @@ class Analysis:
                 self.critical_target(target, directories, ">>" in operator)
                 if ">>" not in operator:
                     self.protect_overwrite([target], directories, "overwrite", unresolved_ok=not bare)
-                    if bare:
+                    # a redirect without a command truncates its file; after a compound command (done, }, fi,
+                    # a closing parenthesis) it is bare too. Only the literal /dev/null target (after quote
+                    # removal) is exempt: no normalized form, so "/dev//null" or "x/../../dev/null" through a
+                    # symlink still counts as a file
+                    if bare and target != "/dev/null":
                         self.deletes.append(("truncate", target, set(directories)))
         if verb in SHELLS | {"sh"} or INTERPRETER_RE.match(verb or "-"):
             for body, quoted in bodies:
@@ -3345,7 +3381,8 @@ class Analysis:
     def code(self, code, directories, depth, nesting=0):
         # a backslash-newline is a line continuation (python: os.\<newline>remove(...) is os.remove(...))
         code = CONT_RE.sub("", code)
-        joined = re.sub(r"([\"'])\s*(?:\+|\.\.?|<>|,)\s*([\"'])", "", code)
+        joined, runs = join_runs(code, ARG_RUN_RE)
+        runs += join_runs(code, STRING_RUN_RE)[1]
         # string literals with whitespace are text (a message, file content, shell text written
         # to a file): the call detection below reads the code without them. A literal without
         # whitespace stays (getattr(os, 'remove'), __import__('os')); literals are still checked
@@ -3380,7 +3417,8 @@ class Analysis:
             r"eval|compile|ctypes|multiprocessing|child_process|Open3|Kernel|shell_exec|passthru|proc_open|"
             r"backticks|qx)\b|`|%x", calls))
         literals = [match.group(1) if match.group(1) is not None else match.group(2)
-                    for text in dict.fromkeys((code, joined)) for match in CODE_STRING_RE.finditer(text)]
+                    for text in dict.fromkeys((code, joined))
+                    for match in CODE_STRING_RE.finditer(text)] + runs
         literals += re.findall(r"`([^`]+)`", code)
         if CODE_INSTALL_RE.search(code):
             self.installs.append("inline code install or download-and-run")
@@ -3438,7 +3476,9 @@ class Analysis:
                 for directory in directories:
                     path = self.join(directory, os.path.expanduser(literal))
                     if path:
-                        self.check_location(path, "write", self.flags.get("token_protection", True), False)
+                        # the path as written and the file it names through symlinks (checked in addition)
+                        for item in dict.fromkeys((path, resolved(path))):
+                            self.check_location(item, "write", self.flags.get("token_protection", True), False)
             first = literal.split(None, 1)[0] if literal.split() else ""
             # a list element of an exec call was judged as its command line already (exec_commands)
             if may_run and os.path.basename(first) in EXEC_VERBS and literal not in exec_pure:
