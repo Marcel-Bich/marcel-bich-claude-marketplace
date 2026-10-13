@@ -1,13 +1,15 @@
 #!/bin/bash
 # Dogma: Delete Guard Hook (PreToolUse:Bash)
-# Blocks commands that could destroy protected data: /, first-level directories,
-# /home depth 0-2, the home and its direct children, and every absolute path outside the
-# temp roots (/tmp, /var/tmp, $TMPDIR and the Windows temp folders below a drive). Targets
-# are resolved before the check (~, $HOME, relative to the working directory and a
-# preceding cd, symlinks via realpath, glob base), so
-# a symlink in /tmp pointing at the home cannot smuggle a wipe through. Targets that
-# cannot be resolved for sure are blocked. Symlinks onto protected paths are blocked
-# at creation as an extra hurdle.
+# Denies the hard list only: commands that delete, move away or overwrite protected data
+# whatever the delete setting says: /, the home and its first level, every path of depth <= 3
+# outside the temp roots, mounted storage (depth <= 4 below /mnt and /media, mount points and
+# their first level), Windows profile and system paths, whole repositories. Targets are resolved
+# before the check (~, $HOME, relative to the working directory and a preceding cd, symlinks via
+# realpath, glob base, plain literal variables of the same command), so a symlink in /tmp pointing
+# at the home cannot smuggle a wipe through. A target that cannot be resolved for sure (unset or
+# re-assigned variable, command substitution, eval, xargs ...) is NOT denied here: it is a delete
+# finding and DOGMA-PERMISSIONS.md decides (file-protection.sh). Symlinks onto protected paths are
+# denied at creation as an extra hurdle.
 #
 # Before that check, bash-guard.py normalises the command like a shell (quoting,
 # variables, wrappers, nested shells, substitutions, heredocs) and checks every simple

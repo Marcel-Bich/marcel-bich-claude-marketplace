@@ -4,22 +4,24 @@
 Reads the PreToolUse JSON on stdin and prints a deny reason (one line) when the
 command must be blocked; prints nothing when it may run. Never executes anything.
 
-Protected (never deletable, moved away or symlinked onto):
-  - /, every first-level directory, /tmp itself
-  - /home, /home/X, /home/X/Y          (depth 0-2 below /home)
-  - $HOME, its parent, $HOME/X         (depth 0-1 below the home)
-  - /mnt and /media, whatever the filesystem (Windows drive, network share, USB stick): every path down
-    to depth 3 (/mnt, /mnt/d, /mnt/d/data, /mnt/nas/share, /media/usb/folder), a Windows user profile root
-    and its first level, Windows system/persistence/profile paths and declared mounts (whole subtree);
-    deeper files there are ordinary (file-protection.sh and the permissions decide). bash-guard.py also
-    refuses a mount point at any depth, from /proc/self/mounts
-  - every other absolute path outside the temp roots (/tmp/X+, /var/tmp/X+, $TMPDIR/X+, the Windows temp folders)
-Every target is RESOLVED before the check: ~ and $HOME are expanded, relative paths
-are joined to the working directory (including a preceding `cd`), symlinks are
-followed (realpath), and for a glob the directory before the first wildcard is
-resolved. A target that cannot be resolved for sure (command substitution, an unset
-or re-assigned variable, eval, xargs) is blocked: deletion errs on the strict side.
-Variables assigned from mktemp in the same command are known-safe.
+The HARD LIST (on_hard_list) is denied whatever DOGMA-PERMISSIONS.md says:
+  - /, the home, its parent and its first level (~, ~/X, /home/X)
+  - every absolute path of depth <= 3 outside the temp roots (/usr/local, /home/X/.ssh, /opt/a/b)
+  - /mnt and /media, whatever the filesystem (Windows drive, network share, USB stick): depth <= 4
+    (/mnt/nas/share/folder), a Windows user profile root and its first level (/mnt/c/Users/X/Pictures),
+    Windows system/persistence/profile paths and declared mounts (whole subtree)
+  - a whole repository or worktree root (bash-guard.py), the working directory and its parents
+Deeper paths are NOT hard: they follow the delete setting (file-protection.sh, DOGMA-PERMISSIONS.md).
+Temp roots (/tmp/X+, /var/tmp/X+, $TMPDIR/X+, the Windows temp folders) are never hard.
+
+Every target is RESOLVED before the check: ~ and $HOME are expanded, relative paths are joined to the
+working directory (including a preceding `cd`), symlinks are followed (realpath), and for a glob the
+directory before the first wildcard is resolved. Plain literal assignments earlier in the same command
+(bash-guard.py substitutes them) are resolved as well. A target that cannot be resolved for sure
+(command substitution, an unset or re-assigned variable, a parameter expansion, eval text, xargs, an
+unknown working directory) is UNSURE: it raises Unsure, which is not a denial. bash-guard.py records the
+target as a delete finding, so the delete setting decides. Only the hard list (and the non-delete rules
+of bash-guard.py) deny. Variables assigned from mktemp in the same command are known-safe.
 """
 
 import codecs
@@ -56,7 +58,18 @@ HOME_REF = r"(~|\$HOME|\$\{HOME\}|expanduser|Path\.home|os\.homedir|Dir\.home)"
 
 
 class Deny(Exception):
-    pass
+    """A hard denial: the command is blocked whatever the delete setting says."""
+
+
+class Unsure(Exception):
+    """A delete target that cannot be resolved for sure. Not a denial: the target is skipped here and
+    bash-guard.py records it as a delete finding, which file-protection.sh decides by the delete setting."""
+
+
+# absolute depth (/ is 0) of a hard path outside the temp roots: /usr/local, /home/X/.ssh, /opt/a/b
+HARD_DEPTH = 3
+# absolute depth of a hard path below /mnt and /media: /mnt/nas/share/folder
+MOUNT_HARD_DEPTH = 4
 
 
 # monotonic time after which the check denies (fail closed); bash-guard.py sets it so the
@@ -113,23 +126,25 @@ def temp_root_of(path):
 
 
 def mount_path_dangerous(p):
-    """True when a path below /mnt or /media (WSL drives, shares, removable media) must never be deleted.
+    """True when a path below /mnt or /media (WSL drives, shares, removable media) is on the hard list.
 
-    The same rule for every filesystem type: protected are the paths down to depth 3 (/mnt/d, /mnt/d/data,
-    /mnt/nas/share, /media/usb/folder), a Windows user profile root and its first level
-    (/mnt/c/Users/<name>[/<x>], the /home rule), the Windows system, persistence and profile paths
-    (windows_critical) and anything inside a declared mount. Deeper files are ordinary: file-protection.sh
-    and the permissions decide."""
+    The same rule for every filesystem type: hard are the paths down to MOUNT_HARD_DEPTH (/mnt/d/data,
+    /mnt/nas/share/folder, /media/usb/folder), a Windows user profile root and its first level
+    (/mnt/c/Users/<name>[/<x>]), the Windows system, persistence and profile paths (windows_critical) and
+    anything inside a declared mount. Deeper files are not hard: the delete setting decides."""
     parts = p.split("/")[1:]
-    if len(parts) <= 3 or declared_mount(p):
+    if len(parts) <= MOUNT_HARD_DEPTH or declared_mount(p):
         return True
     if parts[0] != "mnt":
         return False
     return (parts[2].lower() == "users" and len(parts) <= 5) or windows_critical(parts, False)
 
 
-def is_dangerous(p):
-    """True when the absolute, normalized path p must never be deleted."""
+def on_hard_list(p):
+    """True when the absolute, normalized path p is on the hard list (see the module docstring).
+
+    Never deleted, moved away or overwritten by a delete-type command, whatever the delete setting says.
+    The temp roots are never hard; everything that is not on the list follows DOGMA-PERMISSIONS.md."""
     p = os.path.normpath(p)
     if p == "/":
         return True
@@ -138,14 +153,12 @@ def is_dangerous(p):
         return True
     if temp_root_of(p):
         return False
-    if p == "/home" or p.startswith("/home/"):
-        return depth(p[len("/home"):]) <= 2
-    if p.startswith(h + "/") and any(h.startswith(root.rstrip("/") + "/") for root in temp_roots()):
-        # a home below a temp root (test setups): the same depth rule as below /home
-        return depth(p[len(h):]) <= 1
     if p.startswith(("/mnt/", "/media/")) and not p.startswith(h.rstrip("/") + "/"):
         return mount_path_dangerous(p)
-    return True
+    if p.startswith(h.rstrip("/") + "/") and any(h.startswith(root.rstrip("/") + "/") for root in temp_roots()):
+        # a home below a temp root (test setups): only its first level is hard
+        return depth(p[len(h):]) <= 1
+    return depth(p) <= HARD_DEPTH
 
 
 def _temp_resolved(path, label):
@@ -260,15 +273,19 @@ class Ctx:
 
 
 def expand(arg, ctx):
-    """Expand ~ / variables in one argument; raise Deny when not resolvable."""
+    """Expand ~ / variables in one argument; raise Unsure when not resolvable for sure."""
     if "$(" in arg or "`" in arg:
-        raise Deny("target uses command substitution: %s" % arg)
+        raise Unsure("target uses command substitution: %s" % arg)
     if re.search(r"\$\{[^}]*[^A-Za-z0-9_}][^}]*\}?", arg):
-        raise Deny("target uses a parameter expansion: %s" % arg)
+        raise Unsure("target uses a parameter expansion: %s" % arg)
     if arg == "~" or arg.startswith("~/"):
         arg = home() + arg[1:]
+    elif arg == "~+" or arg.startswith("~+/"):
+        if ctx.cwd is None:
+            raise Unsure("target uses ~+ with an unknown working directory: %s" % arg)
+        arg = ctx.cwd + arg[2:]
     elif arg.startswith("~"):
-        raise Deny("target names another user's home: %s" % arg)
+        raise Unsure("target names another user's home: %s" % arg)
     safe = False
 
     def sub(m):
@@ -278,23 +295,23 @@ def expand(arg, ctx):
             safe = True
             return "/tmp/dogma-mktemp-placeholder"
         if name in ctx.unsafe_vars:
-            raise Deny("target uses a variable re-assigned in the command: $%s" % name)
+            raise Unsure("target uses a variable re-assigned in the command: $%s" % name)
         if name == "HOME":
             return home()
         if name == "PWD":
             if ctx.cwd is None:
-                raise Deny("target uses $PWD with an unknown working directory")
+                raise Unsure("target uses $PWD with an unknown working directory")
             return ctx.cwd
         if name == "OLDPWD":
-            raise Deny("target uses $OLDPWD")
+            raise Unsure("target uses $OLDPWD")
         val = os.environ.get(name)
         if val is None or val == "":
-            raise Deny("target uses an unset variable: $%s" % name)
+            raise Unsure("target uses an unset variable: $%s" % name)
         return val
 
     out = VAR_RE.sub(sub, arg)
     if "$" in out:
-        raise Deny("target cannot be resolved: %s" % arg)
+        raise Unsure("target cannot be resolved: %s" % arg)
     return out, safe
 
 
@@ -331,12 +348,12 @@ def resolve(arg, ctx, dot_ok=False, follow=True):
         path, child = (base or "."), True
     if not path.startswith("/"):
         if ctx.cwd is None:
-            raise Deny("relative target with an unknown working directory: %s" % arg)
+            raise Unsure("relative target with an unknown working directory: %s" % arg)
         path = os.path.join(ctx.cwd, path)
     missing = missing_before_dotdot(path)
     if missing:
-        raise Deny("target %s cannot be checked: %s does not exist yet, so where the following \"..\" "
-                   "leads is unknown" % (arg, missing))
+        raise Unsure("target %s cannot be checked: %s does not exist yet, so where the following \"..\" "
+                     "leads is unknown" % (arg, missing))
     if not follow and not child and not path.endswith("/"):
         # the kernel resolves a symlink before a following "..": the parent is resolved
         # physically and only the final component stays unresolved (never normpath here)
@@ -349,12 +366,14 @@ def resolve(arg, ctx, dot_ok=False, follow=True):
 
 def check_targets(args, ctx, label, dot_ok=False, follow=True):
     for a in args:
-        lit = a
-        r = resolve(a, ctx, dot_ok, follow)
+        try:
+            r = resolve(a, ctx, dot_ok, follow)
+        except Unsure:
+            continue  # the delete setting decides (bash-guard.py records the target)
         if r is None:
             continue
-        if is_dangerous(r):
-            raise Deny("%s of a protected path: %s -> %s" % (label, lit, r))
+        if on_hard_list(r):
+            raise Deny("%s of a protected path: %s -> %s" % (label, a, r))
 
 
 def nonopts(args):
@@ -508,7 +527,7 @@ def check_segment(seg, ctx, nest=0):
             if not d.startswith("/"):
                 d = os.path.join(ctx.cwd, d) if ctx.cwd else None
             ctx.cwd = os.path.realpath(d) if d else None
-        except Deny:
+        except Unsure:
             ctx.cwd = None
         return
     if verb == "git" and args[:1] == ["rm"]:
@@ -527,13 +546,11 @@ def check_segment(seg, ctx, nest=0):
                 return
         return
     if verb == "eval":
-        if re.search(r"\b(rm|unlink|shred|rmdir|find|mv|ln)\b", " ".join(args)):
-            raise Deny("eval around a destructive command")
-        return
+        return  # the text of eval is walked by bash-guard.py: literal text is checked there, run-time text is unsure
     if verb == "xargs":
         rest = strip_prefix(nonopts(args), ctx)
         if rest and os.path.basename(rest[0]) in DELETE_VERBS | {"mv", "shred"}:
-            raise Deny("xargs feeds unknown targets to %s" % rest[0])
+            raise Unsure("xargs feeds unknown targets to %s" % rest[0])
         return
     if verb in DELETE_VERBS:
         # GNU and POSIXLY_CORRECT readings; rm, unlink and rmdir remove a symlink itself,
@@ -552,8 +569,8 @@ def check_segment(seg, ctx, nest=0):
         joined = " ".join(args)
         destructive = "-delete" in args or re.search(r"-(exec|execdir|ok|okdir)\s+\S*\b(rm|unlink|shred|rmdir)\b", joined)
         if destructive:
-            if "-L" in args or "-follow" in args:
-                raise Deny("find follows symlinks while deleting")
+            # with -L the links below the start points are followed: those files are unsure (the start
+            # points themselves are checked, bash-guard.py records the find for the delete setting)
             check_targets(paths or ["."], ctx, "find deletion", dot_ok=True)
         return
     if verb == "mv":
@@ -569,7 +586,10 @@ def check_segment(seg, ctx, nest=0):
             if verb == "ln" and destination is None:
                 sources = sources[:1]
             for src in sources:
-                p, safe = expand(src, ctx)
+                try:
+                    p, safe = expand(src, ctx)
+                except Unsure:
+                    continue
                 if safe:
                     continue
                 if not p.startswith("/"):
@@ -803,6 +823,32 @@ LEGACY = [
 ]
 
 
+# a path word of a command: an absolute path, ~ or $HOME (a quote, = or ( in front of it is no part of it)
+PATH_WORD_RE = re.compile(r"""(?:^|[\s'"=(,\[])((?:~|\$\{?HOME\}?|/)[^\s'"`;|&()<>,\[\]]*)""")
+# delete rules judged by the resolved path words of the command (hard list), not by the critical names of
+# the text: a project folder below /mnt/c or /home is no hard target, the delete setting decides
+LITERAL_RULES = ("python deletion", "perl deletion", "node deletion", "ruby deletion", "rsync --delete",
+                 "tar --remove-files")
+
+
+def hard_word_in(text):
+    """True when a path word of text is on the hard list (on_hard_list after ~ and $HOME are expanded).
+
+    A word that names another user's home is hard (its path is not known here)."""
+    user_home = home()
+    for match in PATH_WORD_RE.finditer(text):
+        word = match.group(1)
+        if word == "~" or word.startswith("~/"):
+            word = user_home + word[1:]
+        elif word.startswith("~"):
+            return True
+        elif word.startswith("$"):
+            word = re.sub(r"^\$\{?HOME\}?", user_home, word)
+        if word.startswith("/") and on_hard_list(os.path.normpath(word)):
+            return True
+    return False
+
+
 def check_legacy(cmd):
     crit = re.compile(r"(%s|%s/|%s\b)" % (CRIT, r"~", r"\$\{?HOME\}?"))
     mask = quote_mask(cmd)
@@ -828,7 +874,11 @@ def check_legacy(cmd):
             if re.search(r"(%s|%s)" % (CRIT, HOME_REF), cmd):
                 raise Deny(reason)
             continue
-        if crit.search(cmd) or re.search(r"(chmod|chown|rsync)\b.*\s/\s*$", cmd):
+        if reason.startswith(LITERAL_RULES):
+            judged = hard_word_in(cmd)
+        else:
+            judged = crit.search(cmd)
+        if judged or re.search(r"(chmod|chown|rsync)\b.*\s/\s*$", cmd):
             raise Deny(reason)
     # a truncating redirect (">", ">|", "&>") onto a critical path; a new file in an ordinary
     # folder (a log below a project) is fine. An append (">>") destroys no content, but onto
@@ -1192,7 +1242,10 @@ def check_command(cmd, ctx, nest=0):
     check_time()
     for seg in split_segments(cmd):
         check_time()
-        check_segment(seg, ctx, nest)
+        try:
+            check_segment(seg, ctx, nest)
+        except Unsure:
+            pass  # this segment is unsure; the others are still checked (the delete setting decides)
 
 
 def main():

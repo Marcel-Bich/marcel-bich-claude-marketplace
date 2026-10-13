@@ -16,17 +16,24 @@ Modes:
                              file-protection.sh, dependency-verification.sh and
                              git-permissions.sh, which apply DOGMA-PERMISSIONS.md.
 
-Hook mode blocks, independent of any setting:
-  - deleting, moving away or emptying protected paths: /, first-level directories,
-    home levels, mount points, devices, the working directory and its parents, whole
-    repositories (also through archive/sync source deletion, find, git rm/clean and
-    data-destroying git commands with a redirected work tree or git dir);
-  - a command word chosen at run time together with a destructive primitive or a
-    protected path, and targets that cannot be resolved (fail closed);
+Hook mode denies, independent of any setting (the hard list, see delete-guard.py):
+  - deleting, moving away or emptying hard paths: /, the home and its first level,
+    every path of depth <= 3 outside the temp roots, mount points (and their first
+    level), depth <= 4 below /mnt and /media, Windows profile and system paths, the
+    working directory and its parents, whole repositories (also through archive/sync
+    source deletion, find, git rm/clean and data-destroying git commands with a
+    redirected work tree or git dir);
+  - a protected overwrite (redirects, truncation) and the non-delete protections
+    (secrets, git hooks and config, DOGMA-PERMISSIONS.md, hook bypass, disk tools);
   - filesystem and disk wipe tools, unmount/mount, Windows-side deletion from WSL;
   - inline interpreter code (python -c, perl -e, node -e and similar) that deletes or
-    runs commands near protected paths (heuristic scan).
-  Afterwards every normalised simple command goes through delete-guard.py.
+    runs commands near hard paths (heuristic scan).
+Targets that cannot be resolved for sure (unset or re-assigned variables, command
+substitution, parameter expansion, xargs, run-time command words, inline code deletes
+without a literal hard path) are NOT denied here: they are recorded as delete findings
+and the delete setting of DOGMA-PERMISSIONS.md decides (file-protection.sh). Plain
+literal assignments earlier in the same command are resolved (literal_plan).
+Afterwards every normalised simple command goes through delete-guard.py.
 Hook mode also applies the setting-independent rules of the other guards, each behind
 its own switch: token protection (credential paths, environment dumps, token
 variables, remote URLs), git add protection (git add -f, secret files, skipped git
@@ -230,6 +237,8 @@ WORD_END = " \t\n;&|()<>"
 SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "fish"}
 INTERPRETER_RE = re.compile(r"^(?:python[0-9.]*|pypy[0-9.]*|perl[0-9.]*|ruby[0-9.]*|node|nodejs|bun|deno|php[0-9.]*)$")
 DELETE_VERBS = {"rm", "unlink", "rmdir", "shred", "del", "srm", "wipe"}
+# the words of a text that run-time code (eval) may delete or move with: such text is unsure, not a denial
+DELETE_TEXT_RE = re.compile(r"\b(?:rm|unlink|shred|rmdir|srm|wipe|truncate|dd|mv)\b")
 DEVICE_TOOLS = {"wipefs", "mkswap", "blkdiscard", "fdisk", "sfdisk", "parted", "sgdisk", "mke2fs", "mkdosfs",
                 "mkntfs", "cryptsetup", "badblocks", "e2fsck", "tune2fs", "zpool", "lvremove", "vgremove", "pvremove",
                 "diskpart", "format"}
@@ -1145,8 +1154,8 @@ def delete_guard():
 
 
 def dangerous(path):
-    """Same rule as the upstream delete-guard: never deleted, moved away or emptied."""
-    return delete_guard().is_dangerous(path)
+    """The hard list of delete-guard.py (on_hard_list): never deleted, moved away or emptied."""
+    return delete_guard().on_hard_list(path)
 
 
 def overwrite_protected(path):
@@ -1230,10 +1239,10 @@ def brace_expand(word, limit=64, strict=False):
 def mount_points():
     """Mounts that protect deletes, as (point, whole) pairs.
 
-    A mount below the home and a declared mount (CLAUDE_MB_DOGMA_PROTECTED_MOUNTS) protect their whole
-    subtree (whole=True). A mount below /mnt or /media protects only its mount point (whole=False), whatever
-    its filesystem: a Windows drive over 9p, a network share or a USB stick. The levels above it are refused by
-    the depth rule of delete-guard.py, and the files deeper inside are ordinary project files."""
+    A mount found in /proc/self/mounts protects its mount point and the first level below it (whole=False), at
+    any depth: a cloud or rclone mount below the home (~/gdrive and ~/gdrive/Folder), a network share or a USB
+    stick below /mnt or /media. Deeper files are ordinary: the delete setting decides. A declared mount
+    (CLAUDE_MB_DOGMA_PROTECTED_MOUNTS) protects its whole subtree (whole=True)."""
     found = []
     try:
         with open("/proc/self/mounts", encoding="utf-8", errors="replace") as handle:
@@ -1246,9 +1255,7 @@ def mount_points():
     user_home = home()
     points = []
     for point in found:
-        if _inside(point, user_home) and point != user_home:
-            points.append((point, True))  # below the home, also when the home itself sits below /mnt or /media
-        elif point.startswith(("/mnt/", "/media/")):
+        if (_inside(point, user_home) and point != user_home) or point.startswith(("/mnt/", "/media/")):
             points.append((point, False))
     extra = os.environ.get("CLAUDE_MB_DOGMA_PROTECTED_MOUNTS") or ""
     for point in extra.split(":"):
@@ -1260,8 +1267,9 @@ def mount_points():
 
 
 def mounted(path):
-    """True when path is a protected mount point, or lies inside a mount whose whole subtree is protected."""
-    return any(_inside(path, point) if whole else path == point for point, whole in mount_points())
+    """True when path is a protected mount point or its first level, or lies inside a declared mount."""
+    return any(_inside(path, point) if whole else (path == point or os.path.dirname(path) == point)
+               for point, whole in mount_points())
 
 
 def repository_root(path):
@@ -1297,6 +1305,50 @@ def short_flag(args, letter):
     return any(re.match(r"^-[a-zA-Z0-9]*%s[a-zA-Z0-9]*$" % letter, arg) and not arg.startswith("--") for arg in args)
 
 
+# --- literal variables ----------------------------------------------------------------
+
+LITERAL_ASSIGN_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.S)
+# the words that start a compound command: an assignment inside one may be skipped or scoped
+COMPOUND_WORDS = {"(", "{", "if", "then", "else", "elif", "fi", "do", "done", "for", "while", "until", "case",
+                  "esac", "select", "function", "time", "!"}
+
+
+def compound(text):
+    words = text.split()
+    return text.lstrip().startswith(("(", "{")) or bool(words) and words[0] in COMPOUND_WORDS
+
+
+def literal_plan(script, command):
+    """{segment index: (name, value)}: the plain assignments whose value may be used by the delete checks.
+
+    Fail closed: a variable that fails one rule stays unresolved, so its targets are unsure (never allowed).
+    The segment is one pure assignment (no command word), first or after ";", a newline or "&&", and followed
+    by ";", a newline or "&&" (not "|", "||", "&" or a subshell). Its value after quote removal is not empty
+    and has no $, backtick, ~, glob character or blank. The name occurs as a bare word exactly once in the whole
+    command (the assignment itself). The command has no compound syntax (subshell, brace group, if, for,
+    while, until, case, select, function)."""
+    segments = script.segments
+    if any(compound(segment.text) or segment.connector == "(" for segment in segments):
+        return {}
+    plan = {}
+    for index in range(len(segments) - 1):
+        segment, following = segments[index], segments[index + 1]
+        if segment.connector not in (None, ";", "\n", "&&") or following.connector not in (";", "\n", "&&"):
+            continue
+        tokens, parsed = tokenize(segment.text)
+        if not parsed or len(tokens) != 1:
+            continue
+        match = LITERAL_ASSIGN_RE.fullmatch(tokens[0])
+        if not match or not match.group(2) or re.search(r"[$`~*?\[\]\s]", match.group(2)):
+            continue
+        name = match.group(1)
+        # a use ($NAME, ${NAME}) is no bare word; the assignment is the one bare occurrence
+        if len(re.findall(r"(?<![\w$])(?<!\$\{)%s(?!\w)" % re.escape(name), command)) != 1:
+            continue
+        plan[index] = (name, match.group(2))
+    return plan
+
+
 # --- analysis -------------------------------------------------------------------------
 
 
@@ -1306,6 +1358,8 @@ class Analysis:
         self.permissions = permissions
         self.flags = flags
         self.assigns = {}
+        self.literals = {}     # variables whose literal assignment already ran in this command (literal_plan)
+        self.plan = {}         # literal_plan of the top-level script: {segment index: (name, value)}
         self.mktemp = {}       # variables holding a fresh mktemp path
         self.batch = []        # (normalized simple command, candidate directories) for delete-guard
         self.deletes = []      # (label, target, directories)
@@ -1331,10 +1385,16 @@ class Analysis:
         if feature is None or self.flags.get(feature, True):
             raise Deny(reason)
 
-    def expand(self, word, cwd=None):
-        """Expand ~, ~user, $HOME and variables assigned in this command; unknown variables stay."""
+    def expand(self, word, cwd=None, strict=False):
+        """Expand ~, ~user, ~+, $HOME and variables assigned in this command; unknown variables stay.
+
+        strict=True (delete and overwrite targets): only literal assignments (literal_plan) and mktemp paths
+        are substituted; any other assigned variable stays unresolved, so the target is unsure. Other callers
+        (reads, redirects, commands) keep the sequential values of the assignments of this command."""
         if word == "~" or word.startswith("~/"):
             word = home() + word[1:]
+        elif (word == "~+" or word.startswith("~+/")) and cwd:
+            word = cwd + word[2:]
         elif word.startswith("~") and re.match(r"^~[A-Za-z0-9._-]+(/|$)", word):
             expanded = os.path.expanduser(word)
             if expanded != word:
@@ -1346,8 +1406,13 @@ class Analysis:
                 return home()
             if name == "PWD":
                 return cwd or match.group(0)
+            if name in self.literals:
+                return self.literals[name]
+            if name in self.mktemp:
+                return self.mktemp[name]
             if name in self.assigns and name not in ("OLDPWD",):
-                return self.assigns[name]
+                # an assigned name never falls back to the environment: strict callers see it unresolved
+                return match.group(0) if strict else self.assigns[name]
             if name in ("CODEX_HOME", "CLAUDE_CONFIG_DIR", "USER", "TMPDIR", "XDG_RUNTIME_DIR"):
                 value = os.environ.get(name)
                 if name == "CODEX_HOME" and not value:
@@ -1358,13 +1423,14 @@ class Analysis:
 
         return VAR_RE.sub(replace, word)
 
-    def join(self, directory, path, physical=False):
+    def join(self, directory, path, physical=False, strict=False):
         """Absolute path of path below directory; None when unknown.
 
         The default normalizes ".." textually like the shell's logical cd. physical=True keeps
         the path as the kernel sees it: a ".." after a symlink component is resolved against
-        the link target by realpath later, so it must never be collapsed textually here."""
-        path = self.expand(path, directory)
+        the link target by realpath later, so it must never be collapsed textually here.
+        strict: see expand()."""
+        path = self.expand(path, directory, strict)
         if "$" in path or SUB_RE.search(path) or path.startswith("~"):
             return None
         if not path.startswith("/"):
@@ -1397,14 +1463,13 @@ class Analysis:
         for variant in brace_expand(word, strict=True):
             trailing = self.expand(variant).endswith("/")
             for directory in directories:
-                path = self.join(directory, variant, physical=True)
+                path = self.join(directory, variant, physical=True, strict=True)
                 if path is None:
                     yield None
                     continue
-                missing = missing_before_dotdot(path)
-                if missing:
-                    raise Deny("dogma: %s cannot be checked: %s does not exist yet, so where the following "
-                               "\"..\" leads is unknown before running; blocked." % (variant[:80], missing[:120]))
+                if missing_before_dotdot(path):
+                    yield None  # where the following ".." leads is unknown before running: unsure
+                    continue
                 glob_match = GLOB_RE.search(path)
                 if glob_match:
                     base = path[:glob_match.start()]
@@ -1429,14 +1494,19 @@ class Analysis:
     def known(self):
         return getattr(self, "_known", set())
 
+    def unsure(self, label, target, directories):
+        """A delete-type target that cannot be resolved for sure: recorded as a finding, so the delete setting
+        of DOGMA-PERMISSIONS.md decides (file-protection.sh). Never a denial of its own."""
+        self.deletes.append((label, target, set(directories)))
+
     def protect_delete(self, operands, directories, label, contents=False, follow=True):
         """Own protected-path check for deleting operations, independent of §0lgy."""
         self._known = set(directories)
         for operand in operands:
             for path in self.targets(operand, directories, follow):
                 if path is None:
-                    raise Deny("dogma: %s target %s cannot be resolved before running; protected paths are "
-                               "checked first, so the command is blocked." % (label, operand[:80]))
+                    self.unsure(label, operand, directories)
+                    continue
                 if dangerous(path) or self.anchor(path, strict=contents) or \
                         (mounted(path) and not delete_guard().temp_root_of(path)):
                     raise Deny("dogma: %s of a protected path (%s) is never allowed." % (label, path))
@@ -1448,9 +1518,9 @@ class Analysis:
         for operand in operands:
             for path in self.targets(operand, directories):
                 if path is None:
-                    if unresolved_ok:
-                        continue
-                    raise Deny("dogma: %s target %s cannot be resolved; blocked." % (label, operand[:80]))
+                    if not unresolved_ok:
+                        self.unsure(label, operand, directories)
+                    continue
                 if overwrite_protected(path):
                     raise Deny("dogma: %s of a protected path (%s) is never allowed." % (label, path))
 
@@ -1461,7 +1531,8 @@ class Analysis:
         instead of the directory, and only an existing protected entry there is refused."""
         for path in self.targets(destination, directories):
             if path is None:
-                raise Deny("dogma: %s target %s cannot be resolved; blocked." % (label, destination[:80]))
+                self.unsure(label, destination, directories)
+                continue
             if not file_only and (into or os.path.isdir(path)):
                 for source in sources:
                     # rsync src/ copies the contents of src: the names are unknown here
@@ -1495,6 +1566,7 @@ class Analysis:
         script = scan(command)
         if self.top is None:
             self.top = script
+            self.plan = literal_plan(script, command)
         self.proc_out = self.proc_out or script.proc_out
         self.subs = script.subs
         visible = "".join(script.visible)
@@ -1521,6 +1593,9 @@ class Analysis:
             if segment.connector == "|" and index:
                 segment.piped_in = self.producer(segments[index - 1], script.heredocs)
             current = self.segment(segment, script.heredocs, current, depth)
+            if script is self.top and index in self.plan:
+                name, value = self.plan[index]
+                self.literals[name] = value  # from here on the later segments see the value
             seen |= current
         for inner in script.subs:
             self.walk(inner, seen, depth + 1)
@@ -1645,6 +1720,16 @@ class Analysis:
         parts.append(text[cut:])
         return "".join(parts)
 
+    def batch_word(self, arg):
+        """An argument as delete-guard.py reads it: literal and mktemp variables are substituted, any other
+        variable stays as written, so delete-guard.py sees it unresolved too (unsure, never a guessed value)."""
+        def replace(match):
+            name = match.group(1) or match.group(2)
+            if name in self.literals:
+                return self.literals[name]
+            return self.mktemp.get(name, match.group(0))
+        return VAR_RE.sub(replace, arg)
+
     def command(self, tokens, segment, bodies, directories, depth, wrapped=False):
         while tokens and ASSIGN_RE.match(tokens[0]):
             self.assign(tokens[0], directories)
@@ -1668,7 +1753,7 @@ class Analysis:
         verb = os.path.basename(first)
         args = tokens[1:]
         self.check_written_run(first, verb, args, directories, segment)
-        safe = [VAR_RE.sub(lambda m: self.mktemp.get(m.group(1) or m.group(2), m.group(0)), arg) for arg in args]
+        safe = [self.batch_word(arg) for arg in args]
         self.batch.append(([verb] + [variant for arg in safe for variant in brace_expand(arg)], set(directories)))
 
         if verb in WRAPPER_VALUE_OPTIONS or verb in ("env", "timeout", "watch", "xargs", "flock"):
@@ -1692,8 +1777,12 @@ class Analysis:
         elif verb == "eval":
             inner = " ".join(args)
             if "$" in inner or SUB_RE.search(inner) or "`" in inner:
-                raise Deny("dogma: eval of text built at run time cannot be checked; blocked (fail closed).")
-            self.walk(inner, directories, depth + 1)
+                if not DELETE_TEXT_RE.search(inner):
+                    raise Deny("dogma: eval of text built at run time cannot be checked; blocked (fail closed).")
+                # text built at run time that deletes: unsure, the delete setting decides
+                self.unsure("eval", inner[:200], directories)
+            else:
+                self.walk(inner, directories, depth + 1)
         elif verb in getopt.LAUNCHERS or verb in ("tmux", "bwrap"):
             self.launch(verb, args, segment, bodies, directories, depth)
         elif verb in ("runuser", "su"):
@@ -2037,7 +2126,7 @@ class Analysis:
             words = shlex.split(text, comments=True)
         except ValueError:
             self.opaque([text], depth)
-            self.unclear(text)
+            self.unclear(text, directories)
             return
         self.tmux_commands(words, directories, depth + 1)
 
@@ -2158,9 +2247,7 @@ class Analysis:
                 continue
             for path in self.targets(arg, directories):
                 if path is None:
-                    if destructive_flags:
-                        raise Deny("dogma: a command chosen at run time with unresolvable targets is blocked.")
-                    continue
+                    continue  # unsure: the "dynamic command" finding below decides by the delete setting
                 if dangerous(path) and (destructive_flags or overwrite_protected(path)) or \
                         overwrite_protected(path) or self.anchor(path):
                     raise Deny("dogma: a command chosen at run time touches a protected path (%s); blocked." % path)
@@ -2201,10 +2288,11 @@ class Analysis:
             except (ValueError, RecursionError):
                 self.unclear(text)
 
-    def unclear(self, text):
+    def unclear(self, text, directories=None):
+        """Text run by a program whose handling is not fully known: when it deletes or moves, its target is
+        unsure (the delete setting decides); directories None = the working directory of the session."""
         if FALLBACK_RE.search(text):
-            raise Deny("dogma: text run by a program whose handling is not fully known deletes or moves "
-                       "something and cannot be checked; blocked (fail closed).")
+            self.unsure("unclear", text[:200], directories or {None})
 
     def inputs(self, args, segment, bodies):
         """Argument strings plus everything the program may read as input."""
@@ -2597,9 +2685,9 @@ class Analysis:
         if verb in DELETE_VERBS:
             label = verb
             if self.xargs:
-                raise Deny("dogma: %s under xargs gets its targets from input; protected paths cannot be "
-                           "checked." % verb)
-            self.protect_delete(operands, directories, "deletion", follow=verb in FOLLOWING_DELETERS)
+                # the targets come from the input of xargs: unsure (the literal operands are still checked)
+                self.unsure(verb, " ".join(operands), directories)
+            self.protect_delete(operands, directories, verb, follow=verb in FOLLOWING_DELETERS)
         elif verb == "truncate":
             self.protect_overwrite(operands, directories, "truncation")
             for operand in operands:
@@ -3135,7 +3223,7 @@ class Analysis:
             if sub == "clean":
                 for directory in targets:
                     if directory is None:
-                        raise Deny("dogma: git clean target cannot be determined; blocked.")
+                        continue  # unsure: the git clean finding below decides by the delete setting
                     if dangerous(directory) or self.anchor(directory, strict=True):
                         raise Deny("dogma: git clean of a protected path (%s) is never allowed." % directory)
             if sub == "rm" and operands:
@@ -3374,8 +3462,8 @@ class Analysis:
             command = values[0] if len(values) == 1 else " ".join(_command_word(value) for value in values)
             self.walk(command, directories, depth + 1)
         if home_lookup and any(_deleting_command(value) for value in literals if value not in pure):
-            raise Deny("dogma: inline code runs a deleting command next to a home lookup; its target cannot be "
-                       "checked, blocked.")
+            # a deleting command whose target the home lookup hides: unsure, the delete setting decides
+            self.unsure("inline code deletion", "", directories)
         return pure
 
     def code(self, code, directories, depth, nesting=0):
@@ -3422,12 +3510,6 @@ class Analysis:
         literals += re.findall(r"`([^`]+)`", code)
         if CODE_INSTALL_RE.search(code):
             self.installs.append("inline code install or download-and-run")
-        home_ref = CODE_HOME_RE.search(code) or re.search(
-            r"getpwuid|pw_dir|getpwnam|chr\(\s*126\s*\)|\\x7e|\\176|homedir|Dir\.home|Sys\.getenv|"
-            r"path\.expand|HOME\b|getcwd|cwd\(\)|dirname|parent|glob\s*\(?\s*[\"']~", code)
-        risky_literal = any(literal in ("~", "..", "/", ".") or literal.startswith(("~/", "../", "/home", "/root",
-                                                                                   "/mnt", "/etc", "/usr"))
-                            for literal in literals)
         if moves and not deletes and not executes:
             self.check_moves(code, literals, directories)
         if CODE_TRUNCATE_RE.search(calls) or CODE_WRITE_RE.search(calls):
@@ -3436,16 +3518,14 @@ class Analysis:
                 lambda m: m.group(0) if not re.search(r"\s", m.group(0)[1:-1]) else m.group(0)[0] * 2, joined))):
             self.check_symlinks(code, literals, directories)
         if deletes:
+            # the target of the code is unsure unless a literal path of it is on the hard list (checked below)
             self.deletes.append(("inline code deletion", "", set(directories)))
-            if home_ref or risky_literal:
-                raise Deny("dogma: inline code deletes near the home, root or parent directories; "
-                           "blocked (the hook cannot follow arbitrary code).")
             for literal in literals:
                 if not literal or "\n" in literal:
                     continue
                 for directory in directories:
                     path = self.join(directory, literal) if not re.search(r"\s", literal) else None
-                    if path and (literal.startswith("/") and dangerous(path) or self.anchor(path)):
+                    if path and (literal.startswith(("/", "~")) and dangerous(path) or self.anchor(path)):
                         raise Deny("dogma: inline code deletes a protected path (%s)." % path)
                     # the kernel resolves ".." after a symlink physically: when that lands
                     # somewhere else than the textual path, the physical target is checked
@@ -3681,8 +3761,14 @@ def findings(analysis, cwd):
     def dirs(directories):
         return sorted({"" if directory in (None, start) else directory for directory in directories})
 
+    def shown(target):
+        # a command substitution is an internal placeholder here: shown as $(...), it stays an unresolved
+        # target for delete-guard.py --temp-only (a placeholder name could look like a plain file in a temp folder)
+        return SUB_RE.sub(lambda match: "$(...)", target)
+
     return {
-        "deletes": [{"label": label, "target": target, "dirs": dirs(directories), "discard": label in DISCARD_LABELS}
+        "deletes": [{"label": label, "target": shown(target), "dirs": dirs(directories),
+                     "discard": label in DISCARD_LABELS}
                     for label, target, directories in analysis.deletes],
         "installs": list(analysis.installs),
         "git": [{"op": operation, "dirs": dirs(targets), "unknown": bool(unknown)}

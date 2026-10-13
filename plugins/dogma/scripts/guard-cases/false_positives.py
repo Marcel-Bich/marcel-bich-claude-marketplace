@@ -835,10 +835,10 @@ CASES = (
     ("allow", "X", "rm /mnt/d/data/proj/models/x.gguf"),
     ("allow", "X", "rm -r /mnt/d/data/proj/old"),
     # a network share or USB stick (any filesystem, not declared here) is treated like a Windows drive: the
-    # mount point and the levels down to depth 3 stay refused, deeper files are ordinary
+    # mount point and the levels down to depth 4 stay refused (v1.46), deeper files are ordinary
     ("allow", "X", "rm /mnt/nas/share/old/x.bin"),
-    ("allow", "X", "rm -r /mnt/nas/share/tmpdir"),
-    ("allow", "X", "rm -rf /media/usb/folder/x"),
+    ("allow", "X", "rm -r /mnt/nas/share/tmpdir/build"),
+    ("allow", "X", "rm -rf /media/usb/folder/x/y"),
     ("deny", "X", "rm -rf /mnt/d/data"),
     ("deny", "X", "rm -rf /mnt/d"),
     ("deny", "X", "rm -rf /mnt"),
@@ -853,7 +853,7 @@ CASES = (
     # a declared mount (CLAUDE_MB_DOGMA_PROTECTED_MOUNTS) stays protected as a whole subtree
     ("deny", "X", "rm -rf /mnt/vault/a/b/c/x"),
     ("deny", "X", "rm -rf /etc/x"),
-    ("deny", "X", "rm -rf /opt/x/y/z"),
+    ("deny", "N", "rm -rf /opt/x/y/z"),  # depth 4 is no hard path (v1.46): the delete setting decides
     ("deny", "N", "rm -rf /tmp/../home"),
     ("deny", "N", "rm -rf /tmp/a {H}/work/keep"),
     ("deny", "N", "rm -rf {R}/homelink/"),
