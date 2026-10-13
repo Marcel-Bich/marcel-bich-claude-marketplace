@@ -25,12 +25,15 @@ The fp table holds false positives (must pass) next to the protection that must
 stay (must be blocked), plus Edit/Write inputs that no Edit/Write hook may treat as a deletion.
 PEM_READ (guard-cases/false_positives.py) runs Read inputs through token-protection.sh: a key
 block is denied, a lone PEM header line is allowed.
+unit_todelete_entry runs file-protection.sh from fixture folders. A delete whose target is a shell variable logs
+its command in TO-DELETE.md and gets the hint, a literal target and a discard keep the plain entry and reason.
 
 Usage: test-guard-parity.py [-v] [--only r1x|r1n|r2|probes|everyday|fp|local|unit]
 """
 
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -360,6 +363,122 @@ def unit_discard_reason(runner):
     return results
 
 
+TODELETE_HINT = "The target uses a shell variable dogma cannot resolve - retry with the literal path."
+TODELETE_TIME = r"\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\)"
+
+
+def todelete_folder(runner, name, box):
+    """A fresh folder whose DOGMA-PERMISSIONS.md sets the delete setting to box ("[ ]" deny, "[?]" ask)."""
+    folder = runner.root / "todelete" / name
+    folder.mkdir(parents=True)
+    (folder / "DOGMA-PERMISSIONS.md").write_text(
+        "<permissions>\n- %s (§0lgy) May delete files\n- [ ] (§b4dk) Discard uncommitted changes\n"
+        "</permissions>\n" % box, encoding="utf-8")
+    (folder / "notes.txt").write_text("fixture\n", encoding="utf-8")
+    return folder
+
+
+def no_python_path(runner):
+    """A PATH directory with the tools the guards use but no python3, which forces the text fallback."""
+    bare = runner.root / "todelete-no-python"
+    bare.mkdir()
+    for tool in ("jq", "grep", "sed", "awk", "cat", "head", "tail", "tr", "wc", "cut", "date", "basename",
+                 "dirname", "xargs", "sort", "uniq", "readlink", "realpath", "stat", "mktemp"):
+        found = shutil.which(tool)
+        if found:
+            (bare / tool).symlink_to(found)
+    return bare
+
+
+def run_file_protection(runner, folder, command, bare=None):
+    """(decision, reason) of file-protection.sh for one Bash command run from folder."""
+    event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                        "tool_input": {"command": command}, "cwd": str(folder), "session_id": ""})
+    env = dict(runner.env, DOGMA_SESSION_DIR=str(folder))
+    if bare is not None:
+        env["PATH"] = str(bare)
+    result = subprocess.run([shutil.which("bash"), str(runner.scripts / "file-protection.sh")], input=event,
+                            capture_output=True, text=True, cwd=folder, env=env, timeout=30)
+    try:
+        output = json.loads(result.stdout)["hookSpecificOutput"]
+        return output["permissionDecision"], output["permissionDecisionReason"]
+    except (ValueError, KeyError, TypeError):
+        return "no json", result.stdout.strip()[:200]
+
+
+def todelete_lines(folder):
+    """The checklist entries of the TO-DELETE.md in folder, or None when the file was not created."""
+    path = folder / "TO-DELETE.md"
+    if not path.is_file():
+        return None
+    return [line for line in path.read_text(encoding="utf-8").splitlines() if line.startswith("- [")]
+
+
+def todelete_entry(target, command=None):
+    """Regex of the one TO-DELETE.md entry of a permanent delete, with the command suffix when given.
+    A target of None accepts any single-line rm target."""
+    shown = r"rm [^`]+" if target is None else re.escape(target)
+    text = r"- \[ \] `%s` - Deletes files permanently %s" % (shown, TODELETE_TIME)
+    if command is not None:
+        text += " - command: `%s`" % re.escape(command)
+    return re.compile(text + "$")
+
+
+def unit_todelete_entry(runner):
+    """[(ok, line)]: a denied delete whose target is a shell variable logs its command in TO-DELETE.md and its
+    deny or ask reason names the hint; a literal target keeps the plain entry, a discard keeps its reason."""
+    variable = 'S=/tmp/x/fx && rm -rf "$S"'
+    long_command = variable + " && echo 'a`b' && echo " + "a" * 320
+    long_flat = long_command.replace("`", "'")[:300] + "..."
+    bare = no_python_path(runner)
+    # name, delete setting box, command, want decision, reason text, hint wanted, entry regex or None, bare path
+    rows = (
+        ("var-deny", "[ ]", variable, "deny", "BLOCKED by dogma", True, todelete_entry("rm $S", variable), None),
+        ("var-ask", "[?]", variable, "ask", "requires confirmation", True, None, None),
+        ("literal", "[ ]", "rm -rf /home/myuser/proj/old", "deny", "BLOCKED by dogma", False,
+         todelete_entry("rm /home/myuser/proj/old"), None),
+        ("multi-line", "[ ]", 'S=/tmp/x/fx\nrm -rf "$S"', "deny", "BLOCKED by dogma", True,
+         todelete_entry("rm $S", 'S=/tmp/x/fx ; rm -rf "$S"'), None),
+        ("long", "[ ]", long_command, "deny", "BLOCKED by dogma", True, todelete_entry("rm $S", long_flat), None),
+        ("text-fallback", "[ ]", variable, "deny", "BLOCKED by dogma", True,
+         todelete_entry('rm "$S"', variable), bare),
+        ("discard", "[ ]", 'F=notes.txt && git restore "$F"', "deny",
+         "discards uncommitted changes and is denied", False, None, None),
+        # F1 - a refused operand with an unassigned variable gets the retry hint, no entry is written
+        ("refused-variable", "[ ]", 'rm -rf "$PROJ/build"', "deny", "cannot be resolved before running", True,
+         None, None),
+        # F2 - the variable sits in a later delete of the group, the first target is literal
+        ("any-variable", "[ ]", 'S=/tmp/x/fx && rm -rf build && rm -rf "$S"', "deny", "BLOCKED by dogma", True,
+         todelete_entry(None, 'S=/tmp/x/fx && rm -rf build && rm -rf "$S"'), None),
+        # F3 - a tab is one space in the entry
+        ("tab-separator", "[ ]", 'S=/tmp/x/fx\t&& rm -rf "$S"', "deny", "BLOCKED by dogma", True,
+         todelete_entry("rm $S", variable), None),
+        # F4 - a backslash and a tab in the target keep the reason valid JSON
+        ("backslash-target", "[ ]", 'S=/tmp/x/fx && rm -rf "$S/a\\ b"', "deny", 'rm $S/a\\ b logged', True,
+         todelete_entry(None, 'S=/tmp/x/fx && rm -rf "$S/a\\ b"'), None),
+        ("tab-target", "[ ]", 'S=/tmp/x/fx && rm -rf "$S/a\tb"', "deny", "BLOCKED by dogma", True,
+         todelete_entry(None, 'S=/tmp/x/fx && rm -rf "$S/a b"'), None),
+        # text fallback: a multi-line command, and two deletes whose targets span two lines
+        ("text-multi-line", "[ ]", 'S=/tmp/x/fx\nrm -rf "$S"', "deny", "BLOCKED by dogma", True,
+         todelete_entry('rm "$S"', 'S=/tmp/x/fx ; rm -rf "$S"'), bare),
+        ("text-two-deletes", "[ ]", 'rm -rf "$S"\nrm -rf "$T"', "deny", "BLOCKED by dogma", True,
+         todelete_entry('rm "$S" ; "$T"', 'rm -rf "$S" ; rm -rf "$T"'), bare),
+    )
+    results = []
+    for name, box, command, want, text, hint, entry, path in rows:
+        folder = todelete_folder(runner, name, box)
+        decision, reason = run_file_protection(runner, folder, command, bare=path)
+        lines = todelete_lines(folder)
+        if entry is None:
+            entry_ok = lines is None
+        else:
+            entry_ok = lines is not None and len(lines) == 1 and entry.match(lines[0]) is not None
+        ok = decision == want and text in reason and (TODELETE_HINT in reason) == hint and entry_ok
+        results.append((ok, "todelete %s (want %s, hint %s): reason %s | entries %s" % (
+            name, want, hint, reason[:300], lines)))
+    return results
+
+
 def unit_perf():
     """[(ok, line)]: long and pathological arguments are analysed well below the hook timeout."""
     import importlib.util
@@ -518,7 +637,7 @@ def main():
                     failed.append("FAIL " + line)
         if only in (None, "unit"):
             for ok, line in (unit_legacy_cwd() + unit_perf() + unit_scope_hint(runner) + unit_read_content(runner)
-                             + unit_mounts(runner) + unit_discard_reason(runner)):
+                             + unit_mounts(runner) + unit_discard_reason(runner) + unit_todelete_entry(runner)):
                 passed, total = counts.get("unit", (0, 0))
                 counts["unit"] = (passed + ok, total + 1)
                 if not ok:
