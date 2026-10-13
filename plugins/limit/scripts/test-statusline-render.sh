@@ -95,6 +95,10 @@ render >/dev/null
 out=$(render)
 has "session token sums from deduplicated JSONL" "Tokens  -> Input: 200.0k" "$out"
 hasre "cache reads shown separately" "Cached: +9\.0M" "$out"
+has "session work tokens (input + output, cache reads excluded) are labelled Work Tokens" "Work Tokens: " "$out"
+hasnt "the misleading User Tokens label is gone" "User Tokens" "$out"
+has_n "context cache holds the last response input, not a session total" "9100000" "$(jq -r '.last_input_tokens // "missing"' "/tmp/claude-mb-context-cache_${SID}.json" 2>/dev/null)"
+has_n "context cache holds the last response output, not a session total" "400000" "$(jq -r '.last_output_tokens // "missing"' "/tmp/claude-mb-context-cache_${SID}.json" 2>/dev/null)"
 has "lifetime counts each message once" "LifetimeTotal: 1.0M" "$out"
 has "Est100% sits on the device line with the device label" "[Highest:1.0M/1.0M] [Est100%:2.0M] (box-1)" "$out"
 hasnt "Est100% is not shown on the account-wide API lines" "Est100%" "$(grep -v 'box-1' <<< "$out")"

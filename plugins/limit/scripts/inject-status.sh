@@ -128,6 +128,15 @@ thresh_json=$(printf '%s' "$THRESHOLDS" | jq -R -c 'split(",") | map(gsub("^\\s+
 
 # --- throttle + threshold + delta state (per session) ---
 state_file="/tmp/claude-mb-inject-state_${session_id}.json"
+# Read, decide and write of this state run under one lock: parallel hook calls of
+# one session would otherwise all read the same state and all inject. The lock is
+# held until this script exits; a busy lock is given up after 2 s (never block).
+STATE_IO="$(dirname "${BASH_SOURCE[0]}")/state-io.sh"
+if [[ -f "$STATE_IO" ]]; then
+    # shellcheck source=state-io.sh
+    source "$STATE_IO"
+    LIMIT_LOCK_WAIT=2 limit_hold_lock "${state_file}.lock" || true
+fi
 last_ts=0; fired_json='[]'; last_ctx=""; last_5h=""; last_weekly=""
 if [[ -f "$state_file" ]]; then
     last_ts=$(jq -r '.last_ts // 0' "$state_file" 2>/dev/null) || last_ts=0

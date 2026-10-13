@@ -974,15 +974,19 @@ write_context_cache() {
     [[ "$compact_estimated" == "true" || "$compact_estimated" == "false" ]] || compact_estimated="false"
     [[ "$compact_disabled" == "true" || "$compact_disabled" == "false" ]] || compact_disabled="false"
 
-    # Session id, model and session-wide totals from the statusline stdin
-    local session_id="" model="" total_input=0 total_output=0
+    # Session id and model from the statusline stdin, plus the last API response
+    # values. Claude Code defines context_window.total_input_tokens as the input
+    # currently in the context window and total_output_tokens as the output of
+    # the most recent response - NOT session totals (session sums come from the
+    # ledger, see usage-ledger.sh).
+    local session_id="" model="" last_input=0 last_output=0
     if [[ -n "$STDIN_DATA" ]]; then
         session_id=$(echo "$STDIN_DATA" | jq -r '.session_id // ""' 2>/dev/null) || session_id=""
         [[ "$session_id" == "null" ]] && session_id=""
         model=$(echo "$STDIN_DATA" | jq -r '.model.id // ""' 2>/dev/null) || model=""
         [[ "$model" == "null" ]] && model=""
-        total_input=$(echo "$STDIN_DATA" | jq -r '.context_window.total_input_tokens // 0' 2>/dev/null) || total_input=0
-        total_output=$(echo "$STDIN_DATA" | jq -r '.context_window.total_output_tokens // 0' 2>/dev/null) || total_output=0
+        last_input=$(echo "$STDIN_DATA" | jq -r '.context_window.total_input_tokens // 0' 2>/dev/null) || last_input=0
+        last_output=$(echo "$STDIN_DATA" | jq -r '.context_window.total_output_tokens // 0' 2>/dev/null) || last_output=0
     fi
 
     # Target: per-session file (parallel-safe). Fallback to profile file if no id.
@@ -1033,12 +1037,12 @@ write_context_cache() {
         --argjson compact_estimated "$compact_estimated" \
         --argjson compact_disabled "$compact_disabled" \
         --argjson try_compact "$try_compact" \
-        --argjson total_input "${total_input:-0}" \
-        --argjson total_output "${total_output:-0}" \
+        --argjson last_input_tokens "${last_input:-0}" \
+        --argjson last_output_tokens "${last_output:-0}" \
         --arg session_cost "$session_cost" \
         --argjson limits "$limits" \
         --arg updated_at "$updated_at" \
-        '{session_id: $sid, model: $model, ctx_tokens: $ctx_tokens, ctx_window: $ctx_window, ctx_pct: $ctx_pct, compact_pct: $compact_pct, compact_ref_tokens: $compact_ref_tokens, compact_estimated: $compact_estimated, compact_disabled: $compact_disabled, try_compact: $try_compact, total_input: $total_input, total_output: $total_output, session_cost: $session_cost} + $limits + {updated_at: $updated_at}' \
+        '{session_id: $sid, model: $model, ctx_tokens: $ctx_tokens, ctx_window: $ctx_window, ctx_pct: $ctx_pct, compact_pct: $compact_pct, compact_ref_tokens: $compact_ref_tokens, compact_estimated: $compact_estimated, compact_disabled: $compact_disabled, try_compact: $try_compact, last_input_tokens: $last_input_tokens, last_output_tokens: $last_output_tokens, session_cost: $session_cost} + $limits + {updated_at: $updated_at}' \
         > "$tmp_file" 2>/dev/null; then
         mv -f "$tmp_file" "$target_file" 2>/dev/null
     fi
@@ -1201,37 +1205,6 @@ get_session_caption() {
     fi
 
     echo ""
-}
-
-# Get token metrics from stdin data
-# Uses context_window totals for session-wide metrics, current_usage for cache
-get_token_metrics() {
-    local metric="$1"  # input, output, cache_read
-    if [[ -n "$STDIN_DATA" ]]; then
-        local value
-        case "$metric" in
-            input)
-                # Session total input tokens
-                value=$(echo "$STDIN_DATA" | jq -r '.context_window.total_input_tokens // 0' 2>/dev/null)
-                ;;
-            output)
-                # Session total output tokens
-                value=$(echo "$STDIN_DATA" | jq -r '.context_window.total_output_tokens // 0' 2>/dev/null)
-                ;;
-            cache_read)
-                # Current context cache (for context calculation)
-                value=$(echo "$STDIN_DATA" | jq -r '.context_window.current_usage.cache_read_input_tokens // 0' 2>/dev/null)
-                ;;
-            *)
-                value="0"
-                ;;
-        esac
-        if [[ -n "$value" ]] && [[ "$value" != "null" ]]; then
-            echo "$value"
-            return
-        fi
-    fi
-    echo "0"
 }
 
 # Get session timing info from stdin data
@@ -1590,9 +1563,10 @@ format_output() {
     local sess_val1="" sess_val2="" sess_val3=""
 
     # Tokens values: session sums (main + its subagents) from the deduplicated
-    # ledger. Input = uncached input + cache writes, Cached = cache reads.
-    # Without a readable ledger the last request from stdin is shown instead,
-    # labelled "LastReq" (stdin has no cumulative per-session totals).
+    # ledger. Input = uncached input + cache writes, Output = output, Cached = cache
+    # reads (not part of Input), Work Tokens = Input + Output (the ledger's work()).
+    # Without a readable ledger the last API request from stdin is shown instead,
+    # labelled "LastReq" (its current_usage has no session totals).
     local tok_label="Tokens  -> "
     if [[ "$SHOW_TOKENS" == "true" ]]; then
         local in_tokens=0 out_tokens=0 cache_read=0 total_tokens=0
@@ -1725,11 +1699,11 @@ format_output() {
     [[ $sess_pct_len -gt $col4_width ]] && col4_width=$sess_pct_len
 
     # Progress bar is 12 chars + 1 space = 13 chars before percentage
-    # Labels "User Tokens: " and "ContextLeft: " are 13 chars each
+    # Labels "Work Tokens: " and "ContextLeft: " are 13 chars each
     # To align the VALUES (not total width), we need extra padding for Tokens/Context
     # Extra padding needed = progress_bar_width (13) - label_width (13) = 0 chars
     local progress_bar_prefix_width=13  # [==========] + space
-    local label_prefix_width=13         # "User Tokens: " or "ContextLeft: "
+    local label_prefix_width=13         # "Work Tokens: " or "ContextLeft: "
     local extra_padding=$((progress_bar_prefix_width - label_prefix_width))
     local col4_padded_width=$((col4_width + extra_padding))
 
@@ -1740,12 +1714,12 @@ format_output() {
         gray_color_reset="$COLOR_RESET"
     fi
 
-    # Tokens line: Input: %Ns    Output: %Ns    Cached: %Ns    User Tokens: %Ns
+    # Tokens line: Input: %Ns    Output: %Ns    Cached: %Ns    Work Tokens: %Ns
     # 4 spaces between columns for readability
     # col4 uses padded width so value aligns with Session's progress bar percentage
     if [[ "$SHOW_TOKENS" == "true" ]]; then
         local tok_line
-        printf -v tok_line "${tok_label}Input: %${col1_width}s    Output: %${col2_width}s    Cached: %${col3_width}s    User Tokens: %${col4_padded_width}s" \
+        printf -v tok_line "${tok_label}Input: %${col1_width}s    Output: %${col2_width}s    Cached: %${col3_width}s    Work Tokens: %${col4_padded_width}s" \
             "$tok_val1" "$tok_val2" "$tok_val3" "$tok_val4"
         lines+=("${gray_color}${tok_line}${gray_color_reset}")
     fi
