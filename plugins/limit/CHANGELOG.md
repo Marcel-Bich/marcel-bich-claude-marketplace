@@ -6,6 +6,18 @@ Changelog of the limit plugin. Newest first. Months group releases; no day dates
 
 ### v2.36
 
+#### v2.36.3
+
+##### Changed
+
+- AvgPeak and Avg values are right-aligned to the width of 100.0, so the line does not shift
+
+##### Fixed
+
+- The 7d and 5h averages group history samples by their reset time, so samples of another window or plan mixed into one series no longer count as consumption
+- A window's first sample counts as a restart only after a real window change, not when the history starts recording the reset time
+- One history line with an unparsable timestamp no longer blanks all averages
+
 #### v2.36.2
 
 ##### Added
