@@ -149,9 +149,10 @@ has "reset window shows 0 %" "0.0% reset: " "$out"
 has "reset marker" "(reset)" "$out"
 
 echo ">>> averages: AvgPeak and Avg values are right-aligned to 5 characters (100.0 is the widest)"
-# Fixture history with invented values. Five completed 5h windows with peaks 67, 68,
-# 68, 68, 68 give AvgPeak 67.8; +10 each is 50 over 5.83 h, i.e. 8.6 %/h. Two completed
-# 7d windows peaking at 100 give AvgPeak 100.0; +1 each is 2 over 2.83 h, i.e. 16.9 %/d.
+# Fixture history with invented values. Five completed 5h windows (each starts at 0,
+# five hours before its reset) peak at 67, 68, 68, 68, 68: AvgPeak 67.8. Their rise
+# is 339 over 10 h: 33.9 %/h. Two completed 7d windows start at 0 and peak at 100:
+# AvgPeak 100.0. Their rise is 200 over 144 h: 33.3 %/d. The current samples sit at 0.
 # The history write is held back so the renders above cannot add samples.
 HIST="$DATA_DIR/limit-history_${FAKE_PROFILE}.jsonl"
 date +%s > "$DATA_DIR/history-last-write_${FAKE_PROFILE}"
@@ -162,29 +163,54 @@ ts_at() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
     for w in 0 1 2 3 4; do
         p=68; [[ $w -eq 0 ]] && p=67
         reset=$(iso $((NOW - (5 - w) * 3600)))
-        jq -cn --arg ts "$(ts_at $((NOW - (5 - w) * 3600 - 3000)))" --arg r "$reset" --argjson v $((p - 10)) \
-            '{ts: $ts, "5h": {api: $v, reset: $r}}'
+        jq -cn --arg ts "$(ts_at $((NOW - (5 - w) * 3600 - 18000)))" --arg r "$reset" \
+            '{ts: $ts, "5h": {api: 0, reset: $r}}'
         jq -cn --arg ts "$(ts_at $((NOW - (5 - w) * 3600 - 2400)))" --arg r "$reset" --argjson v "$p" \
             '{ts: $ts, "5h": {api: $v, reset: $r}}'
     done
     for w in 2 1; do
         reset=$(iso $((NOW - w * 3600)))
-        jq -cn --arg ts "$(ts_at $((NOW - w * 3600 - 3000)))" --arg r "$reset" \
-            '{ts: $ts, "7d": {api: 99, reset: $r}}'
+        jq -cn --arg ts "$(ts_at $((NOW - 6 * 86400 + (2 - w) * 3600)))" --arg r "$reset" \
+            '{ts: $ts, "7d": {api: 0, reset: $r}}'
         jq -cn --arg ts "$(ts_at $((NOW - w * 3600 - 2400)))" --arg r "$reset" \
             '{ts: $ts, "7d": {api: 100, reset: $r}}'
     done
     jq -cn --arg ts "$(ts_at $((NOW - 300)))" --arg f "$H_5H_FUT" --arg s "$H_7D_FUT" \
-        '{ts: $ts, "5h": {api: 50, reset: $f}, "7d": {api: 30, reset: $s}}'
+        '{ts: $ts, "5h": {api: 0, reset: $f}, "7d": {api: 0, reset: $s}}'
 } > "$HIST"
 write_cache 50 "$(iso $((NOW + 7200)))" 30
 out=$(render)
 has "5h AvgPeak keeps the width (67.8)" "[AvgPeak: 67.8%]" "$out"
 has "7d AvgPeak 100.0 fills the width" "[AvgPeak:100.0%]" "$out"
-has "5h Avg is right-aligned (8.6)" "[Avg:  8.6%/h]" "$out"
-has "7d Avg is right-aligned (16.9)" "[Avg: 16.9%/d]" "$out"
+has "5h Avg keeps the width (33.9)" "[Avg: 33.9%/h]" "$out"
+has "7d Avg keeps the width (33.3)" "[Avg: 33.3%/d]" "$out"
 widths=$(grep -oE '\[(AvgPeak|Avg):[ 0-9.]+%' <<< "$out" | sed -E 's/.*:([ 0-9.]+)%$/\1/' | awk '{print length($0)}' | sort -u | paste -sd, -)
 has_n "every AvgPeak and Avg value is 5 characters wide" "5" "$widths"
+
+echo ">>> averages: Opus and Sonnet AvgPeak use the same width; DoD example [Avg:  1.3%/h]"
+# Opus: completed windows 30-60 and 5-40 give AvgPeak 50.0. Sonnet: completed window
+# 99-100 gives AvgPeak 100.0. 5h: 5 -> 18 over 10 h gives 1.3 %/h (the DoD example).
+{
+    i=0
+    for pair in "30 99" "60 100" "5 20" "40 20" "10 20"; do
+        o=${pair% *}; s=${pair#* }
+        jq -cn --arg ts "$(ts_at $((NOW - 1200 * (5 - i))))" --argjson o "$o" --argjson s "$s" \
+            '{ts: $ts, opus: $o, sonnet: $s}'
+        i=$((i + 1))
+    done
+    jq -cn --arg ts "$(ts_at $((NOW - 36000)))" --arg f "$H_5H_FUT" '{ts: $ts, "5h": {api: 5, reset: $f}}'
+    jq -cn --arg ts "$(ts_at $((NOW - 300)))" --arg f "$H_5H_FUT" '{ts: $ts, "5h": {api: 18, reset: $f}}'
+} > "$HIST"
+write_cache 50 "$(iso $((NOW + 7200)))" 30
+CACHE_JSON=$(jq --arg r "$(iso $((NOW + 7200)))" \
+    '.seven_day_opus = {utilization: 10, resets_at: $r} | .seven_day_sonnet = {utilization: 25, resets_at: $r}' "$CACHE")
+printf '%s\n' "$CACHE_JSON" > "$CACHE"
+out=$(render)
+has "Opus line carries its AvgPeak, padded (50.0)" "[AvgPeak: 50.0%]" "$(grep -F '7d Opus' <<< "$out")"
+has "Sonnet line carries its AvgPeak (100.0 fills the width)" "[AvgPeak:100.0%]" "$(grep -F '7d Sonnet' <<< "$out")"
+has "DoD example: 5h Avg 1.3 %/h is right-aligned" "[Avg:  1.3%/h]" "$out"
+widths=$(grep -oE '\[(AvgPeak|Avg):[ 0-9.]+%' <<< "$out" | sed -E 's/.*:([ 0-9.]+)%$/\1/' | awk '{print length($0)}' | sort -u | paste -sd, -)
+has_n "Opus, Sonnet and 5h values are all 5 characters wide" "5" "$widths"
 
 echo ">>> show-highscores uses the device label"
 out=$(bash "$SCRIPT_DIR/show-highscores.sh" 2>&1)

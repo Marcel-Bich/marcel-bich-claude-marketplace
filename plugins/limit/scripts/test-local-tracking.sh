@@ -161,8 +161,9 @@ RB=$(iso $((NOW + 3 * 86400)))
     jq -cn --arg ts "$(date -u -d "@$((W0 + 2400))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$RA" '{ts:$ts,"5h":{api:0},"7d":{api:96,reset:$r}}'
     jq -cn --arg ts "$(date -u -d "@$((W0 + 3000))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$RA" '{ts:$ts,"5h":{api:0},"7d":{api:97,reset:$r}}'
 } > "$HISTORY_FILE"
-# window A: 5 + 1 (96, 97 after 95); window B: 1 (restart) + 1 (2 after 1) -> 8 over 1h
-check "interleaved windows: consumption per window only" "8.0" "$(get_avg_rate '."7d".api' 24 "$((W0 + 3600))")"
+# window A: 90 is its baseline, then +5 (95), +1 (96), +1 (97); window B starts
+# later than A, so its first value 1 counts as a restart, then +1 (2) -> 9 over 1h
+check "interleaved windows: consumption per window only" "9.0" "$(get_avg_rate '."7d".api' 24 "$((W0 + 3600))")"
 
 echo ">>> averages: a reset flipping hh:29:59.9 / hh:30:00.1 is one window (5h peak)"
 # In the observed data the 5h resets_at alternates across the half hour, and hour
@@ -184,6 +185,22 @@ T0=$((NOW - 3 * 3600))
 } > "$HISTORY_FILE"
 # completed windows peak at 60 and 40 (the running window at 10 is excluded)
 check "half-hour flip keeps one window (avg peak 50)" "50.0" "$(get_avg_peak '."5h".api' 168)"
+
+echo ">>> averages: unparsable or missing ts lines are skipped, the other samples still count"
+# Same fixture as the peak test (peaks 60 and 40, rate 5.0 over 20 h) with three bad lines:
+# a non-date ts, a missing ts, and a 7d value that would add 8 points if it were read.
+HISTORY_FILE="$TEST_DIR/badts.jsonl"
+H0=$((NOW - 20 * 3600))
+{
+    for v in 10 30 60; do jq -cn --arg ts "$(date -u -d "@$H0" +%Y-%m-%dT%H:%M:%SZ)" --argjson v "$v" '{ts:$ts,"5h":{api:$v},"7d":{api:1}}'; H0=$((H0 + 3600)); done
+    echo '{"ts":"not-a-date","5h":{"api":99},"7d":{"api":9}}'
+    for v in 5 25 40; do jq -cn --arg ts "$(date -u -d "@$H0" +%Y-%m-%dT%H:%M:%SZ)" --argjson v "$v" '{ts:$ts,"5h":{api:$v},"7d":{api:2}}'; H0=$((H0 + 3600)); done
+    echo '{"5h":{"api":99},"7d":{"api":9}}'
+    for v in 2 10; do jq -cn --arg ts "$(date -u -d "@$H0" +%Y-%m-%dT%H:%M:%SZ)" --argjson v "$v" '{ts:$ts,"5h":{api:$v},"7d":{api:3}}'; H0=$((H0 + 3600)); done
+} > "$HISTORY_FILE"
+check "bad ts lines: avg peak still 50.0" "50.0" "$(get_avg_peak '."5h".api' 168)"
+check "bad ts lines: avg usage per hour still 5.0" "5.0" "$(get_avg_rate '."5h".api' 24 "$NOW")"
+check "bad ts lines: single-pass averages unchanged" "50.0 5.0 - 2.4 - -" "$(history_averages "$NOW")"
 
 echo ">>> refresh-usage honours the stored backoff (no API call, no credentials read)"
 mkdir -p "$PLUGIN_DATA_DIR"

@@ -175,9 +175,13 @@ append_history() {
 # of different windows interleaved in one file never count as consumption.
 # Inside a group, consumption is measured against the running max. A sharp drop
 # (more than 20 points, or below half of a value >= 10) is a restart, and a dip
-# below the max is noise. A group whose resets_at has passed is a completed window.
-# The last segment of an open group (or of the newest samples without resets_at)
-# is still running and is not counted as a completed peak.
+# below the max is noise. The first value of every group counts as consumption
+# (its window started at 0), except in the group of the very first sample, which
+# is only the baseline. A group whose resets_at has passed is a completed window.
+# The last segment of an open group is still running and is not a completed peak.
+# Samples without resets_at form one group and use the same running-max rule, so
+# jitter in them is no consumption either. This is intended.
+# Lines with a missing or unparsable ts are skipped; the other samples still count.
 
 _HISTORY_JQ_SEGMENT='
     def drop(p; c): (p - c) > 20 or (p >= 10 and c < p / 2);
@@ -186,19 +190,20 @@ _HISTORY_JQ_SEGMENT='
               | if . == null then null else ((. + 30) / 60 | floor) end)
         else null end;
     def series(f; rf; cutoff):
-        [.[] | select((.ts | fromdateiso8601) > cutoff)
-             | {t: (.ts | fromdateiso8601), v: (f // null), r: (rf | rmin)}
+        [.[] | (.ts | fromdateiso8601?) as $t
+             | select($t != null and $t > cutoff)
+             | {t: $t, v: (f // null), r: (rf | rmin)}
              | select(.v != null)] | sort_by(.t);
-    def runs:
+    def runs($first):
         reduce .[] as $e ({m: null, used: 0, segs: []};
-            if .m == null then {m: $e.v, used: 0, segs: [$e.v]}
+            if .m == null then {m: $e.v, used: (if $first then 0 else $e.v end), segs: [$e.v]}
             elif drop(.m; $e.v) then {m: $e.v, used: (.used + $e.v), segs: (.segs + [$e.v])}
             elif $e.v > .m then {m: $e.v, used: (.used + $e.v - .m), segs: (.segs[:-1] + [$e.v])}
             else . end);
     def avgpeak($now):
         . as $s
         | [group_by(.r)[] as $g
-            | ($g | runs | .segs) as $sg
+            | ($g | runs(true) | .segs) as $sg
             | (if $g[0].r != null then ($g[0].r * 60 <= $now) else ($g[-1].t != $s[-1].t) end) as $done
             | (if $done then $sg else $sg[:-1] end)[]]
         | if length > 0 then add / length else null end;
@@ -206,7 +211,7 @@ _HISTORY_JQ_SEGMENT='
         . as $s
         | if ($s | length) < 2 then null
           else
-            ([group_by(.r)[] | runs | .used] | add) as $used
+            ([group_by(.r)[] as $g | ($g | runs($g[0].t == $s[0].t) | .used)] | add) as $used
             | (($now - $s[0].t) / 3600) as $span
             | if $span <= 0 then null else $used / $span end
           end;
