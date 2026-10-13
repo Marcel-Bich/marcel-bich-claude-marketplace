@@ -202,6 +202,19 @@ check "bad ts lines: avg peak still 50.0" "50.0" "$(get_avg_peak '."5h".api' 168
 check "bad ts lines: avg usage per hour still 5.0" "5.0" "$(get_avg_rate '."5h".api' 24 "$NOW")"
 check "bad ts lines: single-pass averages unchanged" "50.0 5.0 - 2.4 - -" "$(history_averages "$NOW")"
 
+echo ">>> averages: the first sample with resets_at is no restart (legacy 45 -> resets_at 47 -> 50 is 5)"
+# A sample without resets_at followed by the first sample that has one is a data
+# format change, not a window reset: the neighbours decide (47 - 45 = 2), then 50 - 47 = 3.
+HISTORY_FILE="$TEST_DIR/legacy.jsonl"
+L0=$((NOW - 3600))
+LR=$(iso $((NOW + 86400)))
+{
+    jq -cn --arg ts "$(date -u -d "@$L0" +%Y-%m-%dT%H:%M:%SZ)" '{ts:$ts,"5h":{api:45}}'
+    jq -cn --arg ts "$(date -u -d "@$((L0 + 600))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$LR" '{ts:$ts,"5h":{api:47,reset:$r}}'
+    jq -cn --arg ts "$(date -u -d "@$((L0 + 1200))" +%Y-%m-%dT%H:%M:%SZ)" --arg r "$LR" '{ts:$ts,"5h":{api:50,reset:$r}}'
+} > "$HISTORY_FILE"
+check "null -> resets_at uses the neighbours (5 over 1 h)" "5.0" "$(get_avg_rate '."5h".api' 24 "$((L0 + 3600))")"
+
 echo ">>> refresh-usage honours the stored backoff (no API call, no credentials read)"
 mkdir -p "$PLUGIN_DATA_DIR"
 jq -n --argjson r $((NOW + 300)) '{consecutive_failures: 2, last_rate_limit: "x", retry_at: $r}' \

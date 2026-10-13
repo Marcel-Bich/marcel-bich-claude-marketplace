@@ -173,13 +173,15 @@ append_history() {
 #   get_avg_rate <field> <hours>   average consumption per hour (idle included)
 # Samples are grouped by their recorded resets_at (minute resolution), so samples
 # of different windows interleaved in one file never count as consumption.
-# Inside a group, consumption is measured against the running max. A sharp drop
+# Inside a window, consumption is measured against its running max. A sharp drop
 # (more than 20 points, or below half of a value >= 10) is a restart, and a dip
-# below the max is noise. The first value of every group counts as consumption
-# (its window started at 0), except in the group of the very first sample, which
-# is only the baseline. A group whose resets_at has passed is a completed window.
-# The last segment of an open group is still running and is not a completed peak.
-# Samples without resets_at form one group and use the same running-max rule, so
+# below the max is noise. A window's first sample counts as a restart from 0 only
+# when the previous sample had another resets_at (a real window change). Entering a
+# window from a sample without resets_at, or from the first sample of the history,
+# uses the neighbouring samples instead, because that is a data format change.
+# A window whose resets_at has passed is a completed window. The last segment of an
+# open window is still running and is not a completed peak.
+# Samples without resets_at form one window and use the same running-max rule, so
 # jitter in them is no consumption either. This is intended.
 # Lines with a missing or unparsable ts are skipped; the other samples still count.
 
@@ -194,16 +196,38 @@ _HISTORY_JQ_SEGMENT='
              | select($t != null and $t > cutoff)
              | {t: $t, v: (f // null), r: (rf | rmin)}
              | select(.v != null)] | sort_by(.t);
-    def runs($first):
-        reduce .[] as $e ({m: null, used: 0, segs: []};
-            if .m == null then {m: $e.v, used: (if $first then 0 else $e.v end), segs: [$e.v]}
-            elif drop(.m; $e.v) then {m: $e.v, used: (.used + $e.v), segs: (.segs + [$e.v])}
-            elif $e.v > .m then {m: $e.v, used: (.used + $e.v - .m), segs: (.segs[:-1] + [$e.v])}
+    def runs:
+        reduce .[] as $e ({m: null, segs: []};
+            if .m == null then {m: $e.v, segs: [$e.v]}
+            elif drop(.m; $e.v) then {m: $e.v, segs: (.segs + [$e.v])}
+            elif $e.v > .m then {m: $e.v, segs: (.segs[:-1] + [$e.v])}
             else . end);
+    # Consumption in time order. The first sample of a window is a restart from 0 only
+    # when the previous sample belonged to another window and both had resets_at. Entering
+    # a window from a sample without resets_at (or the first sample of the history)
+    # compares with the neighbour instead. A window already seen continues from its
+    # running max, so interleaved windows never count a switch between them.
+    def consumed:
+        reduce .[] as $e ({prev: null, st: {}, used: 0};
+            ($e.r | tostring) as $k
+            | if .prev == null then {prev: $e, st: {($k): $e.v}, used: 0}
+              elif .st[$k] != null then
+                .st[$k] as $m
+                | (if drop($m; $e.v) then {add: $e.v, m: $e.v}
+                   elif $e.v > $m then {add: ($e.v - $m), m: $e.v}
+                   else {add: 0, m: $m} end) as $u
+                | .used += $u.add | .st[$k] = $u.m | .prev = $e
+              else
+                (if .prev.r != null and $e.r != null then $e.v
+                 elif drop(.prev.v; $e.v) then $e.v
+                 elif $e.v > .prev.v then $e.v - .prev.v
+                 else 0 end) as $add
+                | .used += $add | .st[$k] = $e.v | .prev = $e
+              end);
     def avgpeak($now):
         . as $s
         | [group_by(.r)[] as $g
-            | ($g | runs(true) | .segs) as $sg
+            | ($g | runs | .segs) as $sg
             | (if $g[0].r != null then ($g[0].r * 60 <= $now) else ($g[-1].t != $s[-1].t) end) as $done
             | (if $done then $sg else $sg[:-1] end)[]]
         | if length > 0 then add / length else null end;
@@ -211,7 +235,7 @@ _HISTORY_JQ_SEGMENT='
         . as $s
         | if ($s | length) < 2 then null
           else
-            ([group_by(.r)[] as $g | ($g | runs($g[0].t == $s[0].t) | .used)] | add) as $used
+            ($s | consumed | .used) as $used
             | (($now - $s[0].t) / 3600) as $span
             | if $span <= 0 then null else $used / $span end
           end;
