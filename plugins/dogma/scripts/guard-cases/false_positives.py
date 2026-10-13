@@ -733,6 +733,12 @@ CASES = (
     ("deny", "N", "python3 -c \"import os; os.remove('{H}/dogma-' 'link/hooks/hooks.json')\""),
     ("deny", "N", "python3 -c \"import os; os.unlink('{N}/.git' '/hooks/pre-commit')\""),
     ("deny", "N", "ruby -e \"File.write('{N}/DOGMA-PERM' 'ISSIONS.md', 'x')\""),
+    # mixed quote kinds inside one join: the joined name must still end at its own closing quote
+    ("deny", "N", "python3 - <<'PY'\nopen('{N}/DOGMA-PERM' + \"ISSIONS.md\", 'w').write('x')\nPY"),
+    ("deny", "N", "python3 - <<'PY'\nopen('{N}/DOGMA-PERM'\"ISSIONS.md\", 'w').write('x')\nPY"),
+    ("deny", "N", "python3 - <<'PY'\nopen('{N}/DOGMA-' \"PERM\" + 'ISSIONS.md', 'w').write('x')\nPY"),
+    ("deny", "N", "python3 - <<'PY'\nopen('{N}/.git' + \"/config\", 'w').write('x')\nPY"),
+    ("deny", "N", "python3 - <<'PY'\nopen('{N}/.git'\"/config\", 'w').write('x')\nPY"),
     # ordinary concatenation that forms no protected path passes
     ("allow", "N", "python3 -c \"print('hello ' + 'world')\""),
     ("allow", "N", "python3 -c \"open('/home/myuser/git/notes' '.txt', 'w').write('x')\""),
