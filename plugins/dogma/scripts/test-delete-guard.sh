@@ -116,7 +116,7 @@ expect allow "$T" "rm -rf \`cat list.txt\`"
 expect allow "$T" "eval \"rm -rf \$X\""
 expect allow "$T" "find . -name '*.o' | xargs rm"
 expect allow "$T" "D=\$(mktemp -d); touch \"\$D/a\"; rm -rf \"\$D\""
-expect allow "$T" "D=\$(mktemp -d); D=\$HOME; rm -rf \"\$D\""
+expect deny  "$T" "D=\$(mktemp -d); D=\$HOME; rm -rf \"\$D\""   # D=\$HOME: HOME is a candidate of D
 expect deny  "$T" "bash -c 'rm -rf ~/.config'"
 
 # --- mv sources
@@ -469,7 +469,8 @@ expect allow "$T" "rm -rf /home/alice/proj/old"
 # governs the use) and every literal value the command gives to the name, anywhere (also after ||, in a
 # pipe, in a subshell, as prefix, in a for loop or printf -v). Any candidate on the hard list makes the
 # target hard. A certain single value that is not hard follows the setting; a value that is not certain is
-# unsure. A value with $ ~ glob or blank is no candidate and no certain value.
+# unsure. A literal with ~, $HOME or $NAME is expanded once (its candidates), a glob stays a glob; a literal with
+# a backtick, a blank or a backslash is unknown and no candidate.
 expect deny  "$T" "R=/home; rm -rf \"\$R\""
 expect deny  "$T" "R=/home && rm -rf \"\$R\""
 expect deny  "$T" "R='/home'; rm -rf \"\$R\""
@@ -480,9 +481,9 @@ expect deny  "$T" "R=/home | rm -rf \"\$R\""
 expect deny  "$T" "R=/home || rm -rf \"\$R\""
 expect deny  "$T" "R=/home; R=$FH/proj/sub; rm -rf \"\$R\""           # /home is a candidate too
 expect deny  "$T" "rm -rf \"\$R\"; R=/home"                             # used before the assignment: still a candidate
-expect allow "$T" "R=~; rm -rf \"\$R\""                                 # ~ is no literal value: unsure
-expect allow "$T" "R=\$HOME; rm -rf \"\$R\""                            # an expansion is no literal value: unsure
-expect allow "$T" "R=/ho*; rm -rf \"\$R\""                              # a glob is no literal value: unsure
+expect deny  "$T" "R=~; rm -rf \"\$R\""                                 # ~ is expanded: HOME is a candidate
+expect deny  "$T" "R=\$HOME; rm -rf \"\$R\""                            # $HOME is expanded: HOME is a candidate
+expect deny  "$T" "R=/ho*; rm -rf \"\$R\""                              # a glob is matched: /ho* reaches /home
 expect deny  "$T" "if true; then R=/home; fi; rm -rf \"\$R\""
 expect deny  "$T" "(R=/home); rm -rf \"\$R\""
 
@@ -507,6 +508,19 @@ expect deny  "$T" '(R=/home); rm -rf "$R"'
 expect deny  "$T" 'for R in /home; do rm -rf "$R"; done'
 expect deny  "$T" 'R=/home; read R; rm -rf "$R"'
 expect deny  "$T" 'printf -v R /home; rm -rf "$R"'
+# a literal with ~, $HOME, $NAME or a default is expanded once: its candidates count (v1.46.3)
+expect deny  "$T" 'R=~; rm -rf "$R"'
+expect deny  "$T" 'R="$HOME"; rm -rf "$R"'
+expect deny  "$T" 'S=/home; T=$S; rm -rf "$T"'
+expect deny  "$T" 'for R in "$HOME"; do rm -rf "$R"; done'
+expect deny  "$T" 'R=${S:-/home}; rm -rf "$R"'
+# a glob in a literal is matched like a glob: /ho* reaches /home (depth 1)
+expect deny  "$T" "R='/ho*'; rm -rf \$R"
+# more candidate values than the limit: a hard deny with a reason (fail closed), not an unsure target
+many=$(for i in $(seq 1 70); do printf 'R=/d%s; ' "$i"; done)
+got="$(jq -n --arg c "${many}rm -rf \"\$R\"" --arg d "$T" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+    HOME="$FH" CLAUDE_MB_DOGMA_ENABLED=true CLAUDE_MB_DOGMA_PROTECTED_MOUNTS="" bash "$HOOK" 2>/dev/null)"
+case "$got" in *'"deny"'*'possible values'*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); echo "FAIL want deny with the candidate limit reason: $got" ;; esac
 # the same targets with the variable set in the environment (a set environment value always counts)
 export DGL_HARD=/home
 expect deny  "$T" 'rm -rf "$DGL_HARD"/x'

@@ -34,7 +34,8 @@ without a literal hard path) are NOT denied here: they are recorded as delete fi
 and the delete setting of DOGMA-PERMISSIONS.md decides (file-protection.sh). A variable
 in a delete target is judged by its candidate values (variable_values): the environment
 value (empty when unset, unless a certain literal assignment governs the use) and every
-literal value the command gives to the name; any candidate on the hard list denies.
+literal value the command gives to the name (its ~ and $-references expanded once); any
+candidate on the hard list denies, and more than CANDIDATE_LIMIT candidates deny as well.
 Afterwards every normalised simple command goes through delete-guard.py.
 Hook mode also applies the setting-independent rules of the other guards, each behind
 its own switch: token protection (credential paths, environment dumps, token
@@ -1351,15 +1352,21 @@ def literal_plan(script, command):
     return plan
 
 
-# a value that is no plain literal (an expansion, a tilde, a glob, a blank or a backslash): unknown, no candidate
-LITERAL_VALUE_BAD_RE = re.compile(r"[$`~*?\[\]\s\\]")
+# a value that is unknown and no candidate: a backtick (command substitution), a blank or a backslash. A ~, a $-reference
+# and a glob character are expanded or matched (literal_candidates), not dropped
+LITERAL_VALUE_BAD_RE = re.compile(r"[`\s\\]")
 # $NAME, ${NAME} and the defaults ${NAME:-word} / ${NAME-word} (the only parameter forms that are resolved)
 PARAM_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?::?-([^$`{}'\"\\\s]*))?\}|([A-Za-z_][A-Za-z0-9_]*))")
 ASSIGN_WORD_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.S)
+# a quoted word is read as a command string only when it can hold an assignment (bounded: long words are data)
+NESTED_TEXT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=|\bfor\b|\bprintf\b")
+LITERAL_NESTED_MAX = 2048
 NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # the words that end the word list of a for loop
 LIST_END = {";", "&&", "||", "|", "&", "do", "(", ")"}
-CANDIDATE_LIMIT = 64  # more combinations of candidate values than this: the target is unknown
+CANDIDATE_LIMIT = 64  # more candidate values than this: the target is hard-denied (fail closed), with a reason
+TOO_MANY_VALUES = ("dogma: a variable of a delete target has more than %d possible values; blocked (fail closed)."
+                   % CANDIDATE_LIMIT)
 
 
 def literal_value(value):
@@ -1374,27 +1381,31 @@ def literal_values(text, found=None, depth=0):
     found = {} if found is None else found
     if depth > 4:
         return found
-    try:
-        tokens = list(shlex.shlex(text, posix=True, punctuation_chars=True))
-    except ValueError:
-        tokens = text.split()
-    for index, token in enumerate(tokens):
-        match = ASSIGN_WORD_RE.fullmatch(token)
-        if match and literal_value(match.group(2)):
-            found.setdefault(match.group(1), set()).add(match.group(2))
-        if token == "-v" and index and tokens[index - 1] == "printf" and index + 2 < len(tokens):
-            name, value = tokens[index + 1], tokens[index + 2]
-            if NAME_RE.fullmatch(name) and literal_value(value):
-                found.setdefault(name, set()).add(value)
-        if token == "for" and index + 2 < len(tokens) and tokens[index + 2] == "in" and NAME_RE.fullmatch(
-                tokens[index + 1]):
-            for word in tokens[index + 3:]:
-                if word in LIST_END:
-                    break
-                if literal_value(word):
-                    found.setdefault(tokens[index + 1], set()).add(word)
-        if len(token) > 1 and re.search(r"[\s;&|()]", token):
-            literal_values(token, found, depth + 1)  # a quoted command string: read the same way
+    script = scan(text)  # the simple commands (operators split, quotes kept), like the walk sees them
+    for segment in script.segments:
+        try:
+            tokens = shlex.split(segment.text, posix=True)
+        except ValueError:
+            tokens = segment.text.split()
+        for index, token in enumerate(tokens):
+            match = ASSIGN_WORD_RE.fullmatch(token)
+            if match and literal_value(match.group(2)):
+                found.setdefault(match.group(1), set()).add(match.group(2))
+            if token == "-v" and index and tokens[index - 1] == "printf" and index + 2 < len(tokens):
+                name, value = tokens[index + 1], tokens[index + 2]
+                if NAME_RE.fullmatch(name) and literal_value(value):
+                    found.setdefault(name, set()).add(value)
+            if token == "for" and index + 2 < len(tokens) and tokens[index + 2] == "in" and NAME_RE.fullmatch(
+                    tokens[index + 1]):
+                for word in tokens[index + 3:]:
+                    if word in LIST_END:
+                        break
+                    if literal_value(word):
+                        found.setdefault(tokens[index + 1], set()).add(word)
+            if len(token) <= LITERAL_NESTED_MAX and NESTED_TEXT_RE.search(token) and re.search(r"[\s;&|()]", token):
+                literal_values(token, found, depth + 1)  # a quoted command string: read the same way
+    for inner in script.subs:
+        literal_values(inner, found, depth + 1)  # $(...) and the like
     return found
 
 
@@ -1522,12 +1533,50 @@ class Analysis:
             if environment and not self.bare_write(name):
                 return {environment}, True
             return None
-        values = set(self.all_literals.get(name, ()))
+        values = set()
+        for literal in self.all_literals.get(name, ()):
+            values |= self.literal_candidates(literal, 0)
         if governed:
             values.add(self.literals[name])
         if environment or not governed:
             values.add(environment)
         return values, len(values) == 1 and (governed or not self.bare_write(name))
+
+    def name_candidates(self, name, level):
+        """The values of a variable named inside a literal: its environment value or empty and, at level 0 only,
+        its literal values read one level deeper (level 1 names are the environment value or empty only)."""
+        options = {os.environ.get(name) or ""}
+        if level == 0:
+            for literal in self.all_literals.get(name, ()):
+                options |= self.literal_candidates(literal, level + 1)
+        return options
+
+    def literal_candidates(self, value, level):
+        """The values one literal given to a variable can have: a leading ~ or ~/ is HOME, $HOME and $NAME (also
+        ${NAME} and ${NAME:-word} / ${NAME-word}) are expanded to name_candidates; the default word is a candidate
+        too. Glob characters stay (the target is matched like a glob). An unknown part (a command substitution,
+        another user's home, another parameter form) makes the literal unknown: an empty set, no candidate."""
+        if "`" in value or "$(" in value:
+            return set()
+        if value == "~" or value.startswith("~/"):
+            value = home() + value[1:]
+        elif value.startswith("~"):
+            return set()
+        if "$" in PARAM_RE.sub("", value):
+            return set()
+        results, last = {""}, 0
+        for match in PARAM_RE.finditer(value):
+            name = match.group(1) or match.group(3)
+            options = {home()} if name == "HOME" else self.name_candidates(name, level)
+            default = match.group(2)
+            if default is not None:
+                options = {option or default for option in options} | {default}
+            literal = value[last:match.start()]
+            results = {result + literal + option for result in results for option in options}
+            if len(results) > CANDIDATE_LIMIT:
+                raise Deny(TOO_MANY_VALUES)
+            last = match.end()
+        return {result + value[last:] for result in results}
 
     def expansions(self, word, directory, candidates=False):
         """(values, certain): the values a word can have after its variables are expanded, or None when a part is
@@ -1560,7 +1609,7 @@ class Analysis:
             values = [value + literal + option for value in values for option in sorted(options)]
             certain = certain and sure
             if len(values) > CANDIDATE_LIMIT:
-                return None
+                raise Deny(TOO_MANY_VALUES)
             last = match.end()
         values = sorted({value + word[last:] for value in values})
         return values, certain and len(values) == 1
