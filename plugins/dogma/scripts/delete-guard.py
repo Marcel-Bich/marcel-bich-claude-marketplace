@@ -16,12 +16,14 @@ Temp roots (/tmp/X+, /var/tmp/X+, $TMPDIR/X+, the Windows temp folders) are neve
 
 Every target is RESOLVED before the check: ~ and $HOME are expanded, relative paths are joined to the
 working directory (including a preceding `cd`), symlinks are followed (realpath), and for a glob the
-directory before the first wildcard is resolved. Plain literal assignments earlier in the same command
-(bash-guard.py substitutes them) are resolved as well. A target that cannot be resolved for sure
-(command substitution, an unset or re-assigned variable, a parameter expansion, eval text, xargs, an
-unknown working directory) is UNSURE: it raises Unsure, which is not a denial. bash-guard.py records the
-target as a delete finding, so the delete setting decides. Only the hard list (and the non-delete rules
-of bash-guard.py) deny. Variables assigned from mktemp in the same command are known-safe.
+directory before the first wildcard is resolved. A plain literal assignment earlier in the same command
+(bash-guard.py substitutes it) is resolved as well. A variable target that bash-guard.py cannot pin to one
+value is judged by its candidate values: every one of them that is on the hard list denies, here or in
+bash-guard.py. A target that cannot be resolved for sure (command substitution, an unset or re-assigned
+variable without a certain value, a parameter expansion, eval text, xargs, an unknown working directory) is
+UNSURE: it raises Unsure, which is not a denial. bash-guard.py records the target as a delete finding, so
+the delete setting decides. Only the hard list (and the non-delete rules of bash-guard.py) deny.
+Variables assigned from mktemp in the same command are known-safe.
 """
 
 import codecs

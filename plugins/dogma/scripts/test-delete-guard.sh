@@ -464,24 +464,58 @@ expect allow "$T" "rm -rf /mnt/c/Users/alice/work/proj/old"
 expect allow "$T" "rm -rf /home/alice/proj/old/build"
 expect allow "$T" "rm -rf /home/alice/proj/old"
 
-# --- literal variables: a plain assignment earlier in the same command is resolved; any failed rule
-# (value with $ ~ glob or blank, name used twice, pipe or || before the use, use before the assignment,
-# compound syntax) leaves the target unsure
+# --- literal variables (v1.46): a variable target is judged by its candidate values. Candidates: the
+# environment value (set: always; unset or empty: the empty value, unless a certain literal assignment
+# governs the use) and every literal value the command gives to the name, anywhere (also after ||, in a
+# pipe, in a subshell, as prefix, in a for loop or printf -v). Any candidate on the hard list makes the
+# target hard. A certain single value that is not hard follows the setting; a value that is not certain is
+# unsure. A value with $ ~ glob or blank is no candidate and no certain value.
 expect deny  "$T" "R=/home; rm -rf \"\$R\""
 expect deny  "$T" "R=/home && rm -rf \"\$R\""
 expect deny  "$T" "R='/home'; rm -rf \"\$R\""
 expect deny  "$T" "R=$FH/proj; rm -rf \"\$R\""
 expect deny  "$T" "R=$T/repo; rm -rf \"\$R\""
-expect allow "$T" "R=$FH/proj/sub/renders; rm -- \"\$R/final.mp4\""
-expect allow "$T" "R=/home | rm -rf \"\$R\""
-expect allow "$T" "R=/home || rm -rf \"\$R\""
-expect allow "$T" "R=/home; R=$FH/proj/sub; rm -rf \"\$R\""
-expect allow "$T" "rm -rf \"\$R\"; R=/home"
-expect allow "$T" "R=~; rm -rf \"\$R\""
-expect allow "$T" "R=\$HOME; rm -rf \"\$R\""
-expect allow "$T" "R=/ho*; rm -rf \"\$R\""
-expect allow "$T" "if true; then R=/home; fi; rm -rf \"\$R\""
-expect allow "$T" "(R=/home); rm -rf \"\$R\""
+expect allow "$T" "R=$FH/proj/sub/renders; rm -- \"\$R/final.mp4\""   # the peer repro: a deep project folder
+expect deny  "$T" "R=/home | rm -rf \"\$R\""
+expect deny  "$T" "R=/home || rm -rf \"\$R\""
+expect deny  "$T" "R=/home; R=$FH/proj/sub; rm -rf \"\$R\""           # /home is a candidate too
+expect deny  "$T" "rm -rf \"\$R\"; R=/home"                             # used before the assignment: still a candidate
+expect allow "$T" "R=~; rm -rf \"\$R\""                                 # ~ is no literal value: unsure
+expect allow "$T" "R=\$HOME; rm -rf \"\$R\""                            # an expansion is no literal value: unsure
+expect allow "$T" "R=/ho*; rm -rf \"\$R\""                              # a glob is no literal value: unsure
+expect deny  "$T" "if true; then R=/home; fi; rm -rf \"\$R\""
+expect deny  "$T" "(R=/home); rm -rf \"\$R\""
+
+# --- variable targets that are hard whatever the delete setting says (an unset variable is "", so
+# "$UNSET/x" is /x, depth 1; a default word is a candidate; each candidate counts)
+expect deny  "$T" 'rm -rf "$DGL_UNSET"/*'
+expect deny  "$T" 'rm -rf "$DGL_UNSET/"'
+expect deny  "$T" 'rm -rf $DGL_UNSET/home'
+expect deny  "$T" 'rm -rf "$DGL_UNSET/x"'
+expect deny  "$T" 'cd ~ && rm -rf "$DGL_UNSET"*'
+expect deny  "$T" 'rm -rf "${DGL_UNSET:-/}"'
+expect deny  "$T" 'R=/home rm -rf "$R"/*'
+expect deny  "$T" "bash -c 'rm -rf \"\$DGL_UNSET\"/*'"
+expect deny  "$T" 'X=; rm -rf "$X"/*'
+expect deny  "$T" 'X=""; rm -rf "$X/home"'
+expect deny  "$T" 'R=/home; rm -rf "$R"'
+expect deny  "$T" 'R=/tmp; R=/home; rm -rf "$R"'
+expect deny  "$T" 'R=/home; R=/home; rm -rf "$R"'
+expect deny  "$T" 'R=/home || true; rm -rf "$R"'
+expect deny  "$T" 'R=/home | cat; rm -rf "$R"'
+expect deny  "$T" '(R=/home); rm -rf "$R"'
+expect deny  "$T" 'for R in /home; do rm -rf "$R"; done'
+expect deny  "$T" 'R=/home; read R; rm -rf "$R"'
+expect deny  "$T" 'printf -v R /home; rm -rf "$R"'
+# the same targets with the variable set in the environment (a set environment value always counts)
+export DGL_HARD=/home
+expect deny  "$T" 'rm -rf "$DGL_HARD"/x'
+unset DGL_HARD
+export DGL_DEEP="$FH/proj/sub/renders"
+expect allow "$T" 'rm -rf "$DGL_DEEP/x"'
+unset DGL_DEEP
+# an unset variable with a deep value is no hard target: "" + /deep/project/dir/x follows the setting
+expect allow "$T" 'rm -rf "$DGL_UNSET_BUT/deep/project/dir/x"'
 
 # --- unsure run-time forms: a literal eval text is walked, python paths that cannot be read stay unsure
 expect deny  "$T" "eval \"rm -rf ~\""
@@ -531,7 +565,9 @@ setting_rows() {
     expect_chain "$3" "$PERM/q" "$1"
     expect_chain "$4" "$PERM/d" "$1"
 }
-setting_rows 'rm -rf "$NOPE_UNSET_VAR/x"' allow ask deny
+setting_rows 'rm -rf "$NOPE_UNSET_VAR/x"' deny-hard deny-hard deny-hard   # "" + /x is /x, depth 1: hard
+setting_rows 'rm -rf "$NOPE_UNSET_BUT/deep/project/dir/x"' allow ask deny
+setting_rows 'R=/home rm -rf "$R"/*' deny-hard deny-hard deny-hard
 setting_rows 'rm "$(cat list.txt)"' allow ask deny
 setting_rows "find . -name '*.o' | xargs rm" allow ask deny
 setting_rows "eval \"rm $FH/proj/old/x\"" allow ask deny   # literal eval text is walked: an ordinary target

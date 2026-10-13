@@ -31,8 +31,10 @@ Hook mode denies, independent of any setting (the hard list, see delete-guard.py
 Targets that cannot be resolved for sure (unset or re-assigned variables, command
 substitution, parameter expansion, xargs, run-time command words, inline code deletes
 without a literal hard path) are NOT denied here: they are recorded as delete findings
-and the delete setting of DOGMA-PERMISSIONS.md decides (file-protection.sh). Plain
-literal assignments earlier in the same command are resolved (literal_plan).
+and the delete setting of DOGMA-PERMISSIONS.md decides (file-protection.sh). A variable
+in a delete target is judged by its candidate values (variable_values): the environment
+value (empty when unset, unless a certain literal assignment governs the use) and every
+literal value the command gives to the name; any candidate on the hard list denies.
 Afterwards every normalised simple command goes through delete-guard.py.
 Hook mode also applies the setting-independent rules of the other guards, each behind
 its own switch: token protection (credential paths, environment dumps, token
@@ -1349,6 +1351,53 @@ def literal_plan(script, command):
     return plan
 
 
+# a value that is no plain literal (an expansion, a tilde, a glob, a blank or a backslash): unknown, no candidate
+LITERAL_VALUE_BAD_RE = re.compile(r"[$`~*?\[\]\s\\]")
+# $NAME, ${NAME} and the defaults ${NAME:-word} / ${NAME-word} (the only parameter forms that are resolved)
+PARAM_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?::?-([^$`{}'\"\\\s]*))?\}|([A-Za-z_][A-Za-z0-9_]*))")
+ASSIGN_WORD_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.S)
+NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# the words that end the word list of a for loop
+LIST_END = {";", "&&", "||", "|", "&", "do", "(", ")"}
+CANDIDATE_LIMIT = 64  # more combinations of candidate values than this: the target is unknown
+
+
+def literal_value(value):
+    return not LITERAL_VALUE_BAD_RE.search(value)
+
+
+def literal_values(text, found=None, depth=0):
+    """{NAME: {literal value}}: every literal value the command text gives to a name, anywhere in it: NAME=value
+    words (re-assigned, after || or |, in a subshell, as prefix assignment, the empty value included), the words
+    of for NAME in ... and printf -v NAME value. Quoted command strings (bash -c, eval, $(...)) are read the same
+    way. A value that is no literal is no candidate (literal_value)."""
+    found = {} if found is None else found
+    if depth > 4:
+        return found
+    try:
+        tokens = list(shlex.shlex(text, posix=True, punctuation_chars=True))
+    except ValueError:
+        tokens = text.split()
+    for index, token in enumerate(tokens):
+        match = ASSIGN_WORD_RE.fullmatch(token)
+        if match and literal_value(match.group(2)):
+            found.setdefault(match.group(1), set()).add(match.group(2))
+        if token == "-v" and index and tokens[index - 1] == "printf" and index + 2 < len(tokens):
+            name, value = tokens[index + 1], tokens[index + 2]
+            if NAME_RE.fullmatch(name) and literal_value(value):
+                found.setdefault(name, set()).add(value)
+        if token == "for" and index + 2 < len(tokens) and tokens[index + 2] == "in" and NAME_RE.fullmatch(
+                tokens[index + 1]):
+            for word in tokens[index + 3:]:
+                if word in LIST_END:
+                    break
+                if literal_value(word):
+                    found.setdefault(tokens[index + 1], set()).add(word)
+        if len(token) > 1 and re.search(r"[\s;&|()]", token):
+            literal_values(token, found, depth + 1)  # a quoted command string: read the same way
+    return found
+
+
 # --- analysis -------------------------------------------------------------------------
 
 
@@ -1360,6 +1409,8 @@ class Analysis:
         self.assigns = {}
         self.literals = {}     # variables whose literal assignment already ran in this command (literal_plan)
         self.plan = {}         # literal_plan of the top-level script: {segment index: (name, value)}
+        self.all_literals = {}  # literal_values of the whole command: the candidate values of a variable target
+        self.top_text = ""     # the whole command text (variables that the command writes at all)
         self.mktemp = {}       # variables holding a fresh mktemp path
         self.batch = []        # (normalized simple command, candidate directories) for delete-guard
         self.deletes = []      # (label, target, directories)
@@ -1385,12 +1436,11 @@ class Analysis:
         if feature is None or self.flags.get(feature, True):
             raise Deny(reason)
 
-    def expand(self, word, cwd=None, strict=False):
+    def expand(self, word, cwd=None):
         """Expand ~, ~user, ~+, $HOME and variables assigned in this command; unknown variables stay.
 
-        strict=True (delete and overwrite targets): only literal assignments (literal_plan) and mktemp paths
-        are substituted; any other assigned variable stays unresolved, so the target is unsure. Other callers
-        (reads, redirects, commands) keep the sequential values of the assignments of this command."""
+        Reads, redirects and commands use the sequential values of the assignments of this command. Delete
+        targets are judged by expansions() instead (candidate values)."""
         if word == "~" or word.startswith("~/"):
             word = home() + word[1:]
         elif (word == "~+" or word.startswith("~+/")) and cwd:
@@ -1411,8 +1461,7 @@ class Analysis:
             if name in self.mktemp:
                 return self.mktemp[name]
             if name in self.assigns and name not in ("OLDPWD",):
-                # an assigned name never falls back to the environment: strict callers see it unresolved
-                return match.group(0) if strict else self.assigns[name]
+                return self.assigns[name]
             if name in ("CODEX_HOME", "CLAUDE_CONFIG_DIR", "USER", "TMPDIR", "XDG_RUNTIME_DIR"):
                 value = os.environ.get(name)
                 if name == "CODEX_HOME" and not value:
@@ -1423,14 +1472,13 @@ class Analysis:
 
         return VAR_RE.sub(replace, word)
 
-    def join(self, directory, path, physical=False, strict=False):
+    def join(self, directory, path, physical=False):
         """Absolute path of path below directory; None when unknown.
 
         The default normalizes ".." textually like the shell's logical cd. physical=True keeps
         the path as the kernel sees it: a ".." after a symlink component is resolved against
-        the link target by realpath later, so it must never be collapsed textually here.
-        strict: see expand()."""
-        path = self.expand(path, directory, strict)
+        the link target by realpath later, so it must never be collapsed textually here."""
+        path = self.expand(path, directory)
         if "$" in path or SUB_RE.search(path) or path.startswith("~"):
             return None
         if not path.startswith("/"):
@@ -1447,11 +1495,100 @@ class Analysis:
             return None  # unknown working directory: relative targets fail closed
         return os.path.realpath(joined)
 
-    def targets(self, word, directories, follow=True):
+    def bare_write(self, name):
+        """True when the command names the variable as a bare word (an assignment, read, for, printf -v ...)."""
+        return bool(re.search(r"(?<![\w$])(?<!\$\{)%s(?!\w)" % re.escape(name), self.top_text))
+
+    def variable_values(self, name, directory, candidates):
+        """(values, certain) of one variable of a target, or None when it has no certain value and candidates is off.
+
+        Known for sure: HOME, PWD, a mktemp path, a live literal assignment (literal_plan) and a variable the
+        command never writes (its environment value). Otherwise the candidates are its environment value (set:
+        always; unset or empty: the empty value, unless a live literal assignment governs the use) and every
+        literal value that the command gives to the name (literal_values). An unknown value adds no candidate."""
+        if name == "HOME":
+            return {home()}, True
+        if name == "PWD":
+            return ({directory}, True) if directory else None
+        if name in self.mktemp:
+            return {self.mktemp[name]}, True
+        governed = name in self.literals
+        environment = os.environ.get(name) or ""
+        if not candidates:
+            # the certain value only (overwrite and read targets): a governed literal, or a set variable the command
+            # never writes; an unset variable is unknown, as before
+            if governed:
+                return {self.literals[name]}, True
+            if environment and not self.bare_write(name):
+                return {environment}, True
+            return None
+        values = set(self.all_literals.get(name, ()))
+        if governed:
+            values.add(self.literals[name])
+        if environment or not governed:
+            values.add(environment)
+        return values, len(values) == 1 and (governed or not self.bare_write(name))
+
+    def expansions(self, word, directory, candidates=False):
+        """(values, certain): the values a word can have after its variables are expanded, or None when a part is
+        unknown (command or arithmetic substitution, another user's home, a parameter form other than $NAME,
+        ${NAME} and ${NAME:-word} / ${NAME-word}, or a variable without candidates). certain: one value for sure."""
+        if "`" in word or "$(" in word:
+            return None
+        if word == "~" or word.startswith("~/"):
+            word = home() + word[1:]
+        elif word == "~+" or word.startswith("~+/"):
+            if not directory:
+                return None
+            word = directory + word[2:]
+        elif word.startswith("~"):
+            return None
+        if "$" in PARAM_RE.sub("", word):
+            return None
+        values, certain, last = [""], True, 0
+        for match in PARAM_RE.finditer(word):
+            found = self.variable_values(match.group(1) or match.group(3), directory, candidates)
+            if found is None:
+                return None
+            options, sure = found
+            default = match.group(2)
+            if default is not None:
+                # ${NAME:-word}: an empty value takes the default; the default is a candidate itself
+                options = {option or default for option in options} | {default}
+                sure = sure and len(options) == 1
+            literal = word[last:match.start()]
+            values = [value + literal + option for value in values for option in sorted(options)]
+            certain = certain and sure
+            if len(values) > CANDIDATE_LIMIT:
+                return None
+            last = match.end()
+        values = sorted({value + word[last:] for value in values})
+        return values, certain and len(values) == 1
+
+    def absolute(self, directory, value):
+        """The absolute form of one expanded value (below directory when relative); None when not known."""
+        if "$" in value or SUB_RE.search(value) or value.startswith("~"):
+            return None
+        if value.startswith("/"):
+            return value
+        return os.path.join(directory, value) if directory is not None else None
+
+    def sure(self, word, directories):
+        """True when the operand has one certain value in every directory (no candidate is needed)."""
+        for variant in brace_expand(word, strict=True):
+            for directory in directories:
+                found = self.expansions(variant, directory, candidates=True)
+                if found is None or not found[1]:
+                    return False
+        return True
+
+    def targets(self, word, directories, follow=True, candidates=False):
         """Absolute targets of one operand (brace and glob aware); None = cannot be resolved.
 
         follow=False: a symlink named as the last component is the target itself (rm and mv
-        act on the link), so only its directory is resolved; a trailing slash still follows."""
+        act on the link), so only its directory is resolved; a trailing slash still follows.
+        candidates=True (delete targets): a variable without one certain value yields a target for every
+        candidate value (see variable_values), so a hard candidate is found; an empty value deletes nothing."""
         def real(path, trailing):
             if follow or trailing:
                 return os.path.realpath(path)
@@ -1461,24 +1598,31 @@ class Analysis:
             return os.path.join(os.path.realpath(os.path.dirname(path)), name)
 
         for variant in brace_expand(word, strict=True):
-            trailing = self.expand(variant).endswith("/")
             for directory in directories:
-                path = self.join(directory, variant, physical=True, strict=True)
-                if path is None:
+                found = self.expansions(variant, directory, candidates)
+                if found is None:
                     yield None
                     continue
-                if missing_before_dotdot(path):
-                    yield None  # where the following ".." leads is unknown before running: unsure
-                    continue
-                glob_match = GLOB_RE.search(path)
-                if glob_match:
-                    base = path[:glob_match.start()]
-                    base = base[:base.rfind("/") + 1] or "/"
-                    yield os.path.join(os.path.realpath(base), "x")
-                    for found in itertools.islice(glob.iglob(path), 64):
-                        yield real(found, trailing)
-                    continue
-                yield real(path, trailing)
+                for value in found[0]:
+                    if not value:
+                        continue
+                    path = self.absolute(directory, value)
+                    if path is None:
+                        yield None
+                        continue
+                    if missing_before_dotdot(path):
+                        yield None  # where the following ".." leads is unknown before running: unsure
+                        continue
+                    trailing = value.endswith("/")
+                    glob_match = GLOB_RE.search(path)
+                    if glob_match:
+                        base = path[:glob_match.start()]
+                        base = base[:base.rfind("/") + 1] or "/"
+                        yield os.path.join(os.path.realpath(base), "x")
+                        for found_path in itertools.islice(glob.iglob(path), 64):
+                            yield real(found_path, trailing)
+                        continue
+                    yield real(path, trailing)
 
     def anchor(self, path, strict=False):
         """True when path is the working directory (unless strict) or one of its parents."""
@@ -1503,7 +1647,10 @@ class Analysis:
         """Own protected-path check for deleting operations, independent of §0lgy."""
         self._known = set(directories)
         for operand in operands:
-            for path in self.targets(operand, directories, follow):
+            if not self.sure(operand, directories):
+                # no single certain value: every candidate is checked below, the setting decides as well
+                self.unsure(label, operand, directories)
+            for path in self.targets(operand, directories, follow, candidates=True):
                 if path is None:
                     self.unsure(label, operand, directories)
                     continue
@@ -1567,6 +1714,8 @@ class Analysis:
         if self.top is None:
             self.top = script
             self.plan = literal_plan(script, command)
+            self.all_literals = literal_values(command)
+            self.top_text = command
         self.proc_out = self.proc_out or script.proc_out
         self.subs = script.subs
         visible = "".join(script.visible)

@@ -444,9 +444,11 @@ def unit_todelete_entry(runner):
          todelete_entry('rm "$S"', variable), bare),
         ("discard", "[ ]", 'F=notes.txt && git restore "$F"', "deny",
          "discards uncommitted changes and is denied", False, None, None),
-        # F1 - an operand with an unassigned variable is unsure: the delete setting logs it with the hint
-        ("refused-variable", "[ ]", 'rm -rf "$PROJ/build"', "deny", "BLOCKED by dogma", True,
-         todelete_entry("rm $PROJ/build", 'rm -rf "$PROJ/build"'), None),
+        # F1 - an unset variable is "" as a candidate: "$PROJ/build" is /build, a hard path (no entry, no setting)
+        ("refused-variable", "[ ]", 'rm -rf "$PROJ/build"', "deny", "of a protected path (/build)", False, None, None),
+        # F1b - a variable with a deep candidate only: "" + the deep path follows the setting and is logged
+        ("unset-deep", "[ ]", 'rm -rf "$PROJ/deep/project/dir/build"', "deny", "BLOCKED by dogma", True,
+         todelete_entry("rm $PROJ/deep/project/dir/build", 'rm -rf "$PROJ/deep/project/dir/build"'), None),
         # F1b - a literal assignment is resolved: a deep project path is no hard target, the setting logs it
         ("literal-deep", "[ ]", 'R=/home/myuser/proj/old/renders && rm -- "$R/final.mp4"', "deny", "BLOCKED by dogma",
          True, todelete_entry("rm $R/final.mp4", 'R=/home/myuser/proj/old/renders && rm -- "$R/final.mp4"'), None),

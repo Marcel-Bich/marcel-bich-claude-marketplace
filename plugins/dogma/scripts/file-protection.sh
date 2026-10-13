@@ -81,9 +81,10 @@ fi
 # Read JSON input from stdin
 INPUT=$(cat 2>/dev/null || true)
 
-# Dogma cannot resolve a shell variable in a target ($NAME, $1, ${...}). Only a plain literal assignment earlier
-# in the same command is followed (bash-guard.py literal_plan); any other variable is unsure and the delete
-# setting decides, so the owner allows it or retries with the literal path.
+# Dogma cannot resolve a shell variable in a target ($NAME, $1, ${...}) to one value. A target built on it is
+# judged by its candidate values in bash-guard.py (the environment value or empty, and every literal value the
+# command gives to the name): a hard candidate denies, otherwise the delete setting decides, so the owner
+# allows it or retries with the literal path.
 has_shell_variable() {
     [[ "$1" =~ \$[A-Za-z_0-9{] ]]
 }
