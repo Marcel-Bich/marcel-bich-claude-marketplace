@@ -30,10 +30,20 @@ source "$SCRIPT_DIR/lib-permissions.sh"
 
 # === JSON OUTPUT FOR BLOCKING ===
 # Claude Code expects JSON with permissionDecision
+# JSON string body for a reason. Backslashes and quotes are escaped, control characters (a raw tab
+# or newline would break the JSON) become spaces. Callers pass plain text, escaping happens here only.
+json_text() {
+    local text="$1"
+    text="${text//\\/\\\\}"
+    text="${text//\"/\\\"}"
+    text="${text//[[:cntrl:]]/ }"
+    printf '%s' "$text"
+}
+
 output_ask() {
     local reason="$1"
     cat <<EOF
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"$reason"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"$(json_text "$reason")"}}
 EOF
     exit 0
 }
@@ -41,7 +51,7 @@ EOF
 output_deny() {
     local reason="$1"
     cat <<EOF
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"$reason"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"$(json_text "$reason")"}}
 EOF
     exit 0
 }
@@ -77,26 +87,27 @@ has_shell_variable() {
     [[ "$1" =~ \$[A-Za-z_0-9{] ]]
 }
 
-# The Bash command as one line for a TO-DELETE.md entry. Newlines become " ; ", backticks become
-# single quotes (a backtick would end the inline code span), and the text is capped at 300 characters.
-todelete_command_text() {
+# The hint for a delete whose target names a shell variable (the owner retries with the literal path)
+VARIABLE_HINT="The target uses a shell variable dogma cannot resolve - retry with the literal path."
+
+# One line for a TO-DELETE.md entry. Newlines become " ; ", other control characters become spaces and
+# backticks become single quotes (a backtick would end the inline code span).
+todelete_flat() {
     local text="$1" quote="'"
     text="${text//$'\n'/ ; }"
+    text="${text//[[:cntrl:]]/ }"
     text="${text//\`/$quote}"
-    if [ "${#text}" -gt 300 ]; then
-        text="${text:0:300}..."
-    fi
     printf '%s' "$text"
 }
 
 # Block (ask or deny + TO-DELETE.md) per DELETE_MODE; BLOCKED/TARGET/REASON describe it.
 report_delete() {
-    # A discard keeps its own reason. A delete with a shell-variable target gets the hint, and in
-    # TO-DELETE.md the command too, because "rm $S" alone does not tell the owner what was meant.
+    # A discard keeps its own reason. A delete with a shell-variable target in any entry gets the hint, and
+    # in TO-DELETE.md the command too, because "rm $S" alone does not tell the owner what was meant.
     local variable_target="" hint=""
-    if [ "$BLOCK_KIND" = "delete" ] && has_shell_variable "$TARGET"; then
+    if [ "$BLOCK_KIND" = "delete" ] && [ "$BLOCK_VARIABLE" = "true" ]; then
         variable_target="true"
-        hint=" The target uses a shell variable dogma cannot resolve - retry with the literal path."
+        hint=" $VARIABLE_HINT"
     fi
     if [ "$DELETE_MODE" = "ask" ]; then
         # Ask mode: Prompt user for confirmation
@@ -106,13 +117,11 @@ report_delete() {
         else
             REASON_MSG="dogma: $BLOCKED ${TARGET:-command} requires confirmation. Change [?] to [x] in ${DELETE_SRC:-$PERMS_FILE} to allow automatically.$hint"
         fi
-        REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
         output_ask "$REASON_MSG"
     fi
     if [ "$BLOCK_KIND" = "discard" ]; then
         # A discard is not a file to delete later: deny with the reason only, no TO-DELETE.md entry
         REASON_MSG="dogma: $BLOCKED ${TARGET:-command} discards uncommitted changes and is denied. Change [ ] to [?] or [x] in ${DELETE_SRC:-${PERMS_FILE:-a DOGMA-PERMISSIONS.md (none found)}} to allow it."
-        REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
         output_deny "$REASON_MSG"
     fi
     # Deny mode: Write to TO-DELETE.md and deny
@@ -131,15 +140,19 @@ HEADER
     fi
 
     # Append as checklist item (so checklist-tracking picks it up)
-    ENTRY="- [ ] \`$BLOCKED ${TARGET:-unknown}\` - $REASON ($TIMESTAMP)"
+    ENTRY="- [ ] \`$BLOCKED $(todelete_flat "${TARGET:-unknown}")\` - $REASON ($TIMESTAMP)"
     if [ -n "$variable_target" ]; then
-        ENTRY="$ENTRY - command: \`$(todelete_command_text "$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)")\`"
+        local command_text
+        command_text="$(todelete_flat "$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null || true)")"
+        if [ "${#command_text}" -gt 300 ]; then
+            command_text="${command_text:0:300}..."
+        fi
+        ENTRY="$ENTRY - command: \`$command_text\`"
     fi
     echo "$ENTRY" >> "$TO_DELETE_FILE"
 
     # Deny with info message
     REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} logged to TO-DELETE.md. Change [ ] to [x] or [?] in ${DELETE_SRC:-${PERMS_FILE:-a DOGMA-PERMISSIONS.md (none found)}}.$hint"
-    REASON_MSG=$(echo "$REASON_MSG" | sed 's/"/\\"/g')
     output_deny "$REASON_MSG"
 }
 
@@ -156,7 +169,7 @@ HEADER
 # Usage: decide_group <entries JSON> <spec> <mode when no file applies>
 decide_group() {
     local entries="$1" spec="$2" missing="$3"
-    GROUP_MODE="auto"; GROUP_SRC=""; GROUP_LABEL=""; GROUP_TARGET=""; GROUP_UNDEFINED=""
+    GROUP_MODE="auto"; GROUP_SRC=""; GROUP_LABEL=""; GROUP_TARGET=""; GROUP_UNDEFINED=""; GROUP_VARIABLE=""
     [ "$entries" != "[]" ] || return 0
     mapfile -t GROUP_DIRS < <(printf '%s' "$entries" | jq -r '[.[].dirs[]] | unique | .[]')
     [ "${#GROUP_DIRS[@]}" -gt 0 ] || GROUP_DIRS=("")
@@ -166,6 +179,10 @@ decide_group() {
     GROUP_UNDEFINED="$DOGMA_STRICT_UNDEFINED"
     GROUP_LABEL="$(printf '%s' "$entries" | jq -r '.[0].label')"
     GROUP_TARGET="$(printf '%s' "$entries" | jq -r '.[0].target')"
+    # A shell variable in ANY target of the group counts, not only in the first one
+    if printf '%s' "$entries" | jq -r '.[].target // empty' | grep -qE '[$][A-Za-z_0-9{]'; then
+        GROUP_VARIABLE="true"
+    fi
 }
 
 # Rank of a mode for the "stricter group wins" choice (deny > ask > auto)
@@ -180,12 +197,17 @@ group_rank() {
 dogma_session_from_input "$INPUT"
 BLOCK_KIND="delete"
 BLOCK_UNDEFINED=""
+BLOCK_VARIABLE=""
 if [ "$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)" = "Bash" ] && \
     FINDINGS="$(dogma_bash_findings "$INPUT")"; then
     # The analysis refused the command (or ran out of time): deny here too, so a
     # finding is never silently skipped.
     BLOCKED_REASON="$(dogma_findings_blocked "$FINDINGS")"
     if [ -n "$BLOCKED_REASON" ]; then
+        # The refused operand is named in the reason, so a shell variable there gets the retry hint too
+        if has_shell_variable "$BLOCKED_REASON"; then
+            BLOCKED_REASON="$BLOCKED_REASON $VARIABLE_HINT"
+        fi
         output_deny "$BLOCKED_REASON"
     fi
     [ "$(printf '%s' "$FINDINGS" | jq '.deletes | length')" -gt 0 ] || exit 0
@@ -203,6 +225,7 @@ if [ "$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)" = "Bash" ] && 
     DELETE_SRC="$GROUP_SRC"
     BLOCKED="$GROUP_LABEL"
     TARGET="$GROUP_TARGET"
+    BLOCK_VARIABLE="$GROUP_VARIABLE"
     decide_group "$DISCARD_ENTRIES" "§b4dk|discard uncommitted changes" deny
     if [ "$(group_rank "$GROUP_MODE")" -gt "$(group_rank "$DELETE_MODE")" ]; then
         DELETE_MODE="$GROUP_MODE"
@@ -211,6 +234,7 @@ if [ "$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)" = "Bash" ] && 
         TARGET="$GROUP_TARGET"
         BLOCK_KIND="discard"
         BLOCK_UNDEFINED="$GROUP_UNDEFINED"
+        BLOCK_VARIABLE="$GROUP_VARIABLE"
     fi
     [ "$DELETE_MODE" = "auto" ] && exit 0
     if [ "$BLOCK_KIND" = "discard" ]; then
@@ -317,6 +341,10 @@ if [ -n "$BLOCKED" ]; then
             ;;
     esac
 
+    BLOCK_VARIABLE=""
+    if has_shell_variable "$TARGET"; then
+        BLOCK_VARIABLE="true"
+    fi
     report_delete
 fi
 

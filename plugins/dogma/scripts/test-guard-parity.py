@@ -415,8 +415,10 @@ def todelete_lines(folder):
 
 
 def todelete_entry(target, command=None):
-    """Regex of the one TO-DELETE.md entry of a permanent delete, with the command suffix when given."""
-    text = r"- \[ \] `%s` - Deletes files permanently %s" % (re.escape(target), TODELETE_TIME)
+    """Regex of the one TO-DELETE.md entry of a permanent delete, with the command suffix when given.
+    A target of None accepts any single-line rm target."""
+    shown = r"rm [^`]+" if target is None else re.escape(target)
+    text = r"- \[ \] `%s` - Deletes files permanently %s" % (shown, TODELETE_TIME)
     if command is not None:
         text += " - command: `%s`" % re.escape(command)
     return re.compile(text + "$")
@@ -442,6 +444,25 @@ def unit_todelete_entry(runner):
          todelete_entry('rm "$S"', variable), bare),
         ("discard", "[ ]", 'F=notes.txt && git restore "$F"', "deny",
          "discards uncommitted changes and is denied", False, None, None),
+        # F1 - a refused operand with an unassigned variable gets the retry hint, no entry is written
+        ("refused-variable", "[ ]", 'rm -rf "$PROJ/build"', "deny", "cannot be resolved before running", True,
+         None, None),
+        # F2 - the variable sits in a later delete of the group, the first target is literal
+        ("any-variable", "[ ]", 'S=/tmp/x/fx && rm -rf build && rm -rf "$S"', "deny", "BLOCKED by dogma", True,
+         todelete_entry(None, 'S=/tmp/x/fx && rm -rf build && rm -rf "$S"'), None),
+        # F3 - a tab is one space in the entry
+        ("tab-separator", "[ ]", 'S=/tmp/x/fx\t&& rm -rf "$S"', "deny", "BLOCKED by dogma", True,
+         todelete_entry("rm $S", variable), None),
+        # F4 - a backslash and a tab in the target keep the reason valid JSON
+        ("backslash-target", "[ ]", 'S=/tmp/x/fx && rm -rf "$S/a\\ b"', "deny", 'rm $S/a\\ b logged', True,
+         todelete_entry(None, 'S=/tmp/x/fx && rm -rf "$S/a\\ b"'), None),
+        ("tab-target", "[ ]", 'S=/tmp/x/fx && rm -rf "$S/a\tb"', "deny", "BLOCKED by dogma", True,
+         todelete_entry(None, 'S=/tmp/x/fx && rm -rf "$S/a b"'), None),
+        # text fallback: a multi-line command, and two deletes whose targets span two lines
+        ("text-multi-line", "[ ]", 'S=/tmp/x/fx\nrm -rf "$S"', "deny", "BLOCKED by dogma", True,
+         todelete_entry('rm "$S"', 'S=/tmp/x/fx ; rm -rf "$S"'), bare),
+        ("text-two-deletes", "[ ]", 'rm -rf "$S"\nrm -rf "$T"', "deny", "BLOCKED by dogma", True,
+         todelete_entry('rm "$S" ; "$T"', 'rm -rf "$S" ; rm -rf "$T"'), bare),
     )
     results = []
     for name, box, command, want, text, hint, entry, path in rows:
