@@ -65,7 +65,9 @@ _limit_mkdir_acquire() {
         mtime=$(stat -c %Y "$lockdir" 2>/dev/null || stat -f %m "$lockdir" 2>/dev/null || echo 0)
         now=$(date +%s)
         if [[ $((now - mtime)) -gt 30 ]]; then
-            rmdir "$lockdir" 2>/dev/null || true
+            # A stale lock that cannot be removed (not a dir, no permission) must
+            # not spin forever: give up like a busy lock.
+            rmdir "$lockdir" 2>/dev/null || return 1
             continue
         fi
         i=$((i + 1))

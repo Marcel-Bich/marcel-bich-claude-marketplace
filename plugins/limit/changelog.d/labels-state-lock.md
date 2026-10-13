@@ -14,3 +14,5 @@ bump: patch
 ### Fixed
 
 - The threshold inject state is read, decided and written under one lock for the session, so parallel hook calls no longer all inject the same ACTION or status line
+- The z.ai statusline line is labelled `LastReq` with `In+Out`, since it shows the last API response
+- A stale mkdir lock that cannot be removed no longer makes the lock wait spin forever
