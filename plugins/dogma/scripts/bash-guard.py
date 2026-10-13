@@ -311,6 +311,9 @@ CODE_ENV_DUMP_RE = re.compile(
     r"process\.env(?!\s*[.\[])|%ENV\b|\bENV(?!\s*(?:\[|\.fetch\b|\.key\?|\.include\?|\.delete\b))\b(?![A-Za-z_])|"
     r"getenv\(\s*\)|\$_(?:ENV|SERVER)\b(?!\s*\[)")
 CODE_STRING_RE = re.compile(r"\"((?:[^\"\\\n]|\\.)*)\"|'((?:[^'\\\n]|\\.)*)'")
+# string literals joined by implicit concatenation ('a' 'b', f'a' b'c') or by + ('a' + "b"): the joined text is one
+# more candidate for the path checks; the literals as written stay candidates too. A comma is an argument separator.
+CONCAT_RE = re.compile(r"([\"'])\s*(?:\+\s*)?[rRbBfFuU]{0,2}([\"'])")
 CODE_NAME_RE = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
 INSTALL_RULES = {
     "npm": ({"install", "i", "add", "isntall", "in"}, True),
@@ -3391,8 +3394,10 @@ class Analysis:
             r"\b(subprocess|pty|exec\w*|spawn\w*|posix_spawn\w*|system|popen\w*|getattr|__import__|importlib|"
             r"eval|compile|ctypes|multiprocessing|child_process|Open3|Kernel|shell_exec|passthru|proc_open|"
             r"backticks|qx)\b|`|%x", calls))
+        concatenated = CONCAT_RE.sub("", code)
         literals = [match.group(1) if match.group(1) is not None else match.group(2)
-                    for text in dict.fromkeys((code, joined)) for match in CODE_STRING_RE.finditer(text)]
+                    for text in dict.fromkeys((code, joined, concatenated))
+                    for match in CODE_STRING_RE.finditer(text)]
         literals += re.findall(r"`([^`]+)`", code)
         if CODE_INSTALL_RE.search(code):
             self.installs.append("inline code install or download-and-run")

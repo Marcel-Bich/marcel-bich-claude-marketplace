@@ -716,6 +716,27 @@ CASES = (
     ("deny", "N", "python3 -c \"import os; open('{H}/dogma-link/hooks/hooks.json').read(); "
                   "os.remove('{H}/dogma-link/hooks/hooks.json')\""),
     ("deny", "N", "python3 -c \"import os; open('{N}/DOGMA-PERMISSIONS.md').read(); os.unlink('{N}/DOGMA-PERMISSIONS.md')\""),
+    # string literals joined by implicit concatenation or by + name the protected file all the same, as
+    # candidates next to the literals as written (write, append and delete alike)
+    ("deny", "N", "python3 -c \"open('{N}/DOGMA-PERM' 'ISSIONS.md', 'w').write('x')\""),
+    ("deny", "N", "python3 -c \"open('{N}/DOGMA-PERM' + 'ISSIONS.md', 'w').write('x')\""),
+    ("deny", "N", "python3 -c \"open('{N}/DOGMA-PERM' 'ISSIONS.md', mode='a').write('x')\""),
+    ("deny", "N", "python3 -c \"open(f'{N}/DOGMA-PERM' f'ISSIONS.md', 'w').write('x')\""),
+    # each part alone names nothing protected ("{H}/dogma-", "{N}/.git"); only the joined name is a protected file
+    ("deny", "N", "python3 -c \"open('{H}/dogma-' 'link/hooks/hooks.json', 'w').write('[]')\""),
+    ("deny", "N", "python3 -c \"open('{H}/dogma-' + 'link/hooks/hooks.json', 'a').write('[]')\""),
+    ("deny", "N", "python3 -c \"open('{N}/.git' '/hooks/pre-commit', 'w').write('x')\""),
+    ("deny", "N", "python3 -c \"open('{N}/.git/' + 'hooks/pre-commit', 'w').write('x')\""),
+    ("deny", "N", "python3 - <<'PY'\nopen('{N}/DOGMA-PERM' 'ISSIONS.md', 'w').write('x')\nPY"),
+    ("deny", "N", "python3 -c \"import os; os.remove('{N}/DOGMA-PERM' 'ISSIONS.md')\""),
+    ("deny", "N", "python3 -c \"import os; os.remove('{N}/DOGMA-PERM' + 'ISSIONS.md')\""),
+    ("deny", "N", "python3 -c \"import os; os.remove('{H}/dogma-' 'link/hooks/hooks.json')\""),
+    ("deny", "N", "python3 -c \"import os; os.unlink('{N}/.git' '/hooks/pre-commit')\""),
+    ("deny", "N", "ruby -e \"File.write('{N}/DOGMA-PERM' 'ISSIONS.md', 'x')\""),
+    # ordinary concatenation that forms no protected path passes
+    ("allow", "N", "python3 -c \"print('hello ' + 'world')\""),
+    ("allow", "N", "python3 -c \"open('/home/myuser/git/notes' '.txt', 'w').write('x')\""),
+    ("allow", "N", "python3 -c \"name = 'report' + '-' + 'summary.txt'; open(name, 'w').write('x')\""),
     # private Codex and Claude config homes: everything is readable except credentials and secrets
     ("allow", "N", "ls {CH}/myplugin"),
     ("allow", "N", "cat {CH}/myplugin/state.json"),
