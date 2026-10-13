@@ -148,6 +148,44 @@ out=$(render)
 has "reset window shows 0 %" "0.0% reset: " "$out"
 has "reset marker" "(reset)" "$out"
 
+echo ">>> averages: AvgPeak and Avg values are right-aligned to 5 characters (100.0 is the widest)"
+# Fixture history with invented values. Five completed 5h windows with peaks 67, 68,
+# 68, 68, 68 give AvgPeak 67.8; +10 each is 50 over 5.83 h, i.e. 8.6 %/h. Two completed
+# 7d windows peaking at 100 give AvgPeak 100.0; +1 each is 2 over 2.83 h, i.e. 16.9 %/d.
+# The history write is held back so the renders above cannot add samples.
+HIST="$DATA_DIR/limit-history_${FAKE_PROFILE}.jsonl"
+date +%s > "$DATA_DIR/history-last-write_${FAKE_PROFILE}"
+H_5H_FUT=$(iso $((NOW + 5 * 3600)))
+H_7D_FUT=$(iso $((NOW + 5 * 86400)))
+ts_at() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
+{
+    for w in 0 1 2 3 4; do
+        p=68; [[ $w -eq 0 ]] && p=67
+        reset=$(iso $((NOW - (5 - w) * 3600)))
+        jq -cn --arg ts "$(ts_at $((NOW - (5 - w) * 3600 - 3000)))" --arg r "$reset" --argjson v $((p - 10)) \
+            '{ts: $ts, "5h": {api: $v, reset: $r}}'
+        jq -cn --arg ts "$(ts_at $((NOW - (5 - w) * 3600 - 2400)))" --arg r "$reset" --argjson v "$p" \
+            '{ts: $ts, "5h": {api: $v, reset: $r}}'
+    done
+    for w in 2 1; do
+        reset=$(iso $((NOW - w * 3600)))
+        jq -cn --arg ts "$(ts_at $((NOW - w * 3600 - 3000)))" --arg r "$reset" \
+            '{ts: $ts, "7d": {api: 99, reset: $r}}'
+        jq -cn --arg ts "$(ts_at $((NOW - w * 3600 - 2400)))" --arg r "$reset" \
+            '{ts: $ts, "7d": {api: 100, reset: $r}}'
+    done
+    jq -cn --arg ts "$(ts_at $((NOW - 300)))" --arg f "$H_5H_FUT" --arg s "$H_7D_FUT" \
+        '{ts: $ts, "5h": {api: 50, reset: $f}, "7d": {api: 30, reset: $s}}'
+} > "$HIST"
+write_cache 50 "$(iso $((NOW + 7200)))" 30
+out=$(render)
+has "5h AvgPeak keeps the width (67.8)" "[AvgPeak: 67.8%]" "$out"
+has "7d AvgPeak 100.0 fills the width" "[AvgPeak:100.0%]" "$out"
+has "5h Avg is right-aligned (8.6)" "[Avg:  8.6%/h]" "$out"
+has "7d Avg is right-aligned (16.9)" "[Avg: 16.9%/d]" "$out"
+widths=$(grep -oE '\[(AvgPeak|Avg):[ 0-9.]+%' <<< "$out" | sed -E 's/.*:([ 0-9.]+)%$/\1/' | awk '{print length($0)}' | sort -u | paste -sd, -)
+has_n "every AvgPeak and Avg value is 5 characters wide" "5" "$widths"
+
 echo ">>> show-highscores uses the device label"
 out=$(bash "$SCRIPT_DIR/show-highscores.sh" 2>&1)
 has "device label instead of hostname" "**Device:** box-1" "$out"

@@ -10,7 +10,7 @@ Live API usage in Claude Code statusline - colored progress bars, Git info, toke
 - Multiple limits: 5-hour, 7-day, Sonnet, Extra Credits, plus further entries of the API's `limits[]` list (e.g. per-model `weekly_scoped` limits, shown as `7d <Model>`)
 - Reset times for each limit (minute-precise); after a reset time has passed the bar shows `0.0% ... (reset)` instead of the previous window's value
 - `[stale 12m]` marks API numbers older than `CLAUDE_MB_LIMIT_STALE_AFTER` seconds
-- Averages from the local history: `[AvgPeak:X%]` average peak per completed window, `[Avg:Y%/h]` (5h) / `[Avg:Y%/d]` (7d) average consumption including idle time
+- Averages from the local history: `[AvgPeak:X%]` average peak per completed window, `[Avg:Y%/h]` (5h) / `[Avg:Y%/d]` (7d) average consumption including idle time. The values are right-aligned to 5 characters (`[AvgPeak: 67.8%]`, `[AvgPeak:100.0%]`, `[Avg:  1.3%/h]`) so the labels keep their width.
 
 **Highscore Tracking** (enabled by default, disable with `CLAUDE_MB_LIMIT_LOCAL=false`)
 - Tracks highest token usage per plan (max20, max5, pro)
