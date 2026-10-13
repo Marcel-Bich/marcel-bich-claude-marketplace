@@ -21,7 +21,7 @@ Live API usage in Claude Code statusline - colored progress bars, Git info, toke
 **Extended Features**
 - CWD (Current Working Directory)
 - Git: branch, worktree name, changes (+insertions, -deletions) with colors. The line is prefixed with `git: <parent>/<repo>` showing the resolved target repo. The target is resolved in this order: (1) the repo the MAIN agent last worked in - captured live from its Edit/Write and Bash `cd` / `git -C` calls via a PostToolUse hook (session-affine, subagents excluded), so the line follows the agent into whatever repo it touches even from a non-git hub directory; (2) the repo at the cwd; (3) the credo session-pin. Sources 1 and 3 are soft dependencies - without them, only cwd-based discovery is used
-- Token metrics of the current session (main agent + its subagents, from the transcripts): Input (incl. cache writes), Output, Cached (cache reads), Total. Without a readable ledger the line is labelled `LastReq` and shows the last request from Claude Code's stdin
+- Token metrics of the current session (main agent + its subagents, summed from the deduplicated transcript ledger, not from Claude Code's stdin): Input (uncached input + cache writes), Output, Cached (cache reads; not part of Input or Work Tokens), Work Tokens (Input + Output). Without a readable ledger the line is labelled `LastReq` and shows the most recent API request from Claude Code's stdin (its `current_usage`)
 - Context usage with percentage of max and usable (before auto-compact)
 - Session timing: Total duration, API time
 - Model line: `<Model> | <Effort> | <style> | LifetimeTotal: ... | Device: ...` - the live session effort level (Low/Medium/High/XHigh/Max) is read from the statusline stdin `effort.level` and only shown for models that support reasoning effort
@@ -262,8 +262,10 @@ How it works:
   with the values Claude Code hands only to the statusline: the context fill
   percentage and window size (`context_window_size` is canonical - it reflects model
   switches AND the 1M beta mid-session automatically, no lookup table needed), plus
-  the 5h / weekly limits and session cost. One file per session, so parallel sessions
-  never overwrite each other.
+  the 5h / weekly limits, session cost, and the values of the most recent API response
+  (`last_input_tokens`: input in the context window, `last_output_tokens`: output of that
+  response; these are not session totals - session totals come from the ledger). One file
+  per session, so parallel sessions never overwrite each other.
 - The **inject hook** (`scripts/inject-status.sh`, on `UserPromptSubmit` + `PostToolUse`)
   reads that cache and injects a short status line via `additionalContext` - visible
   to the agent, not flooding the user chat. It skips silently if the cache is missing

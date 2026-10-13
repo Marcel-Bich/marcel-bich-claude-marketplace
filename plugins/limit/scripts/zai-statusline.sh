@@ -10,7 +10,7 @@
 # Layout (matches the plugin, minus accounting-only parts):
 #   cwd
 #   [wt] <wt> (+X,-Y)<branch>
-#   Tokens  -> Input/Output/Cached/User Tokens        (from stdin)
+#   LastReq -> Input/Output/Cached/In+Out (last API response, from stdin)
 #   Context -> UsedT/TkLeft/CtxMax/ContextLeft         (from stdin)
 #   Session -> Sessn/APIuse/SnCost  [bar] %  (try /compact)
 #   <Model> | <Effort> | <style> | Plan: <level> | Device: <host>   (LifetimeTotal dropped;
@@ -294,7 +294,7 @@ c4=${#tok4}; [[ ${#ctx4} -gt $c4 ]] && c4=${#ctx4}
 sp_len=$(( ${#usable_pct} + 1 )); [[ $sp_len -gt $c4 ]] && c4=$sp_len
 
 if [[ "$SHOW_TOKENS" == "true" ]]; then
-    printf -v l "Tokens  -> Input: %${c1}s    Output: %${c2}s    Cached: %${c3}s    User Tokens: %${c4}s" "$tok1" "$tok2" "$tok3" "$tok4"
+    printf -v l "LastReq -> Input: %${c1}s    Output: %${c2}s    Cached: %${c3}s    In+Out: %${c4}s" "$tok1" "$tok2" "$tok3" "$tok4"
     lines+=("${COLOR_GRAY}${l}${COLOR_RESET}")
 fi
 if [[ "$SHOW_CTX" == "true" ]]; then

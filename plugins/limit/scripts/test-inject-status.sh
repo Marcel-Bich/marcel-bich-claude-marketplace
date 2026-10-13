@@ -12,7 +12,7 @@ SID="limit-test-inject-$$"
 CACHE="/tmp/claude-mb-context-cache_${SID}.json"
 STATE="/tmp/claude-mb-inject-state_${SID}.json"
 AGENT_STATE="/tmp/claude-mb-inject-state_${SID}_agent_agent-1.json"
-cleanup() { rm -f "$CACHE" "$STATE" "$AGENT_STATE"; }
+cleanup() { rm -f "$CACHE" "$STATE" "$AGENT_STATE" "$STATE.lock"; rmdir "$STATE.lock.d" 2>/dev/null; }
 trap cleanup EXIT
 cleanup
 
@@ -120,6 +120,19 @@ write_cache 50
 before=$(cksum < "$STATE")
 out=$(run_sub PostToolUse)
 check "subagent drop does not persist the reset" "$before" "$(cksum < "$STATE")"
+
+echo ">>> parallel hook calls of one session (fresh state, same fill)"
+rm -f "$STATE"
+write_cache 65
+PAR_DIR=$(mktemp -d)
+for i in $(seq 1 12); do
+    run_main PostToolUse > "$PAR_DIR/out.$i" &
+done
+wait
+emitted=$(find "$PAR_DIR" -name 'out.*' -size +0 | wc -l | tr -d ' ')
+rm -rf "$PAR_DIR"
+check "exactly one of 12 parallel calls injects" "1" "$emitted"
+check "the threshold is recorded once" "[62]" "$(fired)"
 
 echo ">>> malformed input"
 before=$(cksum < "$STATE")

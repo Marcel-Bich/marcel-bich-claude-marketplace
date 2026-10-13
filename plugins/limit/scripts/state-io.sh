@@ -3,6 +3,7 @@
 #
 # Every read-modify-write of a plugin state file goes through these helpers:
 #   - limit_with_lock <lockfile> <cmd...>   run cmd under an exclusive lock
+#   - limit_hold_lock <lockfile>            hold an exclusive lock until the process exits
 #   - limit_atomic_write <file>             write stdin to file via mktemp + mv
 #   - limit_read_json <file>                print file only if it is valid JSON
 #   - limit_debug_enabled                   one debug flag for all scripts
@@ -45,27 +46,58 @@ limit_with_lock() {
         return $?
     fi
 
-    # mkdir fallback: atomic directory creation as the lock primitive.
+    # mkdir fallback (no flock, e.g. macOS).
     local lockdir="${lockfile}.d"
-    local tries=$((wait * 20))
-    local i=0
-    while ! mkdir "$lockdir" 2>/dev/null; do
-        # Break a stale lock (holder died) after 30 s.
-        local mtime now
-        mtime=$(stat -c %Y "$lockdir" 2>/dev/null || stat -f %m "$lockdir" 2>/dev/null || echo 0)
-        now=$(date +%s)
-        if [[ $((now - mtime)) -gt 30 ]]; then
-            rmdir "$lockdir" 2>/dev/null || true
-            continue
-        fi
-        i=$((i + 1))
-        [[ "$i" -ge "$tries" ]] && return 75
-        sleep 0.05 2>/dev/null || sleep 1
-    done
+    _limit_mkdir_acquire "$lockdir" "$((wait * 20))" || return 75
     local rc=0
     "$@" || rc=$?
     rmdir "$lockdir" 2>/dev/null || true
     return "$rc"
+}
+
+# mkdir lock: atomic directory creation is the lock primitive. A lock older than
+# 30 s is treated as stale (its holder died) and broken. Args: lockdir tries.
+# Returns 1 when the lock is still busy after <tries> polls.
+_limit_mkdir_acquire() {
+    local lockdir="$1" tries="$2" i=0
+    while ! mkdir "$lockdir" 2>/dev/null; do
+        local mtime now
+        mtime=$(stat -c %Y "$lockdir" 2>/dev/null || stat -f %m "$lockdir" 2>/dev/null || echo 0)
+        now=$(date +%s)
+        if [[ $((now - mtime)) -gt 30 ]]; then
+            # A stale lock that cannot be removed (not a dir, no permission) must
+            # not spin forever: give up like a busy lock.
+            rmdir "$lockdir" 2>/dev/null || return 1
+            continue
+        fi
+        i=$((i + 1))
+        [[ "$i" -ge "$tries" ]] && return 1
+        sleep 0.05 2>/dev/null || sleep 1
+    done
+    return 0
+}
+
+# Take an exclusive lock on <lockfile> until the calling process exits. For a hook
+# that reads, decides and writes in one run and exits at several points. Same wait
+# (LIMIT_LOCK_WAIT) and flock / mkdir choice as limit_with_lock. Returns 75 when the
+# lock stays busy; the caller then decides whether to go on unlocked.
+limit_hold_lock() {
+    local lockfile="$1"
+    local wait="${LIMIT_LOCK_WAIT:-3}"
+    local lockdir_parent="${lockfile%/*}"
+    [[ "$lockdir_parent" == "$lockfile" ]] || [[ -d "$lockdir_parent" ]] || mkdir -p "$lockdir_parent" 2>/dev/null || return 75
+    if command -v flock >/dev/null 2>&1; then
+        # Probe first: a failing exec redirection would end a non-interactive shell.
+        : >> "$lockfile" 2>/dev/null || return 75
+        exec 8>>"$lockfile" || return 75
+        flock -w "$wait" 8 2>/dev/null || return 75
+        return 0
+    fi
+    local lockdir="${lockfile}.d"
+    _limit_mkdir_acquire "$lockdir" "$((wait * 20))" || return 75
+    # shellcheck disable=SC2064
+    trap "rmdir '$lockdir' 2>/dev/null" EXIT
+    return 0
 }
 
 # Write stdin to <file> atomically. The content must be non-empty valid JSON
