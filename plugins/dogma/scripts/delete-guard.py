@@ -182,14 +182,33 @@ def _temp_resolved(path, label):
     return os.path.exists(real) or not (path.endswith("/") or label == "shred")
 
 
+# labels whose variable target may be judged by its candidate paths (bash-guard.py candidate_paths): the deletes and
+# the overwrites that a literal temp path reports with no entry at all
+CANDIDATE_LABELS = TEMP_LABELS + ("in-place edit", "overwrite", "truncation")
+
+
+def temp_candidates(candidates, label):
+    """True when a variable target has candidate paths that all lie strictly inside a temp root. A value outside
+    the temp roots or with an unresolved character (glob, parameter, ...) keeps the normal rules."""
+    if label not in CANDIDATE_LABELS or not isinstance(candidates, list) or not candidates:
+        return False
+    return all(isinstance(path, str) and path.startswith("/") and not UNRESOLVED_RE.search(path)
+               and _temp_resolved(path, label) for path in candidates)
+
+
 def temp_only(findings, cwd):
     """True when every recorded delete is a plain rm, unlink, shred, rmdir or find -delete and every
-    target resolves strictly inside a temp root. Anything unsure returns False (normal rules)."""
+    target resolves strictly inside a temp root. A target with candidate paths (variables set by the command,
+    see bash-guard.py) counts by its candidates. Anything unsure returns False (normal rules)."""
     deletes = findings.get("deletes") or []
     if not deletes:
         return False
     tmpdir = os.environ.get("TMPDIR") or ""
     for entry in deletes:
+        if "candidates" in entry:
+            if not temp_candidates(entry["candidates"], entry.get("label")):
+                return False
+            continue
         label, target, dirs = entry.get("label"), entry.get("target") or "", entry.get("dirs") or []
         if tmpdir.startswith("/"):
             target = re.sub(r"\$\{TMPDIR\}|\$TMPDIR(?![A-Za-z0-9_])", lambda _match: tmpdir, target)

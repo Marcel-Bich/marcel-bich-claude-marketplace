@@ -821,6 +821,33 @@ CASES = (
     ("allow", "N", "rm -rf $TMPDIR/x"),
     ("allow", "X", "rm -rf /tmp/foo"),
     ("deny", "N", "rm -rf /tmp"),
+    # shell variables whose candidate values all lie in a temp root are temp targets, like the literal path (item 105)
+    ("allow", "N", "S={R}/scratch; rm -f $S/x"),
+    ("allow", "N", "export S={R}/scratch; rm -f $S/x"),
+    ("allow", "N", "export S={R}/scratch; sed -i s/a/b/ $S/dump.php"),
+    ("allow", "N", "declare -x S={R}/scratch; rm -f $S/x"),
+    ("allow", "N", "readonly S={R}/scratch; rm -rf \"$S\"/build"),
+    ("allow", "N", "S={R}/scratch; for f in a b; do rm -f $S/$f; done"),
+    ("allow", "N", "S={R}/scratch; for f in a b; do sed -i s/a/b/ $S/$f.php; done"),
+    ("allow", "N", "S={R}/scratch; cd {N}; sed -i \"s#^require .*#x#\" $S/dump.php; php $S/dump.php"),
+    ("allow", "N", "S={R}/scratch; cd {N} && rm -f $S/x"),
+    ("allow", "N", "S={R}/scratch; rm -f \"${S}\"/x"),
+    # a sourced file runs in this shell and may set S to anything: the setting decides (N: deny)
+    ("deny", "N", "S={R}/scratch; . ./evil.sh; rm -f $S/x"),
+    ("deny", "N", "S={R}/scratch; source ./evil.sh; rm -f $S/x"),
+    # not temp and not hard: an unset variable, a name assigned twice, an assignment after || or in a pipe
+    ("deny", "N", "rm -f $NOPE_UNSET_TMPX/deep/project/dir/x"),
+    ("deny", "N", "S={R}/scratch; S={R}/other; rm -f $S/x"),
+    ("deny", "N", "S={R}/scratch || S=/var/lib/app/data; rm -f $S/x"),
+    ("deny", "N", "echo a | S={R}/scratch; rm -f $S/x"),
+    ("deny", "N", "S={R}/scratch; if true; then S=/var/lib/app/data; fi; rm -f $S/x"),
+    ("deny", "N", "for f in {R}/scratch/a /var/lib/app/data; do rm -f $f; done"),
+    ("deny", "N", "S=/var/lib/app/data; rm -rf \"$S/build\""),
+    # a conditional assignment governs nothing: S may still be unset, so the target is /x, a hard path
+    ("deny", "X", "false && S={R}/scratch; rm -f $S/x"),
+    # a hard candidate denies whatever the delete setting says
+    ("deny", "X", "for f in {R}/scratch /home; do rm -rf $f; done"),
+    ("deny", "X", "S={R}/scratch; S=/home; rm -rf $S"),
     ("deny", "N", "rm -rf /mnt/c/Users/me/AppData/Local/Temp"),
     # redirects into a Windows temp folder are scratch writes; the temp folder itself and the rest of AppData stay critical
     ("allow", "N", "printf x > /mnt/c/Users/me/AppData/Local/Temp/run.ps1"),

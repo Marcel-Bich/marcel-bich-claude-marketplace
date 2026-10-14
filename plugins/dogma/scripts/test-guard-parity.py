@@ -84,6 +84,7 @@ def fill(root):
             "W": root / "home" / "someone" / "proj", "D": work / "discard-off", "E": work / "discard-on",
             "F": work / "discard-missing"}
     home.mkdir(parents=True)
+    (root / "scratch").mkdir()  # a temporary scratch folder ({R}/scratch): the directories down to a temp target exist
     for directory in dirs.values():
         directory.mkdir(parents=True)
     (dirs["P"] / "DOGMA-PERMISSIONS.md").write_text(
@@ -427,7 +428,7 @@ def todelete_entry(target, command=None):
 def unit_todelete_entry(runner):
     """[(ok, line)]: a denied delete whose target is a shell variable logs its command in TO-DELETE.md and its
     deny or ask reason names the hint; a literal target keeps the plain entry, a discard keeps its reason."""
-    variable = 'S=/tmp/x/fx && rm -rf "$S"'
+    variable = 'S=/home/myuser/proj/fx && rm -rf "$S"'
     long_command = variable + " && echo 'a`b' && echo " + "a" * 320
     long_flat = long_command.replace("`", "'")[:300] + "..."
     bare = no_python_path(runner)
@@ -437,8 +438,8 @@ def unit_todelete_entry(runner):
         ("var-ask", "[?]", variable, "ask", "requires confirmation", True, None, None),
         ("literal", "[ ]", "rm -rf /home/myuser/proj/old", "deny", "BLOCKED by dogma", False,
          todelete_entry("rm /home/myuser/proj/old"), None),
-        ("multi-line", "[ ]", 'S=/tmp/x/fx\nrm -rf "$S"', "deny", "BLOCKED by dogma", True,
-         todelete_entry("rm $S", 'S=/tmp/x/fx ; rm -rf "$S"'), None),
+        ("multi-line", "[ ]", 'S=/home/myuser/proj/fx\nrm -rf "$S"', "deny", "BLOCKED by dogma", True,
+         todelete_entry("rm $S", 'S=/home/myuser/proj/fx ; rm -rf "$S"'), None),
         ("long", "[ ]", long_command, "deny", "BLOCKED by dogma", True, todelete_entry("rm $S", long_flat), None),
         ("text-fallback", "[ ]", variable, "deny", "BLOCKED by dogma", True,
          todelete_entry('rm "$S"', variable), bare),
@@ -453,19 +454,19 @@ def unit_todelete_entry(runner):
         ("literal-deep", "[ ]", 'R=/home/myuser/proj/old/renders && rm -- "$R/final.mp4"', "deny", "BLOCKED by dogma",
          True, todelete_entry("rm $R/final.mp4", 'R=/home/myuser/proj/old/renders && rm -- "$R/final.mp4"'), None),
         # F2 - the variable sits in a later delete of the group, the first target is literal
-        ("any-variable", "[ ]", 'S=/tmp/x/fx && rm -rf build && rm -rf "$S"', "deny", "BLOCKED by dogma", True,
-         todelete_entry(None, 'S=/tmp/x/fx && rm -rf build && rm -rf "$S"'), None),
+        ("any-variable", "[ ]", 'S=/home/myuser/proj/fx && rm -rf build && rm -rf "$S"', "deny", "BLOCKED by dogma", True,
+         todelete_entry(None, 'S=/home/myuser/proj/fx && rm -rf build && rm -rf "$S"'), None),
         # F3 - a tab is one space in the entry
-        ("tab-separator", "[ ]", 'S=/tmp/x/fx\t&& rm -rf "$S"', "deny", "BLOCKED by dogma", True,
+        ("tab-separator", "[ ]", 'S=/home/myuser/proj/fx\t&& rm -rf "$S"', "deny", "BLOCKED by dogma", True,
          todelete_entry("rm $S", variable), None),
         # F4 - a backslash and a tab in the target keep the reason valid JSON
-        ("backslash-target", "[ ]", 'S=/tmp/x/fx && rm -rf "$S/a\\ b"', "deny", 'rm $S/a\\ b logged', True,
-         todelete_entry(None, 'S=/tmp/x/fx && rm -rf "$S/a\\ b"'), None),
-        ("tab-target", "[ ]", 'S=/tmp/x/fx && rm -rf "$S/a\tb"', "deny", "BLOCKED by dogma", True,
-         todelete_entry(None, 'S=/tmp/x/fx && rm -rf "$S/a b"'), None),
+        ("backslash-target", "[ ]", 'S=/home/myuser/proj/fx && rm -rf "$S/a\\ b"', "deny", 'rm $S/a\\ b logged', True,
+         todelete_entry(None, 'S=/home/myuser/proj/fx && rm -rf "$S/a\\ b"'), None),
+        ("tab-target", "[ ]", 'S=/home/myuser/proj/fx && rm -rf "$S/a\tb"', "deny", "BLOCKED by dogma", True,
+         todelete_entry(None, 'S=/home/myuser/proj/fx && rm -rf "$S/a b"'), None),
         # text fallback: a multi-line command, and two deletes whose targets span two lines
-        ("text-multi-line", "[ ]", 'S=/tmp/x/fx\nrm -rf "$S"', "deny", "BLOCKED by dogma", True,
-         todelete_entry('rm "$S"', 'S=/tmp/x/fx ; rm -rf "$S"'), bare),
+        ("text-multi-line", "[ ]", 'S=/home/myuser/proj/fx\nrm -rf "$S"', "deny", "BLOCKED by dogma", True,
+         todelete_entry('rm "$S"', 'S=/home/myuser/proj/fx ; rm -rf "$S"'), bare),
         ("text-two-deletes", "[ ]", 'rm -rf "$S"\nrm -rf "$T"', "deny", "BLOCKED by dogma", True,
          todelete_entry('rm "$S" ; "$T"', 'rm -rf "$S" ; rm -rf "$T"'), bare),
     )
@@ -481,6 +482,27 @@ def unit_todelete_entry(runner):
         ok = decision == want and text in reason and (TODELETE_HINT in reason) == hint and entry_ok
         results.append((ok, "todelete %s (want %s, hint %s): reason %s | entries %s" % (
             name, want, hint, reason[:300], lines)))
+    return results
+
+
+# the ask and deny texts name the delete setting line (§0lgy) and its file; the discard texts are not touched
+SETTING_TEXT = (
+    # name, delete setting box, command, want decision, text that names the line
+    ("setting-ask", "[?]", 'rm -f "$NOPE_UNSET_TMPX/deep/project/dir/x"', "ask",
+     "Change [?] to [x] in the (§0lgy) delete line of "),
+    ("setting-deny", "[ ]", 'rm -f "$NOPE_UNSET_TMPX/deep/project/dir/x"', "deny",
+     "Change [ ] to [x] or [?] in the (§0lgy) delete line of "),
+)
+
+
+def unit_setting_text(runner):
+    """[(ok, line)]: a delete whose setting asks or denies names the (§0lgy) line and the permissions file."""
+    results = []
+    for name, box, command, want, text in SETTING_TEXT:
+        folder = todelete_folder(runner, name, box)
+        decision, reason = run_file_protection(runner, folder, command)
+        ok = decision == want and text in reason and "DOGMA-PERMISSIONS.md" in reason
+        results.append((ok, "setting text %s (want %s): %s" % (name, want, reason[:300])))
     return results
 
 
@@ -644,7 +666,8 @@ def main():
                     failed.append("FAIL " + line)
         if only in (None, "unit"):
             for ok, line in (unit_legacy_cwd() + unit_perf() + unit_scope_hint(runner) + unit_read_content(runner)
-                             + unit_mounts(runner) + unit_discard_reason(runner) + unit_todelete_entry(runner)):
+                             + unit_mounts(runner) + unit_discard_reason(runner) + unit_todelete_entry(runner)
+                             + unit_setting_text(runner)):
                 passed, total = counts.get("unit", (0, 0))
                 counts["unit"] = (passed + ok, total + 1)
                 if not ok:

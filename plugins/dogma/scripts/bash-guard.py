@@ -1337,27 +1337,53 @@ def compound(text):
     return text.lstrip().startswith(("(", "{")) or bool(words) and words[0] in COMPOUND_WORDS
 
 
+GOVERNING_VERBS = ("export", "readonly", "declare", "typeset")
+GOVERNING_OPTIONS = ("-x", "-r", "-g")
+# a word that sources a file ("." or "source"): the file runs in this shell and may set any variable
+SOURCE_RE = re.compile(r"(?:^|[\s;&|(){}`])(?:source|\.)(?=[\s;&|)}`]|$)")
+
+
+def plain_assignment(tokens):
+    """The NAME=value word of a plain assignment: NAME=value alone, or export, readonly, declare or typeset with
+    at most the options -x, -r and -g in front of it. local is no plain assignment (it fails outside a function)."""
+    if len(tokens) == 1:
+        return tokens[0]
+    if len(tokens) >= 2 and tokens[0] in GOVERNING_VERBS and all(token in GOVERNING_OPTIONS for token in tokens[1:-1]):
+        return tokens[-1]
+    return None
+
+
+def opaque(segment):
+    """True when the segment holds compound syntax (subshell, group, function, loop, conditional): what follows it
+    may be skipped or repeated, so literal_plan stops there."""
+    tokens, _parsed = tokenize(segment.text)
+    return compound(segment.text) or segment.connector == "(" or any(
+        token in ("(", ")", "{", "}") or token.endswith("()") for token in tokens)
+
+
 def literal_plan(script, command):
     """{segment index: (name, value)}: the plain assignments whose value may be used by the delete checks.
 
     Fail closed: a variable that fails one rule stays unresolved, so its targets are unsure (never allowed).
-    The segment is one pure assignment (no command word), first or after ";", a newline or "&&", and followed
-    by ";", a newline or "&&" (not "|", "||", "&" or a subshell). Its value after quote removal is not empty
-    and has no $, backtick, ~, glob character or blank. The name occurs as a bare word exactly once in the whole
-    command (the assignment itself). The command has no compound syntax (subshell, brace group, if, for,
-    while, until, case, select, function)."""
+    The segment is one plain assignment (plain_assignment, no command word), first or after ";" or a newline
+    (not after "&&": the command before it may fail and skip it), and followed by ";", a newline or "&&" (not
+    "|", "||", "&" or a subshell). Its value after quote removal is not empty and has no $, backtick, ~, glob
+    character or blank. The name occurs as a bare word exactly once in the whole command (the assignment
+    itself). Only the segments before the first compound syntax count (see opaque): what follows it may be skipped
+    or repeated."""
     segments = script.segments
-    if any(compound(segment.text) or segment.connector == "(" for segment in segments):
-        return {}
     plan = {}
     for index in range(len(segments) - 1):
         segment, following = segments[index], segments[index + 1]
-        if segment.connector not in (None, ";", "\n", "&&") or following.connector not in (";", "\n", "&&"):
+        if opaque(segment):
+            break
+        if segment.connector not in (None, ";", "\n") or following.connector not in (";", "\n", "&&"):
             continue
         tokens, parsed = tokenize(segment.text)
-        if not parsed or len(tokens) != 1:
+        word = plain_assignment(tokens) if parsed else None
+        if word is None:
             continue
-        match = LITERAL_ASSIGN_RE.fullmatch(tokens[0])
+        match = LITERAL_ASSIGN_RE.fullmatch(word)
         if not match or not match.group(2) or re.search(r"[$`~*?\[\]\s]", match.group(2)):
             continue
         name = match.group(1)
@@ -1441,6 +1467,7 @@ class Analysis:
         self.mktemp = {}       # variables holding a fresh mktemp path
         self.batch = []        # (normalized simple command, candidate directories) for delete-guard
         self.deletes = []      # (label, target, directories)
+        self.candidates = {}   # (label, target, frozenset(directories)) -> candidate paths (record_delete)
         self.git_ops = []      # (operation, directories, unknown)
         self.evasions = []     # (directories, label)
         self.installs = []
@@ -1706,7 +1733,45 @@ class Analysis:
     def unsure(self, label, target, directories):
         """A delete-type target that cannot be resolved for sure: recorded as a finding, so the delete setting
         of DOGMA-PERMISSIONS.md decides (file-protection.sh). Never a denial of its own."""
+        self.record_delete(label, target, directories)
+
+    def record_delete(self, label, target, directories):
+        """A delete-type finding. A target with shell variables also gets its candidate paths (candidate_paths)."""
         self.deletes.append((label, target, set(directories)))
+        paths = self.candidate_paths(target, directories)
+        if paths is not None:
+            self.candidates[(label, target, frozenset(directories))] = paths
+
+    def candidate_paths(self, target, directories):
+        """Absolute paths of every value that a target with shell variables can have, or None (no list).
+
+        None unless every variable of the target is set by the command itself (all_literals: a literal assignment,
+        export, readonly, declare, a for word or printf -v), so an environment-only or unset value on its own never
+        counts, the command sources no file (SOURCE_RE), and the target has no command substitution, glob, brace or
+        other parameter form. The candidate values are the same as in variable_values (an unset value adds the
+        empty value). The list is only used for the temp-root check (delete-guard.py temp_only)."""
+        if "$" not in target or not directories or None in directories or SOURCE_RE.search(self.top_text):
+            return None  # a sourced file runs in this shell and may set any variable
+        rest = PARAM_RE.sub("", target)
+        if "$" in rest or SUB_RE.search(target) or re.search(r"[*?\[\]{}()\\`~]", rest):
+            return None
+        names = {match.group(1) or match.group(3) for match in PARAM_RE.finditer(target)}
+        if not names <= set(self.all_literals) or names & set(self.mktemp):
+            return None  # a mktemp path is temp only where TMPDIR is: it keeps the setting (not a literal value)
+        paths = set()
+        try:
+            for directory in directories:
+                found = self.expansions(target, directory, candidates=True)
+                if found is None:
+                    return None
+                for value in found[0]:
+                    path = self.absolute(directory, value) if value else None
+                    if path is None:
+                        return None
+                    paths.add(path)
+        except Deny:
+            return None
+        return sorted(paths) if len(paths) <= CANDIDATE_LIMIT else None
 
     def protect_delete(self, operands, directories, label, contents=False, follow=True):
         """Own protected-path check for deleting operations, independent of §0lgy."""
@@ -1855,7 +1920,7 @@ class Analysis:
                     # removal) is exempt: no normalized form, so "/dev//null" or "x/../../dev/null" through a
                     # symlink still counts as a file
                     if bare and target != "/dev/null":
-                        self.deletes.append(("truncate", target, set(directories)))
+                        self.record_delete("truncate", target, directories)
         if verb in SHELLS | {"sh"} or INTERPRETER_RE.match(verb or "-"):
             for body, quoted in bodies:
                 if not quoted and body and ("$(" in body or "`" in body):
@@ -3018,7 +3083,7 @@ class Analysis:
                 after_separator = args[args.index("--") + 1:] if "--" in args else []
                 targets = operands + [arg for arg in after_separator if arg.startswith("-")]
             for each in targets or [target]:
-                self.deletes.append((label, each, set(directories)))
+                self.record_delete(label, each, directories)
 
     def remember_written(self, word, directories):
         for path in self.targets(word, directories):
@@ -3445,7 +3510,7 @@ class Analysis:
             if sub == "rm" and operands:
                 self.protect_delete(operands, targets, "git rm")
             target = operands[-1] if operands and not label.endswith(" " + operands[-1]) else ""
-            self.deletes.append((label, target, set(targets)))
+            self.record_delete(label, target, targets)
 
     def checkout_path(self, rest, targets):
         """One operand of git checkout that names an existing file or folder (relative to a directory the
@@ -3848,7 +3913,7 @@ class Analysis:
             # a leading option (find -L ...) hides the start points: recorded unresolved, so the normal rules apply
             unknown_start = not roots and bool(args) and args[0].startswith("-")
             for root in roots or ["" if unknown_start else "."]:
-                self.deletes.append(("find -delete", root, set(directories)))
+                self.record_delete("find -delete", root, directories)
 
 
 def long_option(arg, name, minimum):
@@ -3982,10 +4047,16 @@ def findings(analysis, cwd):
         # target for delete-guard.py --temp-only (a placeholder name could look like a plain file in a temp folder)
         return SUB_RE.sub(lambda match: "$(...)", target)
 
+    def delete(label, target, directories):
+        entry = {"label": label, "target": shown(target), "dirs": dirs(directories),
+                 "discard": label in DISCARD_LABELS}
+        paths = analysis.candidates.get((label, target, frozenset(directories)))
+        if paths is not None:
+            entry["candidates"] = paths  # every absolute value of the target's variables (temp-root check only)
+        return entry
+
     return {
-        "deletes": [{"label": label, "target": shown(target), "dirs": dirs(directories),
-                     "discard": label in DISCARD_LABELS}
-                    for label, target, directories in analysis.deletes],
+        "deletes": [delete(label, target, directories) for label, target, directories in analysis.deletes],
         "installs": list(analysis.installs),
         "git": [{"op": operation, "dirs": dirs(targets), "unknown": bool(unknown)}
                 for operation, targets, unknown in analysis.git_ops],

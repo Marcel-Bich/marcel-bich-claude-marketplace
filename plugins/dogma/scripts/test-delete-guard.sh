@@ -14,7 +14,7 @@ T="$(mktemp -d)"
 case "$T" in /tmp/?*) ;; *) echo "refusing: mktemp gave $T"; exit 1 ;; esac
 trap 'rm -rf -- "$T"' EXIT
 FH="$T/home/u"                      # fake HOME
-mkdir -p "$FH/proj/sub" "$T/plain/dir" "$T/repo/.git"   # repo: a whole repository root (hard)
+mkdir -p "$FH/proj/sub" "$T/plain/dir" "$T/repo/.git" "$T/scratch"   # repo: a whole repository root (hard); scratch: temp
 ln -s "$FH" "$T/lnk"                # /tmp/... symlink pointing at the (fake) home
 ln -s "$T/plain" "$T/oklnk"         # harmless symlink inside the temp dir
 
@@ -587,6 +587,17 @@ setting_rows "find . -name '*.o' | xargs rm" allow ask deny
 setting_rows "eval \"rm $FH/proj/old/x\"" allow ask deny   # literal eval text is walked: an ordinary target
 setting_rows "R=$FH/proj/sub/renders; rm -- \"\$R/final.mp4\"" allow ask deny
 setting_rows "rm -rf $FH/proj/sub/old/build" allow ask deny
+# a shell variable whose candidate values all lie in a temp root is a temp target (item 105): allowed in every
+# box; a candidate outside the temp roots follows the setting; a conditional assignment governs nothing
+setting_rows "export S=$T/scratch; rm -f \"\$S/x\"" allow allow allow
+setting_rows "declare -x S=$T/scratch; sed -i s/a/b/ \"\$S/dump.php\"" allow allow allow
+setting_rows "S=$T/scratch; for f in a b; do rm -f \"\$S/\$f\"; done" allow allow allow
+setting_rows "S=/var/lib/app/data; rm -rf \"\$S/build/x\"" allow ask deny
+setting_rows "for f in /var/lib/app/data; do rm -rf \"\$f\"; done" allow ask deny
+setting_rows "for f in /home; do rm -rf \"\$f\"; done" deny-hard deny-hard deny-hard
+setting_rows "false && S=$T/scratch; rm -f \"\$S/x\"" deny-hard deny-hard deny-hard
+setting_rows "S=$T/scratch; . ./evil.sh; rm -f \"\$S/x\"" allow ask deny   # a sourced file may set S
+setting_rows "S=$T/scratch; rm -f \"\${S}/x\"" allow allow allow
 setting_rows "R=/home; rm -rf \"\$R\"" deny-hard deny-hard deny-hard
 setting_rows "rm -rf /home/alice" deny-hard deny-hard deny-hard
 [ -s "$PERM/d/TO-DELETE.md" ] && [ ! -e "$PERM/x/TO-DELETE.md" ] && [ ! -e "$PERM/q/TO-DELETE.md" ] \

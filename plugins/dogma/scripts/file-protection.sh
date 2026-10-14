@@ -117,7 +117,7 @@ report_delete() {
             # The file has no line for the discard setting yet: the step is to add it (default [?]), not to change it
             REASON_MSG="dogma: $BLOCKED ${TARGET:-command} discards uncommitted changes and needs confirmation. ${DELETE_SRC:-${PERMS_FILE:-a DOGMA-PERMISSIONS.md}} has no line for (§b4dk) yet: add \`- [?] (§b4dk) Discard uncommitted changes\` to its <permissions> block, or run /dogma:sync or /dogma:permissions. Until then this asks; set [x] to allow it."
         else
-            REASON_MSG="dogma: $BLOCKED ${TARGET:-command} requires confirmation. Change [?] to [x] in ${DELETE_SRC:-$PERMS_FILE} to allow automatically.$hint"
+            REASON_MSG="dogma: $BLOCKED ${TARGET:-command} requires confirmation. Change [?] to [x] in the (§0lgy) delete line of ${DELETE_SRC:-$PERMS_FILE} to allow automatically.$hint"
         fi
         output_ask "$REASON_MSG"
     fi
@@ -154,7 +154,7 @@ HEADER
     echo "$ENTRY" >> "$TO_DELETE_FILE"
 
     # Deny with info message
-    REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} logged to TO-DELETE.md. Change [ ] to [x] or [?] in ${DELETE_SRC:-${PERMS_FILE:-a DOGMA-PERMISSIONS.md (none found)}}.$hint"
+    REASON_MSG="BLOCKED by dogma: $BLOCKED ${TARGET:-command} logged to TO-DELETE.md. Change [ ] to [x] or [?] in the (§0lgy) delete line of ${DELETE_SRC:-${PERMS_FILE:-a DOGMA-PERMISSIONS.md (none found)}}.$hint"
     output_deny "$REASON_MSG"
 }
 
