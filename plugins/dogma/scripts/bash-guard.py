@@ -1210,35 +1210,20 @@ def _inside(path, root):
     return path == root or path.startswith(root.rstrip("/") + "/")
 
 
-def inline_code(verb, item):
-    """True for the option that gives an interpreter its code (bash -c, python3 -c, perl -e, node -e, php -r)."""
-    if verb.startswith("php"):
-        return item == "-r"
-    if verb.startswith(("perl", "ruby")):
-        return re.fullmatch(r"-[a-zA-Z]*[eE]", item) is not None
-    if verb in ("node", "nodejs", "bun", "deno"):
-        return item in ("-e", "-p")
-    return re.fullmatch(r"-[a-zA-Z]*c[a-zA-Z]*", item) is not None
+LITERAL_WORD_BAD_RE = re.compile(r"[\s\"'\\*?\[\]{}$`]")
 
 
 def script_operand(verb, args):
-    """Index of the script an interpreter (bash, sh, python3, perl, node, ...) runs, or None.
+    """0 when the first argument is the script an interpreter (bash, sh, python3, perl, node, ...) runs, else None.
 
-    The first word that is not an option. None for inline code, for stdin ("-"), and for an option
-    that can move the program into a directory or name one to write to (a long option such as
-    node --cpu-prof-dir, ruby -C): the word after it is then no script."""
-    if not (verb in SHELLS or INTERPRETER_RE.match(verb)):
+    Only a literal first word counts. An option before it can change what runs (bash -s reads the commands
+    from stdin, python3 -mvenv and -cCODE attach a value), and a word with quotes, a glob, a brace or an
+    expansion can turn into an option or into several words: the word after it is then checked as a write."""
+    if not (verb in SHELLS or INTERPRETER_RE.match(verb)) or not args:
         return None
-    for position, item in enumerate(args):
-        if item == "--":
-            return position + 1 if position + 1 < len(args) else None
-        if item == "-":
-            return None
-        if not item.startswith(("-", "+")):
-            return position
-        if item.startswith("--") or item == "-C" or inline_code(verb, item):
-            return None
-    return None
+    if args[0].startswith(("-", "+")) or LITERAL_WORD_BAD_RE.search(args[0]):
+        return None
+    return 0
 
 
 BRACE_RE = re.compile(r"\{([^{},]*(?:,[^{},]*)+)\}")  # linear: commas only as separators

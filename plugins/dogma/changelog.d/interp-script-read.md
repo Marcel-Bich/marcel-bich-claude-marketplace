@@ -4,4 +4,4 @@ bump: patch
 
 ### Fixed
 
-- A dogma script run through an interpreter (`bash`, `sh`, `python3`, ...) is no longer denied as a write; writes into the installed plugin stay blocked
+- An installed dogma script given as the first argument of an interpreter (`bash x.sh`, `python3 x.py`) is no longer denied as a write; any option before it, later arguments and every write into the installed plugin stay blocked
