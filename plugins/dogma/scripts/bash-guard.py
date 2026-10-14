@@ -1210,6 +1210,37 @@ def _inside(path, root):
     return path == root or path.startswith(root.rstrip("/") + "/")
 
 
+def inline_code(verb, item):
+    """True for the option that gives an interpreter its code (bash -c, python3 -c, perl -e, node -e, php -r)."""
+    if verb.startswith("php"):
+        return item == "-r"
+    if verb.startswith(("perl", "ruby")):
+        return re.fullmatch(r"-[a-zA-Z]*[eE]", item) is not None
+    if verb in ("node", "nodejs", "bun", "deno"):
+        return item in ("-e", "-p")
+    return re.fullmatch(r"-[a-zA-Z]*c[a-zA-Z]*", item) is not None
+
+
+def script_operand(verb, args):
+    """Index of the script an interpreter (bash, sh, python3, perl, node, ...) runs, or None.
+
+    The first word that is not an option. None for inline code, for stdin ("-"), and for an option
+    that can move the program into a directory or name one to write to (a long option such as
+    node --cpu-prof-dir, ruby -C): the word after it is then no script."""
+    if not (verb in SHELLS or INTERPRETER_RE.match(verb)):
+        return None
+    for position, item in enumerate(args):
+        if item == "--":
+            return position + 1 if position + 1 < len(args) else None
+        if item == "-":
+            return None
+        if not item.startswith(("-", "+")):
+            return position
+        if item.startswith("--") or item == "-C" or inline_code(verb, item):
+            return None
+    return None
+
+
 BRACE_RE = re.compile(r"\{([^{},]*(?:,[^{},]*)+)\}")  # linear: commas only as separators
 BRACE_MAX = 4096
 
@@ -2548,8 +2579,9 @@ class Analysis:
             return False
         return exists or bool(re.search(r"[/.~*?]", word))
 
-    def check_path(self, word, directories, kind, force=False):
-        """kind: list, read or write. Raises Deny for credentials, private homes and own files."""
+    def check_path(self, word, directories, kind, force=False, runs=False):
+        """kind: list, read or write. Raises Deny for credentials, private homes and own files.
+        runs: the script operand of an interpreter (see script_operand); only the own-files rule relaxes."""
         if not word:
             return
         expanded = self.expand(word)
@@ -2579,9 +2611,9 @@ class Analysis:
                 except (OSError, ValueError):
                     real = candidate
                 for item in {candidate, real}:
-                    self.check_location(item, kind, token, globbed=bool(GLOB_RE.search(path)))
+                    self.check_location(item, kind, token, globbed=bool(GLOB_RE.search(path)), runs=runs)
 
-    def check_location(self, path, kind, token, globbed):
+    def check_location(self, path, kind, token, globbed, runs=False):
         reason = "dogma: command references a protected credential path. Use a non-secret source."
         if token and kind != "list" and (sensitive_name(path) and not token_allowed(path) or codex_auth(path)):
             raise Deny(reason)
@@ -2593,7 +2625,7 @@ class Analysis:
         if kind == "write" and (lowered.endswith("/.codex/hooks.json") or lowered.endswith("/.codex/config.toml")):
             raise Deny("dogma: Codex hook configuration is protected against agent writes.")
         for own in self.own:
-            if kind == "write" and _inside(path, own):
+            if kind == "write" and not runs and _inside(path, own):
                 raise Deny("dogma: the dogma hook files are protected against agent writes.")
         for root in self.private:
             if not _inside(path, root):
@@ -2673,6 +2705,7 @@ class Analysis:
     def check_arguments(self, verb, args, directories):
         skipped = self.text_positions(verb, args)
         kind = self.verb_class(verb, args)
+        script = script_operand(verb, args)
         token = self.flags.get("token_protection", True)
         globs = glob_values(args) if token and verb in SEARCH_COMMANDS else {}
         if token and verb in SEARCH_COMMANDS:
@@ -2703,7 +2736,7 @@ class Analysis:
                 continue  # a file-name glob, not a path: the search root is checked below
             if position not in globs:
                 roots.append(value)
-            self.check_path(value, directories, kind)
+            self.check_path(value, directories, kind, runs=position == script)
         if token and verb in SEARCH_COMMANDS and searches_recursively(verb, args):
             self.check_login_reach(roots, globs, directories)
 

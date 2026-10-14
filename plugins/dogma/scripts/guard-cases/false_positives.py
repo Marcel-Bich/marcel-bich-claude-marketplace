@@ -941,6 +941,36 @@ CASES = (
     ("deny", "N", r'''grep -r x /home/myuser/.claude/sessions'''),
     ("deny", "N", r'''grep -rl x /home/myuser/.claude/sessions --include=*.key'''),
     ("deny", "N", r'''python3 -c "open('/home/myuser/.claude/sessions/../.credentials.json').read()"'''),
+    # an installed dogma script run by an interpreter is read, not written: the own-files rule covers the writes
+    # into the plugin only. Inline code, a long option or a bare option with a value, later arguments, redirects
+    # and private homes keep the write rule.
+    ("allow", "N", "bash {DS}/test-delete-guard.sh"),
+    ("allow", "N", "sh {DS}/test-delete-guard.sh"),
+    ("allow", "N", "zsh {DS}/test-delete-guard.sh"),
+    ("allow", "N", "dash {DS}/test-delete-guard.sh"),
+    ("allow", "N", "bash {DS}/test-delete-guard.sh --verbose"),
+    ("allow", "N", "bash -e {DS}/test-delete-guard.sh"),
+    ("allow", "N", "bash -- {DS}/test-delete-guard.sh"),
+    ("allow", "N", "bash {DS}/test-delete-guard.sh && echo done"),
+    ("allow", "N", "env bash {DS}/test-delete-guard.sh"),
+    ("allow", "N", "python3 {DS}/test-guard-parity.py"),
+    ("allow", "N", "python3.12 -I {DS}/test-guard-parity.py -v"),
+    ("allow", "N", "cd {DS}/.. && bash scripts/test-delete-guard.sh"),
+    ("deny", "N", "bash {DS}/test-delete-guard.sh > {DS}/x"),
+    ("deny", "N", "bash {DS}/test-delete-guard.sh; rm {DS}/x"),
+    ("deny", "N", 'bash -c "echo x > {DS}/x"'),
+    ("deny", "N", "python3 tool.py {DS}/x"),
+    ("deny", "N", "python3 -m pytest {DS}/x"),
+    ("deny", "N", "node --cpu-prof-dir {DS} x.js"),
+    ("deny", "N", "echo x > {DS}/x"),
+    ("deny", "N", "sed -i s/a/b/ {DS}/x"),
+    ("deny", "N", "rm {DS}/x"),
+    ("deny", "N", "cp /tmp/x {DS}/x"),
+    ("deny", "N", "mv /tmp/x {DS}/x"),
+    ("deny", "N", "tee {DS}/x"),
+    ("deny", "N", "bash {DS}/../../../../../../../.codex/x.sh"),
+    ("deny", "N", "bash {H}/.codex/x.sh"),
+    ("deny", "N", "bash DOGMA-PERMISSIONS.md"),
 )
 
 # Read tool input (file name, content) through token-protection.sh: a key block is denied, a lone
