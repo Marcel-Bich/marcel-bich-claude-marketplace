@@ -835,6 +835,16 @@ CASES = (
     # a sourced file runs in this shell and may set S to anything: the setting decides (N: deny)
     ("deny", "N", "S={R}/scratch; . ./evil.sh; rm -f $S/x"),
     ("deny", "N", "S={R}/scratch; source ./evil.sh; rm -f $S/x"),
+    # a nested shell does not see an unexported S: its target is /x (item 105 review): the setting decides
+    ("deny", "N", "S={R}/scratch; sh -c 'rm -f \"$S/x\"'"),
+    ("deny", "N", "S={R}/scratch; bash -c 'rm -f \"$S/../x\"'"),
+    ("deny", "N", "export S={R}/scratch; sh -c 'rm -f \"$S/x\"'"),
+    # a ".." segment is never temp, and a "/." suffix follows a link that the same command may create (review)
+    ("deny", "N", "S={R}/scratch; rm -f \"$S/../x\""),
+    ("deny", "N", "rm -rf {R}/scratch/../x"),
+    ("deny", "N", "rm -rf {R}/scratch/lnk/."),
+    ("deny", "N", "find {R}/scratch/lnk/. -delete"),
+    ("deny", "N", "S={R}/scratch; read S <<< /home/myuser/proj/sub; rm -f \"$S/x\""),
     # not temp and not hard: an unset variable, a name assigned twice, an assignment after || or in a pipe
     ("deny", "N", "rm -f $NOPE_UNSET_TMPX/deep/project/dir/x"),
     ("deny", "N", "S={R}/scratch; S={R}/other; rm -f $S/x"),

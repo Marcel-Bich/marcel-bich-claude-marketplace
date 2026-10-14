@@ -598,6 +598,21 @@ setting_rows "for f in /home; do rm -rf \"\$f\"; done" deny-hard deny-hard deny-
 setting_rows "false && S=$T/scratch; rm -f \"\$S/x\"" deny-hard deny-hard deny-hard
 setting_rows "S=$T/scratch; . ./evil.sh; rm -f \"\$S/x\"" allow ask deny   # a sourced file may set S
 setting_rows "S=$T/scratch; rm -f \"\${S}/x\"" allow allow allow
+# review of 2c1ec54: a nested shell does not see an unexported S (its target is /x); a ".." segment and a "/."
+# suffix through a link that the same command creates are never temp; a variable written by a non-literal
+# write (read, +=, mapfile, printf -v) has no temp candidates, so the hook environment value cannot stand in for it
+setting_rows "S=$T/scratch; sh -c 'rm -f \"\$S/x\"'" allow ask deny
+setting_rows "S=$T/scratch; bash -c 'rm -f \"\$S/../x\"'" allow ask deny
+setting_rows "S=$T/scratch; ln -s \"\$FH/proj/sub\" \"\$S/lnk\"; rm -rf \"\$S/lnk/.\"" allow ask deny
+setting_rows "ln -s \"\$FH/proj/sub\" \"$T/scratch/lnk2\"; rm -rf \"$T/scratch/lnk2/.\"" allow ask deny
+setting_rows "rm -rf \"$T/scratch/../scratch/x\"" allow ask deny
+export DGL_TMPV="$T/scratch"   # the hook environment value of a variable the command writes (review of 2c1ec54)
+setting_rows "DGL_TMPV=$T/scratch; rm -f \"\$DGL_TMPV/x\"" allow allow allow
+setting_rows "DGL_TMPV=$T/scratch; read DGL_TMPV <<< /home/myuser/proj/sub; rm -f \"\$DGL_TMPV/x\"" allow ask deny
+setting_rows "DGL_TMPV=$T/scratch; DGL_TMPV+=/../../x; rm -f \"\$DGL_TMPV/y\"" allow ask deny
+setting_rows "DGL_TMPV=$T/scratch; mapfile -t DGL_TMPV < /dev/null; rm -f \"\$DGL_TMPV/x\"" allow ask deny
+setting_rows "DGL_TMPV=$T/scratch; printf -v DGL_TMPV %s \"\$X\"; rm -f \"\$DGL_TMPV/x\"" allow ask deny
+unset DGL_TMPV
 setting_rows "R=/home; rm -rf \"\$R\"" deny-hard deny-hard deny-hard
 setting_rows "rm -rf /home/alice" deny-hard deny-hard deny-hard
 [ -s "$PERM/d/TO-DELETE.md" ] && [ ! -e "$PERM/x/TO-DELETE.md" ] && [ ! -e "$PERM/q/TO-DELETE.md" ] \

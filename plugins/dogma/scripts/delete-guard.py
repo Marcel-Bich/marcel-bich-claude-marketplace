@@ -168,9 +168,11 @@ def _temp_resolved(path, label):
 
     The directories between the temp root and the target must exist: a link that the same command
     creates there could redirect the rest of the path. The target itself may be missing, because
-    rm, unlink and find -delete remove a link without following it; a trailing slash or shred
-    follows it, so there the target must exist as well."""
-    if ".." in path.split("/") and missing_before_dotdot(path):
+    rm, unlink and find -delete remove a link without following it; a trailing slash, a trailing "/."
+    (the contents of a link) or shred follows it, so there the target must exist as well. A ".." segment
+    is never judged temp (it is resolved against links that may not exist yet)."""
+    parts = path.split("/")
+    if ".." in parts:
         return False
     real = os.path.realpath(path)
     root = temp_root_of(real)
@@ -179,7 +181,8 @@ def _temp_resolved(path, label):
     parent = os.path.dirname(real)
     if parent != root and not os.path.isdir(parent):
         return False
-    return os.path.exists(real) or not (path.endswith("/") or label == "shred")
+    follows = parts[-1] in ("", ".") or label == "shred"
+    return os.path.exists(real) or not follows
 
 
 # labels whose variable target may be judged by its candidate paths (bash-guard.py candidate_paths): the deletes and

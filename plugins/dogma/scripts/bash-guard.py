@@ -1341,6 +1341,32 @@ GOVERNING_VERBS = ("export", "readonly", "declare", "typeset")
 GOVERNING_OPTIONS = ("-x", "-r", "-g")
 # a word that sources a file ("." or "source"): the file runs in this shell and may set any variable
 SOURCE_RE = re.compile(r"(?:^|[\s;&|(){}`])(?:source|\.)(?=[\s;&|)}`]|$)")
+# the characters of a plain literal value: no $, quotes, blank, backslash, glob character or backtick
+PLAIN_VALUE = r"[\w./~+,:@%-]*"
+# constructs that may write a variable other than by a plain literal assignment, or run code in this shell
+UNPLAIN_RE = re.compile(r"(?<![\w/.-])(?:read|mapfile|readarray|getopts|let|select|unset|coproc|eval|source|enable|"
+                        r"hash|shopt|trap)(?![\w.-])|\+=|\(\(|\$\[|\$\{\w+:?=|\bprintf\b[^;&|\n]*\s-v\b")
+DECLARE_RE = re.compile(r"(?<![\w/.-])(?:declare|typeset|local|export|readonly)((?:[ \t]+-[A-Za-z]+)*)")
+
+
+def unplain_command(text):
+    """True when the command text may write a variable other than by a plain literal assignment: read, mapfile,
+    printf -v, +=, arithmetic, a parameter assignment, declare -n/-i/-a/-l/-u, eval, a sourced file, trap ..."""
+    if UNPLAIN_RE.search(text) or SOURCE_RE.search(text):
+        return True
+    return any(set(option[1:]) - set("xrg") for match in DECLARE_RE.finditer(text)
+               for option in match.group(1).split())
+
+
+def plain_writes(name, text):
+    """True when every bare occurrence of name in the command text is a plain literal write: NAME=word (also after
+    export, readonly, declare or typeset) or the loop name of a for over plain words."""
+    # a word after "-" is an option (rm -f), no write: NAME=, for NAME and the builtins of unplain_command write
+    bare = len(re.findall(r"(?<![\w$-])(?<!\$\{)%s(?!\w)" % re.escape(name), text))
+    assigned = len(re.findall(r"(?<![^\s;&|(){}])%s=%s(?=[\s;&|)}]|$)" % (re.escape(name), PLAIN_VALUE), text))
+    looped = len(re.findall(r"(?<![\w$])for[ \t]+%s[ \t]+in(?:[ \t]+[\w./~+,:@%%-]+)*[ \t]*(?=[;\n]|$)"
+                            % re.escape(name), text))
+    return bare == assigned + looped
 
 
 def plain_assignment(tokens):
@@ -1468,6 +1494,7 @@ class Analysis:
         self.batch = []        # (normalized simple command, candidate directories) for delete-guard
         self.deletes = []      # (label, target, directories)
         self.candidates = {}   # (label, target, frozenset(directories)) -> candidate paths (record_delete)
+        self.nest = 0          # depth of the walk that is running (0: the command itself, not a nested shell)
         self.git_ops = []      # (operation, directories, unknown)
         self.evasions = []     # (directories, label)
         self.installs = []
@@ -1745,33 +1772,57 @@ class Analysis:
     def candidate_paths(self, target, directories):
         """Absolute paths of every value that a target with shell variables can have, or None (no list).
 
-        None unless every variable of the target is set by the command itself (all_literals: a literal assignment,
-        export, readonly, declare, a for word or printf -v), so an environment-only or unset value on its own never
-        counts, the command sources no file (SOURCE_RE), and the target has no command substitution, glob, brace or
-        other parameter form. The candidate values are the same as in variable_values (an unset value adds the
-        empty value). The list is only used for the temp-root check (delete-guard.py temp_only)."""
-        if "$" not in target or not directories or None in directories or SOURCE_RE.search(self.top_text):
-            return None  # a sourced file runs in this shell and may set any variable
+        Only for a target at the top level of the command (not in a nested shell, eval or substitution: those do
+        not see an unexported variable the same way), in a command without a construct that writes a variable
+        other than by a plain literal assignment (unplain_command), and whose every variable is written only by
+        plain literal writes (plain_writes). The values come from the command alone (temp_options): the
+        environment is never read. The target has no command substitution, default word, glob, brace or other
+        parameter form. The list is only used for the temp-root check (delete-guard.py temp_only)."""
+        if "$" not in target or not directories or None in directories or self.nest:
+            return None
+        if unplain_command(self.top_text):
+            return None
+        matches = list(PARAM_RE.finditer(target))
+        if any(match.group(2) is not None for match in matches):
+            return None
         rest = PARAM_RE.sub("", target)
         if "$" in rest or SUB_RE.search(target) or re.search(r"[*?\[\]{}()\\`~]", rest):
             return None
-        names = {match.group(1) or match.group(3) for match in PARAM_RE.finditer(target)}
+        names = {match.group(1) or match.group(3) for match in matches}
         if not names <= set(self.all_literals) or names & set(self.mktemp):
             return None  # a mktemp path is temp only where TMPDIR is: it keeps the setting (not a literal value)
-        paths = set()
+        if not all(plain_writes(name, self.top_text) for name in names):
+            return None
         try:
-            for directory in directories:
-                found = self.expansions(target, directory, candidates=True)
-                if found is None:
+            values, last = {""}, 0
+            for match in matches:
+                options = self.temp_options(match.group(1) or match.group(3))
+                literal = target[last:match.start()]
+                values = {value + literal + option for value in values for option in options}
+                if len(values) > CANDIDATE_LIMIT:
                     return None
-                for value in found[0]:
+                last = match.end()
+            values = {value + target[last:] for value in values}
+            paths = set()
+            for directory in directories:
+                for value in values:
                     path = self.absolute(directory, value) if value else None
                     if path is None:
-                        return None
+                        return None  # an empty value (the whole target) or an unknown form: no list
                     paths.add(path)
         except Deny:
             return None
         return sorted(paths) if len(paths) <= CANDIDATE_LIMIT else None
+
+    def temp_options(self, name):
+        """The values a variable of a temp target can have, from the command alone: its governed literal, or else
+        its literal values and the empty value (the value before its first write). The environment is not used."""
+        if name in self.literals:
+            return {self.literals[name]}
+        options = {""}
+        for literal in self.all_literals.get(name, ()):
+            options |= self.literal_candidates(literal, 0)
+        return options
 
     def protect_delete(self, operands, directories, label, contents=False, follow=True):
         """Own protected-path check for deleting operations, independent of §0lgy."""
@@ -1836,6 +1887,13 @@ class Analysis:
 
     # walking ---------------------------------------------------------------------------
     def walk(self, command, directories, depth=0):
+        previous, self.nest = self.nest, depth
+        try:
+            return self.walk_script(command, directories, depth)
+        finally:
+            self.nest = previous
+
+    def walk_script(self, command, directories, depth=0):
         if depth > 8:
             raise Deny("dogma: command nesting is too deep to check safely.")
         if time_left() < 0:
