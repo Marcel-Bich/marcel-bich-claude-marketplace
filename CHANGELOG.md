@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v1.47
 
+##### v1.47.1
+
+###### Fixed
+
+- An installed dogma script given as the first argument of an interpreter (`bash x.sh`, `python3 x.py`) is no longer denied as a write; any option before it, later arguments and every write into the installed plugin stay blocked
+
 ##### v1.47.0
 
 ###### Changed
