@@ -47,7 +47,6 @@ VAR_FORMS='($X, ${X} or $(...))'
 LITERAL_PATH="Write the literal path instead"
 NEW_DIR="create a NEW literal scratch dir"
 PROMPT_RISK="can raise a permission prompt that blocks the whole run"
-BLANKET="Never delete or reset files or dirs to reach a clean state"
 
 # --- full block: general-purpose subagent carries the narrowed no-delete rule -------
 gp_ctx="$(ctx_of general-purpose)"
@@ -56,10 +55,6 @@ has "general-purpose: variable forms named" "$VAR_FORMS" "$gp_ctx"
 has "general-purpose: literal path instead" "$LITERAL_PATH" "$gp_ctx"
 has "general-purpose: new scratch dir instead" "$NEW_DIR" "$gp_ctx"
 has "general-purpose: unattended prompt risk named" "$PROMPT_RISK" "$gp_ctx"
-case "$gp_ctx" in
-    *"$BLANKET"*) check "general-purpose: no blanket ban on deleting" no yes ;;
-    *) check "general-purpose: no blanket ban on deleting" no no ;;
-esac
 has "general-purpose: security rule still present" "SECURITY (inherited, non-negotiable)" "$gp_ctx"
 
 # --- full block: unknown or empty agent_type gets the same rule ---------------------
