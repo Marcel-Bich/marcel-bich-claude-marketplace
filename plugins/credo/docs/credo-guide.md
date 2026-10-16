@@ -27,6 +27,7 @@ Design principles:
   - `credo-autonomy-clear.sh` (`UserPromptSubmit`) - a real user message turns autonomy off for the session it was typed in (drops that session's flag, sets its paused opt-out).
   - `credo-subagent-inject.sh` (`SubagentStart`) - primes every subagent with the load-bearing rules.
   - `credo-autonomy-keepalive.sh` (`Stop`) - in autonomous mode, blocks a stop that has no scheduled self-wake and instructs the agent to call ScheduleWakeup.
+  - `credo-autonomy-permission-notify.sh` (`Notification`, matcher `permission_prompt`) - in autonomous mode, sends one high-priority ntfy when a permission prompt would block the unattended run.
   - `credo-optimize-hook.sh` (`SessionStart` + `UserPromptSubmit`) - keeps the per-repo last-seen timestamp current on every prompt and, at session start (also on resume), asks the optimisation-audit opt-in once (credo active, answer open) or injects the welcome-back offer for a returner (section 5.3). Never in autonomous mode, silent in `/credo:disable`d directories; toggle `CREDO_OPTIMIZE_HOOK` (default on).
   - `credo-todo-tools-hint.sh` (`SessionStart`) - while the Claude Code task-list tools opt-in (`CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, needed on newer models for `TaskCreate` / `TaskList`) is off for the active profile and not declined, offers it once via AskUserQuestion (enable with a backup of `settings.json` / not now / never ask again), at most once per `CREDO_TODO_TOOLS_HINT_DAYS` (default 7) days per profile, only on a human-present start (`startup`/`clear`) where credo is active, never in autonomous work (the injected text opens with that rule, since the session mode is often not set yet at a fresh start), silent in `/credo:disable`d directories, and silent without using its slot when `credo-optimize-hook.sh` asks its own opt-in or welcome-back question at the same start (at most one credo opt-in question per start). It never changes settings itself; the helper `credo-todo-tools.sh` does that on a yes (also offered in `/credo:setup` Step 10). Toggle `CREDO_TODO_TOOLS_HINT` (default on).
 
@@ -45,7 +46,7 @@ The mode (active | passive | autonomous) is stored on disk, one file per session
 
 ### 2.3 Subagent priming
 
-The `SubagentStart` hook injects a compact rule block into every subagent before its first prompt: inherited security (no installs without approval, never read secrets, never delete protected paths), quality gates (visual verify, item + audit gating, verbatim requirements), honesty, delegation rules, and output hygiene. It cannot block subagent creation; it only adds context. This is the mechanism that makes a delegation-first main agent safe even when its own context has rotted.
+The `SubagentStart` hook injects a compact rule block into every subagent before its first prompt: inherited security (no installs without approval, never read secrets, never delete protected paths, never run a delete whose path contains a shell variable), quality gates (visual verify, item + audit gating, verbatim requirements), honesty, delegation rules, and output hygiene. It cannot block subagent creation; it only adds context. This is the mechanism that makes a delegation-first main agent safe even when its own context has rotted.
 
 ### 2.4 State on disk
 
