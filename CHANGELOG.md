@@ -2,406 +2,18 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-10
 
-## dogma
-
-### v1
-
-#### v1.47
-
-##### v1.47.2
-
-###### Fixed
-
-- A delete, overwrite or `sed -i` whose shell variables the command sets itself, with every value inside a temp root, is allowed like the literal temp path (no ask); covers `NAME=value`, `export`, `readonly`, `declare` and `for` word lists
-- An assignment after `&&` no longer sets a variable for the delete checks: `false && S=/tmp/x; rm -f "$S/a"` is judged with `S` unset
-- An assignment before a `for` loop or a group is read again, so `S=/tmp/x; for f in a b; do rm -f "$S/$f"; done` is no longer a hard deny
-- The ask and deny texts of the delete setting name the `(§0lgy)` delete line of the permissions file
-- A variable written by `read`, `mapfile`, `+=` or `printf -v`, a target run in a nested shell (`sh -c`), and a `..` segment or a `/.` suffix through a link keep the delete setting instead of counting as temp
-
-##### v1.47.1
-
-###### Fixed
-
-- An installed dogma script given as the first argument of an interpreter (`bash x.sh`, `python3 x.py`) is no longer denied as a write; any option before it, later arguments and every write into the installed plugin stay blocked
-
-##### v1.47.0
-
-###### Changed
-
-- The delete guard denies only the resolved hard list (home first level, paths up to depth 3 outside the temp roots, mounted storage up to depth 4, Windows profile and system paths, mount points, whole repositories). Everything else in the delete domain, including targets that cannot be resolved for sure, follows the delete permission in DOGMA-PERMISSIONS.md.
-- A variable in a delete target is judged by every value it can have in the command (its environment value, or empty when unset, and every literal value assigned to it there): if one of them is on the hard list the target is denied, a single certain value that is not hard follows the delete permission.
-
-#### v1.46
-
-##### v1.46.2
-
-###### Fixed
-
-- A delete blocked because its target is a shell variable now logs the original command in TO-DELETE.md, so the entry says what was meant
-- Deny and ask messages for such targets tell the agent to retry with the literal path
-- Block messages stay valid JSON for targets with backslashes, quotes or control characters, and TO-DELETE.md entries stay on one line
-
-##### v1.46.1
-
-###### Fixed
-
-- A redirect to the literal `/dev/null` after a compound command (loop, group, subshell, `if`, `case`) is no longer reported as a truncate; a normalized or dotdot form of it and a redirect of such a command to a real file still are
-- Inline code: a write is refused when the path as written or the file it names through symlinks is protected; a `..` after a symlink is not resolved
-- Inline code: string literals that follow each other or are joined by `+`, `.` or `,`, in any quote kinds (`'.git' + "/config"`), are also checked as the path they form, so such writes to protected files are refused
-
-##### v1.46.0
-
-###### Added
-
-- New DOGMA-PERMISSIONS.md setting `(§b4dk)` "Discard uncommitted changes" for `git restore`, `git reset --hard`, `git checkout` (paths, `.`, `-f`), `git switch --discard-changes` and `git stash drop|clear`. Default `[?]`, independent of the delete setting `(§0lgy)`; `git clean` stays under the delete setting.
-
-###### Changed
-
-- The discard commands are no longer governed by the delete setting. A missing line for `(§b4dk)` in an existing DOGMA-PERMISSIONS.md counts as `[?]`, every other missing setting keeps its default.
-- dogma shows an update notice at session start (until it is answered) that points to `/dogma:permissions` and `/dogma:sync`.
-
-#### v1.45
-
-##### v1.45.10
-
-###### Fixed
-
-- A redirect target with an unknown part followed by a `..` segment (`> /mnt/c/Users/me/AppData/Local/Temp/$X/../../Roaming/x.ps1`, `>> ~/proj/$X/../.bashrc`) is blocked; such a word could climb out of the directory that was checked, and the Windows temp exception never applies to a word with an unknown part
-- A Windows drive declared in `CLAUDE_MB_DOGMA_PROTECTED_MOUNTS` (`/mnt/c`) no longer protects the whole drive from deletes; it follows the drive rules, as the redirect rules already did
-
-##### v1.45.9
-
-###### Fixed
-
-- Network shares and USB sticks below `/mnt` and `/media` no longer protect their whole subtree from deletes: like a Windows drive, the mount point and the levels down to depth 3 (for example `/mnt/nas/share` and `/media/usb/folder`) stay refused, deeper files are ordinary and the file protection and the delete permission decide
-- A mount point below `/mnt` or `/media` stays refused at any depth; mounts below the home and declared mounts (`CLAUDE_MB_DOGMA_PROTECTED_MOUNTS`) keep their whole subtree protected
-- A redirect (`>`, `>>`, `tee`) into a file inside the Windows user temp folder (`/mnt/c/Users/<name>/AppData/Local/Temp/...`) is no longer blocked as a critical path; deletes there were already allowed. The temp folder itself, the rest of `AppData` and `Windows/Temp` stay critical
-
-##### v1.45.8
-
-###### Fixed
-
-- Deleting a file or folder deeper below a Windows drive or `/media` (for example `rm /mnt/d/data/proj/models/x.gguf` or `rm -r /mnt/d/data/proj/old`) is no longer refused by the delete floor; the normal file protection and the delete permission decide
-- The delete floor below `/mnt` and `/media` still refuses the mount point, the drive and its first level, a Windows user profile root and its first level, Windows system, persistence and profile paths, declared mounts and network shares
-
-##### v1.45.7
-
-###### Fixed
-
-- Read-only inline Python no longer trips the deletion check on a word inside a string literal (a regex such as `r'rmdir'`); only real calls are judged
-- A recursive search with a `--include` glob such as `*.json` no longer counts as a credential path when it searches a plugin folder; a recursive search rooted at a Claude or Codex config home, or at a directory above one, is refused because it reaches the login file
-- Inline exec calls (`subprocess`, `os.system`) are judged by the command they run: a deleting command aimed at the home, root or a parent folder is refused, harmless commands such as `ls ~` pass; the exec pattern of `bash-guard.py` had a stray control character and never matched
-- Disk tools named inside quoted `printf` or `echo` text (`mkfs`, `dd`, `wipefs`) are text, not a disk operation; real `dd`, `mkfs` and `wipefs` commands stay refused, also through `sudo`, `env` and `bash -c`
-- Session descriptors `<profile>/sessions/*.json` can be read, also from inline code, globs and folder listings; the key files of that folder stay refused, and so do globs and recursive searches that would read them
-
-##### v1.45.6
-
-###### Changed
-
-- The per-prompt orchestration inject says that while hydra is installed every worktree is created via hydra, also for a single isolated track; the Agent tool with `isolation: "worktree"` and a bare `git worktree add` outside `../<repo>-worktrees` are named as not allowed
-
-###### Fixed
-
-- A lone PEM private-key header line (in docs, grep patterns, commit text, prose) is no longer denied by the Read guard and the Bash command scan; a key block (header followed by base64 body, on the same line or on the next line after PEM header fields and a blank line) is still denied
-
-##### v1.45.5
-
-###### Added
-
-- `scripts/git-scope.sh [dir]` prints the owner/repo scope (`<host>/<owner>/<repo>`) of the `origin` remote without showing the remote URL, so agents can tell repositories of different owners apart while `git remote -v` and `git remote get-url` stay blocked
-
-###### Changed
-
-- The block message for remote URL output (`git remote -v`, `git remote show`, `git remote get-url`, `git config` on remote URLs, `git ls-remote --get-url`) names the absolute path of `git-scope.sh`
-
-###### Fixed
-
-- `git-remote-safe.sh url` no longer prints userinfo (`user:token@`), query string or fragment of the remote URL; a URL whose userinfo cannot be told apart is refused
-- `git-remote-safe.sh` reads the remote with git (origin, fallback: the first remote), so it works in worktrees; `host`, `owner`, `repo` and `owner-repo` come from `git-scope.sh`
-
-##### v1.45.4
-
-###### Fixed
-
-- delete-guard no longer denies `2>/dev/null; next` or `>/dev/null&& next`: a redirect target now ends at an unquoted `;`, `|`, `&`, `(`, `)`, `<` or `>`, so `/dev/null;` is no longer read as an unknown critical path
-
-##### v1.45.3
-
-###### Changed
-
-- Reading inside the private Codex config home is allowed anywhere, no longer only in a fixed list of folders (`cat ~/.codex/myplugin/state.json`, `grep foo ~/.codex/history.jsonl`, `ls ~/.codex/logs`, `cat ~/.codex/archived_sessions/x.jsonl`). Credential files stay blocked: `auth.json` (in the Codex and the Claude config homes `~/.claude`, `~/.claude-*`, `$CLAUDE_CONFIG_DIR`), `.credentials*`, `credentials.json`, `.pem` and `.key` files, `.env` (not `.env.example`); the home itself and a glob in its first path component stay refused. Writing there is blocked as before
-- `git worktree remove` without `--force` and `git worktree prune` are no deletes under the delete setting and pass (also inside `bash -c`); `git worktree remove --force`, `-f`, `-ff` and any prefix of `--force` (`--f`, `--fo`) stay blocked
-- The redirect target is read the way the shell reads it: quotes inside the word (`"$HOME"/.bashrc`, `~/".bashrc"`), `$'...'`, a relative target after `cd ~` and `tee -a` are checked too
-- The truncating redirect `>` is blocked only onto a critical path (the home and its parent, direct children of a home, everything inside a home's dot folders, `/home/X/Y`, `/` and first-level directories, the system trees except `/var/tmp`, devices, and `/mnt` and `/media` with the drive and the first level below it plus the dot entries of `/mnt/<x>/Users/<name>` and the Windows system and persistence paths below a drive (`Windows`, `ProgramData`, `Program Files*`, `Users/<name>/AppData` with the Startup folder, `Start Menu`, `NTUSER.DAT*`, `Documents/PowerShell`, `Documents/WindowsPowerShell`; also for `>>` and `tee -a`); files deeper inside a project on a Windows drive (`/mnt/c/work/project/.bench/x.log`) are ordinary files. This relaxation applies to redirects only: `rm`, `mv` and `truncate` below a deep `/mnt` path are not relaxed and follow the normal delete rules (protected mounts and the delete permission `§0lgy`)
-- The standard streams `/dev/stdout`, `/dev/stderr`, `/dev/stdin` and `/dev/fd/N` are no files and pass as redirect targets (`> /dev/stdout`, `>> /dev/stderr`); a heredoc body written to them is still checked as shell text
-- A file written in the same command and then read by a shell or interpreter through `<` (`sh < x.sh`, `sh -s < x.sh`, `. /dev/stdin < x.sh`) is refused like running it by name; a syntax check does not run the script, so `bash -n x.sh` and `sh -n x.sh` pass
-- Quoted heredoc bodies written by `cat` or `tee` (not piped on) or fed to an interpreter are data for the text rules of the delete guard only while the output goes to a normal file or `/dev/null`; a process substitution (`> >(sh)`), another `/dev/*` or `/proc/*` target, a file descriptor copy other than `1` and `2`, or `mkfifo` in the command keeps the body checked as shell text
-- Python deletes are detected under every spelling of the module and through indirection, in the text rule and in the inline code analysis of heredoc bodies alike (one shared detection): `import os as o`, `from os import remove` and `from os import *`, `posix` and `nt`, `(os).remove`, `getattr(o, 'remove')`, `vars(os)`, `os.__dict__`, `importlib.import_module('posix')`, `sys.modules['os']`, and strings handed to `exec`, `eval` or `compile`. `os.rename`, `os.replace` and `shutil.move` are refused only when a path they name is critical (as for redirects) or the working directory or a parent, or the home is looked up in a way that hides the path
-- Deletes whose targets all lie strictly inside a temporary root (`/tmp`, `/var/tmp`, `$TMPDIR` and the Windows temp folders `/mnt/<drive>/Users/<name>/AppData/Local/Temp`, `/mnt/<drive>/Windows/Temp`) are allowed whatever the delete setting (`§0lgy`). The root itself, the home below a temp root and any target that cannot be resolved for sure follow the normal rules
-
-###### Fixed
-
-- Delete guard: quoted heredoc bodies written by `cat` or `tee` (not piped on) or fed to an interpreter are data; the line-by-line delete check and the text rules no longer read them as commands, so a script written to a file (`rm -rf "${VAR:?}"`, `find it's here`) no longer blocks
-- The shell scanner no longer removes a backslash-newline before it looks for the end of a heredoc: bash keeps it literal inside a quoted body, so the line that ends the body and the command after it were misplaced and a command after the first `EOF` could be read as data
-- A heredoc inside `$(...)` inside double quotes, the standard commit pattern `git commit -m "$(cat <<'EOF' ... EOF)"` (also `git tag -a` and `--amend`), is read as a heredoc: an apostrophe in its body (`don't`) no longer unbalances the quoting and blocks the command; `<<` inside `$((...))` is still a shift
-- Delete guard: the python text rule reacts to deleting calls instead of the bare words `remove`, `unlink` or `shutil`; the interpreter symlink rule needs a symlink call, not the word; `os.replace(p + '.tmp', p)` (the atomic write) below a project passes
-- Inline code: string literals with whitespace are text, so a message or file content mentioning `unlink` or `run` no longer counts as a deletion or a command; literals are only walked as shell commands when the code can run commands
-- `git grep`: the search pattern is text like the pattern of `grep` (`git grep -n '.credentials' plugins/`); paths after it are still checked
-- A shell option that starts with `+` (`bash +x x.sh`) is no longer taken for the script name by the check for a script written and run in the same command
-- Delete guard: `truncate` is a truncation only in command position (start of a command, after `sudo`, `env`, `xargs`, `find -exec`); `grep -n truncate a.py` and `cd /home/u/proj && grep -n truncate a.py` pass
-- Delete guard: a `>` inside a quoted string, a `$(...)` inside double quotes or a comment is text, no redirect (`git commit -m "no longer blocks > ~/.bashrc"`, `grep -n "> ~/.bashrc" notes.md`, a commit message heredoc with `> /etc/passwd`); a real unquoted redirect stays blocked, and the target word keeps blanks inside quotes (`> "/mnt/c/Program Files/x"`). The text rules for python, perl, node and ruby react to the interpreter as a command, not to its name inside a quoted message (`git commit -m "fix: python os.remove(~/x)"`). A command whose quotes cannot be read is judged as before
-- New parity table `guard-cases/false_positives.py`: false positives that must pass, the protection that must stay, and Edit/Write inputs that no Edit/Write hook may treat as a deletion
-
-###### Security
-
-- New: an append `>>` and `tee -a` are blocked onto startup and persistence files. Before, `>>` was never checked at all. Blocked are the shell and session startup files of a home (`.bashrc`, `.bash_profile`, `.bash_login`, `.bash_logout`, `.bash_aliases`, `.profile`, `.zshrc`, `.zprofile`, `.zshenv`, `.zlogin`, `.zlogout`, `.inputrc`, `.xprofile`, `.xinitrc`, `.xsession`, `.pam_environment`), `~/.ssh`, `~/.gnupg`, `~/.config/fish`, `~/.config/autostart`, `~/.config/systemd`, `~/.config/environment.d` and `~/.local/bin` (the same below `/home/X` and a Windows home `/mnt/c/Users/<name>`), the system trees (the cron and at spools are below `/var`), devices and the top levels of `/mnt` and `/media`. Every other append passes: plain files of the home (`~/notes.md`), a log below a project, the other dot folders (`~/.cache/x.log`, `~/.local/state/...`, `~/.claude/...`, `~/.npm/_logs/...`)
-- A redirect target with a variable that is not known (`> ~/$X`, `> /etc/$X`, `> $HOME/.$X`, `>> $HOME/.bash$X`) is judged by its literal part before the first `$`: a name that starts there could be any name, a dot name too. A target that starts with the variable (`> $X`) is unknown and passes, as before
-- `$'...'` (ANSI-C quoting) and `$"..."` redirect targets are read the way the shell reads them (`> $'/etc/hosts'`, `>> $'\x2fetc/hosts'`); `tee -a` already did
-- A heredoc body written by `cat` or `tee` or fed to an interpreter is data only when these commands are the real ones: a function (`cat() { sh; }`, `function cat`), an alias, `hash`, `enable`, `builtin`, a changed `PATH` or a sourced file in the same command keep the body checked as shell text (`/bin/cat` stays data)
-- Inline interpreter code in a heredoc is checked for symlink calls again (`os.symlink`, `Path.symlink_to`, `from os import symlink`, perl `symlink`, `File.symlink`, `fs.symlinkSync`, under any import name): a path the code names that a link must not point at (the rule of `ln -s`: the home and its parent, a direct child of the home, `/`, a first-level directory, `/home/X/Y`) or a home lookup that hides the path is refused
-- A mount declared in `CLAUDE_MB_DOGMA_PROTECTED_MOUNTS` is protected against `>`, `>>` and `tee` at any depth (`> /mnt/nas/share/a/b/c/x.txt`); a Windows drive such as `/mnt/c` is excepted, it follows the drive rules, so a project below it stays writable
-- A heredoc piped into a subshell (`cat <<'EOF' | (sh)`, `| ( bash -s )`, `| (python3)`, `tee /dev/null <<'EOF' | (sh)`) is piped on like `| { sh; }`: its body is no data and is checked
-- Inline and heredoc code that truncates a file by path (`os.truncate`, `fs.truncateSync`) is refused when a path it names is critical for `>` or the home is looked up so that the path is hidden; `open(path, 'w'|'a')`, `Path(path).write_text()` and `fs.writeFileSync(path, ...)` onto a startup or persistence file (the rule of `>>`) are refused as well, like the `python3 -c` form
-- A python line continuation in inline or heredoc code (`os.\<newline>remove(...)`) is joined before the calls are read, so it no longer hides a delete
-- A `#` inside `${...}` is part of the parameter expansion, no comment: `echo ${x// #/y} > /etc/hosts` and `echo ${x%% #*} > ~/.bashrc` are checked as redirects
-- Inside `$(...)` a `)` that ends a case pattern no longer closes the substitution, in double quotes and unquoted alike, so the commands after it are checked (`echo "$(case x in a) rm -rf /home;; esac)"`); `truncate` onto a critical path inside a substitution is refused like `>`
-- 8.3 short names below a Windows drive (`/mnt/c/PROGRA~1/...`, `Users/<name>/Documents/WINDOW~1/profile.ps1`) count as the critical system and profile folders for `>` and `>>`; the PowerShell profile rule covers the localized `Dokumente` too
-- A shell or interpreter that reads stdin anywhere inside a group or compound command that is the target of a pipe is refused (`curl ... | (cd /tmp; sh)`, `| { true; sh; }`, `| while read l; do sh; done`), not only as the first command
-- Inline code `open(file='...', mode='a'|'w')` (either argument order) onto a startup or persistence file is refused like the positional form
-
-##### v1.45.2
-
-###### Fixed
-
-- Test suites remove their temp dirs and stop their child processes on exit, including failures and interrupts
-
-##### v1.45.1
-
-###### Fixed
-
-- bash-guard: strings that are executed in a way the analyser cannot follow (the arguments and input of a command word chosen at run time, launcher option values, tmux command strings and send-keys text) are parsed as shell text with an unknown working directory, so relative delete targets fail closed; text that cannot be parsed is refused when a delete-capable verb with an operand appears in it. Plain arguments and stdin of ordinary programs (commit messages, test filters, clipboard tools, database clients) are not treated as shell text
-- bash-guard: sudo -s/-i, doas -s, su and runuser without a command are handled like a shell reading its script from stdin
-- bash-guard: tmux command names resolve by alias and unique prefix, ";" at the end of an argument splits commands, nested command strings (if-shell, confirm-before, bind-key, set-hook and similar) go through the same tmux analysis, and send-keys text is checked with an unknown working directory (hex keys decoded, single keys joined, unclear keys fail closed)
-- bash-guard: wsl.exe honours --cd, ~ and other distributions for the working directory and checks the joined command line its shell runs; bwrap with an unknown option runs with an unknown working directory
-- bash-guard: awk programs are only checked through system(), print | and getline, so patterns such as /mv / no longer count as commands
-- bash-guard: brace expansion is bounded (long words such as a JSON document are not expanded), the time budget is checked inside the analysis loops, and long or pathological arguments are analysed in linear time
-- bash-guard: every refusal of a git hook bypass (core.hooksPath, HUSKY=0/SKIP=, --no-verify, commit -n) now ends with the same hint to make a normal commit and to fix or report a failing hook
-- delete-guard: string arguments of a command word chosen at run time that contain a delete command are checked with an unknown working directory
-
-##### v1.45.0
-
-###### Added
-
-- `scripts/bash-guard.py`: shell-aware analysis of Bash commands for the guard hooks (quoting, variables, wrappers, nested shells, substitutions, heredocs, `cd` tracking, abbreviated long options); every simple command is checked on its own
-- Protected paths now also cover mount points, devices, the working directory and its parents, and whole repositories or worktrees; `CLAUDE_MB_DOGMA_PROTECTED_MOUNTS` adds mount points
-- `scripts/test-guard-parity.py` with shared case tables in `scripts/guard-cases/` (review rounds, audit probes, everyday commands that must pass)
-
-###### Changed
-
-- Hardened the delete guard: commands whose command word is only known at run time, archive/sync tools that delete their sources, data-destroying git commands with a redirected work tree or git dir, filesystem wipe tools and Windows-side deletion from WSL are blocked; inline interpreter code is checked for deletes near protected paths
-- File protection, git permissions, token protection and dependency verification use the shell-aware analysis when python3 exists (text patterns remain the fallback); data-destroying git commands follow the delete setting, and words inside commit messages or search patterns no longer trigger the guards
-- Git hook bypasses (`--no-verify`, also abbreviated, hook path overrides, hook-skipping variables) are blocked
-- Both guards share one option parser (`scripts/dogma_getopt.py`) for cp, mv, install, ln, rm, unlink, rmdir, rsync, su, runuser and the env, sudo and doas wrappers: bundled short options, abbreviated long options (exact match for rsync, unknown rsync options are blocked), and both the GNU and the `POSIXLY_CORRECT` reading of the arguments are checked; an `env -S` string is split by the GNU env rules and refused when it uses an escape or expansion those rules do not allow; unknown wrapper options make relative targets fail closed
-- Commands that start in another working directory are checked there (`env -C`, `sudo -D`, systemd-run, tmux, bwrap, nsenter, unshare, start-stop-daemon); where it is not known before running (a login with `sudo -i` or `su -`, a systemd service, a new tmux window) relative targets fail closed, and a command run below another root or mount namespace (chroot, nsenter/unshare with a root or mount namespace, bwrap with remapped paths) is blocked
-- `rm`, `unlink`, `rmdir` and `mv` of a symlink act on the link itself and are no longer blocked when it points at a protected path; `..` after a symlink component is resolved against the link target, as the kernel does, and a path whose component before `..` does not exist yet is blocked
-
-#### v1.44
-
-##### v1.44.4
-
-###### Fixed
-
-- German-only language rules now fire on German text only: the write reminder's "Keep it in
-  German" note and the post-write ASCII umlaut check (fuer -> für) use a stricter shared
-  detection (`lib-german.sh`) instead of substring matches that also hit English or other
-  languages. Quoted text and code are ignored, and German function words must be a
-  meaningful share of all words and clearly outweigh English ones
-- An English file that quotes German examples is no longer reported as German, and a
-  bilingual file gets no language note instead of a wrong one
-- A German file is no longer reported as English because German prose contains "in" / "is"
-- `/dogma:force` examples show the real umlauts again (they had been stripped to "fur",
-  "konnen"); `/dogma:cleanup` and the prompt reminder state the umlaut rule is German text only
-- New `scripts/test-german-detection.sh` checks German, English, French, Spanish, Dutch and
-  Portuguese samples, English text with German quotes and code, and a bilingual document
-  against the detection and both hooks
-
-##### v1.44.3
-
-###### Fixed
-
-- dogma band no longer shows a "blocked" line forever: the notice is time-stamped and hidden after 15 s even when a plugin reload cut its timer short, and a new session starts without it
-
-##### v1.44.2
-
-###### Fixed
-
-- Delete guard only analyzes a segment whose command word can delete, move or link; a verb inside an argument (a file name, a grep pattern with <...>) no longer blocks harmless commands
-
-##### v1.44.1
-
-###### Changed
-
-- Notice tests use an invented project name instead of a real one
-
-##### v1.44.0
-
-###### Added
-
-- Always-on delete guard: blocks deleting, moving or symlinking onto protected paths (/, first-level dirs, /home depth 0-2, the home and its children); targets are resolved first (~, $HOME, cwd and cd, symlinks, glob base), unresolvable targets are blocked, fails closed without python3
-
-###### Security
-
-- A symlink under /tmp pointing at a protected directory can no longer route a recursive delete past the /tmp allowance
-
-#### v1.43
-
-##### Added
-
-- DOGMA-PERMISSIONS.md is picked by action target, pinned project, then session folder, with per-id inheritance (default on)
-- Notices also show in non-git folders and for pinned projects that inherit permissions
-
-#### v1.42
-
-##### Added
-
-- Source broadcasts via NOTICES.md
-- `CLAUDE_MB_DOGMA_SOURCE` for sync and recommended setup
-- Per-folder git identity for the source fetch
-
-#### v1.41
-
-##### Added
-
-- Stable setting ids (`§xxxx`) matched first with a text fallback, plus an id registry
-- changelog.d assembly in `/dogma:versioning`
-
-#### v1.40
-
-##### Added
-
-- Worktree files list (link or copy, `.credo/` included by default) and a cleanup-merged-worktrees checkbox
-
-##### Changed
-
-- Subagents may commit in their own worktree, never push or merge
-
-#### v1.39
-
-##### Added
-
-- One-time per-repo update notices for updates that need user action (Run/Later/Never), with an optional band toast
-
-#### v1.38
-
-##### Added
-
-- Final Verification option to run all tests only at release
-
-#### v1.37
-
-##### Added
-
-- Optional per-stage test commands (commit, push, relevant, build, all) with branch filters
-
-#### v1.36
-
-##### Added
-
-- Optional Claude Code band showing restricting permissions with change highlights
-
-#### v1.35
-
-##### Added
-
-- `permissions-summary.sh` listing only the restricting DOGMA-PERMISSIONS entries
-
-## limit
-
-### v2
-
-#### v2.36
-
-##### v2.36.3
-
-###### Changed
-
-- AvgPeak and Avg values are right-aligned to the width of 100.0, so the line does not shift
-
-###### Fixed
-
-- The 7d and 5h averages group history samples by their reset time, so samples of another window or plan mixed into one series no longer count as consumption
-- A window's first sample counts as a restart only after a real window change, not when the history starts recording the reset time
-- One history line with an unparsable timestamp no longer blanks all averages
-
-##### v2.36.2
-
-###### Added
-
-- Test script `scripts/test-state-io.sh` covers the state primitives under parallel writers. A read-modify-write held under the lock loses no update, a reader never sees a partial file, a rejected write leaves the target untouched, and the mkdir fallback lock refuses a second holder
-
-###### Changed
-
-- The tokens line label `User Tokens` is now `Work Tokens` (Input + Output, cache reads excluded), matching the README and the ledger's work tokens
-- Context cache fields `total_input` and `total_output` are renamed to `last_input_tokens` and `last_output_tokens`; they hold the most recent API response, not session totals
-
-###### Fixed
-
-- The threshold inject state is read, decided and written under one lock for the session, so parallel hook calls no longer all inject the same ACTION or status line
-- The z.ai statusline line is labelled `LastReq` with `In+Out`, since it shows the last API response
-- A stale mkdir lock that cannot be removed no longer makes the lock wait spin forever
-
-##### v2.36.1
-
-###### Added
-
-- `scripts/test-inject-status.sh`: fixture test for the main-session-only ACTION, the untouched main state on subagent calls, the reset after a drop (also inside the throttle interval) and malformed input
-
-###### Fixed
-
-- The threshold ACTION line is injected into the main session only: a tool call inside a subagent (`agent_id` in the hook input) no longer receives it and never writes the main session's inject state (fired thresholds, throttle, delta baseline), so the main session still gets the ACTION on its next prompt or tool call; a subagent gets at most the plain status line, throttled by its own per-agent state file
-- A threshold reset (fill dropped back below it, e.g. after a compact) is persisted for the main session even when no status line is written on that call, so the threshold fires again when the fill climbs back before the next line
-
-##### v2.36.0
-
-###### Added
-
-- One deduplicated token ledger (`scripts/usage-ledger.sh`) for main agent and subagents: transcript lines are counted once per API message (`message.id` + `requestId`, last line wins), read incrementally without consuming a partial trailing line, and summed into 5-minute buckets so window tokens come from timestamps
-- `[Est100%:X]` on the 5h / 7d device lines: median of window tokens / (API% / 100) over samples at >= 20 % in the current window, falling back to the previous window (`~`). It is a per-device value (only this device's transcripts are readable, API% is account-wide) and a lower bound with parallel use on other devices; no samples are taken while the transcript backfill is incomplete or the API numbers are older than `CLAUDE_MB_LIMIT_EST_MAX_AGE` (default 120 s)
-- `[AvgPeak:X%]` (average peak per completed window) and `[Avg:Y%/h]` / `[Avg:Y%/d]` (average consumption incl. idle time) from the history; history entries now record `resets_at`
-- Further limits from the API's `limits[]` list (e.g. `weekly_scoped` per model) as their own lines (`CLAUDE_MB_LIMIT_SCOPED`)
-- `[stale Xm]` when the usage cache is older than `CLAUDE_MB_LIMIT_STALE_AFTER` (default 600 s); after `resets_at` a limit shows `0.0% ... (reset)`
-- `scripts/state-io.sh`: shared lock, atomic write, safe read, debug flag, half-up rounding and backoff helpers
-- Fixture tests: `test-usage-ledger.sh` (duplicated message ids, split messages, partial lines, parallel scans, pricing), `test-local-tracking.sh` (reset detection incl. utilization drop with unchanged `resets_at`, parallel writers, Est100%, averages, backoff), `test-statusline-render.sh` (end-to-end render, parallel renders)
-
-###### Changed
-
-- Tokens line shows the session sums (main agent + its subagents) from the ledger: Input incl. cache writes, Output, Cached (cache reads); it falls back to `LastReq` (last request from stdin) when the ledger is unreadable
-- Window tokens, highscores and LifetimeTotal count work tokens (input + output + cache writes); cache reads are tracked and shown separately
-- LifetimeTotal and `/limit:highscore` price usage per concrete model id with cache writes by TTL; models without a known price show `$X+n/a` instead of Opus pricing
-- Window resets are also detected on a sharp utilization drop (> 20 points or below half) with an unchanged `resets_at`, and when `resets_at` has passed
-- All state read-modify-writes run under a lock with atomic writes; an unreadable state skips the local values for one render instead of counting from 0
-- A 429 stores one `retry_at`; the statusline shows exactly that countdown and `refresh-usage.sh` does not call the API before it
-- `CLAUDE_MB_LIMIT_DEBUG` accepts `true`/`1`/`yes`/`on` in every script
-- `/limit:highscore` uses `CLAUDE_MB_LIMIT_DEVICE_LABEL` and shows Est100%, window tokens with cache reads and a per-model lifetime breakdown
-- Transcript reading is linear in the bytes read (grep prefilter, one streaming jq pass, one awk pass for dedup and sums) and always bounded: the render reads about `CLAUDE_MB_LIMIT_SESSION_SCAN_BYTES` (default 2 MiB) of the current transcript per render (a single longer line is read whole), the global scan runs detached with a time budget (default 25 s, checked with millisecond resolution) (optional byte budget `CLAUDE_MB_LIMIT_SCAN_BYTES`), small transcripts are read in batches, and both resume from stored byte offsets with unfinished files marked pending, so a first backfill never blocks the statusline. The render-time scan is gated per transcript and writes nothing when the transcript did not grow; entries of deleted transcripts are pruned (lifetime totals stay; a transcript read or marked pending in the same run is never pruned). Transcript paths are canonicalized, so one file is never counted under two spellings. Known limit: deduplication is per file, so an API message present in two transcripts (e.g. a subagent sidechain and its parent) is counted in both (about 1 %)
-- Fewer jq calls per render: highscore/window updates and the ledger summary each read their state in a single jq pass
-- Highscore state schema 2: highscores and LimitAt values of the old counting scheme are discarded once (a `.bak` copy is kept)
-
-###### Removed
-
-- `[LimitAt:...]` and the `[Average:L%/A%]` display (both halves read the same field)
-- The stdin delta accounting (`limit-usage-state_<profile>.json`, no longer written) with its false "session reset" path, and the separate main/subagent scanner states (`subagent-tokens.sh` is a compatibility wrapper now)
-
-###### Fixed
-
-- Token counts were ~2.3x too high because every content-block line of a message was counted
-- Main-agent window tokens measured context growth and re-added the full context on almost every other turn
-- Mid-window drops caused by empty reads of non-atomically written state files (subagent baseline reset)
-- `test-local-tracking.sh` deleted and rewrote the real state file; it now runs in a temp profile
-
 ## credo
 
 ### v0
+
+#### v0.84
+
+##### v0.84.0
+
+###### Fixed
+
+- Subagents no longer run a delete whose path contains a shell variable (an empty variable could delete a parent dir); they write the literal path or a fresh scratch dir, so an unattended run is not blocked by a permission prompt
+- A permission prompt in an autonomous credo session now sends a high-priority ntfy push, so the owner is called back to the PC
 
 #### v0.83
 
@@ -1235,6 +847,403 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 ##### Added
 
 - Budget read-back shows the active profile, config layers and the source of each cap
+
+## dogma
+
+### v1
+
+#### v1.47
+
+##### v1.47.2
+
+###### Fixed
+
+- A delete, overwrite or `sed -i` whose shell variables the command sets itself, with every value inside a temp root, is allowed like the literal temp path (no ask); covers `NAME=value`, `export`, `readonly`, `declare` and `for` word lists
+- An assignment after `&&` no longer sets a variable for the delete checks: `false && S=/tmp/x; rm -f "$S/a"` is judged with `S` unset
+- An assignment before a `for` loop or a group is read again, so `S=/tmp/x; for f in a b; do rm -f "$S/$f"; done` is no longer a hard deny
+- The ask and deny texts of the delete setting name the `(§0lgy)` delete line of the permissions file
+- A variable written by `read`, `mapfile`, `+=` or `printf -v`, a target run in a nested shell (`sh -c`), and a `..` segment or a `/.` suffix through a link keep the delete setting instead of counting as temp
+
+##### v1.47.1
+
+###### Fixed
+
+- An installed dogma script given as the first argument of an interpreter (`bash x.sh`, `python3 x.py`) is no longer denied as a write; any option before it, later arguments and every write into the installed plugin stay blocked
+
+##### v1.47.0
+
+###### Changed
+
+- The delete guard denies only the resolved hard list (home first level, paths up to depth 3 outside the temp roots, mounted storage up to depth 4, Windows profile and system paths, mount points, whole repositories). Everything else in the delete domain, including targets that cannot be resolved for sure, follows the delete permission in DOGMA-PERMISSIONS.md.
+- A variable in a delete target is judged by every value it can have in the command (its environment value, or empty when unset, and every literal value assigned to it there): if one of them is on the hard list the target is denied, a single certain value that is not hard follows the delete permission.
+
+#### v1.46
+
+##### v1.46.2
+
+###### Fixed
+
+- A delete blocked because its target is a shell variable now logs the original command in TO-DELETE.md, so the entry says what was meant
+- Deny and ask messages for such targets tell the agent to retry with the literal path
+- Block messages stay valid JSON for targets with backslashes, quotes or control characters, and TO-DELETE.md entries stay on one line
+
+##### v1.46.1
+
+###### Fixed
+
+- A redirect to the literal `/dev/null` after a compound command (loop, group, subshell, `if`, `case`) is no longer reported as a truncate; a normalized or dotdot form of it and a redirect of such a command to a real file still are
+- Inline code: a write is refused when the path as written or the file it names through symlinks is protected; a `..` after a symlink is not resolved
+- Inline code: string literals that follow each other or are joined by `+`, `.` or `,`, in any quote kinds (`'.git' + "/config"`), are also checked as the path they form, so such writes to protected files are refused
+
+##### v1.46.0
+
+###### Added
+
+- New DOGMA-PERMISSIONS.md setting `(§b4dk)` "Discard uncommitted changes" for `git restore`, `git reset --hard`, `git checkout` (paths, `.`, `-f`), `git switch --discard-changes` and `git stash drop|clear`. Default `[?]`, independent of the delete setting `(§0lgy)`; `git clean` stays under the delete setting.
+
+###### Changed
+
+- The discard commands are no longer governed by the delete setting. A missing line for `(§b4dk)` in an existing DOGMA-PERMISSIONS.md counts as `[?]`, every other missing setting keeps its default.
+- dogma shows an update notice at session start (until it is answered) that points to `/dogma:permissions` and `/dogma:sync`.
+
+#### v1.45
+
+##### v1.45.10
+
+###### Fixed
+
+- A redirect target with an unknown part followed by a `..` segment (`> /mnt/c/Users/me/AppData/Local/Temp/$X/../../Roaming/x.ps1`, `>> ~/proj/$X/../.bashrc`) is blocked; such a word could climb out of the directory that was checked, and the Windows temp exception never applies to a word with an unknown part
+- A Windows drive declared in `CLAUDE_MB_DOGMA_PROTECTED_MOUNTS` (`/mnt/c`) no longer protects the whole drive from deletes; it follows the drive rules, as the redirect rules already did
+
+##### v1.45.9
+
+###### Fixed
+
+- Network shares and USB sticks below `/mnt` and `/media` no longer protect their whole subtree from deletes: like a Windows drive, the mount point and the levels down to depth 3 (for example `/mnt/nas/share` and `/media/usb/folder`) stay refused, deeper files are ordinary and the file protection and the delete permission decide
+- A mount point below `/mnt` or `/media` stays refused at any depth; mounts below the home and declared mounts (`CLAUDE_MB_DOGMA_PROTECTED_MOUNTS`) keep their whole subtree protected
+- A redirect (`>`, `>>`, `tee`) into a file inside the Windows user temp folder (`/mnt/c/Users/<name>/AppData/Local/Temp/...`) is no longer blocked as a critical path; deletes there were already allowed. The temp folder itself, the rest of `AppData` and `Windows/Temp` stay critical
+
+##### v1.45.8
+
+###### Fixed
+
+- Deleting a file or folder deeper below a Windows drive or `/media` (for example `rm /mnt/d/data/proj/models/x.gguf` or `rm -r /mnt/d/data/proj/old`) is no longer refused by the delete floor; the normal file protection and the delete permission decide
+- The delete floor below `/mnt` and `/media` still refuses the mount point, the drive and its first level, a Windows user profile root and its first level, Windows system, persistence and profile paths, declared mounts and network shares
+
+##### v1.45.7
+
+###### Fixed
+
+- Read-only inline Python no longer trips the deletion check on a word inside a string literal (a regex such as `r'rmdir'`); only real calls are judged
+- A recursive search with a `--include` glob such as `*.json` no longer counts as a credential path when it searches a plugin folder; a recursive search rooted at a Claude or Codex config home, or at a directory above one, is refused because it reaches the login file
+- Inline exec calls (`subprocess`, `os.system`) are judged by the command they run: a deleting command aimed at the home, root or a parent folder is refused, harmless commands such as `ls ~` pass; the exec pattern of `bash-guard.py` had a stray control character and never matched
+- Disk tools named inside quoted `printf` or `echo` text (`mkfs`, `dd`, `wipefs`) are text, not a disk operation; real `dd`, `mkfs` and `wipefs` commands stay refused, also through `sudo`, `env` and `bash -c`
+- Session descriptors `<profile>/sessions/*.json` can be read, also from inline code, globs and folder listings; the key files of that folder stay refused, and so do globs and recursive searches that would read them
+
+##### v1.45.6
+
+###### Changed
+
+- The per-prompt orchestration inject says that while hydra is installed every worktree is created via hydra, also for a single isolated track; the Agent tool with `isolation: "worktree"` and a bare `git worktree add` outside `../<repo>-worktrees` are named as not allowed
+
+###### Fixed
+
+- A lone PEM private-key header line (in docs, grep patterns, commit text, prose) is no longer denied by the Read guard and the Bash command scan; a key block (header followed by base64 body, on the same line or on the next line after PEM header fields and a blank line) is still denied
+
+##### v1.45.5
+
+###### Added
+
+- `scripts/git-scope.sh [dir]` prints the owner/repo scope (`<host>/<owner>/<repo>`) of the `origin` remote without showing the remote URL, so agents can tell repositories of different owners apart while `git remote -v` and `git remote get-url` stay blocked
+
+###### Changed
+
+- The block message for remote URL output (`git remote -v`, `git remote show`, `git remote get-url`, `git config` on remote URLs, `git ls-remote --get-url`) names the absolute path of `git-scope.sh`
+
+###### Fixed
+
+- `git-remote-safe.sh url` no longer prints userinfo (`user:token@`), query string or fragment of the remote URL; a URL whose userinfo cannot be told apart is refused
+- `git-remote-safe.sh` reads the remote with git (origin, fallback: the first remote), so it works in worktrees; `host`, `owner`, `repo` and `owner-repo` come from `git-scope.sh`
+
+##### v1.45.4
+
+###### Fixed
+
+- delete-guard no longer denies `2>/dev/null; next` or `>/dev/null&& next`: a redirect target now ends at an unquoted `;`, `|`, `&`, `(`, `)`, `<` or `>`, so `/dev/null;` is no longer read as an unknown critical path
+
+##### v1.45.3
+
+###### Changed
+
+- Reading inside the private Codex config home is allowed anywhere, no longer only in a fixed list of folders (`cat ~/.codex/myplugin/state.json`, `grep foo ~/.codex/history.jsonl`, `ls ~/.codex/logs`, `cat ~/.codex/archived_sessions/x.jsonl`). Credential files stay blocked: `auth.json` (in the Codex and the Claude config homes `~/.claude`, `~/.claude-*`, `$CLAUDE_CONFIG_DIR`), `.credentials*`, `credentials.json`, `.pem` and `.key` files, `.env` (not `.env.example`); the home itself and a glob in its first path component stay refused. Writing there is blocked as before
+- `git worktree remove` without `--force` and `git worktree prune` are no deletes under the delete setting and pass (also inside `bash -c`); `git worktree remove --force`, `-f`, `-ff` and any prefix of `--force` (`--f`, `--fo`) stay blocked
+- The redirect target is read the way the shell reads it: quotes inside the word (`"$HOME"/.bashrc`, `~/".bashrc"`), `$'...'`, a relative target after `cd ~` and `tee -a` are checked too
+- The truncating redirect `>` is blocked only onto a critical path (the home and its parent, direct children of a home, everything inside a home's dot folders, `/home/X/Y`, `/` and first-level directories, the system trees except `/var/tmp`, devices, and `/mnt` and `/media` with the drive and the first level below it plus the dot entries of `/mnt/<x>/Users/<name>` and the Windows system and persistence paths below a drive (`Windows`, `ProgramData`, `Program Files*`, `Users/<name>/AppData` with the Startup folder, `Start Menu`, `NTUSER.DAT*`, `Documents/PowerShell`, `Documents/WindowsPowerShell`; also for `>>` and `tee -a`); files deeper inside a project on a Windows drive (`/mnt/c/work/project/.bench/x.log`) are ordinary files. This relaxation applies to redirects only: `rm`, `mv` and `truncate` below a deep `/mnt` path are not relaxed and follow the normal delete rules (protected mounts and the delete permission `§0lgy`)
+- The standard streams `/dev/stdout`, `/dev/stderr`, `/dev/stdin` and `/dev/fd/N` are no files and pass as redirect targets (`> /dev/stdout`, `>> /dev/stderr`); a heredoc body written to them is still checked as shell text
+- A file written in the same command and then read by a shell or interpreter through `<` (`sh < x.sh`, `sh -s < x.sh`, `. /dev/stdin < x.sh`) is refused like running it by name; a syntax check does not run the script, so `bash -n x.sh` and `sh -n x.sh` pass
+- Quoted heredoc bodies written by `cat` or `tee` (not piped on) or fed to an interpreter are data for the text rules of the delete guard only while the output goes to a normal file or `/dev/null`; a process substitution (`> >(sh)`), another `/dev/*` or `/proc/*` target, a file descriptor copy other than `1` and `2`, or `mkfifo` in the command keeps the body checked as shell text
+- Python deletes are detected under every spelling of the module and through indirection, in the text rule and in the inline code analysis of heredoc bodies alike (one shared detection): `import os as o`, `from os import remove` and `from os import *`, `posix` and `nt`, `(os).remove`, `getattr(o, 'remove')`, `vars(os)`, `os.__dict__`, `importlib.import_module('posix')`, `sys.modules['os']`, and strings handed to `exec`, `eval` or `compile`. `os.rename`, `os.replace` and `shutil.move` are refused only when a path they name is critical (as for redirects) or the working directory or a parent, or the home is looked up in a way that hides the path
+- Deletes whose targets all lie strictly inside a temporary root (`/tmp`, `/var/tmp`, `$TMPDIR` and the Windows temp folders `/mnt/<drive>/Users/<name>/AppData/Local/Temp`, `/mnt/<drive>/Windows/Temp`) are allowed whatever the delete setting (`§0lgy`). The root itself, the home below a temp root and any target that cannot be resolved for sure follow the normal rules
+
+###### Fixed
+
+- Delete guard: quoted heredoc bodies written by `cat` or `tee` (not piped on) or fed to an interpreter are data; the line-by-line delete check and the text rules no longer read them as commands, so a script written to a file (`rm -rf "${VAR:?}"`, `find it's here`) no longer blocks
+- The shell scanner no longer removes a backslash-newline before it looks for the end of a heredoc: bash keeps it literal inside a quoted body, so the line that ends the body and the command after it were misplaced and a command after the first `EOF` could be read as data
+- A heredoc inside `$(...)` inside double quotes, the standard commit pattern `git commit -m "$(cat <<'EOF' ... EOF)"` (also `git tag -a` and `--amend`), is read as a heredoc: an apostrophe in its body (`don't`) no longer unbalances the quoting and blocks the command; `<<` inside `$((...))` is still a shift
+- Delete guard: the python text rule reacts to deleting calls instead of the bare words `remove`, `unlink` or `shutil`; the interpreter symlink rule needs a symlink call, not the word; `os.replace(p + '.tmp', p)` (the atomic write) below a project passes
+- Inline code: string literals with whitespace are text, so a message or file content mentioning `unlink` or `run` no longer counts as a deletion or a command; literals are only walked as shell commands when the code can run commands
+- `git grep`: the search pattern is text like the pattern of `grep` (`git grep -n '.credentials' plugins/`); paths after it are still checked
+- A shell option that starts with `+` (`bash +x x.sh`) is no longer taken for the script name by the check for a script written and run in the same command
+- Delete guard: `truncate` is a truncation only in command position (start of a command, after `sudo`, `env`, `xargs`, `find -exec`); `grep -n truncate a.py` and `cd /home/u/proj && grep -n truncate a.py` pass
+- Delete guard: a `>` inside a quoted string, a `$(...)` inside double quotes or a comment is text, no redirect (`git commit -m "no longer blocks > ~/.bashrc"`, `grep -n "> ~/.bashrc" notes.md`, a commit message heredoc with `> /etc/passwd`); a real unquoted redirect stays blocked, and the target word keeps blanks inside quotes (`> "/mnt/c/Program Files/x"`). The text rules for python, perl, node and ruby react to the interpreter as a command, not to its name inside a quoted message (`git commit -m "fix: python os.remove(~/x)"`). A command whose quotes cannot be read is judged as before
+- New parity table `guard-cases/false_positives.py`: false positives that must pass, the protection that must stay, and Edit/Write inputs that no Edit/Write hook may treat as a deletion
+
+###### Security
+
+- New: an append `>>` and `tee -a` are blocked onto startup and persistence files. Before, `>>` was never checked at all. Blocked are the shell and session startup files of a home (`.bashrc`, `.bash_profile`, `.bash_login`, `.bash_logout`, `.bash_aliases`, `.profile`, `.zshrc`, `.zprofile`, `.zshenv`, `.zlogin`, `.zlogout`, `.inputrc`, `.xprofile`, `.xinitrc`, `.xsession`, `.pam_environment`), `~/.ssh`, `~/.gnupg`, `~/.config/fish`, `~/.config/autostart`, `~/.config/systemd`, `~/.config/environment.d` and `~/.local/bin` (the same below `/home/X` and a Windows home `/mnt/c/Users/<name>`), the system trees (the cron and at spools are below `/var`), devices and the top levels of `/mnt` and `/media`. Every other append passes: plain files of the home (`~/notes.md`), a log below a project, the other dot folders (`~/.cache/x.log`, `~/.local/state/...`, `~/.claude/...`, `~/.npm/_logs/...`)
+- A redirect target with a variable that is not known (`> ~/$X`, `> /etc/$X`, `> $HOME/.$X`, `>> $HOME/.bash$X`) is judged by its literal part before the first `$`: a name that starts there could be any name, a dot name too. A target that starts with the variable (`> $X`) is unknown and passes, as before
+- `$'...'` (ANSI-C quoting) and `$"..."` redirect targets are read the way the shell reads them (`> $'/etc/hosts'`, `>> $'\x2fetc/hosts'`); `tee -a` already did
+- A heredoc body written by `cat` or `tee` or fed to an interpreter is data only when these commands are the real ones: a function (`cat() { sh; }`, `function cat`), an alias, `hash`, `enable`, `builtin`, a changed `PATH` or a sourced file in the same command keep the body checked as shell text (`/bin/cat` stays data)
+- Inline interpreter code in a heredoc is checked for symlink calls again (`os.symlink`, `Path.symlink_to`, `from os import symlink`, perl `symlink`, `File.symlink`, `fs.symlinkSync`, under any import name): a path the code names that a link must not point at (the rule of `ln -s`: the home and its parent, a direct child of the home, `/`, a first-level directory, `/home/X/Y`) or a home lookup that hides the path is refused
+- A mount declared in `CLAUDE_MB_DOGMA_PROTECTED_MOUNTS` is protected against `>`, `>>` and `tee` at any depth (`> /mnt/nas/share/a/b/c/x.txt`); a Windows drive such as `/mnt/c` is excepted, it follows the drive rules, so a project below it stays writable
+- A heredoc piped into a subshell (`cat <<'EOF' | (sh)`, `| ( bash -s )`, `| (python3)`, `tee /dev/null <<'EOF' | (sh)`) is piped on like `| { sh; }`: its body is no data and is checked
+- Inline and heredoc code that truncates a file by path (`os.truncate`, `fs.truncateSync`) is refused when a path it names is critical for `>` or the home is looked up so that the path is hidden; `open(path, 'w'|'a')`, `Path(path).write_text()` and `fs.writeFileSync(path, ...)` onto a startup or persistence file (the rule of `>>`) are refused as well, like the `python3 -c` form
+- A python line continuation in inline or heredoc code (`os.\<newline>remove(...)`) is joined before the calls are read, so it no longer hides a delete
+- A `#` inside `${...}` is part of the parameter expansion, no comment: `echo ${x// #/y} > /etc/hosts` and `echo ${x%% #*} > ~/.bashrc` are checked as redirects
+- Inside `$(...)` a `)` that ends a case pattern no longer closes the substitution, in double quotes and unquoted alike, so the commands after it are checked (`echo "$(case x in a) rm -rf /home;; esac)"`); `truncate` onto a critical path inside a substitution is refused like `>`
+- 8.3 short names below a Windows drive (`/mnt/c/PROGRA~1/...`, `Users/<name>/Documents/WINDOW~1/profile.ps1`) count as the critical system and profile folders for `>` and `>>`; the PowerShell profile rule covers the localized `Dokumente` too
+- A shell or interpreter that reads stdin anywhere inside a group or compound command that is the target of a pipe is refused (`curl ... | (cd /tmp; sh)`, `| { true; sh; }`, `| while read l; do sh; done`), not only as the first command
+- Inline code `open(file='...', mode='a'|'w')` (either argument order) onto a startup or persistence file is refused like the positional form
+
+##### v1.45.2
+
+###### Fixed
+
+- Test suites remove their temp dirs and stop their child processes on exit, including failures and interrupts
+
+##### v1.45.1
+
+###### Fixed
+
+- bash-guard: strings that are executed in a way the analyser cannot follow (the arguments and input of a command word chosen at run time, launcher option values, tmux command strings and send-keys text) are parsed as shell text with an unknown working directory, so relative delete targets fail closed; text that cannot be parsed is refused when a delete-capable verb with an operand appears in it. Plain arguments and stdin of ordinary programs (commit messages, test filters, clipboard tools, database clients) are not treated as shell text
+- bash-guard: sudo -s/-i, doas -s, su and runuser without a command are handled like a shell reading its script from stdin
+- bash-guard: tmux command names resolve by alias and unique prefix, ";" at the end of an argument splits commands, nested command strings (if-shell, confirm-before, bind-key, set-hook and similar) go through the same tmux analysis, and send-keys text is checked with an unknown working directory (hex keys decoded, single keys joined, unclear keys fail closed)
+- bash-guard: wsl.exe honours --cd, ~ and other distributions for the working directory and checks the joined command line its shell runs; bwrap with an unknown option runs with an unknown working directory
+- bash-guard: awk programs are only checked through system(), print | and getline, so patterns such as /mv / no longer count as commands
+- bash-guard: brace expansion is bounded (long words such as a JSON document are not expanded), the time budget is checked inside the analysis loops, and long or pathological arguments are analysed in linear time
+- bash-guard: every refusal of a git hook bypass (core.hooksPath, HUSKY=0/SKIP=, --no-verify, commit -n) now ends with the same hint to make a normal commit and to fix or report a failing hook
+- delete-guard: string arguments of a command word chosen at run time that contain a delete command are checked with an unknown working directory
+
+##### v1.45.0
+
+###### Added
+
+- `scripts/bash-guard.py`: shell-aware analysis of Bash commands for the guard hooks (quoting, variables, wrappers, nested shells, substitutions, heredocs, `cd` tracking, abbreviated long options); every simple command is checked on its own
+- Protected paths now also cover mount points, devices, the working directory and its parents, and whole repositories or worktrees; `CLAUDE_MB_DOGMA_PROTECTED_MOUNTS` adds mount points
+- `scripts/test-guard-parity.py` with shared case tables in `scripts/guard-cases/` (review rounds, audit probes, everyday commands that must pass)
+
+###### Changed
+
+- Hardened the delete guard: commands whose command word is only known at run time, archive/sync tools that delete their sources, data-destroying git commands with a redirected work tree or git dir, filesystem wipe tools and Windows-side deletion from WSL are blocked; inline interpreter code is checked for deletes near protected paths
+- File protection, git permissions, token protection and dependency verification use the shell-aware analysis when python3 exists (text patterns remain the fallback); data-destroying git commands follow the delete setting, and words inside commit messages or search patterns no longer trigger the guards
+- Git hook bypasses (`--no-verify`, also abbreviated, hook path overrides, hook-skipping variables) are blocked
+- Both guards share one option parser (`scripts/dogma_getopt.py`) for cp, mv, install, ln, rm, unlink, rmdir, rsync, su, runuser and the env, sudo and doas wrappers: bundled short options, abbreviated long options (exact match for rsync, unknown rsync options are blocked), and both the GNU and the `POSIXLY_CORRECT` reading of the arguments are checked; an `env -S` string is split by the GNU env rules and refused when it uses an escape or expansion those rules do not allow; unknown wrapper options make relative targets fail closed
+- Commands that start in another working directory are checked there (`env -C`, `sudo -D`, systemd-run, tmux, bwrap, nsenter, unshare, start-stop-daemon); where it is not known before running (a login with `sudo -i` or `su -`, a systemd service, a new tmux window) relative targets fail closed, and a command run below another root or mount namespace (chroot, nsenter/unshare with a root or mount namespace, bwrap with remapped paths) is blocked
+- `rm`, `unlink`, `rmdir` and `mv` of a symlink act on the link itself and are no longer blocked when it points at a protected path; `..` after a symlink component is resolved against the link target, as the kernel does, and a path whose component before `..` does not exist yet is blocked
+
+#### v1.44
+
+##### v1.44.4
+
+###### Fixed
+
+- German-only language rules now fire on German text only: the write reminder's "Keep it in
+  German" note and the post-write ASCII umlaut check (fuer -> für) use a stricter shared
+  detection (`lib-german.sh`) instead of substring matches that also hit English or other
+  languages. Quoted text and code are ignored, and German function words must be a
+  meaningful share of all words and clearly outweigh English ones
+- An English file that quotes German examples is no longer reported as German, and a
+  bilingual file gets no language note instead of a wrong one
+- A German file is no longer reported as English because German prose contains "in" / "is"
+- `/dogma:force` examples show the real umlauts again (they had been stripped to "fur",
+  "konnen"); `/dogma:cleanup` and the prompt reminder state the umlaut rule is German text only
+- New `scripts/test-german-detection.sh` checks German, English, French, Spanish, Dutch and
+  Portuguese samples, English text with German quotes and code, and a bilingual document
+  against the detection and both hooks
+
+##### v1.44.3
+
+###### Fixed
+
+- dogma band no longer shows a "blocked" line forever: the notice is time-stamped and hidden after 15 s even when a plugin reload cut its timer short, and a new session starts without it
+
+##### v1.44.2
+
+###### Fixed
+
+- Delete guard only analyzes a segment whose command word can delete, move or link; a verb inside an argument (a file name, a grep pattern with <...>) no longer blocks harmless commands
+
+##### v1.44.1
+
+###### Changed
+
+- Notice tests use an invented project name instead of a real one
+
+##### v1.44.0
+
+###### Added
+
+- Always-on delete guard: blocks deleting, moving or symlinking onto protected paths (/, first-level dirs, /home depth 0-2, the home and its children); targets are resolved first (~, $HOME, cwd and cd, symlinks, glob base), unresolvable targets are blocked, fails closed without python3
+
+###### Security
+
+- A symlink under /tmp pointing at a protected directory can no longer route a recursive delete past the /tmp allowance
+
+#### v1.43
+
+##### Added
+
+- DOGMA-PERMISSIONS.md is picked by action target, pinned project, then session folder, with per-id inheritance (default on)
+- Notices also show in non-git folders and for pinned projects that inherit permissions
+
+#### v1.42
+
+##### Added
+
+- Source broadcasts via NOTICES.md
+- `CLAUDE_MB_DOGMA_SOURCE` for sync and recommended setup
+- Per-folder git identity for the source fetch
+
+#### v1.41
+
+##### Added
+
+- Stable setting ids (`§xxxx`) matched first with a text fallback, plus an id registry
+- changelog.d assembly in `/dogma:versioning`
+
+#### v1.40
+
+##### Added
+
+- Worktree files list (link or copy, `.credo/` included by default) and a cleanup-merged-worktrees checkbox
+
+##### Changed
+
+- Subagents may commit in their own worktree, never push or merge
+
+#### v1.39
+
+##### Added
+
+- One-time per-repo update notices for updates that need user action (Run/Later/Never), with an optional band toast
+
+#### v1.38
+
+##### Added
+
+- Final Verification option to run all tests only at release
+
+#### v1.37
+
+##### Added
+
+- Optional per-stage test commands (commit, push, relevant, build, all) with branch filters
+
+#### v1.36
+
+##### Added
+
+- Optional Claude Code band showing restricting permissions with change highlights
+
+#### v1.35
+
+##### Added
+
+- `permissions-summary.sh` listing only the restricting DOGMA-PERMISSIONS entries
+
+## limit
+
+### v2
+
+#### v2.36
+
+##### v2.36.3
+
+###### Changed
+
+- AvgPeak and Avg values are right-aligned to the width of 100.0, so the line does not shift
+
+###### Fixed
+
+- The 7d and 5h averages group history samples by their reset time, so samples of another window or plan mixed into one series no longer count as consumption
+- A window's first sample counts as a restart only after a real window change, not when the history starts recording the reset time
+- One history line with an unparsable timestamp no longer blanks all averages
+
+##### v2.36.2
+
+###### Added
+
+- Test script `scripts/test-state-io.sh` covers the state primitives under parallel writers. A read-modify-write held under the lock loses no update, a reader never sees a partial file, a rejected write leaves the target untouched, and the mkdir fallback lock refuses a second holder
+
+###### Changed
+
+- The tokens line label `User Tokens` is now `Work Tokens` (Input + Output, cache reads excluded), matching the README and the ledger's work tokens
+- Context cache fields `total_input` and `total_output` are renamed to `last_input_tokens` and `last_output_tokens`; they hold the most recent API response, not session totals
+
+###### Fixed
+
+- The threshold inject state is read, decided and written under one lock for the session, so parallel hook calls no longer all inject the same ACTION or status line
+- The z.ai statusline line is labelled `LastReq` with `In+Out`, since it shows the last API response
+- A stale mkdir lock that cannot be removed no longer makes the lock wait spin forever
+
+##### v2.36.1
+
+###### Added
+
+- `scripts/test-inject-status.sh`: fixture test for the main-session-only ACTION, the untouched main state on subagent calls, the reset after a drop (also inside the throttle interval) and malformed input
+
+###### Fixed
+
+- The threshold ACTION line is injected into the main session only: a tool call inside a subagent (`agent_id` in the hook input) no longer receives it and never writes the main session's inject state (fired thresholds, throttle, delta baseline), so the main session still gets the ACTION on its next prompt or tool call; a subagent gets at most the plain status line, throttled by its own per-agent state file
+- A threshold reset (fill dropped back below it, e.g. after a compact) is persisted for the main session even when no status line is written on that call, so the threshold fires again when the fill climbs back before the next line
+
+##### v2.36.0
+
+###### Added
+
+- One deduplicated token ledger (`scripts/usage-ledger.sh`) for main agent and subagents: transcript lines are counted once per API message (`message.id` + `requestId`, last line wins), read incrementally without consuming a partial trailing line, and summed into 5-minute buckets so window tokens come from timestamps
+- `[Est100%:X]` on the 5h / 7d device lines: median of window tokens / (API% / 100) over samples at >= 20 % in the current window, falling back to the previous window (`~`). It is a per-device value (only this device's transcripts are readable, API% is account-wide) and a lower bound with parallel use on other devices; no samples are taken while the transcript backfill is incomplete or the API numbers are older than `CLAUDE_MB_LIMIT_EST_MAX_AGE` (default 120 s)
+- `[AvgPeak:X%]` (average peak per completed window) and `[Avg:Y%/h]` / `[Avg:Y%/d]` (average consumption incl. idle time) from the history; history entries now record `resets_at`
+- Further limits from the API's `limits[]` list (e.g. `weekly_scoped` per model) as their own lines (`CLAUDE_MB_LIMIT_SCOPED`)
+- `[stale Xm]` when the usage cache is older than `CLAUDE_MB_LIMIT_STALE_AFTER` (default 600 s); after `resets_at` a limit shows `0.0% ... (reset)`
+- `scripts/state-io.sh`: shared lock, atomic write, safe read, debug flag, half-up rounding and backoff helpers
+- Fixture tests: `test-usage-ledger.sh` (duplicated message ids, split messages, partial lines, parallel scans, pricing), `test-local-tracking.sh` (reset detection incl. utilization drop with unchanged `resets_at`, parallel writers, Est100%, averages, backoff), `test-statusline-render.sh` (end-to-end render, parallel renders)
+
+###### Changed
+
+- Tokens line shows the session sums (main agent + its subagents) from the ledger: Input incl. cache writes, Output, Cached (cache reads); it falls back to `LastReq` (last request from stdin) when the ledger is unreadable
+- Window tokens, highscores and LifetimeTotal count work tokens (input + output + cache writes); cache reads are tracked and shown separately
+- LifetimeTotal and `/limit:highscore` price usage per concrete model id with cache writes by TTL; models without a known price show `$X+n/a` instead of Opus pricing
+- Window resets are also detected on a sharp utilization drop (> 20 points or below half) with an unchanged `resets_at`, and when `resets_at` has passed
+- All state read-modify-writes run under a lock with atomic writes; an unreadable state skips the local values for one render instead of counting from 0
+- A 429 stores one `retry_at`; the statusline shows exactly that countdown and `refresh-usage.sh` does not call the API before it
+- `CLAUDE_MB_LIMIT_DEBUG` accepts `true`/`1`/`yes`/`on` in every script
+- `/limit:highscore` uses `CLAUDE_MB_LIMIT_DEVICE_LABEL` and shows Est100%, window tokens with cache reads and a per-model lifetime breakdown
+- Transcript reading is linear in the bytes read (grep prefilter, one streaming jq pass, one awk pass for dedup and sums) and always bounded: the render reads about `CLAUDE_MB_LIMIT_SESSION_SCAN_BYTES` (default 2 MiB) of the current transcript per render (a single longer line is read whole), the global scan runs detached with a time budget (default 25 s, checked with millisecond resolution) (optional byte budget `CLAUDE_MB_LIMIT_SCAN_BYTES`), small transcripts are read in batches, and both resume from stored byte offsets with unfinished files marked pending, so a first backfill never blocks the statusline. The render-time scan is gated per transcript and writes nothing when the transcript did not grow; entries of deleted transcripts are pruned (lifetime totals stay; a transcript read or marked pending in the same run is never pruned). Transcript paths are canonicalized, so one file is never counted under two spellings. Known limit: deduplication is per file, so an API message present in two transcripts (e.g. a subagent sidechain and its parent) is counted in both (about 1 %)
+- Fewer jq calls per render: highscore/window updates and the ledger summary each read their state in a single jq pass
+- Highscore state schema 2: highscores and LimitAt values of the old counting scheme are discarded once (a `.bak` copy is kept)
+
+###### Removed
+
+- `[LimitAt:...]` and the `[Average:L%/A%]` display (both halves read the same field)
+- The stdin delta accounting (`limit-usage-state_<profile>.json`, no longer written) with its false "session reset" path, and the separate main/subagent scanner states (`subagent-tokens.sh` is a compatibility wrapper now)
+
+###### Fixed
+
+- Token counts were ~2.3x too high because every content-block line of a message was counted
+- Main-agent window tokens measured context growth and re-added the full context on almost every other turn
+- Mid-window drops caused by empty reads of non-atomically written state files (subagent baseline reset)
+- `test-local-tracking.sh` deleted and rewrote the real state file; it now runs in a temp profile
 
 ## hydra
 
