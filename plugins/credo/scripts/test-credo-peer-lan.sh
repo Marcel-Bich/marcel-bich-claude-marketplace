@@ -48,6 +48,9 @@
 #     adds it), pending repairs follow their configured address (check, pairs, init
 #     --remove, daemon start), the relay log rotates at 5 MB (also while the daemon runs),
 #     and a peer that stays down logs its failed roster once, plus once on recovery.
+#   - WSL default route (WN): the Windows default route is taken only from an Up adapter
+#     with a non-link-local IPv4 address, all routes as fallback (static check of the
+#     PowerShell text; powershell is never run).
 #
 # Usage: bash test-credo-peer-lan.sh
 
@@ -5516,6 +5519,31 @@ WTH="$(wt /nonexistent "$TMP/WT/procversion-wsl" --hint /nonexistent-credo-test/
 case "$WTH" in *powershell.exe*appendWindowsPath*) r=0 ;; *) r=1 ;; esac
 ok "WT: missing powershell.exe under WSL yields a reason naming the tool and the PATH fix" "$r"
 check "WT: no hint when powershell.exe is found" "NOHINT" "$(wt /nonexistent "$TMP/WT/procversion-wsl" --hint)"
+
+# --- WN: WSL default route only from Up adapters with a non-link-local IPv4 ----------
+# The Windows default route must come from an adapter that is Up and whose IPv4 address
+# is not 169.254.0.0/16, with the unfiltered route list as fallback. Static check of the
+# PowerShell text only: powershell is never run here.
+cat > "$TMP/wn.py" <<'PYEOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("credo_peer_lan", sys.argv[1])
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+ps = mod.WSL_NETINFO_PS
+checks = {
+    "Get-NetAdapter Status Up filter": "Get-NetAdapter" in ps and 'Where-Object Status -eq "Up"' in ps,
+    "link-local 169.254 exclusion via InterfaceIndex": "InterfaceIndex" in ps and '$_.IPAddress -notlike "169.254.*"' in ps,
+    "route candidate needs Up and non-link-local": "$up -contains $_.ifIndex" in ps and "$real -contains $_.ifIndex" in ps,
+    "unfiltered fallback": "if ($cand.Count -eq 0) { $cand = $all }" in ps,
+    "filter before the metric sort": 0 <= ps.find("$cand") < ps.find("Sort-Object { [int]$_.RouteMetric"),
+    "route query unchanged": 'Get-NetRoute -DestinationPrefix "0.0.0.0/0" -AddressFamily IPv4' in ps,
+}
+for name, cond in checks.items():
+    if not cond:
+        print("missing: " + name)
+print("checked")
+PYEOF
+check "WN: default route only from Up adapters with a non-link-local IPv4, unfiltered fallback" "checked" \
+    "$("$PY" "$TMP/wn.py" "$DAEMON" 2>/dev/null)"
 
 # --- SD: deliver by sessionId picks only LIVE descriptors -----------------------------
 # After a crash/resume the registry can hold two descriptors of one session: a dead pid

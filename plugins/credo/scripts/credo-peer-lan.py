@@ -1031,12 +1031,20 @@ def detect_network_linux():
     }
 
 
-# ONE read-only powershell call: the Windows default route with the lowest metric,
+# ONE read-only powershell call: the lowest-metric default route of an Up, non-link-local adapter,
 # the router MAC from the neighbor table, the adapter IPv4 + prefix, and the network
 # profile (name = label, NetworkCategory = Private/Public/DomainAuthenticated).
 WSL_NETINFO_PS = (
     '$ErrorActionPreference="Stop"; '
-    '$r = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -AddressFamily IPv4 | '
+    '$up = @(Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object Status -eq "Up" | '
+    "ForEach-Object ifIndex); "
+    '$real = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | '
+    'Where-Object { $_.IPAddress -notlike "169.254.*" } | ForEach-Object InterfaceIndex); '
+    '$all = @(Get-NetRoute -DestinationPrefix "0.0.0.0/0" -AddressFamily IPv4); '
+    '$cand = @($all | Where-Object { ($up -contains $_.ifIndex) -and '
+    '($real -contains $_.ifIndex) }); '
+    'if ($cand.Count -eq 0) { $cand = $all }; '
+    '$r = $cand | '
     "Sort-Object { [int]$_.RouteMetric + [int]$_.InterfaceMetric } | "
     "Select-Object -First 1; "
     "$n = Get-NetNeighbor -IPAddress $r.NextHop -InterfaceIndex $r.ifIndex "
