@@ -5535,6 +5535,7 @@ checks = {
     "route candidate needs Up and non-link-local": "$up -contains $_.ifIndex" in ps and "$real -contains $_.ifIndex" in ps,
     "unfiltered fallback": "if ($cand.Count -eq 0) { $cand = $all }" in ps,
     "filter before the metric sort": 0 <= ps.find("$cand") < ps.find("Sort-Object { [int]$_.RouteMetric"),
+    "route picked from the candidates": "$r = $cand | " in ps,
     "route query unchanged": 'Get-NetRoute -DestinationPrefix "0.0.0.0/0" -AddressFamily IPv4' in ps,
 }
 for name, cond in checks.items():
