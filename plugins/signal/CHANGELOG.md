@@ -4,6 +4,14 @@ Changelog of the signal plugin. Newest first. Months group releases; no day date
 
 ## v1
 
+### v1.6
+
+#### v1.6.0
+
+##### Added
+
+- Windows toasts are hidden after `CLAUDE_MB_NOTIFY_TOAST_SECONDS` seconds (default 60, `0` keeps them until dismissed); their entries stay in the Action Center
+
 ### v1.5
 
 #### v1.5.4
