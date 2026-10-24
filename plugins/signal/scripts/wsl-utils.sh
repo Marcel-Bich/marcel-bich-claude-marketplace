@@ -7,8 +7,12 @@
 # Environment:
 #   CLAUDE_MB_NOTIFY_TOAST: "true" (default) or "false"/"off"/"no"/"0"/"disabled" to skip every toast and
 #                           desktop-notification attempt (and the preflight). Sounds are unaffected.
+#   CLAUDE_MB_NOTIFY_TOAST_SECONDS: seconds a Windows toast stays on screen before it is hidden (its entry
+#                           stays in the Action Center). Unset means 60; 0 or an invalid value means until
+#                           dismissed. Digits only, capped at 86400.
 #   CLAUDE_MB_SIGNAL_STATE_DIR: state dir (default: ${XDG_STATE_HOME:-$HOME/.local/state}/claude-mb-signal)
-#   CLAUDE_MB_SIGNAL_PS_TIMEOUT: seconds before a powershell.exe run is killed (default 20)
+#   CLAUDE_MB_SIGNAL_PS_TIMEOUT: seconds before a powershell.exe run is killed (default 20); a toast run that
+#                           hides its toast gets this plus CLAUDE_MB_NOTIFY_TOAST_SECONDS
 #   CLAUDE_MB_SIGNAL_PROC_MOUNTS / CLAUDE_MB_SIGNAL_PROC_VERSION: test seams for /proc/mounts and /proc/version
 
 # Cache WSL detection result
@@ -207,6 +211,25 @@ signal_toast_enabled() {
     return 0
 }
 
+# Print how many seconds a Windows toast stays on screen before it is hidden (its entry stays in
+# the Action Center): CLAUDE_MB_NOTIFY_TOAST_SECONDS, unset means 60. Only digits count (surrounding
+# whitespace ignored); an empty, blank or non-integer value prints 0, which means until dismissed.
+# Leading zeros are dropped and the value is capped at 86400 (one day).
+_signal_toast_seconds() {
+    local v="${CLAUDE_MB_NOTIFY_TOAST_SECONDS-60}"
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    case "$v" in
+        ''|*[!0123456789]*) printf '0\n'; return 0 ;;
+    esac
+    v="${v#"${v%%[!0]*}"}"
+    [ -n "$v" ] || v=0
+    if [ "${#v}" -gt 5 ] || [ "$v" -gt 86400 ]; then
+        v=86400
+    fi
+    printf '%s\n' "$v"
+}
+
 # --- powershell.exe resolution --------------------------------------------------------
 
 # True when the path is an absolute, executable file named powershell.exe.
@@ -299,9 +322,10 @@ _signal_ps_run() {
 # A failure goes to the log and to the per-kind "ps-failed-<what>" marker (read by the next
 # notification of that kind to emit one rate-limited warning); a success clears only its own
 # kind's marker, so a working sound run does not hide a failing toast.
-# Usage: signal_ps_bg <what> <powershell-path> <script>
+# Usage: signal_ps_bg <what> <powershell-path> <script> [timeout-seconds]
+# The optional timeout replaces CLAUDE_MB_SIGNAL_PS_TIMEOUT (default 20) for this run only.
 signal_ps_bg() {
-    local what="$1" ps="$2" cmd="$3" t="${CLAUDE_MB_SIGNAL_PS_TIMEOUT:-20}"
+    local what="$1" ps="$2" cmd="$3" t="${4:-${CLAUDE_MB_SIGNAL_PS_TIMEOUT:-20}}"
     (
         local err rc d kind="${what//[^A-Za-z0-9._-]/_}"
         err="$(_signal_ps_run "$ps" "$t" "$cmd" 2>&1 >/dev/null)"
@@ -339,7 +363,9 @@ _signal_need_ps() {
 # Send Windows toast notification via PowerShell
 # Usage: windows_notify "Title" "Message" "Tag" "Urgency"
 # - Tag: Used for notification replacement (same tag = replace old notification)
-# - Urgency: 1=normal (5s), 2=critical (persistent)
+# - Urgency: 1=normal, 2=critical. Both use duration short (1) or long (2), but Windows keeps the
+#   incomingCall toast on screen until the user acts, so the duration does not end it. The toast is
+#   hidden after CLAUDE_MB_NOTIFY_TOAST_SECONDS instead (default 60, 0 keeps it until dismissed)
 # Uses scenario="incomingCall" to bypass Focus Assist and show banner
 # Returns 0 when the toast run was started (its exit code is evaluated in the background),
 # 1 when powershell.exe cannot be found (one warning per day), 3 when the toast switch is off.
@@ -381,9 +407,21 @@ windows_notify() {
     tag=$(printf '%s' "$tag" | tr -c 'A-Za-z0-9-' '-')
     tag="${tag:0:64}"
 
-    # Duration: short (5s) for normal, long (25s) for critical
+    # Duration attribute of the toast (see the Urgency note above)
     local duration="short"
     [ "$urgency" = "2" ] && duration="long"
+
+    # Hide after CLAUDE_MB_NOTIFY_TOAST_SECONDS (0 keeps the toast). Only digits reach the script.
+    # The run waits that long before it hides the toast, so its timeout covers the wait on top of
+    # the normal one. A non-digit CLAUDE_MB_SIGNAL_PS_TIMEOUT is passed on unchanged, as before.
+    local secs hide_lines="" run_timeout="${CLAUDE_MB_SIGNAL_PS_TIMEOUT:-20}"
+    secs="$(_signal_toast_seconds)"
+    if [ "$secs" -gt 0 ]; then
+        hide_lines="
+        Start-Sleep -Seconds $secs
+        try { \$notifier.Hide(\$toast) } catch { }"
+        case "$run_timeout" in *[!0123456789]*) ;; *) run_timeout=$((10#$run_timeout + secs)) ;; esac
+    fi
 
     ps_cmd="
         [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
@@ -404,9 +442,10 @@ windows_notify() {
         \$toast = [Windows.UI.Notifications.ToastNotification]::new(\$xml)
         \$toast.Tag = '$tag'
         \$toast.Group = 'ClaudeCode'
-        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show(\$toast)
+        \$notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe')
+        \$notifier.Show(\$toast)$hide_lines
     "
-    signal_ps_bg toast "$ps" "$ps_cmd"
+    signal_ps_bg toast "$ps" "$ps_cmd" "$run_timeout"
     return 0
 }
 

@@ -147,6 +147,8 @@ reset_state() {
     : > "$PS_LOG"; : > "$GDBUS_LOG"; : > "$NS_LOG"
 }
 st_has() { [ -e "$CLAUDE_MB_SIGNAL_STATE_DIR/$1" ] && echo yes || echo no; }
+# the hide-after-seconds setting is unset (default 60 s) unless a case sets it
+unset CLAUDE_MB_NOTIFY_TOAST_SECONDS
 
 # --- resolve_powershell -------------------------------------------------------------
 
@@ -473,11 +475,94 @@ check_contains "ps failure: earlier sound failure is reported by the next sound"
 # a hanging powershell never blocks the caller and is killed by the timeout
 reset_state
 t0=$(date +%s%N)
-FAKE_PS_SLEEP=30 CLAUDE_MB_SIGNAL_PS_TIMEOUT=1 windows_notify "Done" "x" "tag" 1; rc=$?
+# (hide switched off: with the default 60 s wait the run timeout would be 61 s and this run would not be killed)
+FAKE_PS_SLEEP=30 CLAUDE_MB_NOTIFY_TOAST_SECONDS=0 CLAUDE_MB_SIGNAL_PS_TIMEOUT=1 windows_notify "Done" "x" "tag" 1; rc=$?
 t1=$(date +%s%N)
 check "notify: hang does not block the caller" "1" "$([ $(( (t1 - t0) / 1000000 )) -lt 800 ] && echo 1 || echo 0)"
 wait
 check_contains "notify: hung run is killed and logged" "exit 124" "$(cat "$CLAUDE_MB_SIGNAL_STATE_DIR/signal.log" 2>/dev/null)"
+
+# --- windows_notify: hide after CLAUDE_MB_NOTIFY_TOAST_SECONDS -----------------------
+
+# the seconds setting: unset is 60, digits are the seconds, anything else is 0 (stays until dismissed)
+check "toast seconds: unset is 60" "60" "$(_signal_toast_seconds)"
+check "toast seconds: 15" "15" "$(CLAUDE_MB_NOTIFY_TOAST_SECONDS=15 _signal_toast_seconds)"
+check "toast seconds: 0 is off" "0" "$(CLAUDE_MB_NOTIFY_TOAST_SECONDS=0 _signal_toast_seconds)"
+check "toast seconds: empty is off" "0" "$(CLAUDE_MB_NOTIFY_TOAST_SECONDS= _signal_toast_seconds)"
+check "toast seconds: blank is off" "0" "$(CLAUDE_MB_NOTIFY_TOAST_SECONDS='  ' _signal_toast_seconds)"
+for v in abc 1.5 -5 +5 12s '1 2' 1e3 0x1F '5; calc'; do
+    check "toast seconds: '$v' is off" "0" "$(CLAUDE_MB_NOTIFY_TOAST_SECONDS="$v" _signal_toast_seconds)"
+done
+check "toast seconds: blanks and leading zeros ignored" "30" "$(CLAUDE_MB_NOTIFY_TOAST_SECONDS=' 030 ' _signal_toast_seconds)"
+check "toast seconds: 86400 kept" "86400" "$(CLAUDE_MB_NOTIFY_TOAST_SECONDS=86400 _signal_toast_seconds)"
+check "toast seconds: above the cap is capped" "86400" "$(CLAUDE_MB_NOTIFY_TOAST_SECONDS=86401 _signal_toast_seconds)"
+check "toast seconds: huge value is capped" "86400" "$(CLAUDE_MB_NOTIFY_TOAST_SECONDS=99999999999999999999999 _signal_toast_seconds)"
+
+# default: the script shows the toast, waits 60 s, then hides it through the same notifier
+reset_state
+windows_notify "Done" "All good" "tag-h" 1
+wait
+s="$(grep '^SCRIPT' "$PS_LOG")"
+check_contains "hide: default script waits 60 seconds" "Start-Sleep -Seconds 60" "$s"
+check_contains "hide: default script hides through the notifier" "try { \$notifier.Hide(\$toast) } catch" "$s"
+check_contains "hide: notifier kept in a variable for Show" "\$notifier.Show(\$toast)" "$s"
+show_first=0; [[ "${s%%Start-Sleep*}" == *'$notifier.Show($toast)'* ]] && show_first=1
+check "hide: Show comes before the wait" "1" "$show_first"
+hide_after=0; [[ "${s#*Start-Sleep}" == *'.Hide($toast)'* ]] && hide_after=1
+check "hide: Hide comes after the wait" "1" "$hide_after"
+
+# explicit seconds replace the default
+reset_state
+CLAUDE_MB_NOTIFY_TOAST_SECONDS=15 windows_notify "Done" "x" "tag-h" 1
+wait
+s="$(grep '^SCRIPT' "$PS_LOG")"
+check_contains "hide: explicit 15 seconds" "Start-Sleep -Seconds 15" "$s"
+check "hide: explicit value replaces the default wait" "0" "$(grep -c 'Seconds 60' <<< "$s")"
+
+# 0, empty, blank and invalid values: today's behavior, the toast is shown and never hidden
+for v in 0 '' '   ' abc 1.5 -5 '12s' '5; Start-Process calc'; do
+    reset_state
+    CLAUDE_MB_NOTIFY_TOAST_SECONDS="$v" windows_notify "Done" "x" "tag-h" 1
+    wait
+    s="$(grep '^SCRIPT' "$PS_LOG")"
+    check "hide: value '$v' keeps today's behavior, no wait" "0" "$(grep -c 'Start-Sleep' <<< "$s")"
+    check "hide: value '$v' makes no Hide call" "0" "$(grep -c 'Hide(' <<< "$s")"
+    check "hide: value '$v' still shows the toast" "1" "$(grep -c 'Show(' <<< "$s")"
+done
+reset_state
+CLAUDE_MB_NOTIFY_TOAST_SECONDS='5; Start-Process calc' windows_notify "Done" "x" "tag-h" 1
+wait
+check "hide: hostile value adds no statement" "0" "$(grep '^SCRIPT' "$PS_LOG" | grep -c 'Start-Process calc')"
+
+# a value above the cap is capped in the script
+reset_state
+CLAUDE_MB_NOTIFY_TOAST_SECONDS=100000 windows_notify "Done" "x" "tag-h" 1
+wait
+check_contains "hide: large value is capped in the script" "Start-Sleep -Seconds 86400" "$(grep '^SCRIPT' "$PS_LOG")"
+
+# the toast run timeout covers the wait: normal 1 s plus 10 s, the fake run takes 3 s and must not be killed
+reset_state
+FAKE_PS_SLEEP=3 CLAUDE_MB_SIGNAL_PS_TIMEOUT=1 CLAUDE_MB_NOTIFY_TOAST_SECONDS=10 windows_notify "Done" "x" "tag-t" 1
+wait
+check "hide: toast run is not killed inside its wait" "" "$(cat "$CLAUDE_MB_SIGNAL_STATE_DIR/signal.log" 2>/dev/null)"
+
+# switched off: the normal timeout still applies, the same 3 s run is killed after 1 s
+reset_state
+FAKE_PS_SLEEP=3 CLAUDE_MB_SIGNAL_PS_TIMEOUT=1 CLAUDE_MB_NOTIFY_TOAST_SECONDS=0 windows_notify "Done" "x" "tag-t" 1
+wait
+check_contains "hide: switched off keeps the normal timeout" "exit 124" "$(cat "$CLAUDE_MB_SIGNAL_STATE_DIR/signal.log" 2>/dev/null)"
+
+# sounds keep the normal timeout and are not extended by the toast seconds
+reset_state
+FAKE_PS_SLEEP=3 CLAUDE_MB_SIGNAL_PS_TIMEOUT=1 CLAUDE_MB_NOTIFY_TOAST_SECONDS=10 windows_sound complete 0.4
+wait
+check_contains "hide: sound run keeps the normal timeout" "exit 124" "$(cat "$CLAUDE_MB_SIGNAL_STATE_DIR/signal.log" 2>/dev/null)"
+
+# a non-numeric timeout setting does not break the arithmetic of the toast run
+reset_state
+CLAUDE_MB_SIGNAL_PS_TIMEOUT=abc CLAUDE_MB_NOTIFY_TOAST_SECONDS=10 windows_notify "Done" "x" "tag-t" 1; rc=$?
+wait
+check "hide: invalid timeout setting still returns 0" "0" "$rc"
 
 # --- windows_sound ------------------------------------------------------------------
 
