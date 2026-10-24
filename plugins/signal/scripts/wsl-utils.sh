@@ -416,9 +416,10 @@ windows_notify() {
     # the normal one. A non-digit CLAUDE_MB_SIGNAL_PS_TIMEOUT, or 0 (no limit), is passed on
     # unchanged, as before.
     # Hide() also drops the entry from the Action Center, so the same toast is added back there
-    # without a banner (SuppressPopup), which matches a click on it. Only while the entry is still
-    # in the history with the same content: a toast the user deleted, or one replaced by a newer
-    # toast with the same tag, is left alone.
+    # without a banner (SuppressPopup), which matches a click on it. The copy drops the
+    # incomingCall scenario: with it, Windows shows the banner again despite SuppressPopup.
+    # Only while the entry is still in the history with the same content: a toast the user
+    # deleted, or one replaced by a newer toast with the same tag, is left alone.
     local secs hide_lines="" run_timeout="${CLAUDE_MB_SIGNAL_PS_TIMEOUT:-20}"
     secs="$(_signal_toast_seconds)"
     if [ "$secs" -gt 0 ]; then
@@ -428,7 +429,10 @@ windows_notify() {
         \$still = @([Windows.UI.Notifications.ToastNotificationManager]::History.GetHistory(\$app) | Where-Object { \$_.Tag -eq \$toast.Tag -and \$_.Group -eq \$toast.Group -and \$_.Content.GetXml() -eq \$xml.GetXml() })
         if (\$still.Count -gt 0) {
             try { \$notifier.Hide(\$toast) } catch { }
-            \$quiet = [Windows.UI.Notifications.ToastNotification]::new(\$xml)
+            \$copy = New-Object Windows.Data.Xml.Dom.XmlDocument
+            \$copy.LoadXml(\$xml.GetXml())
+            \$copy.DocumentElement.RemoveAttribute('scenario')
+            \$quiet = [Windows.UI.Notifications.ToastNotification]::new(\$copy)
             \$quiet.Tag = \$toast.Tag
             \$quiet.Group = \$toast.Group
             \$quiet.SuppressPopup = \$true

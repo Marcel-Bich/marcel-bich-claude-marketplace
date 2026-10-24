@@ -375,13 +375,14 @@ check_contains "notify: title text around stripped controls kept" "title[31m" "$
 check_contains "notify: body text around stripped controls kept, tab kept" "bodyx"$'\t'"y" "$(grep '^SCRIPT' "$PS_LOG")"
 
 # the encoded command stays far below the 32767 character Windows limit even when escaping
-# inflates every character (2000 x '&' becomes 5 characters each)
+# inflates every character (2000 x '&' becomes 5 characters each); the hide step adds about 2k,
+# so 24k still keeps a wide margin
 reset_state
 big="$(head -c 2000 /dev/zero | tr '\0' '&')"
 bigt="$(head -c 300 /dev/zero | tr '\0' '<')"
 windows_notify "$bigt" "$big" "tag-big" 1
 wait
-check "notify: worst-case encoded command stays far below the limit" "1" "$([ "$(grep '^CALL' "$PS_LOG" | head -n1 | wc -c)" -lt 20000 ] && echo 1 || echo 0)"
+check "notify: worst-case encoded command stays far below the limit" "1" "$([ "$(grep '^CALL' "$PS_LOG" | head -n1 | wc -c)" -lt 24000 ] && echo 1 || echo 0)"
 check "notify: capped text keeps well-formed entities" "0" "$(grep '^SCRIPT' "$PS_LOG" | sed 's/&amp;//g; s/&lt;//g; s/&gt;//g' | grep -c '&')"
 
 # non-ASCII text survives the UTF-16LE round trip
@@ -513,6 +514,8 @@ check "hide: Hide comes after the wait" "1" "$hide_after"
 # Hide() also drops the Action Center entry: the toast is added back there without a banner,
 # only while the same entry is still in the history
 check_contains "hide: re-add is silent" "\$quiet.SuppressPopup = \$true" "$s"
+check_contains "hide: re-add copy drops the incomingCall scenario" "\$copy.DocumentElement.RemoveAttribute('scenario')" "$s"
+check_contains "hide: re-add is built from the copy" "ToastNotification]::new(\$copy)" "$s"
 check_contains "hide: re-add shows the silent copy" "\$notifier.Show(\$quiet)" "$s"
 check_contains "hide: only while the same entry is in the history" "\$_.Content.GetXml() -eq \$xml.GetXml()" "$s"
 readd_after=0; [[ "${s#*.Hide(\$toast)}" == *'$notifier.Show($quiet)'* ]] && readd_after=1
