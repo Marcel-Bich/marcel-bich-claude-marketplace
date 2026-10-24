@@ -510,6 +510,14 @@ show_first=0; [[ "${s%%Start-Sleep*}" == *'$notifier.Show($toast)'* ]] && show_f
 check "hide: Show comes before the wait" "1" "$show_first"
 hide_after=0; [[ "${s#*Start-Sleep}" == *'.Hide($toast)'* ]] && hide_after=1
 check "hide: Hide comes after the wait" "1" "$hide_after"
+# Hide() also drops the Action Center entry: the toast is added back there without a banner,
+# only while the same entry is still in the history
+check_contains "hide: re-add is silent" "\$quiet.SuppressPopup = \$true" "$s"
+check_contains "hide: re-add shows the silent copy" "\$notifier.Show(\$quiet)" "$s"
+check_contains "hide: only while the same entry is in the history" "\$_.Content.GetXml() -eq \$xml.GetXml()" "$s"
+readd_after=0; [[ "${s#*.Hide(\$toast)}" == *'$notifier.Show($quiet)'* ]] && readd_after=1
+check "hide: re-add comes after Hide" "1" "$readd_after"
+check "hide: no History.Remove or Clear" "0" "$(grep -cE 'History\.(Remove|Clear)' <<< "$s")"
 
 # explicit seconds replace the default
 reset_state
@@ -557,6 +565,12 @@ reset_state
 FAKE_PS_SLEEP=3 CLAUDE_MB_SIGNAL_PS_TIMEOUT=1 CLAUDE_MB_NOTIFY_TOAST_SECONDS=10 windows_sound complete 0.4
 wait
 check_contains "hide: sound run keeps the normal timeout" "exit 124" "$(cat "$CLAUDE_MB_SIGNAL_STATE_DIR/signal.log" 2>/dev/null)"
+
+# timeout 0 (no limit) stays unlimited: 0 + 1 s would kill the 3 s run
+reset_state
+FAKE_PS_SLEEP=3 CLAUDE_MB_SIGNAL_PS_TIMEOUT=0 CLAUDE_MB_NOTIFY_TOAST_SECONDS=1 windows_notify "Done" "x" "tag-t" 1
+wait
+check "hide: timeout 0 stays without limit" "" "$(cat "$CLAUDE_MB_SIGNAL_STATE_DIR/signal.log" 2>/dev/null)"
 
 # a non-numeric timeout setting does not break the arithmetic of the toast run
 reset_state

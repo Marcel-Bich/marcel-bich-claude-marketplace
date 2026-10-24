@@ -413,14 +413,31 @@ windows_notify() {
 
     # Hide after CLAUDE_MB_NOTIFY_TOAST_SECONDS (0 keeps the toast). Only digits reach the script.
     # The run waits that long before it hides the toast, so its timeout covers the wait on top of
-    # the normal one. A non-digit CLAUDE_MB_SIGNAL_PS_TIMEOUT is passed on unchanged, as before.
+    # the normal one. A non-digit CLAUDE_MB_SIGNAL_PS_TIMEOUT, or 0 (no limit), is passed on
+    # unchanged, as before.
+    # Hide() also drops the entry from the Action Center, so the same toast is added back there
+    # without a banner (SuppressPopup), which matches a click on it. Only while the entry is still
+    # in the history with the same content: a toast the user deleted, or one replaced by a newer
+    # toast with the same tag, is left alone.
     local secs hide_lines="" run_timeout="${CLAUDE_MB_SIGNAL_PS_TIMEOUT:-20}"
     secs="$(_signal_toast_seconds)"
     if [ "$secs" -gt 0 ]; then
         hide_lines="
         Start-Sleep -Seconds $secs
-        try { \$notifier.Hide(\$toast) } catch { }"
-        case "$run_timeout" in *[!0123456789]*) ;; *) run_timeout=$((10#$run_timeout + secs)) ;; esac
+        \$app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+        \$still = @([Windows.UI.Notifications.ToastNotificationManager]::History.GetHistory(\$app) | Where-Object { \$_.Tag -eq \$toast.Tag -and \$_.Group -eq \$toast.Group -and \$_.Content.GetXml() -eq \$xml.GetXml() })
+        if (\$still.Count -gt 0) {
+            try { \$notifier.Hide(\$toast) } catch { }
+            \$quiet = [Windows.UI.Notifications.ToastNotification]::new(\$xml)
+            \$quiet.Tag = \$toast.Tag
+            \$quiet.Group = \$toast.Group
+            \$quiet.SuppressPopup = \$true
+            \$notifier.Show(\$quiet)
+        }"
+        case "$run_timeout" in
+            ''|*[!0123456789]*) ;;
+            *) [ "$((10#$run_timeout))" -gt 0 ] && run_timeout=$((10#$run_timeout + secs)) ;;
+        esac
     fi
 
     ps_cmd="
