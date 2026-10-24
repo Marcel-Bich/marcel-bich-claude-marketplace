@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v1.6
 
+##### v1.6.1
+
+###### Fixed
+
+- Windows toasts now really leave the screen after `CLAUDE_MB_NOTIFY_TOAST_SECONDS`: the silent Action Center copy no longer carries the incomingCall scenario, which made Windows show the banner again
+
 ##### v1.6.0
 
 ###### Added
