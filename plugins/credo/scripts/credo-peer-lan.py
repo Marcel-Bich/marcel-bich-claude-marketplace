@@ -5217,9 +5217,9 @@ class Daemon(object):
         key = "%s:%d" % (host, port)
         sock = None
         ch = None
-        if not is_loopback_ip(host):
-            self._refresh_self_address()   # the hello below advertises the current address
         try:
+            if not is_loopback_ip(host):
+                self._refresh_self_address()   # the hello below advertises the current address
             try:
                 sock = open_link_socket(host, port, min(5.0, max(1.0, 3 * self.roster_interval)))
             except OSError as exc:
