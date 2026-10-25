@@ -7,6 +7,10 @@
 
 set -uo pipefail
 
+# Start from a clean limit configuration: inherited CLAUDE_MB_LIMIT_* values
+# (a preset, a per-feature flag) would change the layout under test.
+while IFS= read -r limit_var; do unset "$limit_var"; done < <(compgen -e | grep '^CLAUDE_MB_LIMIT_')
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_DIR=$(mktemp -d)
 FAKE_PROFILE="limit-render-$$-${RANDOM}"
@@ -33,6 +37,9 @@ export CLAUDE_MB_LIMIT_CAPTION=false
 export CLAUDE_MB_LIMIT_DEVICE_LABEL=box-1
 export CLAUDE_MB_LIMIT_SESSION_SCAN=0
 export CLAUDE_MB_LIMIT_SCAN_SYNC=1
+# The checks below pin the full layout (the former default). The preset checks
+# set their own CLAUDE_MB_LIMIT_PRESET per render.
+export CLAUDE_MB_LIMIT_PRESET=enthusiast
 
 PASS=0
 FAIL=0
@@ -64,7 +71,11 @@ write_cache() { # five_util five_reset seven_util
           {kind: "session", group: "session", percent: $f, resets_at: $fr, scope: null},
           {kind: "weekly_all", group: "weekly", percent: $s, resets_at: $sr, scope: null},
           {kind: "weekly_scoped", group: "weekly", percent: 12, resets_at: $sr,
-           scope: {model: {id: null, display_name: "Fable"}, surface: null}}
+           scope: {model: {id: null, display_name: "Fable"}, surface: null}},
+          {kind: "weekly_scoped", group: "weekly", percent: 0, resets_at: $sr,
+           scope: {model: {id: null, display_name: "Zed"}, surface: null}},
+          {kind: "weekly_scoped", group: "weekly", percent: 5, resets_at: $sr,
+           scope: {model: {id: null, display_name: "Nova"}, surface: null}}
         ]}' > "$CACHE"
 }
 STDIN=$(jq -cn --arg sid "$SID" --arg tp "$TRANSCRIPT" --arg cwd "$TEST_DIR" '{
@@ -147,6 +158,65 @@ write_cache 87 "$(iso $((NOW - 60)))" 30
 out=$(render)
 has "reset window shows 0 %" "0.0% reset: " "$out"
 has "reset marker" "(reset)" "$out"
+
+echo ">>> presets: professional is the default, casual and enthusiast select the other layouts"
+edit_cache() { jq "$@" "$CACHE" > "$CACHE.tmp" && mv -f "$CACHE.tmp" "$CACHE"; }
+write_cache 50 "$(iso $((NOW + 7200)))" 30
+pro=$(unset CLAUDE_MB_LIMIT_PRESET; render)
+bogus=$(CLAUDE_MB_LIMIT_PRESET=nonsense render)
+cas=$(CLAUDE_MB_LIMIT_PRESET=casual render)
+ent=$(CLAUDE_MB_LIMIT_PRESET=enthusiast render)
+has_n "unknown preset value renders like professional" "$pro" "$bogus"
+hasnt "professional: no Tokens line" "Tokens  -> " "$pro"
+hasnt "professional: no Context line" "Context -> " "$pro"
+hasnt "professional: no local highscore line" "[Highest:" "$pro"
+has "professional: session line keeps Sessn" "Session -> Sessn:" "$pro"
+has "professional: Device stays on the model line" "| Device: box-1" "$pro"
+hasre "professional: context bar stays on the session line" 'Session -> .*\[[=-]{10}\]' "$pro"
+has "professional: API 5h line" "5h all [" "$pro"
+has "professional: Session ID and Profile" "Profile: " "$pro"
+has "enthusiast: Tokens line" "Tokens  -> Input:" "$ent"
+has "enthusiast: Context line" "Context -> UsedT:" "$ent"
+has "enthusiast: local highscore line" "[Highest:" "$ent"
+has "enthusiast: session line keeps Sessn" "Session -> Sessn:" "$ent"
+has "casual: cwd line" "cwd: " "$cas"
+hasre "casual: session line shows SnCost and Device" 'Session -> SnCost: \$[0-9.]+ +Device: box-1' "$cas"
+hasre "casual: context bar on the session line" 'Session -> .*\[[=-]{10}\]' "$cas"
+hasnt "casual: session line has no Sessn" "Sessn:" "$cas"
+hasnt "casual: session line has no APIuse" "APIuse:" "$cas"
+has "casual: LifetimeTotal stays on the model line" "LifetimeTotal: " "$cas"
+hasnt "casual: model line has no Device" "| Device:" "$cas"
+hasnt "casual: no Tokens line" "Tokens  -> " "$cas"
+hasnt "casual: no Context line" "Context -> " "$cas"
+hasnt "casual: no local highscore line" "[Highest:" "$cas"
+hasnt "casual: no averages" "AvgPeak" "$cas"
+hasre "casual: 5h API line" '^5h all \[' "$cas"
+hasre "casual: 7d API line" '^7d all \[' "$cas"
+hasre "casual: separator lines" '^-$' "$(sed 's/\x1b\[[0-9;]*m//g' <<< "$cas")"
+has "casual: Session ID and Profile" "Profile: " "$cas"
+has "explicit CLAUDE_MB_LIMIT_TOKENS=true wins over professional" "Tokens  -> Input:" "$(CLAUDE_MB_LIMIT_TOKENS=true render)"
+has "explicit CLAUDE_MB_LIMIT_CTX=true wins over professional" "Context -> UsedT:" "$(CLAUDE_MB_LIMIT_CTX=true render)"
+has "explicit CLAUDE_MB_LIMIT_LOCAL=true wins over professional" "[Highest:" "$(CLAUDE_MB_LIMIT_LOCAL=true render)"
+hasnt "explicit CLAUDE_MB_LIMIT_TOKENS=false hides Tokens in enthusiast" "Tokens  -> " "$(CLAUDE_MB_LIMIT_PRESET=enthusiast CLAUDE_MB_LIMIT_TOKENS=false render)"
+
+echo ">>> scoped and model lines below 0.1 % are hidden in every preset"
+hasnt "scoped 0.0 % line hidden (professional)" "7d Zed" "$pro"
+hasnt "scoped 0.0 % line hidden (casual)" "7d Zed" "$cas"
+hasnt "scoped 0.0 % line hidden (enthusiast)" "7d Zed" "$ent"
+has "scoped 5 % line shown" "7d Nova" "$pro"
+has "scoped 12 % line shown" "7d Fable" "$pro"
+edit_cache --arg r "$(iso $((NOW - 60)))" '(.limits[] | select(.scope.model.display_name == "Zed") | .resets_at) = $r'
+hasnt "scoped 0.0 % line stays hidden after its reset" "7d Zed" "$(render)"
+write_cache 50 "$(iso $((NOW + 7200)))" 30
+edit_cache --arg r "$(iso $((NOW - 60)))" '(.limits[] | select(.scope.model.display_name == "Fable") | .resets_at) = $r'
+hasre "shown scoped line after its reset keeps the (reset) marker" '7d Fable .*0\.0% reset: .*\(reset\)' "$(render)"
+write_cache 50 "$(iso $((NOW + 7200)))" 30
+edit_cache --arg r "$(iso $((NOW + 7200)))" '.seven_day_opus = {utilization: 0, resets_at: $r} | .seven_day_sonnet = {utilization: 0, resets_at: $r}'
+hasnt "Opus 0.0 % line hidden" "7d Opus" "$(render)"
+hasnt "Sonnet 0.0 % line hidden" "7d Sonnet" "$(render)"
+edit_cache --arg r "$(iso $((NOW + 7200)))" '.seven_day_opus = {utilization: 10, resets_at: $r}'
+has "Opus 10 % line shown" "7d Opus" "$(render)"
+write_cache 50 "$(iso $((NOW + 7200)))" 30
 
 echo ">>> averages: AvgPeak and Avg values are right-aligned to 5 characters (100.0 is the widest)"
 # Fixture history with invented values. Five completed 5h windows (each starts at 0,

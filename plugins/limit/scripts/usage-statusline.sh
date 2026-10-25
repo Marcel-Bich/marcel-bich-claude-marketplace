@@ -199,6 +199,22 @@ debug_log() {
     fi
 }
 
+# Presets (CLAUDE_MB_LIMIT_PRESET): professional (default, also for unset or
+# unknown values), casual (compact layout) and enthusiast (everything). A preset
+# only sets the defaults of the flags below; a CLAUDE_MB_LIMIT_<X> set
+# explicitly still wins.
+case "${CLAUDE_MB_LIMIT_PRESET:-}" in
+    casual|enthusiast) PRESET="$CLAUDE_MB_LIMIT_PRESET" ;;
+    *) PRESET=professional ;;
+esac
+PRESET_DETAILED=false   # Tokens, Context and the local highscore lines
+PRESET_AVERAGE=true     # [AvgPeak:...] / [Avg:...] on the API lines
+PRESET_COMPACT=false    # casual layout: compact session, model and API lines
+case "$PRESET" in
+    enthusiast) PRESET_DETAILED=true ;;
+    casual) PRESET_AVERAGE=false; PRESET_COMPACT=true ;;
+esac
+
 # Feature toggles (all default to true)
 SHOW_MODEL="${CLAUDE_MB_LIMIT_MODEL:-true}"
 SHOW_5H="${CLAUDE_MB_LIMIT_5H:-true}"
@@ -213,8 +229,10 @@ SHOW_RESET="${CLAUDE_MB_LIMIT_RESET:-true}"
 # Extended features (all default to true)
 SHOW_CWD="${CLAUDE_MB_LIMIT_CWD:-true}"
 SHOW_GIT="${CLAUDE_MB_LIMIT_GIT:-true}"
-SHOW_TOKENS="${CLAUDE_MB_LIMIT_TOKENS:-true}"
+SHOW_TOKENS="${CLAUDE_MB_LIMIT_TOKENS:-$PRESET_DETAILED}"
 SHOW_CTX="${CLAUDE_MB_LIMIT_CTX:-true}"
+# Context line only: the progress bar on the session line follows SHOW_CTX
+SHOW_CTX_LINE="${CLAUDE_MB_LIMIT_CTX:-$PRESET_DETAILED}"
 # Write the context-fill values to a readable cache file (for agents). Default on.
 CTX_CACHE="${CLAUDE_MB_LIMIT_CTX_CACHE:-true}"
 SHOW_SESSION="${CLAUDE_MB_LIMIT_SESSION:-true}"
@@ -225,10 +243,13 @@ SHOW_SEPARATORS="${CLAUDE_MB_LIMIT_SEPARATORS:-true}"
 
 # Local device tracking (default true - highscore-based tracking enabled for all)
 SHOW_LOCAL="${CLAUDE_MB_LIMIT_LOCAL:-true}"
+# Local highscore lines only: tracking (SHOW_LOCAL) keeps running, the history
+# and the Est100% samples depend on it
+SHOW_LOCAL_LINES="${CLAUDE_MB_LIMIT_LOCAL:-$PRESET_DETAILED}"
 LOCAL_DEVICE_LABEL="${CLAUDE_MB_LIMIT_DEVICE_LABEL:-$(hostname)}"
 
-# History and average display (default true)
-SHOW_AVERAGE="${CLAUDE_MB_LIMIT_AVERAGE:-true}"
+# History and average display (default true; off in the casual preset)
+SHOW_AVERAGE="${CLAUDE_MB_LIMIT_AVERAGE:-$PRESET_AVERAGE}"
 
 # Further limits from the API's limits[] list (e.g. weekly_scoped per model)
 SHOW_SCOPED="${CLAUDE_MB_LIMIT_SCOPED:-true}"
@@ -1733,7 +1754,7 @@ format_output() {
     # Context line: UsedT: %Ns    TkLeft: %Ns    CtxMax: %Ns    ContextLeft: %Ns
     # 4 spaces between columns for readability
     # col4 uses padded width so value aligns with Session's progress bar percentage
-    if [[ "$SHOW_CTX" == "true" ]]; then
+    if [[ "$SHOW_CTX_LINE" == "true" ]]; then
         local ctx_line
         printf -v ctx_line "Context -> UsedT: %${col1_width}s    TkLeft: %${col2_width}s    CtxMax: %${col3_width}s    ContextLeft: %${col4_padded_width}s" \
             "$ctx_val1" "$ctx_val2" "$ctx_val3" "$ctx_val4"
@@ -1781,8 +1802,12 @@ format_output() {
         # Session line: Sessn: %Ns    APIuse: %Ns    SnCost: %Ns    [progress bar] (compact_warning)
         # 4 spaces between columns for readability
         local sess_line
-        printf -v sess_line "Session -> Sessn: %${col1_width}s    APIuse: %${col2_width}s    SnCost: %${col3_width}s" \
-            "$sess_val1" "$sess_val2" "$sess_val3"
+        if [[ "$PRESET_COMPACT" == "true" ]]; then
+            printf -v sess_line "Session -> SnCost: %s    Device: %s" "$sess_val3" "$LOCAL_DEVICE_LABEL"
+        else
+            printf -v sess_line "Session -> Sessn: %${col1_width}s    APIuse: %${col2_width}s    SnCost: %${col3_width}s" \
+                "$sess_val1" "$sess_val2" "$sess_val3"
+        fi
         lines+=("${gray_color}${sess_line}${gray_color_reset}${sess_progress_color}${sess_progress_bar}${sess_progress_color_reset}${compact_warning}")
 
         # Model info line with lifetime totals
@@ -1813,7 +1838,11 @@ format_output() {
             if [[ -n "$formatted_tokens_lifetime" ]]; then
                 model_line="${model_line} | LifetimeTotal: ${formatted_tokens_lifetime} \$${total_cost_lifetime}"
             fi
-            model_line="${model_line} | Device: ${LOCAL_DEVICE_LABEL}${gray_color_reset}"
+            # casual shows the device on the session line instead
+            if [[ "$PRESET_COMPACT" != "true" ]]; then
+                model_line="${model_line} | Device: ${LOCAL_DEVICE_LABEL}"
+            fi
+            model_line="${model_line}${gray_color_reset}"
             lines+=("$model_line")
         fi
     fi
@@ -1915,7 +1944,7 @@ format_output() {
         lines+=("${error_color}${API_ERROR}${error_color_reset}")
 
         # Still show local highscore lines if available (without reset time)
-        if [[ "$SHOW_LOCAL" == "true" ]] && [[ "$SHOW_5H" == "true" ]] && [[ -n "${local_5h_pct}" ]]; then
+        if [[ "$SHOW_LOCAL_LINES" == "true" ]] && [[ "$SHOW_5H" == "true" ]] && [[ -n "${local_5h_pct}" ]]; then
             local local_5h_color="" local_5h_color_reset=""
             if [[ "$SHOW_COLORS" == "true" ]]; then
                 local_5h_color=$(get_color "${local_5h_pct}")
@@ -1929,7 +1958,7 @@ format_output() {
         fi
 
         # Still show the local 7d/weekly highscore line too (also API-independent, without reset)
-        if [[ "$SHOW_LOCAL" == "true" ]] && [[ "$SHOW_7D" == "true" ]] && [[ -n "${local_7d_pct}" ]]; then
+        if [[ "$SHOW_LOCAL_LINES" == "true" ]] && [[ "$SHOW_7D" == "true" ]] && [[ -n "${local_7d_pct}" ]]; then
             local local_7d_color="" local_7d_color_reset=""
             if [[ "$SHOW_COLORS" == "true" ]]; then
                 local_7d_color=$(get_color "${local_7d_pct}")
@@ -1986,7 +2015,7 @@ format_output() {
             fi
             lines+=("$global_5h_line")
             # Local 5h directly below global 5h - shows highscore-based percentage
-            if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "${local_5h_pct}" ]]; then
+            if [[ "$SHOW_LOCAL_LINES" == "true" ]] && [[ -n "${local_5h_pct}" ]]; then
                 local local_5h_color="" local_5h_color_reset=""
                 if [[ "$SHOW_COLORS" == "true" ]]; then
                     local_5h_color=$(get_color "${local_5h_pct}")
@@ -2013,7 +2042,7 @@ format_output() {
             fi
             lines+=("$global_7d_line")
             # Local 7d directly below global 7d - shows highscore-based percentage
-            if [[ "$SHOW_LOCAL" == "true" ]] && [[ -n "${local_7d_pct}" ]]; then
+            if [[ "$SHOW_LOCAL_LINES" == "true" ]] && [[ -n "${local_7d_pct}" ]]; then
                 local local_7d_color="" local_7d_color_reset=""
                 if [[ "$SHOW_COLORS" == "true" ]]; then
                     local_7d_color=$(get_color "${local_7d_pct}")
@@ -2026,8 +2055,8 @@ format_output() {
             fi
         fi
 
-        # 7-day Opus limit (if enabled and has data)
-        if [[ "$SHOW_OPUS" == "true" ]] && [[ -n "$opus_pct" ]]; then
+        # 7-day Opus limit (if enabled and utilization >= 0.1%, like Sonnet)
+        if [[ "$SHOW_OPUS" == "true" ]] && [[ -n "$opus_pct" ]] && [[ "$(awk "BEGIN {print ($opus_pct >= 0.1) ? 1 : 0}")" -eq 1 ]]; then
             local opus_line opus_color="" opus_color_reset=""
             if [[ "$SHOW_COLORS" == "true" ]]; then
                 opus_color=$(get_color "$opus_pct")
@@ -2071,6 +2100,10 @@ format_output() {
                 [[ "$sc_label" == "7d Sonnet" && -n "$sonnet_pct" ]] && continue
                 sc_pct=$(cap_decimal "$(parse_decimal "$sc_pct")" 100)
                 [[ -n "$sc_pct" ]] || continue
+                # Unused scoped limits stay hidden (same 0.1 % rule as the Sonnet line)
+                local sc_used
+                sc_used=$(awk "BEGIN {print ($sc_pct >= 0.1) ? 1 : 0}")
+                [[ "$sc_used" -eq 1 ]] || continue
                 local sc_epoch
                 sc_epoch=$(_hs_epoch "$sc_reset")
                 if [[ -n "$sc_epoch" ]] && [[ "$now_epoch" -ge "$sc_epoch" ]]; then

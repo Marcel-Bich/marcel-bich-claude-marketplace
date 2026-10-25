@@ -7,12 +7,12 @@ Live API usage in Claude Code statusline - colored progress bars, Git info, toke
 **API Usage Tracking**
 - Real API data from Anthropic (same as `/usage`)
 - Colored progress bars with signal colors (gray/green/yellow/orange/red)
-- Multiple limits: 5-hour, 7-day, Sonnet, Extra Credits, plus further entries of the API's `limits[]` list (e.g. per-model `weekly_scoped` limits, shown as `7d <Model>`)
+- Multiple limits: 5-hour, 7-day, Sonnet, Extra Credits, plus further entries of the API's `limits[]` list (e.g. per-model `weekly_scoped` limits, shown as `7d <Model>`). Sonnet, Opus and the further entries are shown only from 0.1 % utilization, so an unused model limit does not clutter the line
 - Reset times for each limit (minute-precise); after a reset time has passed the bar shows `0.0% ... (reset)` instead of the previous window's value
 - `[stale 12m]` marks API numbers older than `CLAUDE_MB_LIMIT_STALE_AFTER` seconds
 - Averages from the local history: `[AvgPeak:X%]` average peak per completed window, `[Avg:Y%/h]` (5h) / `[Avg:Y%/d]` (7d) average consumption including idle time. The values are right-aligned to 5 characters (`[AvgPeak: 67.8%]`, `[AvgPeak:100.0%]`, `[Avg:  1.3%/h]`) so the labels keep their width.
 
-**Highscore Tracking** (enabled by default, disable with `CLAUDE_MB_LIMIT_LOCAL=false`)
+**Highscore Tracking** (enabled by default, disable with `CLAUDE_MB_LIMIT_LOCAL=false`; its lines are part of the `enthusiast` preset, see Configuration)
 - Tracks highest token usage per plan (max20, max5, pro)
 - Separate highscores for 5h and 7d windows
 - Automatic plan detection from credentials
@@ -24,7 +24,7 @@ Live API usage in Claude Code statusline - colored progress bars, Git info, toke
 - Token metrics of the current session (main agent + its subagents, summed from the deduplicated transcript ledger, not from Claude Code's stdin): Input (uncached input + cache writes), Output, Cached (cache reads; not part of Input or Work Tokens), Work Tokens (Input + Output). Without a readable ledger the line is labelled `LastReq` and shows the most recent API request from Claude Code's stdin (its `current_usage`)
 - Context usage with percentage of max and usable (before auto-compact)
 - Session timing: Total duration, API time
-- Model line: `<Model> | <Effort> | <style> | LifetimeTotal: ... | Device: ...` - the live session effort level (Low/Medium/High/XHigh/Max) is read from the statusline stdin `effort.level` and only shown for models that support reasoning effort
+- Model line: `<Model> | <Effort> | <style> | LifetimeTotal: ... | Device: ...` (the `casual` preset moves the device to the session line) - the live session effort level (Low/Medium/High/XHigh/Max) is read from the statusline stdin `effort.level` and only shown for models that support reasoning effort
 - Session ID display
 - Session caption (from /rename, summary, or first user prompt)
 
@@ -106,7 +106,33 @@ tokens/percentage stay main-only.
 
 All features can be toggled via environment variables. Export them in your shell profile or set them before running Claude Code.
 
-**Feature Toggles** (all default to `true` unless noted):
+**Layout presets** (`CLAUDE_MB_LIMIT_PRESET`, default `professional`):
+
+| Preset | Shows |
+|--------|-------|
+| `professional` (default) | cwd, git, session line (Sessn, APIuse, SnCost, context bar), model line with Device, API 5h and 7d lines with averages, further limits (scoped, Opus, Sonnet, Extra), Session ID and Profile |
+| `casual` | cwd, git, session line with SnCost, Device and context bar, model line without Device, API 5h and 7d lines without averages, further limits only when used, Session ID and Profile |
+| `enthusiast` | Everything, including the Tokens line, the Context line and the local highscore lines with Est100% (the layout before presets existed) |
+
+Unset or unknown values use `professional`. A preset only sets the defaults of the variables below; a variable you set yourself still wins, e.g. `CLAUDE_MB_LIMIT_PRESET=professional CLAUDE_MB_LIMIT_TOKENS=true` shows the Tokens line. Highscore tracking runs in every preset; only the local highscore lines are hidden.
+
+Upgrading: the default output changed to `professional`. Set `CLAUDE_MB_LIMIT_PRESET=enthusiast` to keep the previous layout.
+
+Example `casual` output (invented values):
+
+```
+cwd: /home/myuser/workstation
+git: acme/werkbank [wt] main (+0,-0)⎇ main
+Session -> SnCost: $5321.39    Device: box-1    [==--------]  16.2%
+Opus 5.5 | Medium | default | LifetimeTotal: 710.7M $6164.18
+-
+5h all [=---------]    8.0% reset: 2026-10-25 19:00
+7d all [===-------]   25.0% reset: 2026-10-29 14:00
+-
+Session ID: 3f2a9c1e-7b4d-4e8a-9c2f-1a2b3c4d5e6f    Profile: .claude
+```
+
+**Feature Toggles** (all default to `true` unless noted; `preset` = the default of the active preset):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -117,8 +143,8 @@ All features can be toggled via environment variables. Export them in your shell
 | `CLAUDE_MB_LIMIT_EXTRA` | true | Show extra credits usage |
 | `CLAUDE_MB_LIMIT_CWD` | true | Show current working directory |
 | `CLAUDE_MB_LIMIT_GIT` | true | Show git branch, worktree, changes |
-| `CLAUDE_MB_LIMIT_TOKENS` | true | Show token metrics |
-| `CLAUDE_MB_LIMIT_CTX` | true | Show context usage |
+| `CLAUDE_MB_LIMIT_TOKENS` | preset | Show the Tokens line (on in `enthusiast` only) |
+| `CLAUDE_MB_LIMIT_CTX` | preset | Show the Context line (on in `enthusiast` only); `false` also hides the session progress bar |
 | `CLAUDE_MB_LIMIT_SESSION` | true | Show session timing |
 | `CLAUDE_MB_LIMIT_SESSION_ID` | true | Show session ID |
 | `CLAUDE_MB_LIMIT_CAPTION` | true | Show session caption (from /rename, summary, or first prompt) |
@@ -133,7 +159,7 @@ All features can be toggled via environment variables. Export them in your shell
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLAUDE_MB_LIMIT_LOCAL` | true | Enable highscore tracking |
+| `CLAUDE_MB_LIMIT_LOCAL` | true | Enable highscore tracking. Its `[Highest:...]` lines show in the `enthusiast` preset only (`preset` default); `false` disables tracking and lines |
 | `CLAUDE_MB_LIMIT_DEVICE_LABEL` | hostname | Custom device label for display |
 
 **Other Settings**:
@@ -152,7 +178,7 @@ All features can be toggled via environment variables. Export them in your shell
 | `CLAUDE_MB_LIMIT_EST_MAX_AGE` | 120 | Est100% samples only use API numbers younger than this many seconds |
 | `CLAUDE_MB_LIMIT_DEFAULT_COLOR` | `\033[90m` | Default color (ANSI escape sequence) |
 | `CLAUDE_MB_LIMIT_SHOW_ERRORS` | false | Show "limit: error" on failures |
-| `CLAUDE_MB_LIMIT_AVERAGE` | true | Show `[AvgPeak:...]` / `[Avg:...]` averages |
+| `CLAUDE_MB_LIMIT_AVERAGE` | preset | Show `[AvgPeak:...]` / `[Avg:...]` averages (off in `casual`) |
 | `CLAUDE_MB_LIMIT_DEBUG` | false | Enable debug logging to `/tmp/claude-mb-limit-debug_${PROFILE_NAME}.log` (`true`, `1`, `yes` or `on`; same flag for every script) |
 | `CLAUDE_MB_LIMIT_HISTORY_ENABLED` | true | Enable history tracking for average display |
 | `CLAUDE_MB_LIMIT_HISTORY_INTERVAL` | 600 | Minimum seconds between history writes (10 min) |
@@ -237,7 +263,7 @@ Instead of complex calibration, we track the highest token usage ever measured o
 
 **Est100%:** a continuous estimate of where 100 % lies, in work tokens: the median of `window_tokens / (API% / 100)` over samples taken at >= 20 % utilization in the current window. It replaces the former LimitAt easter egg, which compared counts from different schemes and almost never refreshed.
 
-Est100% is a per-device value and is therefore shown on the device line (`... [Highest:...] [Est100%:X] (device)`). The tokens come from this device's transcripts only - other devices keep their own `~/.claude` and cannot be read from here - while the API percentage is account-wide. With parallel use on other devices the estimate is a lower bound. Samples are skipped while the transcript backfill is incomplete (tokens missing, ratio too low) and while the API numbers are older than `CLAUDE_MB_LIMIT_EST_MAX_AGE` (old percentage, ratio too high).
+Est100% is a per-device value and is therefore shown on the device line (`... [Highest:...] [Est100%:X] (device)`, lines of the `enthusiast` preset). The tokens come from this device's transcripts only - other devices keep their own `~/.claude` and cannot be read from here - while the API percentage is account-wide. With parallel use on other devices the estimate is a lower bound. Samples are skipped while the transcript backfill is incomplete (tokens missing, ratio too low) and while the API numbers are older than `CLAUDE_MB_LIMIT_EST_MAX_AGE` (old percentage, ratio too high).
 
 Upgrading to the ledger-based accounting resets highscores once (the old values were measured in an inflated unit); the old state is kept as `.bak`.
 
