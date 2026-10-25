@@ -2209,6 +2209,8 @@ class PairStore(object):
                     and isinstance(e.get("ts"), int) and not isinstance(e.get("ts"), bool)]
             if ents:
                 out["retired"] = ents[-RETIRED_SLOTS_MAX:]
+        if d.get("followed") is True:
+            out["followed"] = True
         return out
 
     def get(self, pid, strict=False):
@@ -2247,7 +2249,7 @@ class PairStore(object):
                 return r
         return None
 
-    def pin(self, pid, pub, key, slot, machine="", follow=False):
+    def pin(self, pid, pub, key, slot, machine="", follow=False, from_peer=False):
         """Store the pairing of pid at slot (or refresh its machine label). A slot
         belongs to at most one paired id and a paired id to exactly one slot: False
         (nothing written) when another id already holds the slot, so two first
@@ -2255,7 +2257,10 @@ class PairStore(object):
         silently: only with follow=True (the caller checked the key proof and the
         address) does pid move to slot. Its old address then stays reserved for it
         (retired), and a retired reservation of another paired id is taken over. Any
-        other move is refused; only `pair-reset` moves a pairing otherwise."""
+        other move is refused; only `pair-reset` moves a pairing otherwise.
+        from_peer (with follow=True): the address the move leaves is a configured peer
+        address or a followed slot. Only then the record is marked "followed" (sticky),
+        and only marked records are dialed and rostered (see Daemon._peer_targets)."""
         with self.lock:
             other = self.by_slot(slot)
             if other is not None and other["id"] != pid and (not follow or other["slot"] == slot):
@@ -2272,10 +2277,13 @@ class PairStore(object):
                     if e["slot"] != slot and now - e["ts"] < RETIRED_TTL]
             if cur is not None and cur["slot"] != slot:
                 held.append({"slot": cur["slot"], "ts": now})
+            marked = (cur is not None and bool(cur.get("followed"))) or (follow and from_peer)
             rec = {"id": pid, "pub": pub, "key": key, "slot": slot,
                    "machine": str(machine or "")[:60]}
             if held:
                 rec["retired"] = held[-RETIRED_SLOTS_MAX:]
+            if marked:
+                rec["followed"] = True
             self._write("peer-%s.json" % pid, rec)
             if other is not None and other["id"] != pid:
                 self._drop_retired(other, slot)
@@ -2284,6 +2292,8 @@ class PairStore(object):
     def _drop_retired(self, rec, slot):
         """Release the retired reservation of slot held by rec's id (a proven move took it)."""
         out = {k: rec[k] for k in ("id", "pub", "key", "slot", "machine")}
+        if rec.get("followed"):
+            out["followed"] = True
         left = [e for e in rec.get("retired", []) if e["slot"] != slot]
         if left:
             out["retired"] = left
@@ -4681,7 +4691,12 @@ class Daemon(object):
         try:
             old = self.pairs.get(pid)
             new = old is None
-            stored = self.pairs.pin(pid, pub, key, slot, machine, follow=follow)
+            # a move away from a configured peer address (or from a followed slot) is a
+            # followed move: only then the record becomes a dial and roster target
+            old_addr = self._slot_addr(old["slot"]) if old is not None else None
+            from_peer = follow and old is not None and (
+                bool(old.get("followed")) or (old_addr is not None and self._configured_addr(old_addr)))
+            stored = self.pairs.pin(pid, pub, key, slot, machine, follow=follow, from_peer=from_peer)
         except OSError as exc:
             self._pair_log(("store", slot), "pairing with %s at %s not stored (%s); link dropped"
                            % (pid[:8], slot, exc))
@@ -4812,10 +4827,27 @@ class Daemon(object):
         return self._link_verified(src, host) or is_loopback_ip(src) or self._is_wsl_gw(src, state)
 
     def _is_peer_key(self, key):
-        """key ("host:port") is a configured peer address (per-link secrets are kept
-        for those and for every paired link, so their maps stay bounded by the config
-        and the pairing records; see _open_link and _register_channel)."""
+        """key ("host:port") is a configured peer address (per-link secrets are kept only
+        for those and for followed slots, so their maps stay bounded)."""
         return any("%s:%d" % (p["host"], p["port"]) == key for p in self.peers)
+
+    def _keeps_link_secret(self, key):
+        """Per-link secrets (link_out_secret, link_last_secret) are kept for configured
+        peer addresses and followed slots only, never for first-contact records. Reads the
+        pairing store: call it outside chan_lock."""
+        return self._is_peer_key(key) or self._is_followed_key(key)
+
+    def _followed_records(self):
+        """Paired records marked followed (moved away from a configured peer address, see
+        PairStore.pin). Empty while the store is unreadable: nothing extra is dialed."""
+        try:
+            return [r for r in self.pairs.records() if r.get("followed")]
+        except PairStoreUnreadable:
+            return []
+
+    def _is_followed_key(self, key):
+        """key ("host:port") is the current slot of a followed record. Reads the store."""
+        return any(r["slot"] == key for r in self._followed_records())
 
     def _peer_link_proof_locked(self, key, their_out):
         """link_proof we can offer the peer at key for its outbound link whose
@@ -4878,6 +4910,7 @@ class Daemon(object):
             proof our own outbound link (we dialed the configured address) wins."""
         drop = None
         ch.refuse_reason = ""
+        keep_secret = bool(ch.secret) and self._keeps_link_secret(ch.key)   # reads the store
         with self.chan_lock:
             if ch.direction == "in":
                 why = self._inbound_cap_locked(ch)
@@ -4934,7 +4967,7 @@ class Daemon(object):
                     % (cur.key, cur.direction, cur.desc))
             self.channels[ch.key] = ch
             ch.registered = True
-            if ch.secret and (ch.pair_id or self._is_peer_key(ch.key)):
+            if keep_secret:
                 self.link_last_secret[(ch.key, ch.direction)] = ch.secret
             self.link_warned.discard(ch.key)
             self.link_retry.pop(ch.key, None)
@@ -5154,28 +5187,36 @@ class Daemon(object):
             if self.stop.wait(min(self.roster_interval, CHAN_PING_MAX)):
                 break
 
+    @staticmethod
+    def _slot_addr(slot):
+        """(host, port) of a "host:port" slot key, or None when it is not one."""
+        host, sep, port = str(slot).rpartition(":")
+        try:
+            return (host, int(port)) if sep else None
+        except ValueError:
+            return None
+
     def _peer_targets(self):
         """Peer addresses to dial and to send rosters to: the configured peers, plus the
-        current pairing slot of every paired peer that is not one of them. A slot is
-        key-proven and persisted with its pairing record, so a peer that followed its
+        current slot of a followed record (see _followed_records) that is not one of
+        them. A followed slot is key-proven and persisted, so a peer that followed its
         address is reached again after a restart even while its configured address is
-        stale. Each address is listed once; the outbound gate still applies per address.
-        A moved-from address is not a target (it is only reserved, see PairStore.pin)."""
+        stale. A first-contact record is never a target, whatever address it claims.
+        The extra targets are capped at the number of configured peers, so the count
+        never grows with the records. Each address is listed once; the outbound gate
+        still applies per address. A moved-from address is not a target (only reserved,
+        see PairStore.pin)."""
         targets = list(self.peers)
-        try:
-            records = self.pairs.records()
-        except PairStoreUnreadable:
-            return targets   # unknown pairing state: configured peers only
         seen = set((p["host"], p["port"]) for p in targets)
-        for rec in records:
-            host, sep, port = rec["slot"].rpartition(":")
-            try:
-                addr = (host, int(port))
-            except ValueError:
-                continue
-            if sep and addr not in seen:
+        room = len(self.peers)
+        for rec in self._followed_records():
+            addr = self._slot_addr(rec["slot"])
+            if room <= 0:
+                break
+            if addr is not None and addr not in seen:
                 seen.add(addr)
-                targets.append({"host": host, "port": addr[1]})
+                targets.append({"host": addr[0], "port": addr[1]})
+                room -= 1
         return targets
 
     def link_tick(self):
@@ -5260,13 +5301,14 @@ class Daemon(object):
             chal = os.urandom(16).hex()
             # a paired peer bound to this address must prove its key (never token-only)
             expected = self._bound(key)
+            keep_secret = self._keeps_link_secret(key)   # reads the store: before chan_lock
             with self.chan_lock:
                 cur = self.channels.get(key)
                 theirs = (cur.secret if cur is not None and not cur.closed and cur.direction == "in"
                           else self.link_last_secret.get((key, "in"), ""))
                 proof = link_proof(chal, theirs)
                 resume = resume_proof(chal, self.link_last_secret.get((key, "out"), ""))
-                if expected is not None or self._is_peer_key(key):
+                if keep_secret:
                     self.link_out_secret[key] = chal
             try:
                 sock.settimeout(min(10.0, max(2.0, 3 * self.roster_interval)))
@@ -5738,10 +5780,11 @@ class Daemon(object):
             # the configured peer addresses. Token-less this is still served (the
             # receiving session's own consent gate is the protection), so it is only
             # a warning, once per address (no per-interval spam). A correctly
-            # configured multi-IP setup matches a peer address and never warns. A paired
-            # slot (see _peer_targets) is known too: its key was proven.
-            paired_slot = self._bound(addr_key) is not None
-            if not known and not paired_slot and warn_once(self.unknown_warned, addr_key):
+            # configured multi-IP setup matches a peer address and never warns. A followed
+            # slot (see _followed_records) is known too: its key was proven and it was
+            # followed from a configured address.
+            if not known and not self._is_followed_key(addr_key) and warn_once(
+                    self.unknown_warned, addr_key):
                 log(
                     "roster from %s (machine %r) whose address is not among this "
                     "daemon's configured peer addresses %s - add it with "

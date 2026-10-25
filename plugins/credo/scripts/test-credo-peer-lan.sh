@@ -4802,9 +4802,9 @@ def pk_o():
         return
     refresh_self_ip(P, NEW)
     wire(P, C_ADDR, A, NEW)
-    res("PK o: precondition: A followed P to the new address",
-        rec(A, P.peer_id) is not None and rec(A, P.peer_id)["slot"] == KEYNEW,
-        "rec=%r" % rec(A, P.peer_id))
+    res("PK o: precondition: A followed P to the new address, marked followed",
+        rec(A, P.peer_id) is not None and rec(A, P.peer_id)["slot"] == KEYNEW
+        and rec(A, P.peer_id).get("followed") is True, "rec=%r" % rec(A, P.peer_id))
     for d in (A, P):   # A restarts: the links of both sides are gone
         for c in live(d):
             d._drop_channel(c, "test: restart")
@@ -4820,6 +4820,8 @@ def pk_o():
     ch = A2._get_channel(KEYNEW)
     res("PK o: the dial at the followed slot is up, authenticated as the paired id",
         ch is not None and ch.pair_id == P.peer_id, "ch=%r" % (ch and ch.pair_id))
+    res("PK o: the followed dial keeps its link secret", KEYNEW in A2.link_out_secret,
+        "out=%r" % sorted(A2.link_out_secret))
     sent = []
     A2.send_frame = lambda host, port, payload, allow_raw=True: sent.append("%s:%d" % (host, port))
     try:
@@ -4861,6 +4863,91 @@ def pk_o():
     res("PK o: a followed slot outside the outbound allowlist is not dialed",
         "%s:48610" % OUT not in dialed5 and KEYB in dialed5, "dialed=%r" % dialed5)
 guard("PK o", pk_o)
+
+# first-contact records (trust on first use at the device's own address) are no targets
+TOFU_ADDR, TOFU_MOVED = "192.168.1.61", "192.168.1.62"
+KEYTOFU, KEYTOFU_MOVED = "%s:48610" % TOFU_ADDR, "%s:48610" % TOFU_MOVED
+
+def pk_o_tofu():
+    # a first-contact device (its own fresh keys, not configured here) pairs at its own
+    # address: never dialed, never rostered to, even after it moves; no per-link secret
+    A = new_daemon([B_ADDR, Q_ADDR], "box-a", adv=C_ADDR)
+    T = new_daemon([C_ADDR], "box-first", adv=TOFU_ADDR)
+    wire(T, C_ADDR, A, TOFU_ADDR)
+    res("PK o tofu: precondition: the first-contact device is paired at its own address, not followed",
+        rec(A, T.peer_id) is not None and rec(A, T.peer_id)["slot"] == KEYTOFU
+        and not rec(A, T.peer_id).get("followed"), "rec=%r" % rec(A, T.peer_id))
+    sent = []
+    A.send_frame = lambda host, port, payload, allow_raw=True: sent.append("%s:%d" % (host, port))
+    try:
+        A.roster_tick()
+    finally:
+        del A.send_frame
+    res("PK o tofu: no roster goes to the first-contact address", KEYTOFU not in sent,
+        "sent=%r" % sent)
+    A2 = new_daemon([B_ADDR, Q_ADDR], "box-a", keys_dir=A.pairs.path, adv=C_ADDR)
+    dialed = pk_o_dials(A2)
+    res("PK o tofu: no dial goes to the first-contact address after a restart",
+        KEYTOFU not in dialed and KEYB in dialed, "dialed=%r" % dialed)
+    refresh_self_ip(T, TOFU_MOVED)
+    wire(T, C_ADDR, A, TOFU_MOVED)
+    rm = rec(A, T.peer_id)
+    res("PK o tofu: precondition: the first-contact record moved with its key proof, not followed",
+        rm is not None and rm["slot"] == KEYTOFU_MOVED and not rm.get("followed"), "rec=%r" % rm)
+    A3 = new_daemon([B_ADDR, Q_ADDR], "box-a", keys_dir=A.pairs.path, adv=C_ADDR)
+    dialed3 = pk_o_dials(A3)
+    res("PK o tofu: a moved first-contact record is not dialed either",
+        KEYTOFU_MOVED not in dialed3 and KEYB in dialed3, "dialed=%r" % dialed3)
+    res("PK o tofu: no per-link secret is kept for first-contact links",
+        not any(k[0] in (KEYTOFU, KEYTOFU_MOVED) for k in A.link_last_secret)
+        and not any(k in (KEYTOFU, KEYTOFU_MOVED) for k in A.link_out_secret),
+        "last=%r out=%r" % (sorted(A.link_last_secret), sorted(A.link_out_secret)))
+guard("PK o tofu", pk_o_tofu)
+
+def pk_o_marker():
+    # the followed mark survives another paired id taking over the moved-from reservation
+    A, P = pair_ap()
+    if rec(A, P.peer_id) is None or rec(P, A.peer_id) is None:
+        res("PK o marker: precondition: A and P paired", False, "not paired")
+        return
+    refresh_self_ip(P, NEW)
+    wire(P, C_ADDR, A, NEW)
+    rp = rec(A, P.peer_id)
+    R = os.urandom(16).hex()
+    A.pairs.pin(R, rp["pub"], rp["key"], "192.168.1.63:48610")
+    took = A.pairs.pin(R, rp["pub"], rp["key"], KEYB, "", follow=True)
+    p2 = rec(A, P.peer_id)
+    res("PK o marker: another id takes over the moved-from reservation, P stays followed",
+        took and p2 is not None and p2["slot"] == KEYNEW and p2.get("followed") is True
+        and KEYB not in mod.live_retired(p2), "took=%r rec=%r" % (took, p2))
+    A4 = new_daemon([B_ADDR, Q_ADDR], "box-a", keys_dir=A.pairs.path, adv=C_ADDR)
+    dialed = pk_o_dials(A4)
+    res("PK o marker: the followed slot is still dialed after the takeover",
+        KEYNEW in dialed, "dialed=%r" % dialed)
+    res("PK o marker: a takeover by a plain move is not marked followed",
+        not rec(A, R).get("followed"), "rec=%r" % rec(A, R))
+guard("PK o marker", pk_o_marker)
+
+def pk_o_cap():
+    # followed records are dialed at most as many as there are configured peers (two here)
+    A, P = pair_ap()
+    if rec(A, P.peer_id) is None or rec(P, A.peer_id) is None:
+        res("PK o cap: precondition: A and P paired", False, "not paired")
+        return
+    pub, key = rec(A, P.peer_id)["pub"], rec(A, P.peer_id)["key"]
+    fol = ["192.168.1.7%d:48610" % i for i in (1, 2, 3)]
+    for i, new in enumerate(fol, 1):
+        pid = os.urandom(16).hex()
+        A.pairs.pin(pid, pub, key, "192.168.1.8%d:48610" % i)
+        A.pairs.pin(pid, pub, key, new, follow=True, from_peer=True)
+    res("PK o cap: precondition: three followed records",
+        sum(1 for r in A.pairs.records() if r.get("followed")) == 3,
+        "followed=%r" % [r["slot"] for r in A.pairs.records() if r.get("followed")])
+    A5 = new_daemon([B_ADDR, Q_ADDR], "box-a", keys_dir=A.pairs.path, adv=C_ADDR)
+    dialed = pk_o_dials(A5)
+    res("PK o cap: followed slots dialed at most as many as there are configured peers",
+        len([d for d in dialed if d in fol]) == 2, "dialed=%r" % dialed)
+guard("PK o cap", pk_o_cap)
 PYEOF
 PK_OUT="$("$PY" "$TMP/PK/pktest.py" "$DAEMON" "$TMP/PK" 2>&1)"
 while IFS= read -r line; do
@@ -4870,7 +4957,7 @@ while IFS= read -r line; do
     esac
 done <<< "$PK_OUT"
 case "$PK_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL PK: traceback\n%s\n' "$PK_OUT" ;; esac
-check "PK: expected number of pairing results" "170" "$(printf '%s\n' "$PK_OUT" | grep -cE '^(PASS|FAIL) ')"
+check "PK: expected number of pairing results" "182" "$(printf '%s\n' "$PK_OUT" | grep -cE '^(PASS|FAIL) ')"
 
 # --- RO: an OLD peer (no link support) is marked after a few refusals; rosters keep -
 # flowing over fresh connections. The fake old relay reads one line per connection,
