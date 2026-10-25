@@ -122,14 +122,15 @@ Example `casual` output (invented values):
 
 ```
 cwd: /home/myuser/workstation
-git: acme/werkbank [wt] main (+0,-0)⎇ main
-Session -> SnCost: $5321.39    Device: box-1    [==--------]  16.2%
-Opus 5.5 | Medium | default | LifetimeTotal: 710.7M $6164.18
+git: acme/demo [wt] main (+0,-0)⎇ main
+Session -> SnCost: $12.40    Device: box-1    [==--------]  16.2%
+Opus 5.5 | Medium | default | LifetimeTotal: 48.2M $310.75
 -
-5h all [=---------]    8.0% reset: 2026-10-25 19:00
-7d all [===-------]   25.0% reset: 2026-10-29 14:00
+5h all [=---------]    8.0% reset: 2026-01-05 19:00
+7d all [===-------]   25.0% reset: 2026-01-09 14:00
 -
 Session ID: 3f2a9c1e-7b4d-4e8a-9c2f-1a2b3c4d5e6f    Profile: .claude
+Caption: <session caption, when CLAUDE_MB_LIMIT_CAPTION is on (default, every preset)>
 ```
 
 **Feature Toggles** (all default to `true` unless noted; `preset` = the default of the active preset):
