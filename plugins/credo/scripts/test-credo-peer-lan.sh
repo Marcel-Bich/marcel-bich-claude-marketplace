@@ -4564,6 +4564,40 @@ def pk_n():
         and rec(A, R.peer_id)["slot"] == K62, "okc=%r okm=%r" % (okc, okm))
 guard("PK n", pk_n)
 
+def pk_n_dial():
+    # The DHCP change happened, the netwatch recheck has not run yet, and the link that
+    # dropped is re-dialed at once: that dial must advertise the new address, or the
+    # acceptor sees advertise != source and refuses the moved pairing (PENDING REPAIR).
+    A, P = pair_ap()
+    if rec(A, P.peer_id) is None or rec(P, A.peer_id) is None:
+        res("PK n dial: precondition: A and P paired", False, "not paired")
+        return
+    P.netwatch_running = True   # live daemon: a dial re-reads the self address
+    real = mod.detect_self_ip
+    prev_net = os.environ.get("CREDO_PEER_LAN_NETINFO")
+    os.environ["CREDO_PEER_LAN_NETINFO"] = json.dumps(
+        {"ip": NEW, "subnet": "192.168.1.0/24", "gateway_mac": MAC, "wsl_nat_gateway": GW})
+    mod.detect_self_ip = lambda: NEW
+    del logs[:]
+    try:
+        wire(P, C_ADDR, A, NEW)
+    finally:
+        mod.detect_self_ip = real
+        if prev_net is None:
+            os.environ.pop("CREDO_PEER_LAN_NETINFO", None)
+        else:
+            os.environ["CREDO_PEER_LAN_NETINFO"] = prev_net
+    ra = rec(A, P.peer_id)
+    ch = A._get_channel(KEYNEW)
+    res("PK n dial: a dial after the self address changed advertises the new address",
+        P.advertise_host == NEW, "adv=%r" % P.advertise_host)
+    res("PK n dial: the acceptor follows the pairing to the new address without a refusal",
+        ra is not None and ra["slot"] == KEYNEW and not any("pair-reset" in l for l in logs),
+        "rec=%r logs=%r" % (ra, logs))
+    res("PK n dial: the link at the new address is up, authenticated as the paired id",
+        ch is not None and ch.pair_id == P.peer_id, "ch=%r" % (ch and ch.pair_id))
+guard("PK n dial", pk_n_dial)
+
 def pk_n_more():
     # 1. a configured advertise_host is never refreshed (the config pins it)
     D = mod.Daemon({"this_machine": "box-d", "token": "tok", "peers": [C_ADDR],
@@ -4752,7 +4786,7 @@ while IFS= read -r line; do
     esac
 done <<< "$PK_OUT"
 case "$PK_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL PK: traceback\n%s\n' "$PK_OUT" ;; esac
-check "PK: expected number of pairing results" "156" "$(printf '%s\n' "$PK_OUT" | grep -cE '^(PASS|FAIL) ')"
+check "PK: expected number of pairing results" "159" "$(printf '%s\n' "$PK_OUT" | grep -cE '^(PASS|FAIL) ')"
 
 # --- RO: an OLD peer (no link support) is marked after a few refusals; rosters keep -
 # flowing over fresh connections. The fake old relay reads one line per connection,

@@ -3963,6 +3963,7 @@ class Daemon(object):
         self.network_recheck = float(
             cfg.get("network_recheck_interval", DEFAULT_NETWORK_RECHECK)
         )
+        self.netwatch_running = False   # set by start(): a live daemon re-reads its self address per dial
         self.lan_state = compute_lan_state({}, None, self.peers, self.wsl)
         self.lan_state["reason"] = "network not detected yet"
         self._lan_key = None
@@ -4081,6 +4082,7 @@ class Daemon(object):
             # (receivers then fall back - see _resolve_peer_addr).
             threading.Thread(target=self._detect_advertise_host, daemon=True).start()
         self._start_relay()
+        self.netwatch_running = True
         threading.Thread(target=self._netwatch_loop, daemon=True).start()
         threading.Thread(target=self._accept_loop, daemon=True).start()
         threading.Thread(target=self._link_loop, daemon=True).start()
@@ -4120,6 +4122,17 @@ class Daemon(object):
         self.advertise_host = ip
         log("advertising self address %s:%d in rosters (was %s)"
             % (ip, self.advertise_port, old or "none"))
+
+    def _refresh_self_address(self):
+        """Re-read the self address for a dial. The netwatch recheck runs every
+        network_recheck seconds, but a link dropped by a DHCP change is re-dialed at
+        once, so its hello would still carry the old address and the acceptor refuses
+        the moved pairing (pending repair). The live daemon (netwatch running) therefore
+        reads it again per dial, from the same source as the recheck. A configured
+        advertise_host is never refreshed (see advertise_pinned)."""
+        if not self.netwatch_running or self.advertise_pinned:
+            return
+        self._refresh_advertise_host(detect_network() if self.wsl else None)
 
     # -- network watcher (allowlist state) ------------------------------------
     def _netwatch_loop(self):
@@ -5204,6 +5217,8 @@ class Daemon(object):
         key = "%s:%d" % (host, port)
         sock = None
         ch = None
+        if not is_loopback_ip(host):
+            self._refresh_self_address()   # the hello below advertises the current address
         try:
             try:
                 sock = open_link_socket(host, port, min(5.0, max(1.0, 3 * self.roster_interval)))
