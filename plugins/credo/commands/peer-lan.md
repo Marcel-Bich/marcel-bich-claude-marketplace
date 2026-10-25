@@ -340,15 +340,23 @@ the config, recording pid + version + port) and decides: leave a current/newer d
 untouched, replace an OLDER one after a plugin update (`cc-up`), or start fresh. `status`,
 `stop` and `restart` act on that state file too: they only ever signal the pid recorded
 there, after checking it really is this config's daemon. The running daemon keeps that
-state file. When it is missing (removed by hand or by a racing process), the daemon
-rewrites it within a second. Only one daemon runs per machine: the listen port is the
+state file. When it is missing, or names no live credo daemon (removed by hand or by a
+racing process), the daemon rewrites it within a second. A file that names another live
+credo daemon is left alone. Only one daemon runs per machine. The listen port is the
 single-instance lock, so a second daemon on the same `listen_host:listen_port` poll-retries
-the bind briefly (race-safe) and, if it
-stays held, logs that another is already listening and exits 0 without disturbing the
-running one. A listener that holds the port while the state file names no live daemon
-(pid unknown) is treated as running. `status` reports it, `start` and `ensure` leave it
-alone, and `restart` and `stop` refuse to act on a pid they cannot verify. Disable the auto-start (and the relay) with `CREDO_PEER_LAN` set to
-`0`/`false`/`no`/`off`.
+the bind briefly (race-safe) and, if it stays held, logs that another is already listening
+and exits 0 without disturbing the running one.
+
+A port that is held while the state file names no live daemon is reported as held (pid
+unknown, maybe not a credo relay). `status` shows it and exits 0, `start` exits 1 without
+starting a second daemon, `ensure` leaves it alone, and `restart`, `stop` and
+`disconnect-all` refuse to act on it. Their message gives the manual route. Find the
+listener with `ss -ltnp "sport = :PORT"` (or `lsof -nP -iTCP:PORT -sTCP:LISTEN`), stop
+only a pid whose command line is `credo-peer-lan.py daemon` or `ensure` with `kill PID`,
+then run `credo-peer-lan.py start`. Any other process is not this relay. Leave it, or set
+another `listen_port` in the config.
+
+Disable the auto-start (and the relay) with `CREDO_PEER_LAN` set to `0`/`false`/`no`/`off`.
 
 Served profiles start the same relay. The hook asks the daemon for the one machine config
 and its directory (`credo-peer-lan.py onboarding --state --dir`). A session in the profile
@@ -796,8 +804,9 @@ allowlist-scoped firewall rule (the old rule allowed the whole LocalSubnet).
   Reads the state file (`peer-lan.pid`) and checks that the recorded pid is a live relay
   daemon of this config, so a daemon started by `start`, the autostart hook or `restart`
   is found alike. Exit 0 prints pid, version, port and start time (plus a hint when the
-  installed plugin version differs); a listener on the port whose state file names no live
-  daemon prints `relay running (pid unknown)` and exits 0; exit 1 prints `relay not running`.
+  installed plugin version differs); a port held while the state file names no live daemon
+  prints `port P held (pid unknown, maybe not a credo relay)` with the manual route and exits
+  0 (see the auto-start notes above); exit 1 prints `relay not running`.
   Report the
   result. Also show the pairing state; report any PENDING REPAIR line to the user (it
   names the `pair-reset` command; run it only on the user's confirmation):

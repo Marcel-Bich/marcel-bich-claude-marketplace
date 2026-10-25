@@ -2846,6 +2846,25 @@ def relay_port_held(cfg):
     return not port_is_free(host, port)
 
 
+def held_port_text(cfg):
+    """What status, ensure, start, restart, stop and disconnect-all say about a port that is
+    held while the pidfile names no live daemon. The listener may be a credo relay whose
+    pidfile is not visible from this profile, or any other process."""
+    return ("port %s held (pid unknown, maybe not a credo relay); pidfile %s names no live "
+            "daemon" % (cfg.get("listen_port", DEFAULT_PORT), pidfile_path()))
+
+
+def held_port_hint(cfg):
+    """Manual recovery for a held port. Nothing is killed automatically. The listener is
+    found by its port, and the user stops only a pid whose command line is this daemon."""
+    port = cfg.get("listen_port", DEFAULT_PORT)
+    return ("To recover by hand: find the listener with `ss -ltnp \"sport = :%s\"` (or "
+            "`lsof -nP -iTCP:%s -sTCP:LISTEN`). If its command line is credo-peer-lan.py "
+            "daemon or ensure, stop only that pid with `kill PID`, then run "
+            "`credo-peer-lan.py start`. Any other process is not this relay. Leave it, or "
+            "set another listen_port in the config." % (port, port))
+
+
 def incumbent(cfg, wait=0.0):
     """(pid, pidfile dict) of the running daemon for cfg, or (None, pidfile dict). While
     the listen port is held but the pidfile names no live daemon, polls up to wait
@@ -4371,21 +4390,29 @@ class Daemon(object):
             return False
 
     def keep_pidfile(self):
-        """Self-heal, called once per main-loop tick. A running daemon keeps a pidfile
-        that names its own pid. A file that is missing, unreadable or names another pid
-        (removed by a racing remover or by hand) is rewritten from the same record.
-        Nothing is written once shutdown has begun, and a failing rewrite is retried at
-        most every HEAL_RETRY seconds. Never raises. A heal failure must not stop the
-        relay."""
+        """Self-heal, called once per main-loop tick. A running daemon keeps a pidfile that
+        names its own pid. A file that is missing, unreadable, or names a pid that is not a
+        live credo daemon (removed by a racing remover or by hand) is rewritten from the
+        same record. A file that names another live credo daemon is left alone, so two
+        daemons on one pidfile path never rewrite it in turn. A failing rewrite is retried
+        at most every HEAL_RETRY seconds. A rewrite that overlaps shutdown takes its own
+        file back, so a clean shutdown leaves nothing behind. Never raises. A heal failure
+        must not stop the relay."""
         if self.stop.is_set() or time.monotonic() < self._heal_after:
             return
         try:
             d = read_pidfile()
-            if isinstance(d, dict) and d.get("pid") == os.getpid():
+            if isinstance(d, dict) and (
+                d.get("pid") == os.getpid() or daemon_is_alive(d.get("pid"), d.get("pstart"))
+            ):
                 return
-            log("pidfile %s was missing or named another pid; rewriting it" % pidfile_path())
+            log("pidfile %s was missing or named no live daemon; rewriting it" % pidfile_path())
             if not self._write_pidfile():
                 self._heal_after = time.monotonic() + HEAL_RETRY
+            elif self.stop.is_set():
+                # shutdown began during the rewrite (signal handlers run on this thread
+                # between its steps), so its own removal may have run before the write
+                self._remove_pidfile()
         except Exception:
             self._heal_after = time.monotonic() + HEAL_RETRY
 
@@ -6483,10 +6510,7 @@ def run_ensure(_args):
         )
         return 0
     if relay_port_held(cfg):
-        log(
-            "relay already listening on %s:%s with no live pidfile daemon (pid unknown); "
-            "leaving it" % (cfg.get("listen_host", "127.0.0.1"), cfg.get("listen_port", DEFAULT_PORT))
-        )
+        log("%s; leaving it" % held_port_text(cfg))
         return 0
     return _serve(cfg)
 
@@ -6511,11 +6535,8 @@ def run_restart(_args):
     port = int(cfg.get("listen_port", DEFAULT_PORT))
     old_pid, pf = incumbent(cfg, bind_window(cfg))
     if old_pid is None and relay_port_held(cfg):
-        sys.stderr.write(
-            "credo-peer-lan restart: port %d is held by a listener (pid unknown, its pidfile "
-            "%s is missing or unreadable); left it running\n"
-            % (port, pidfile_path())
-        )
+        sys.stderr.write("credo-peer-lan restart: %s; left as it is. %s\n"
+                         % (held_port_text(cfg), held_port_hint(cfg)))
         return 1
     if old_pid is not None:
         log("restart: stopping running daemon pid %s" % old_pid)
@@ -6549,10 +6570,9 @@ def run_start(_args):
             return 0
         return run_restart(_args)
     if relay_port_held(cfg):
-        print("relay already running on port %s (pid unknown, its pidfile %s is missing "
-              "or unreadable); not starting a second daemon"
-              % (cfg.get("listen_port", DEFAULT_PORT), pidfile_path()))
-        return 0
+        sys.stderr.write("credo-peer-lan start: %s; not started. %s\n"
+                         % (held_port_text(cfg), held_port_hint(cfg)))
+        return 1
     return _start_detached(cfg, "start")
 
 
@@ -6600,8 +6620,10 @@ def run_status(_args):
     cfg = load_config()
     pid, pf = incumbent(cfg, HEAL_WAIT)
     if pid is None and relay_port_held(cfg):
-        print("relay running (pid unknown), port %s is held, but its pidfile %s is missing "
-              "or unreadable" % (cfg.get("listen_port", DEFAULT_PORT), pidfile_path()))
+        # exit 0 keeps "port in use" meaning running for credo-peer-check; the text says the
+        # listener is not verified
+        print(held_port_text(cfg))
+        print(held_port_hint(cfg))
         return 0
     if pid is None:
         print("relay not running")
@@ -6630,10 +6652,8 @@ def run_stop(_args):
     cfg = load_config()
     pid, pf = incumbent(cfg, HEAL_WAIT)
     if pid is None and relay_port_held(cfg):
-        sys.stderr.write(
-            "credo-peer-lan stop: port %s is held by a listener (pid unknown, its pidfile "
-            "%s is missing or unreadable); not stopped\n"
-            % (cfg.get("listen_port", DEFAULT_PORT), pidfile_path()))
+        sys.stderr.write("credo-peer-lan stop: %s; not stopped. %s\n"
+                         % (held_port_text(cfg), held_port_hint(cfg)))
         return 1
     if pid is None:
         print("relay not running")
@@ -7234,11 +7254,15 @@ def _disconnect_plan(cfg, rows, running, full, port, task):
 
 def _stop_for_disconnect(cfg):
     """Stop the running relay (its verified pid only, like restart). True when the port
-    is free again or nothing was running. A listener whose pid is unknown is never taken
-    as stopped."""
+    is free again or nothing was running. A held port whose pid is unknown is never taken
+    as stopped. It prints the manual recovery route and returns False."""
     pid, pf = incumbent(cfg, HEAL_WAIT)
     if pid is None:
-        return not relay_port_held(cfg)
+        if not relay_port_held(cfg):
+            return True
+        sys.stderr.write("credo-peer-lan disconnect-all: %s; not stopped. %s\n"
+                         % (held_port_text(cfg), held_port_hint(cfg)))
+        return False
     return _terminate_incumbent(pid, cfg.get("listen_host", "127.0.0.1"),
                                 int(cfg.get("listen_port", DEFAULT_PORT)), pstart=pf.get("pstart"))
 

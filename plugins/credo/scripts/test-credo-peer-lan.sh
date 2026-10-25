@@ -1208,23 +1208,33 @@ hl_cli() { # the relay CLI against the HL config; the port holder is not a daemo
 }
 HL_ST="$(hl_cli status 2>&1)"; HL_STRC=$?
 check "HL: status exits 0 while a listener holds the port without a pidfile" "0" "$HL_STRC"
-ok "HL: status reports the listener as running with its pid unknown" \
-    "$(case "$HL_ST" in *"relay running"*"pid unknown"*) echo 0 ;; *) echo 1 ;; esac)"
+ok "HL: status says the port is held, pid unknown, maybe not a credo relay" \
+    "$(case "$HL_ST" in *"port $PHL held (pid unknown, maybe not a credo relay)"*) echo 0 ;; *) echo 1 ;; esac)"
 HL_EN="$(hl_cli ensure 2>&1)"; HL_ENRC=$?
 check "HL: ensure leaves the listener alone (exit 0)" "0" "$HL_ENRC"
 ok "HL: ensure does not try to start a second daemon beside it" \
     "$(case "$HL_EN" in *"another daemon already listening"*) echo 1 ;; *) echo 0 ;; esac)"
+ok "HL: ensure logs the held port with the same wording" \
+    "$(case "$HL_EN" in *"held (pid unknown, maybe not a credo relay)"*) echo 0 ;; *) echo 1 ;; esac)"
 HL_SRT="$(hl_cli start 2>&1)"; HL_SRTRC=$?
-check "HL: start leaves the listener alone (exit 0)" "0" "$HL_SRTRC"
-ok "HL: start reports the listener with its pid unknown instead of spawning a daemon" \
-    "$(case "$HL_SRT" in *"pid unknown"*) echo 0 ;; *) echo 1 ;; esac)"
+check "HL: start does not start a second daemon beside a held port (exit 1)" "1" "$HL_SRTRC"
+ok "HL: start names the held port and gives the manual recovery route" \
+    "$(case "$HL_SRT" in *"held (pid unknown, maybe not a credo relay)"*"by hand"*) echo 0 ;; *) echo 1 ;; esac)"
 HL_RS="$(hl_cli restart 2>&1)"; HL_RSRC=$?
 check "HL: restart refuses to replace a listener it cannot identify (exit 1)" "1" "$HL_RSRC"
-ok "HL: restart names the pid as unknown and says why it stopped" \
-    "$(case "$HL_RS" in *"pid unknown"*) echo 0 ;; *) echo 1 ;; esac)"
+ok "HL: restart names the held port and the manual route (ss, kill, start)" \
+    "$(case "$HL_RS" in *"held (pid unknown, maybe not a credo relay)"*"by hand"*"ss -ltnp"*"credo-peer-lan.py start"*) echo 0 ;; *) echo 1 ;; esac)"
 ok "HL: the listener is still up after restart" "$(kill -0 "$HL_HOLD" 2>/dev/null && echo 0 || echo 1)"
 HL_SP="$(hl_cli stop 2>&1)"; HL_SPRC=$?
 check "HL: stop does not report success for a listener it cannot identify (exit 1)" "1" "$HL_SPRC"
+ok "HL: stop names the held port and the manual route" \
+    "$(case "$HL_SP" in *"held (pid unknown, maybe not a credo relay)"*"by hand"*) echo 0 ;; *) echo 1 ;; esac)"
+HL_DC="$(hl_cli disconnect-all --yes 2>&1)"; HL_DCRC=$?
+check "HL: disconnect-all refuses while the port is held (exit 1)" "1" "$HL_DCRC"
+ok "HL: disconnect-all says the relay did not stop and gives the manual route" \
+    "$(grep -q "did not stop" <<<"$HL_DC" && grep -q "by hand" <<<"$HL_DC" && echo 0 || echo 1)"
+ok "HL: disconnect-all removed nothing (config still there)" "$([ -f "$TMP/HL/cfg/credo/peer-lan.json" ] && echo 0 || echo 1)"
+ok "HL: the held listener survives all refusals" "$(kill -0 "$HL_HOLD" 2>/dev/null && echo 0 || echo 1)"
 kill -KILL "$HL_HOLD" 2>/dev/null || true
 
 read PHS < <(free_port)
@@ -1248,6 +1258,45 @@ kill -TERM "$HS_PID" 2>/dev/null || true
 removed=""
 for _ in $(seq 1 40); do [ ! -f "$PIDFILE_HS" ] && { removed=1; break; }; sleep 0.1; done
 ok "self-heal: the healed pidfile is removed on a clean shutdown" "$([ -n "$removed" ] && echo 0 || echo 1)"
+
+# --- PP: two live daemons on one pidfile path never rewrite it in turn ---------------
+# Two configs in one credo/ dir give two daemons the same pidfile path. The file names a
+# live credo daemon, so neither may rewrite it. The rewrite count stays flat. When the
+# other daemon exits, the survivor takes the file back.
+read PPA < <(free_port); read PPB < <(free_port)
+mkdir -p "$TMP/PP/cfg/sessions" "$TMP/PP/cfg/credo" "$TMP/PP/sockA" "$TMP/PP/sockB"
+cat > "$TMP/PP/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"PPA","listen_host":"127.0.0.1","listen_port":$PPA,
+ "roster_interval":60,"machine_timeout":600,"bind_retry_total":1,"peers":[]}
+EOF
+cat > "$TMP/PP/cfg/credo/peer-lan-b.json" <<EOF
+{"this_machine":"PPB","listen_host":"127.0.0.1","listen_port":$PPB,
+ "roster_interval":60,"machine_timeout":600,"bind_retry_total":1,"peers":[]}
+EOF
+PIDFILE_PP="$TMP/PP/cfg/credo/peer-lan.pid"
+CLAUDE_CONFIG_DIR="$TMP/PP/cfg" CREDO_PEER_LAN_CONFIG="$TMP/PP/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/PP/sockA" "$PY" "$DAEMON" daemon >"$TMP/PP/a.log" 2>&1 &
+PP_A=$!; PIDS="$PIDS $PP_A"
+for _ in $(seq 1 40); do grep -q "listening on" "$TMP/PP/a.log" && break; sleep 0.1; done
+CLAUDE_CONFIG_DIR="$TMP/PP/cfg" CREDO_PEER_LAN_CONFIG="$TMP/PP/cfg/credo/peer-lan-b.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/PP/sockB" "$PY" "$DAEMON" daemon >"$TMP/PP/b.log" 2>&1 &
+PP_B=$!; PIDS="$PIDS $PP_B"
+for _ in $(seq 1 40); do grep -q "listening on" "$TMP/PP/b.log" && break; sleep 0.1; done
+ok "PP: both daemons listen on their own ports" \
+    "$(kill -0 "$PP_A" 2>/dev/null && kill -0 "$PP_B" 2>/dev/null && grep -q "listening on" "$TMP/PP/a.log" && grep -q "listening on" "$TMP/PP/b.log" && echo 0 || echo 1)"
+sleep 1.5   # both daemons have had at least one tick
+PP_N1="$(cat "$TMP/PP/a.log" "$TMP/PP/b.log" | grep -c "rewriting it")"
+sleep 3
+PP_N2="$(cat "$TMP/PP/a.log" "$TMP/PP/b.log" | grep -c "rewriting it")"
+ok "PP: two live daemons sharing a pidfile do not rewrite it in turn" "$([ "$PP_N1" = "$PP_N2" ] && echo 0 || echo 1)"
+ok "PP: the shared pidfile names one of the two live daemons" \
+    "$(case "$(pf_pid "$PIDFILE_PP")" in "$PP_A"|"$PP_B") echo 0 ;; *) echo 1 ;; esac)"
+kill -TERM "$PP_B" 2>/dev/null || true
+for _ in $(seq 1 40); do kill -0 "$PP_B" 2>/dev/null || break; sleep 0.1; done
+pp_took=""
+for _ in $(seq 1 40); do [ "$(pf_pid "$PIDFILE_PP")" = "$PP_A" ] && { pp_took=1; break; }; sleep 0.1; done
+ok "PP: the survivor takes the shared pidfile back when the other daemon exits" "$([ -n "$pp_took" ] && echo 0 || echo 1)"
+kill -TERM "$PP_A" 2>/dev/null || true
 
 # --- EN: ensure decisions (no config / same / newer / unknown -> no-op; older -> replace) --
 # One real incumbent daemon drives every decision: its pidfile's version field is rewritten
