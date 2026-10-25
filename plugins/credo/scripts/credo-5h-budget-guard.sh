@@ -227,7 +227,7 @@ read_ladder() {
     local -a def=("$@")
     local out rc
     set +e
-    out=$(CLAUDE_PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}" "$CONFIG" get "$key" 2>/dev/null)
+    out=$(CREDO_SESSION_ID="$session_id" CLAUDE_PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}" "$CONFIG" get "$key" 2>/dev/null)
     rc=$?
     set -e
     if [[ $rc -ne 0 || -z "$out" ]]; then

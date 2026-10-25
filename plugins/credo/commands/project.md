@@ -38,6 +38,9 @@ The user gave a path in `$ARGUMENTS`.
    "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" resolve-project
    ```
 3. Confirm briefly: credo now targets `<resolved .credo dir>` for this session.
+   The pin covers the whole project config (preset, backend, every key) from now on. The
+   preset prompt injected at session start follows at the next SessionStart (compact,
+   resume or restart); mention that when the pinned repo has its own preset.
 
 ## Without an argument (show the current target)
 

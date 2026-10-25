@@ -10,8 +10,9 @@
 # The project layer is the .credo/config of the target repo, chosen in this order:
 # CREDO_PROJECT, CREDO_DIR, the session project pin (set by /credo:project, see
 # session_pin_repo below), the cwd git toplevel, else the cwd. get, source, paths,
-# backend and resolve-project all use this one target, so a session pinned from a
-# launch hub reads the pinned repo's whole config (preset, backend, every key).
+# backend and resolve-project (which skips the CREDO_PROJECT test override) use this
+# target, so a session pinned from a launch hub reads the pinned repo's whole
+# config (preset, backend, every key).
 #
 # The profile layer lets a second Claude Code profile (a different
 # CLAUDE_CONFIG_DIR, e.g. ~/.claude-private) override the shared global per key,
