@@ -6,6 +6,12 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.84
 
+#### v0.84.2
+
+##### Fixed
+
+- The peer send reminder tells the agent to resolve a short peer name (a session name) through ListAgents itself and send to the full mirror row name, instead of failing or asking the user for the long name
+
 #### v0.84.1
 
 ##### Fixed
