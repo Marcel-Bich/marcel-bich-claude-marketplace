@@ -2299,6 +2299,19 @@ class PairStore(object):
             out["retired"] = left
         self._write("peer-%s.json" % rec["id"], out)
 
+    def mark_followed(self, pid):
+        """Persist the followed mark of pid's record and change nothing else (see
+        Daemon._mark_legacy_followed). False when there is no such record. Raises
+        PairStoreUnreadable when the record cannot be read (never overwritten then)."""
+        with self.lock:
+            cur = self.get(pid, strict=True)
+            if cur is None:
+                return False
+            if not cur.get("followed"):
+                cur["followed"] = True
+                self._write("peer-%s.json" % pid, cur)
+            return True
+
     # -- pending repairs (a new id or key at a paired slot, refused) ---------------
     def pending(self, strict=False):
         d = self._read(self.PENDING, strict)
@@ -4060,6 +4073,7 @@ class Daemon(object):
                 time.sleep(self.bind_retry_interval)
         self._cleanup_stale_descriptors()
         self._cleanup_stale_sockets()
+        self._mark_legacy_followed()   # before the copies: they carry the mark too
         self._sync_pair_copies()
         rotate_relay_log()   # an oversized log from an earlier run is cut before this one writes
         dropped = prune_pending_for(self.pairs, self.cfg)
@@ -4849,6 +4863,34 @@ class Daemon(object):
         """key ("host:port") is the current slot of a followed record. Reads the store."""
         return any(r["slot"] == key for r in self._followed_records())
 
+    def _mark_legacy_followed(self):
+        """One-time migration, run by start() right after the bind (only the running
+        daemon writes). A record followed before the mark existed (v0.84.3) keeps its
+        moved-from address in retired. When that address is a configured peer address
+        now, the record was followed away from a configured peer: the mark is written to
+        the store at once, not derived on read, because pin() prunes retired entries
+        older than RETIRED_TTL and the evidence would be gone. A marked record is skipped,
+        so later starts change nothing. Returns how many records were marked."""
+        configured = set((p["host"], p["port"]) for p in self.peers)
+        try:
+            records = self.pairs.records()
+        except PairStoreUnreadable:
+            return 0   # unknown state: nothing is marked, the next start retries
+        marked = 0
+        for rec in records:
+            if rec.get("followed"):
+                continue
+            if not any(self._slot_addr(e["slot"]) in configured for e in rec.get("retired", [])):
+                continue
+            try:
+                if self.pairs.mark_followed(rec["id"]):
+                    marked += 1
+            except (OSError, PairStoreUnreadable) as exc:
+                log("pairing %s not marked as followed (%s)" % (rec["id"][:8], exc))
+        if marked:
+            log("%d pairing record(s) marked as followed from a configured peer address" % marked)
+        return marked
+
     def _peer_link_proof_locked(self, key, their_out):
         """link_proof we can offer the peer at key for its outbound link whose
         secret is their_out: combined with our own latest outbound link to that key
@@ -5201,22 +5243,17 @@ class Daemon(object):
         current slot of a followed record (see _followed_records) that is not one of
         them. A followed slot is key-proven and persisted, so a peer that followed its
         address is reached again after a restart even while its configured address is
-        stale. A first-contact record is never a target, whatever address it claims.
-        The extra targets are capped at the number of configured peers, so the count
-        never grows with the records. Each address is listed once; the outbound gate
-        still applies per address. A moved-from address is not a target (only reserved,
-        see PairStore.pin)."""
+        stale. A first-contact record is never a target, whatever address it claims: a
+        mark needs a key-proven move away from a configured address. Each address is
+        listed once; the outbound gate still applies per address. A moved-from address is
+        not a target (only reserved, see PairStore.pin)."""
         targets = list(self.peers)
         seen = set((p["host"], p["port"]) for p in targets)
-        room = len(self.peers)
         for rec in self._followed_records():
             addr = self._slot_addr(rec["slot"])
-            if room <= 0:
-                break
             if addr is not None and addr not in seen:
                 seen.add(addr)
                 targets.append({"host": addr[0], "port": addr[1]})
-                room -= 1
         return targets
 
     def link_tick(self):

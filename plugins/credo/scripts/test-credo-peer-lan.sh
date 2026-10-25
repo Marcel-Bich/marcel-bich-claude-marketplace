@@ -4928,8 +4928,8 @@ def pk_o_marker():
         not rec(A, R).get("followed"), "rec=%r" % rec(A, R))
 guard("PK o marker", pk_o_marker)
 
-def pk_o_cap():
-    # followed records are dialed at most as many as there are configured peers (two here)
+def pk_o_followed_all():
+    # every followed record is a dial target, more of them than there are configured peers
     A, P = pair_ap()
     if rec(A, P.peer_id) is None or rec(P, A.peer_id) is None:
         res("PK o cap: precondition: A and P paired", False, "not paired")
@@ -4945,9 +4945,51 @@ def pk_o_cap():
         "followed=%r" % [r["slot"] for r in A.pairs.records() if r.get("followed")])
     A5 = new_daemon([B_ADDR, Q_ADDR], "box-a", keys_dir=A.pairs.path, adv=C_ADDR)
     dialed = pk_o_dials(A5)
-    res("PK o cap: followed slots dialed at most as many as there are configured peers",
-        len([d for d in dialed if d in fol]) == 2, "dialed=%r" % dialed)
-guard("PK o cap", pk_o_cap)
+    res("PK o followed: every followed slot is dialed, more than the configured peers",
+        all(d in dialed for d in fol), "dialed=%r" % dialed)
+    A6 = new_daemon([], "box-a", keys_dir=A.pairs.path, adv=C_ADDR)
+    dialed6 = pk_o_dials(A6)
+    res("PK o followed: with no configured peer the followed slots are dialed too",
+        all(d in dialed6 for d in fol), "dialed=%r" % dialed6)
+guard("PK o followed", pk_o_followed_all)
+
+def pk_o_legacy():
+    # a record followed under v0.84.3: moved away from a configured address, no followed
+    # mark, the moved-from address still in retired (here long past RETIRED_TTL, not pruned)
+    A, P = pair_ap()
+    if rec(A, P.peer_id) is None or rec(P, A.peer_id) is None:
+        res("PK o legacy: precondition: A and P paired", False, "not paired")
+        return
+    rp = rec(A, P.peer_id)
+    A.pairs.pin(P.peer_id, rp["pub"], rp["key"], KEYNEW, "", follow=True)   # no from_peer: v0.84.3
+    path = os.path.join(A.pairs.path, "peer-%s.json" % P.peer_id)
+    with open(path) as fh:
+        raw = json.load(fh)
+    raw["retired"] = [dict(e, ts=0) for e in raw.get("retired", [])]
+    with open(path, "w") as fh:
+        json.dump(raw, fh)
+    lg = rec(A, P.peer_id)
+    res("PK o legacy: precondition: followed without the mark, its configured address retired",
+        lg is not None and lg["slot"] == KEYNEW and not lg.get("followed")
+        and KEYB in [e["slot"] for e in lg.get("retired", [])], "rec=%r" % lg)
+    # a first-contact record: moved from an address that is no configured peer address
+    TID = os.urandom(16).hex()
+    A.pairs.pin(TID, rp["pub"], rp["key"], KEYTOFU)
+    A.pairs.pin(TID, rp["pub"], rp["key"], KEYTOFU_MOVED, follow=True)
+    A2 = new_daemon([B_ADDR, Q_ADDR], "box-a", keys_dir=A.pairs.path, adv=C_ADDR)
+    marked = A2._mark_legacy_followed()   # what start() runs right after the bind
+    res("PK o legacy: the start persists the followed mark of the legacy record, only it",
+        marked == 1 and rec(A2, P.peer_id).get("followed") is True
+        and not rec(A2, TID).get("followed"), "marked=%r rec=%r" % (marked, rec(A2, P.peer_id)))
+    dialed = pk_o_dials(A2)
+    res("PK o legacy: the legacy followed slot is dialed after the restart",
+        KEYNEW in dialed and KEYB in dialed, "dialed=%r" % dialed)
+    res("PK o legacy: a first-contact record moved from an unconfigured slot is not marked",
+        not rec(A2, TID).get("followed") and rec(A2, TID)["slot"] == KEYTOFU_MOVED,
+        "rec=%r" % rec(A2, TID))
+    res("PK o legacy: a first-contact record moved from an unconfigured slot is not dialed",
+        KEYTOFU_MOVED not in dialed, "dialed=%r" % dialed)
+guard("PK o legacy", pk_o_legacy)
 PYEOF
 PK_OUT="$("$PY" "$TMP/PK/pktest.py" "$DAEMON" "$TMP/PK" 2>&1)"
 while IFS= read -r line; do
@@ -4957,7 +4999,7 @@ while IFS= read -r line; do
     esac
 done <<< "$PK_OUT"
 case "$PK_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL PK: traceback\n%s\n' "$PK_OUT" ;; esac
-check "PK: expected number of pairing results" "182" "$(printf '%s\n' "$PK_OUT" | grep -cE '^(PASS|FAIL) ')"
+check "PK: expected number of pairing results" "188" "$(printf '%s\n' "$PK_OUT" | grep -cE '^(PASS|FAIL) ')"
 
 # --- RO: an OLD peer (no link support) is marked after a few refusals; rosters keep -
 # flowing over fresh connections. The fake old relay reads one line per connection,

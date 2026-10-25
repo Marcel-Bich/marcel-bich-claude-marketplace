@@ -295,6 +295,8 @@ The machine name stays a display label.
   WSL NAT gateway the key proof decides, and no other peer's address, slot or reservation
   is ever taken over). The daemon dials a followed peer at its current slot as well as at
   the configured address, so a restart restores the link without waiting for the peer.
+  A device that takes over a configured peer's address (DHCP reuse) and pairs there gets
+  the followed mark on its first move, so it receives what that address already receives.
 - **Paired slots.** A slot bound to a paired peer goes only to a link that proves that
   peer's key, whether or not the peer is online, from the WSL gateway, loopback or
   anywhere else. A paired peer never falls
