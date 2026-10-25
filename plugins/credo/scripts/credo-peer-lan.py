@@ -4864,8 +4864,8 @@ class Daemon(object):
         return any(r["slot"] == key for r in self._followed_records())
 
     def _mark_legacy_followed(self):
-        """One-time migration, run by start() right after the bind (only the running
-        daemon writes). A record followed before the mark existed (v0.84.3) keeps its
+        """One-time migration, run by start() right after the bind, before the relay
+        threads start (a CLI pair-reset in that short window may be undone). A record followed before the mark existed (v0.84.3) keeps its
         moved-from address in retired. When that address is a configured peer address
         now, the record was followed away from a configured peer: the mark is written to
         the store at once, not derived on read, because pin() prunes retired entries
