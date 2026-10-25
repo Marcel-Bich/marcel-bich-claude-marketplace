@@ -252,7 +252,7 @@ case "$event" in
         if [ "$to" = "main" ] || printf '%s' "$to" | grep -Eq '^a[0-9a-f]{16}$'; then
             exit 0
         fi
-        emit PreToolUse "[credo-peer] Before sending to a peer: start the message with [info] or [urgent] (urgent only for budget, priority or stop orders and questions that block you). Bundle several points into one message instead of sending them one by one, never send a pure ack or thanks, and end with \"No reply needed\" when you need no answer. Skip the message entirely if it can wait for the next real update."
+        emit PreToolUse "[credo-peer] Before sending to a peer: start the message with [info] or [urgent] (urgent only for budget, priority or stop orders and questions that block you). Bundle several points into one message instead of sending them one by one, never send a pure ack or thanks, and end with \"No reply needed\" when you need no answer. Skip the message entirely if it can wait for the next real update. Address: when the user names a peer by a short name (usually its session name) that is not an exact ListAgents name, resolve it yourself - run ListAgents and pick the row whose session part matches (a LAN mirror row is harness--network--device--user--profile--<session>+sid, each part in backticks; send to that full row name, with its [ref] when shown); never make the user type the long name, and ask via the Ask tool only when several rows match."
         ;;
 esac
 exit 0

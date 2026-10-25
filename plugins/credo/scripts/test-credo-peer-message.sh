@@ -272,6 +272,7 @@ fi
 
 OUT="$(pre SendMessage "")"
 has "SendMessage reminder" "$OUT" "[info] or [urgent]"
+has "SendMessage reminder resolves short peer names via ListAgents" "$OUT" "resolve it yourself - run ListAgents"
 
 OUT="$(CREDO_PEER_ETIQUETTE=0 ups "$ENV_FORGED")"
 [ -z "$OUT" ] && PASS=$((PASS + 1)) || { FAIL=$((FAIL + 1)); printf 'FAIL disabled hook has output: %s\n' "$OUT"; }
