@@ -4777,6 +4777,90 @@ def pk_n_more():
         and any(e["slot"] == KEYQ for e in A7.pairs.pending()),
         "rec=%r pending=%r" % (rec(A7, P7.peer_id), A7.pairs.pending()))
 guard("PK n more", pk_n_more)
+
+# ---------------------------------------------------------------- (o) a followed pairing slot is dialed
+def pk_o_dials(d):
+    """One link tick of d: the "host:port" addresses it dialed (test mode records the dials
+    and connects nowhere)."""
+    path = os.path.join(root, "pk-o-dials.log")
+    open(path, "w").close()
+    os.environ["CREDO_PEER_LAN_TEST_SENDLOG"] = path
+    try:
+        d.link_tick()
+        time.sleep(0.3)
+    finally:
+        os.environ.pop("CREDO_PEER_LAN_TEST_SENDLOG", None)
+    with open(path) as fh:
+        return [l.split(" ", 1)[1].strip() for l in fh if l.startswith("link ")]
+
+def pk_o():
+    # P moved from B_ADDR to NEW and A followed it (key proof, allowlist). A restarts while its
+    # configured peer address is still the old one: the dial round must reach the slot as well.
+    A, P = pair_ap()
+    if rec(A, P.peer_id) is None or rec(P, A.peer_id) is None:
+        res("PK o: precondition: A and P paired", False, "not paired")
+        return
+    refresh_self_ip(P, NEW)
+    wire(P, C_ADDR, A, NEW)
+    res("PK o: precondition: A followed P to the new address",
+        rec(A, P.peer_id) is not None and rec(A, P.peer_id)["slot"] == KEYNEW,
+        "rec=%r" % rec(A, P.peer_id))
+    for d in (A, P):   # A restarts: the links of both sides are gone
+        for c in live(d):
+            d._drop_channel(c, "test: restart")
+    keyd = A.pairs.path
+    A2 = new_daemon([B_ADDR, Q_ADDR], "box-a", keys_dir=keyd, adv=C_ADDR)
+    dialed = pk_o_dials(A2)
+    res("PK o: a dial round after a restart dials the followed slot",
+        KEYNEW in dialed, "dialed=%r" % dialed)
+    res("PK o: the configured peer addresses are still dialed",
+        KEYB in dialed and KEYQ in dialed, "dialed=%r" % dialed)
+    res("PK o: the followed slot is dialed once", dialed.count(KEYNEW) == 1, "dialed=%r" % dialed)
+    wire(A2, NEW, P, C_ADDR)
+    ch = A2._get_channel(KEYNEW)
+    res("PK o: the dial at the followed slot is up, authenticated as the paired id",
+        ch is not None and ch.pair_id == P.peer_id, "ch=%r" % (ch and ch.pair_id))
+    sent = []
+    A2.send_frame = lambda host, port, payload, allow_raw=True: sent.append("%s:%d" % (host, port))
+    try:
+        A2.roster_tick()
+    finally:
+        del A2.send_frame
+    res("PK o: the roster goes to the followed slot over its paired link",
+        KEYNEW in sent, "sent=%r" % sent)
+    # a slot that is also configured is one target, not two
+    A3 = new_daemon([B_ADDR, Q_ADDR, NEW], "box-a", keys_dir=keyd, adv=C_ADDR)
+    dialed3 = pk_o_dials(A3)
+    res("PK o: a slot that is also configured is dialed once",
+        dialed3.count(KEYNEW) == 1, "dialed=%r" % dialed3)
+    # the moved-from address is reserved for P but not held by its slot: no dial
+    A4 = new_daemon([Q_ADDR], "box-a", keys_dir=keyd, adv=C_ADDR)
+    dialed4 = pk_o_dials(A4)
+    res("PK o: the moved-from address is not dialed, the slot is",
+        KEYNEW in dialed4 and KEYB not in dialed4, "dialed=%r" % dialed4)
+    # a roster over the followed INBOUND link (keyed by the slot, not configured) is no
+    # unexpected address: the slot belongs to a paired peer
+    for c in live(P):
+        P._drop_channel(c, "test: re-dial")
+    A6 = new_daemon([B_ADDR, Q_ADDR], "box-a", keys_dir=keyd, adv=C_ADDR)
+    wire(P, C_ADDR, A6, NEW)
+    ch_in = A6._get_channel(KEYNEW)
+    res("PK o: the followed slot's inbound link is authenticated as the paired id",
+        ch_in is not None and ch_in.direction == "in" and ch_in.pair_id == P.peer_id,
+        "ch=%r" % (ch_in,))
+    del logs[:]
+    A6._on_roster({"machine": "box-p", "listen_port": 48610, "sessions": []}, src_ip=NEW, chan=ch_in)
+    res("PK o: a roster over the followed inbound link is not flagged as an unexpected address",
+        not any("not among this daemon" in l for l in logs), "logs=%r" % logs)
+    # the gate: a slot outside the outbound allowlist is not dialed (set by hand, the store
+    # itself does not check the allowlist; only a proven follow passes it)
+    rp = rec(A, P.peer_id)
+    A.pairs.pin(P.peer_id, rp["pub"], rp["key"], "%s:48610" % OUT, "", follow=True)
+    A5 = new_daemon([B_ADDR, Q_ADDR], "box-a", keys_dir=keyd, adv=C_ADDR)
+    dialed5 = pk_o_dials(A5)
+    res("PK o: a followed slot outside the outbound allowlist is not dialed",
+        "%s:48610" % OUT not in dialed5 and KEYB in dialed5, "dialed=%r" % dialed5)
+guard("PK o", pk_o)
 PYEOF
 PK_OUT="$("$PY" "$TMP/PK/pktest.py" "$DAEMON" "$TMP/PK" 2>&1)"
 while IFS= read -r line; do
@@ -4786,7 +4870,7 @@ while IFS= read -r line; do
     esac
 done <<< "$PK_OUT"
 case "$PK_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL PK: traceback\n%s\n' "$PK_OUT" ;; esac
-check "PK: expected number of pairing results" "159" "$(printf '%s\n' "$PK_OUT" | grep -cE '^(PASS|FAIL) ')"
+check "PK: expected number of pairing results" "170" "$(printf '%s\n' "$PK_OUT" | grep -cE '^(PASS|FAIL) ')"
 
 # --- RO: an OLD peer (no link support) is marked after a few refusals; rosters keep -
 # flowing over fresh connections. The fake old relay reads one line per connection,

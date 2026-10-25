@@ -293,7 +293,8 @@ The machine name stays a display label.
   command is `pair-reset <peer id>` - the manual way to move a paired peer (a proven
   move to a new allowlisted address follows automatically, see Setup step 9; behind the
   WSL NAT gateway the key proof decides, and no other peer's address, slot or reservation
-  is ever taken over).
+  is ever taken over). The daemon dials a followed peer at its current slot as well as at
+  the configured address, so a restart restores the link without waiting for the peer.
 - **Paired slots.** A slot bound to a paired peer goes only to a link that proves that
   peer's key, whether or not the peer is online, from the WSL gateway, loopback or
   anywhere else. A paired peer never falls

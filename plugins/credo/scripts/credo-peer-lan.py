@@ -4813,7 +4813,8 @@ class Daemon(object):
 
     def _is_peer_key(self, key):
         """key ("host:port") is a configured peer address (per-link secrets are kept
-        only for those, so their maps stay bounded by the config)."""
+        for those and for every paired link, so their maps stay bounded by the config
+        and the pairing records; see _open_link and _register_channel)."""
         return any("%s:%d" % (p["host"], p["port"]) == key for p in self.peers)
 
     def _peer_link_proof_locked(self, key, their_out):
@@ -4933,7 +4934,7 @@ class Daemon(object):
                     % (cur.key, cur.direction, cur.desc))
             self.channels[ch.key] = ch
             ch.registered = True
-            if ch.secret and self._is_peer_key(ch.key):
+            if ch.secret and (ch.pair_id or self._is_peer_key(ch.key)):
                 self.link_last_secret[(ch.key, ch.direction)] = ch.secret
             self.link_warned.discard(ch.key)
             self.link_retry.pop(ch.key, None)
@@ -5153,9 +5154,34 @@ class Daemon(object):
             if self.stop.wait(min(self.roster_interval, CHAN_PING_MAX)):
                 break
 
+    def _peer_targets(self):
+        """Peer addresses to dial and to send rosters to: the configured peers, plus the
+        current pairing slot of every paired peer that is not one of them. A slot is
+        key-proven and persisted with its pairing record, so a peer that followed its
+        address is reached again after a restart even while its configured address is
+        stale. Each address is listed once; the outbound gate still applies per address.
+        A moved-from address is not a target (it is only reserved, see PairStore.pin)."""
+        targets = list(self.peers)
+        try:
+            records = self.pairs.records()
+        except PairStoreUnreadable:
+            return targets   # unknown pairing state: configured peers only
+        seen = set((p["host"], p["port"]) for p in targets)
+        for rec in records:
+            host, sep, port = rec["slot"].rpartition(":")
+            try:
+                addr = (host, int(port))
+            except ValueError:
+                continue
+            if sep and addr not in seen:
+                seen.add(addr)
+                targets.append({"host": host, "port": addr[1]})
+        return targets
+
     def link_tick(self):
         """Keepalive pings on idle channels, then (re)open an outbound link to every
-        peer the outbound gate allows that has no channel yet. An inbound channel the
+        peer address (configured, or the paired slot of a peer that followed its address)
+        the outbound gate allows that has no channel yet. An inbound channel the
         peer opened counts only when its socket source proves the address (or our
         own link already lost the tie-break to it); otherwise we prefer our own
         outbound link. Peers marked "no link support" are skipped until the next
@@ -5171,7 +5197,7 @@ class Daemon(object):
                     ch.send_payload(self.token, {"kind": "ping"})
                 except OSError as exc:
                     self._drop_channel(ch, "ping failed: %s" % exc)
-        for peer in self.peers:
+        for peer in self._peer_targets():
             host, port = peer["host"], peer["port"]
             key = "%s:%d" % (host, port)
             if not peer_allowed_outbound(host, state):
@@ -5232,16 +5258,16 @@ class Daemon(object):
             # dialed. proof ties it to the peer's live inbound link (simultaneous
             # open), resume to our own previous link it may replace (reconnect).
             chal = os.urandom(16).hex()
+            # a paired peer bound to this address must prove its key (never token-only)
+            expected = self._bound(key)
             with self.chan_lock:
                 cur = self.channels.get(key)
                 theirs = (cur.secret if cur is not None and not cur.closed and cur.direction == "in"
                           else self.link_last_secret.get((key, "in"), ""))
                 proof = link_proof(chal, theirs)
                 resume = resume_proof(chal, self.link_last_secret.get((key, "out"), ""))
-                if self._is_peer_key(key):
+                if expected is not None or self._is_peer_key(key):
                     self.link_out_secret[key] = chal
-            # a paired peer bound to this address must prove its key (never token-only)
-            expected = self._bound(key)
             try:
                 sock.settimeout(min(10.0, max(2.0, 3 * self.roster_interval)))
                 sock.sendall(frame_for(self.token, self._link_hello(
@@ -5512,7 +5538,7 @@ class Daemon(object):
         with self.lock:
             state = self.lan_state
         targets = []
-        for peer in self.peers:
+        for peer in self._peer_targets():
             if peer_allowed_outbound(peer["host"], state):
                 targets.append((peer, True))
                 continue
@@ -5712,8 +5738,10 @@ class Daemon(object):
             # the configured peer addresses. Token-less this is still served (the
             # receiving session's own consent gate is the protection), so it is only
             # a warning, once per address (no per-interval spam). A correctly
-            # configured multi-IP setup matches a peer address and never warns.
-            if not known and warn_once(self.unknown_warned, addr_key):
+            # configured multi-IP setup matches a peer address and never warns. A paired
+            # slot (see _peer_targets) is known too: its key was proven.
+            paired_slot = self._bound(addr_key) is not None
+            if not known and not paired_slot and warn_once(self.unknown_warned, addr_key):
                 log(
                     "roster from %s (machine %r) whose address is not among this "
                     "daemon's configured peer addresses %s - add it with "
