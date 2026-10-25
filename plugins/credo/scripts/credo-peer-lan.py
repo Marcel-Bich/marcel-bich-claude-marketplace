@@ -4148,13 +4148,11 @@ class Daemon(object):
             except Exception as exc:
                 log("self-address detection failed: %s" % exc)
                 return
-        if not ip or not is_lan_ipv4(ip):
-            return
         with self._adv_lock:
             if ticket < self._adv_written:
                 return   # a probe that started later already answered
-            self._adv_written = ticket
-            if ip == self.advertise_host:
+            self._adv_written = ticket   # also on no answer: an older probe must not write the pre-hop address
+            if not ip or not is_lan_ipv4(ip) or ip == self.advertise_host:
                 return
             old = self.advertise_host
             self.advertise_host = ip
