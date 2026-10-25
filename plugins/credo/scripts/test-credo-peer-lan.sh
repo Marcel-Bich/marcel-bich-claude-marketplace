@@ -49,8 +49,13 @@
 #     --remove, daemon start), the relay log rotates at 5 MB (also while the daemon runs),
 #     and a peer that stays down logs its failed roster once, plus once on recovery.
 #   - WSL default route (WN): the Windows default route is taken only from an Up adapter
-#     with a non-link-local IPv4 address, all routes as fallback (static check of the
-#     PowerShell text; powershell is never run).
+#     with a non-link-local IPv4 address, a deterministic tie-break, and no fallback to
+#     routes of other adapters (static check of the PowerShell text; powershell is never
+#     run),
+#   - WLAN hop (HP): the advertised self address follows the active network, an older
+#     netinfo probe that finishes last never overwrites a newer one, the start-up address
+#     under WSL comes from the same netinfo as the recheck, and a hop between two bound
+#     networks keeps the LAN state and the advertised address on the active one.
 #
 # Usage: bash test-credo-peer-lan.sh
 
@@ -5769,8 +5774,10 @@ check "WT: no hint when powershell.exe is found" "NOHINT" "$(wt /nonexistent "$T
 
 # --- WN: WSL default route only from Up adapters with a non-link-local IPv4 ----------
 # The Windows default route must come from an adapter that is Up and whose IPv4 address
-# is not 169.254.0.0/16, with the unfiltered route list as fallback. Static check of the
-# PowerShell text only: powershell is never run here.
+# is not 169.254.0.0/16. Routes of other adapters are never a fallback (a disconnected
+# adapter's stale address would be advertised during a WLAN hop), ties are broken by the
+# interface index so the same state always yields the same answer, and no route means no
+# answer. Static check of the PowerShell text only: powershell is never run here.
 cat > "$TMP/wn.py" <<'PYEOF'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("credo_peer_lan", sys.argv[1])
@@ -5780,9 +5787,16 @@ checks = {
     "Get-NetAdapter Status Up filter": "Get-NetAdapter" in ps and 'Where-Object Status -eq "Up"' in ps,
     "link-local 169.254 exclusion via InterfaceIndex": "InterfaceIndex" in ps and '$_.IPAddress -notlike "169.254.*"' in ps,
     "route candidate needs Up and non-link-local": "$up -contains $_.ifIndex" in ps and "$real -contains $_.ifIndex" in ps,
-    "unfiltered fallback": "if ($cand.Count -eq 0) { $cand = $all }" in ps,
+    "no fallback to routes of other adapters": "$cand = $all" not in ps and "$cand.Count -eq 0" not in ps,
+    "fails closed without a default route": "if (-not $r) { exit 1 }" in ps,
+    "deterministic tie-break on the interface index": (
+        "Sort-Object { [int]$_.RouteMetric + [int]$_.InterfaceMetric }, { [int]$_.ifIndex }" in ps
+    ),
     "filter before the metric sort": 0 <= ps.find("$cand") < ps.find("Sort-Object { [int]$_.RouteMetric"),
     "route picked from the candidates": "$r = $cand | " in ps,
+    "self address of the chosen adapter excludes link-local": (
+        '-InterfaceIndex $r.ifIndex -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike "169.254.*" }' in ps
+    ),
     "route query unchanged": 'Get-NetRoute -DestinationPrefix "0.0.0.0/0" -AddressFamily IPv4' in ps,
 }
 for name, cond in checks.items():
@@ -5790,8 +5804,172 @@ for name, cond in checks.items():
         print("missing: " + name)
 print("checked")
 PYEOF
-check "WN: default route only from Up adapters with a non-link-local IPv4, unfiltered fallback" "checked" \
+check "WN: default route only from Up adapters, deterministic, no fallback to other adapters" "checked" \
     "$("$PY" "$TMP/wn.py" "$DAEMON" 2>/dev/null)"
+
+# --- HP: WLAN hop - the advertised self address follows the active network ------------
+# The Windows netinfo is read by several threads (netwatch recheck, per dial, start-up).
+# A probe that started earlier must never overwrite the answer of a later probe; the
+# start-up address under WSL must come from the same netinfo as the recheck (not from a
+# second probe that may pick another adapter); and alternating netinfo between two bound
+# networks (plus an unbound one) keeps the LAN state and the advertised address on the
+# active network. Fixture addresses only; no powershell, no real config.
+mkdir -p "$TMP/HP"
+cat > "$TMP/HP/hp.py" <<'PYEOF'
+import importlib.util, json, os, sys, threading, traceback
+daemon_path, root = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+logs = []
+mod.log = lambda m: logs.append(m)
+def res(name, cond, detail=""):
+    print(("PASS %s" % name) if cond else ("FAIL %s: %s" % (name, detail)))
+def guard(name, fn):
+    try:
+        fn()
+    except Exception as exc:
+        res(name, False, "raised %s: %s %s" % (type(exc).__name__, exc,
+                                               traceback.format_exc().splitlines()[-3:]))
+A_IP, B_IP, C_IP = "192.168.1.42", "192.168.2.42", "192.168.3.42"
+MAC_A, MAC_B, MAC_C = "aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02", "aa:bb:cc:dd:ee:03"
+NET_A = {"ip": A_IP, "subnet": "192.168.1.0/24", "gateway_mac": MAC_A, "wsl_nat_gateway": "172.20.0.1"}
+NET_B = {"ip": B_IP, "subnet": "192.168.2.0/24", "gateway_mac": MAC_B, "wsl_nat_gateway": "172.20.0.1"}
+NET_C = {"ip": C_IP, "subnet": "192.168.3.0/24", "gateway_mac": MAC_C, "wsl_nat_gateway": "172.20.0.1"}
+NETWORKS = {
+    "wlan": {"fingerprint": {"gateway_mac": MAC_A, "subnet": "192.168.1.0/24"},
+             "allow": ["192.168.1.0/24"], "group": "home"},
+    "wlan-b": {"fingerprint": {"gateway_mac": MAC_B, "subnet": "192.168.2.0/24"},
+               "allow": ["192.168.2.0/24"], "group": "home"},
+}
+# recheck_network takes the bound networks from the machine config file, so the fixture
+# writes its own (under the test root) and points CREDO_PEER_LAN_CONFIG at it
+CFG_PATH = os.path.join(root, "hp-cfg", "peer-lan.json")
+os.makedirs(os.path.dirname(CFG_PATH), exist_ok=True)
+with open(CFG_PATH, "w") as fh:
+    json.dump({"this_machine": "hp", "token": "tok", "peers": ["192.168.1.10"],
+               "listen_port": 48610, "networks": NETWORKS}, fh)
+os.environ["CREDO_PEER_LAN_CONFIG"] = CFG_PATH
+def wsl_daemon(tag):
+    d = mod.Daemon({"this_machine": tag, "token": "tok", "peers": ["192.168.1.10"],
+                    "listen_port": 48610, "keys_dir": os.path.join(root, "keys", tag),
+                    "networks": NETWORKS})
+    d.wsl = True
+    d.netwatch_running = True
+    d.listen_host = "127.0.0.1"   # keeps _win_sync (Windows allowlist file) out of the test
+    d._channel_reader = lambda ch, buf=b"": None
+    return d
+
+def hop_race():
+    # the recheck (or a dial) reads the netinfo of network A; the hop to B is read by a
+    # second probe that lands first; the A probe finishes last and must not overwrite B
+    d = wsl_daemon("hp-race")
+    seen, started, gate = [], threading.Event(), threading.Event()
+    def probe():
+        first = not seen
+        seen.append(1)
+        if first:
+            started.set()
+            gate.wait(10)
+            return mod.normalize_netinfo(NET_A)
+        return mod.normalize_netinfo(NET_B)
+    real = mod.detect_network
+    mod.detect_network = probe
+    try:
+        t = threading.Thread(target=d._refresh_self_address, daemon=True)
+        t.start()
+        started.wait(10)
+        d._refresh_self_address()
+        gate.set()
+        t.join(10)
+    finally:
+        mod.detect_network = real
+    res("HP: an older self-address probe that finishes last does not overwrite the newer hop",
+        d.advertise_host == B_IP, "adv=%r" % d.advertise_host)
+guard("HP hop race", hop_race)
+
+def start_probe():
+    # start-up detection under WSL: the second (Get-NetIPConfiguration) probe would pick the
+    # other adapter; the self address must be the netinfo address the recheck also reads
+    d = wsl_daemon("hp-start")
+    real_det, real_self = mod.detect_network, mod.detect_self_ip
+    mod.detect_network = lambda: mod.normalize_netinfo(NET_B)
+    mod.detect_self_ip = lambda: A_IP
+    try:
+        d._detect_advertise_host()
+    finally:
+        mod.detect_network, mod.detect_self_ip = real_det, real_self
+    res("HP: the start-up self address under WSL is the netinfo address (one rule with the recheck)",
+        d.advertise_host == B_IP, "adv=%r" % d.advertise_host)
+guard("HP start probe", start_probe)
+
+def printed_address():
+    # `check` / `init` print the address the other machines must use: under WSL it must be
+    # the address the relay advertises (the netinfo of the active network), not a second
+    # probe's pick. A fake powershell.exe on PATH would answer A; the netinfo says B.
+    bin_dir = os.path.join(root, "hp-bin")
+    os.makedirs(bin_dir, exist_ok=True)
+    ps = os.path.join(bin_dir, "powershell.exe")
+    with open(ps, "w") as fh:
+        fh.write("#!/bin/sh\necho %s\n" % A_IP)
+    os.chmod(ps, 0o755)
+    procver = os.path.join(root, "hp-procversion-wsl")
+    with open(procver, "w") as fh:
+        fh.write("Linux version 5.15.0-microsoft-standard-WSL2\n")
+    saved = {k: os.environ.get(k) for k in ("PATH", "CREDO_PEER_LAN_PROCVERSION", "CREDO_PEER_LAN_NETINFO")}
+    os.environ["PATH"] = bin_dir + os.pathsep + saved["PATH"]
+    os.environ["CREDO_PEER_LAN_PROCVERSION"] = procver
+    os.environ["CREDO_PEER_LAN_NETINFO"] = json.dumps(NET_B)
+    try:
+        return mod.detect_self_ip()
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+def printed():
+    got = printed_address()
+    res("HP: the address check and init print under WSL is the one the relay advertises",
+        got == B_IP, "printed=%r" % got)
+guard("HP printed address", printed)
+
+def hop_sequence():
+    # A -> B -> unbound C -> A: LAN follows the active network each time, and the advertised
+    # address is the bound network's address whenever that network is active
+    d = wsl_daemon("hp-seq")
+    steps = [("A", NET_A, "wlan"), ("B", NET_B, "wlan-b"), ("C", NET_C, None), ("A", NET_A, "wlan")]
+    lan_ok, adv_ok, detail = True, True, []
+    prev = os.environ.get("CREDO_PEER_LAN_NETINFO")
+    try:
+        for label, net, want in steps:
+            os.environ["CREDO_PEER_LAN_NETINFO"] = json.dumps(net)
+            st = d.recheck_network()
+            on = want is not None
+            if st["enabled"] != on or st["network"] != want:
+                lan_ok = False
+            if on and d.advertise_host != net["ip"]:
+                adv_ok = False
+            detail.append("%s:enabled=%r,network=%r,adv=%r" % (label, st["enabled"], st["network"], d.advertise_host))
+    finally:
+        if prev is None:
+            os.environ.pop("CREDO_PEER_LAN_NETINFO", None)
+        else:
+            os.environ["CREDO_PEER_LAN_NETINFO"] = prev
+    res("HP: a hop A -> B -> unbound C -> A keeps the LAN state on the active network", lan_ok,
+        "; ".join(detail))
+    res("HP: the advertised address follows each bound network across the hops", adv_ok,
+        "; ".join(detail))
+guard("HP hop sequence", hop_sequence)
+PYEOF
+HP_OUT="$("$PY" "$TMP/HP/hp.py" "$DAEMON" "$TMP/HP" 2>&1)"
+while IFS= read -r line; do
+    case "$line" in
+        PASS\ *) PASS=$((PASS + 1)) ;;
+        FAIL\ *) FAIL=$((FAIL + 1)); printf '%s\n' "$line" ;;
+    esac
+done <<< "$HP_OUT"
+case "$HP_OUT" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL HP: traceback\n%s\n' "$HP_OUT" ;; esac
+check "HP: expected number of results" "5" "$(printf '%s\n' "$HP_OUT" | grep -cE '^(PASS|FAIL) ')"
 
 # --- SD: deliver by sessionId picks only LIVE descriptors -----------------------------
 # After a crash/resume the registry can hold two descriptors of one session: a dead pid

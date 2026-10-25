@@ -623,29 +623,13 @@ def self_ip_linux():
 
 
 def self_ip_wsl():
-    """Windows host LAN IPv4 of the default-route adapter, via powershell.exe -
-    the address a LAN peer must use to reach this WSL machine. Read-only; returns
-    None (never raises) if powershell.exe is absent or the query fails."""
-    ps_exe = win_tool("powershell.exe")
-    if not ps_exe:
-        return None
-    ps = (
-        "Get-NetIPConfiguration | Where-Object {$_.IPv4DefaultGateway} | "
-        "Select-Object -First 1 -ExpandProperty IPv4Address | "
-        "Select-Object -ExpandProperty IPAddress"
-    )
-    try:
-        out = subprocess.run(
-            [ps_exe, "-NoProfile", "-Command", ps],
-            capture_output=True, text=True, timeout=15,
-        )
-    except Exception:
-        return None
-    cands = [ln.strip() for ln in out.stdout.splitlines() if IPV4_RE.match(ln.strip())]
-    for ip in cands:
-        if is_lan_ipv4(ip):
-            return ip
-    return cands[0] if cands else None
+    """Windows host LAN IPv4 of the active default-route adapter - the address a LAN peer
+    must use to reach this WSL machine. It is the ip of the netinfo the relay advertises
+    (one rule, see _refresh_advertise_host), so the address printed for the other machines
+    is the one the relay announces. Read-only; returns None (never raises) if the netinfo
+    cannot be read or carries no LAN address."""
+    ip = (detect_network() or {}).get("ip")
+    return ip if ip and is_lan_ipv4(ip) else None
 
 
 def detect_self_ip():
@@ -1031,9 +1015,13 @@ def detect_network_linux():
     }
 
 
-# ONE read-only powershell call: the lowest-metric default route of an Up, non-link-local adapter,
-# the router MAC from the neighbor table, the adapter IPv4 + prefix, and the network
-# profile (name = label, NetworkCategory = Private/Public/DomainAuthenticated).
+# ONE read-only powershell call: the default route Windows uses - the lowest effective metric
+# among the routes of Up adapters that carry a non-link-local IPv4, ties broken by the
+# interface index, so one network state always gives one answer. Routes of any other adapter
+# are never used (a disconnected adapter's stale address must not be advertised during a WLAN
+# hop); no such route means no answer (fail closed). Then the router MAC from the neighbor
+# table, the adapter IPv4 + prefix, and the network profile (name = label, NetworkCategory =
+# Private/Public/DomainAuthenticated).
 WSL_NETINFO_PS = (
     '$ErrorActionPreference="Stop"; '
     '$up = @(Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object Status -eq "Up" | '
@@ -1043,13 +1031,14 @@ WSL_NETINFO_PS = (
     '$all = @(Get-NetRoute -DestinationPrefix "0.0.0.0/0" -AddressFamily IPv4); '
     '$cand = @($all | Where-Object { ($up -contains $_.ifIndex) -and '
     '($real -contains $_.ifIndex) }); '
-    'if ($cand.Count -eq 0) { $cand = $all }; '
     '$r = $cand | '
-    "Sort-Object { [int]$_.RouteMetric + [int]$_.InterfaceMetric } | "
+    "Sort-Object { [int]$_.RouteMetric + [int]$_.InterfaceMetric }, { [int]$_.ifIndex } | "
     "Select-Object -First 1; "
+    "if (-not $r) { exit 1 }; "
     "$n = Get-NetNeighbor -IPAddress $r.NextHop -InterfaceIndex $r.ifIndex "
     "-ErrorAction SilentlyContinue | Select-Object -First 1; "
     "$a = Get-NetIPAddress -InterfaceIndex $r.ifIndex -AddressFamily IPv4 | "
+    'Where-Object { $_.IPAddress -notlike "169.254.*" } | '
     "Select-Object -First 1; "
     "$p = Get-NetConnectionProfile -InterfaceIndex $r.ifIndex "
     "-ErrorAction SilentlyContinue | Select-Object -First 1; "
@@ -3951,6 +3940,9 @@ class Daemon(object):
         # the slow powershell probe under WSL never blocks the roster loop.
         self.advertise_host = cfg.get("advertise_host")
         self.advertise_pinned = bool(self.advertise_host)   # pinned: never refreshed
+        self._adv_lock = threading.Lock()
+        self._adv_seq = 0        # last issued self-address probe ticket
+        self._adv_written = 0    # ticket of the last accepted self-address answer
         self.advertise_port = int(cfg.get("advertise_port", self.listen_port))
         self.roster_interval = float(
             cfg.get("roster_interval", DEFAULT_ROSTER_INTERVAL)
@@ -4114,6 +4106,12 @@ class Daemon(object):
         threading.Thread(target=self._janitor_loop, daemon=True).start()
 
     def _detect_advertise_host(self):
+        if self.wsl:
+            # one rule under WSL: the netinfo the netwatch recheck reads (a second probe
+            # here could pick the other adapter and the two would disagree)
+            ticket = self._next_adv_ticket()
+            self._refresh_advertise_host(detect_network(), ticket)
+            return
         try:
             ip = detect_self_ip()
         except Exception as exc:
@@ -4125,13 +4123,23 @@ class Daemon(object):
         else:
             log("self-address not detected; rosters omit the advertise fields")
 
-    def _refresh_advertise_host(self, net):
-        """Follow a changed self address (DHCP): new hellos and rosters advertise the
-        current one. Under WSL that is the ip of the netinfo this recheck already read
-        (the Windows host LAN address), so a recheck runs no second powershell probe;
-        natively it stays the route lookup of detect_self_ip, as at start. An undetected
-        or non-LAN address keeps the last known one; a configured advertise_host is never
-        refreshed (see advertise_pinned)."""
+    def _next_adv_ticket(self):
+        """Ticket of one self-address probe, taken BEFORE the probe starts. Probes overlap
+        (netwatch recheck, the dial path, start-up), and a slow powershell probe that started
+        earlier can finish after a newer one: _refresh_advertise_host drops an answer whose
+        ticket is older than the last accepted one, so the newest network state wins."""
+        with self._adv_lock:
+            self._adv_seq += 1
+            return self._adv_seq
+
+    def _refresh_advertise_host(self, net, ticket):
+        """Follow a changed self address (DHCP, WLAN hop): new hellos and rosters advertise
+        the current one. Under WSL that is the ip of the netinfo this probe read (the Windows
+        host LAN address of the active network), so a recheck runs no second powershell probe;
+        natively it stays the route lookup of detect_self_ip, as at start. An undetected or
+        non-LAN address keeps the last known one; a configured advertise_host is never
+        refreshed (see advertise_pinned). ticket is from _next_adv_ticket(), taken before the
+        probe that produced net."""
         if self.wsl:
             ip = net.get("ip") if isinstance(net, dict) else None
         else:
@@ -4140,10 +4148,16 @@ class Daemon(object):
             except Exception as exc:
                 log("self-address detection failed: %s" % exc)
                 return
-        if not ip or not is_lan_ipv4(ip) or ip == self.advertise_host:
+        if not ip or not is_lan_ipv4(ip):
             return
-        old = self.advertise_host
-        self.advertise_host = ip
+        with self._adv_lock:
+            if ticket < self._adv_written:
+                return   # a probe that started later already answered
+            self._adv_written = ticket
+            if ip == self.advertise_host:
+                return
+            old = self.advertise_host
+            self.advertise_host = ip
         log("advertising self address %s:%d in rosters (was %s)"
             % (ip, self.advertise_port, old or "none"))
 
@@ -4156,7 +4170,8 @@ class Daemon(object):
         advertise_host is never refreshed (see advertise_pinned)."""
         if not self.netwatch_running or self.advertise_pinned:
             return
-        self._refresh_advertise_host(detect_network() if self.wsl else None)
+        ticket = self._next_adv_ticket()
+        self._refresh_advertise_host(detect_network() if self.wsl else None, ticket)
 
     # -- network watcher (allowlist state) ------------------------------------
     def _netwatch_loop(self):
@@ -4176,9 +4191,10 @@ class Daemon(object):
         config's networks/windows_profiles so `bind` applies without a restart), log
         every transition, prune remotes that are no longer allowed, and (WSL) sync
         the Windows firewall data file. Returns the new state."""
+        ticket = self._next_adv_ticket()
         net = detect_network()
         if not self.advertise_pinned:
-            self._refresh_advertise_host(net)
+            self._refresh_advertise_host(net, ticket)
         fresh = load_config()
         merged = dict(self.cfg)
         for key in ("networks", "windows_profiles"):
