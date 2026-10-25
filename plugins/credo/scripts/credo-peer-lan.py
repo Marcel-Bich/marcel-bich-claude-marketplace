@@ -172,6 +172,12 @@ BIND_RETRY_TOTAL = 8.0
 BIND_RETRY_INTERVAL = 0.25
 # how long _terminate_incumbent waits for a SIGTERMed daemon to die and free the port
 TERMINATE_TIMEOUT = 8.0
+# A running daemon re-checks its pidfile once per main-loop tick (1 s) and rewrites it when
+# it is missing (Daemon.keep_pidfile). A caller that finds the listen port held but no live
+# pidfile daemon waits HEAL_WAIT for the file to come back before it reports "pid unknown".
+# A failing rewrite is retried at most every HEAL_RETRY seconds.
+HEAL_WAIT = 3.0
+HEAL_RETRY = 30.0
 
 
 def _read_version():
@@ -2826,6 +2832,40 @@ def _terminate_incumbent(pid, host, port, timeout=TERMINATE_TIMEOUT, pstart=None
     return port_is_free(host, port)
 
 
+def relay_port_held(cfg):
+    """True when something holds the listen port of cfg, whatever its pidfile says. A
+    relay whose pidfile is missing or unreadable from this profile still listens there.
+    False without a config. Never raises."""
+    if not isinstance(cfg, dict) or not cfg:
+        return False
+    try:
+        host = cfg.get("listen_host", "127.0.0.1")
+        port = int(cfg.get("listen_port", DEFAULT_PORT))
+    except (TypeError, ValueError):
+        return False
+    return not port_is_free(host, port)
+
+
+def incumbent(cfg, wait=0.0):
+    """(pid, pidfile dict) of the running daemon for cfg, or (None, pidfile dict). While
+    the listen port is held but the pidfile names no live daemon, polls up to wait
+    seconds. A running relay rewrites a missing pidfile within one tick (keep_pidfile),
+    and a relay that is shutting down frees the port."""
+    deadline = time.monotonic() + wait
+    while True:
+        pf = read_pidfile()
+        pid = pidfile_daemon(pf)
+        if pid is not None or not relay_port_held(cfg) or time.monotonic() >= deadline:
+            return pid, pf
+        time.sleep(0.2)
+
+
+def bind_window(cfg):
+    """How long a start waits for a held listen port to free. It is the daemon's bind-retry
+    window plus a margin."""
+    return float(cfg.get("bind_retry_total", BIND_RETRY_TOTAL)) + 2.0
+
+
 def proc_start(pid):
     """Field 22 (starttime) of /proc/<pid>/stat as a string, robust to a comm
     containing spaces or parentheses."""
@@ -3972,6 +4012,8 @@ class Daemon(object):
         self.unknown_warned = set()  # peer addrs warned once (not a configured peer)
         self.stop = threading.Event()
         self.srv = None
+        self._pidrec = None   # this daemon's pidfile record, built once (see _pidfile_record)
+        self._heal_after = 0.0   # monotonic time before which keep_pidfile does not retry
         # LAN allowlist state. FAIL-CLOSED: disabled until the network watcher has
         # detected and matched a bound network (loopback keeps working meanwhile).
         self.wsl = is_wsl()
@@ -4288,35 +4330,64 @@ class Daemon(object):
             if not os.environ.get("CREDO_PEER_LAN_WINALLOW_FILE"):
                 trigger_win_task()
 
+    def _pidfile_record(self):
+        """This daemon's pidfile record, built once so a rewrite keeps the original
+        started time and process start time."""
+        if self._pidrec is None:
+            data = {
+                "pid": os.getpid(),
+                "version": VERSION,
+                "listen_port": self.listen_port,
+                "started": time.time(),
+                "config": os.path.abspath(config_path()),
+            }
+            try:
+                # process start time: lets stop/restart/status tell a recycled pid apart
+                data["pstart"] = proc_start(os.getpid())
+            except (OSError, ValueError, IndexError):
+                pass
+            self._pidrec = data
+        return self._pidrec
+
     def _write_pidfile(self):
         """Atomically record our pid, version, listen port and start time after a
         successful bind+listen, so a later session's `ensure` can read what is running
-        and decide. Best-effort: pidfile I/O must never crash the daemon."""
+        and decide. Best-effort: pidfile I/O must never crash the daemon. True when the
+        file was written."""
         path = pidfile_path()
-        data = {
-            "pid": os.getpid(),
-            "version": VERSION,
-            "listen_port": self.listen_port,
-            "started": time.time(),
-            "config": os.path.abspath(config_path()),
-        }
-        try:
-            # process start time: lets stop/restart/status tell a recycled pid apart
-            data["pstart"] = proc_start(os.getpid())
-        except (OSError, ValueError, IndexError):
-            pass
         tmp = "%s.%d.tmp" % (path, os.getpid())
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(tmp, "w") as fh:
-                fh.write(json.dumps(data))
+                fh.write(json.dumps(self._pidfile_record()))
             os.replace(tmp, path)
+            return True
         except Exception as exc:
             log("pidfile write %s failed: %s" % (path, exc))
             try:
                 os.unlink(tmp)
             except OSError:
                 pass
+            return False
+
+    def keep_pidfile(self):
+        """Self-heal, called once per main-loop tick. A running daemon keeps a pidfile
+        that names its own pid. A file that is missing, unreadable or names another pid
+        (removed by a racing remover or by hand) is rewritten from the same record.
+        Nothing is written once shutdown has begun, and a failing rewrite is retried at
+        most every HEAL_RETRY seconds. Never raises. A heal failure must not stop the
+        relay."""
+        if self.stop.is_set() or time.monotonic() < self._heal_after:
+            return
+        try:
+            d = read_pidfile()
+            if isinstance(d, dict) and d.get("pid") == os.getpid():
+                return
+            log("pidfile %s was missing or named another pid; rewriting it" % pidfile_path())
+            if not self._write_pidfile():
+                self._heal_after = time.monotonic() + HEAL_RETRY
+        except Exception:
+            self._heal_after = time.monotonic() + HEAL_RETRY
 
     def _remove_pidfile(self):
         """Remove the pidfile on shutdown, but ONLY if it still records our own pid, so
@@ -6349,7 +6420,7 @@ def _serve(cfg):
         return 1
     try:
         while not daemon.stop.wait(1.0):
-            pass
+            daemon.keep_pidfile()
     finally:
         daemon.shutdown()
     return 0
@@ -6387,8 +6458,8 @@ def run_ensure(_args):
     if cfg is None:
         log("no config at %s; nothing to do (no-op)" % config_path())
         return 0
-    pf = read_pidfile()
-    if pidfile_daemon(pf) is not None:
+    pid, pf = incumbent(cfg, bind_window(cfg))
+    if pid is not None:
         old_pid = pf.get("pid")
         running_v = version_tuple(pf.get("version"))
         cur_v = version_tuple(VERSION)
@@ -6409,6 +6480,12 @@ def run_ensure(_args):
         log(
             "could not reclaim %s:%d from older daemon pid %s; leaving it running"
             % (host, port, old_pid)
+        )
+        return 0
+    if relay_port_held(cfg):
+        log(
+            "relay already listening on %s:%s with no live pidfile daemon (pid unknown); "
+            "leaving it" % (cfg.get("listen_host", "127.0.0.1"), cfg.get("listen_port", DEFAULT_PORT))
         )
         return 0
     return _serve(cfg)
@@ -6432,8 +6509,14 @@ def run_restart(_args):
         return 0
     host = cfg.get("listen_host", "127.0.0.1")
     port = int(cfg.get("listen_port", DEFAULT_PORT))
-    pf = read_pidfile()
-    old_pid = pidfile_daemon(pf)
+    old_pid, pf = incumbent(cfg, bind_window(cfg))
+    if old_pid is None and relay_port_held(cfg):
+        sys.stderr.write(
+            "credo-peer-lan restart: port %d is held by a listener (pid unknown, its pidfile "
+            "%s is missing or unreadable); left it running\n"
+            % (port, pidfile_path())
+        )
+        return 1
     if old_pid is not None:
         log("restart: stopping running daemon pid %s" % old_pid)
         if not _terminate_incumbent(old_pid, host, port, pstart=pf.get("pstart")):
@@ -6457,8 +6540,7 @@ def run_start(_args):
     if cfg is None:
         log("no config at %s; nothing to do (no-op)" % config_path())
         return 0
-    pf = read_pidfile()
-    pid = pidfile_daemon(pf)
+    pid, pf = incumbent(cfg, bind_window(cfg))
     if pid is not None:
         running_v, cur_v = version_tuple(pf.get("version")), version_tuple(VERSION)
         if running_v is None or cur_v is None or running_v >= cur_v:
@@ -6466,6 +6548,11 @@ def run_start(_args):
                   % (pid, pf.get("version"), pf.get("listen_port")))
             return 0
         return run_restart(_args)
+    if relay_port_held(cfg):
+        print("relay already running on port %s (pid unknown, its pidfile %s is missing "
+              "or unreadable); not starting a second daemon"
+              % (cfg.get("listen_port", DEFAULT_PORT), pidfile_path()))
+        return 0
     return _start_detached(cfg, "start")
 
 
@@ -6511,8 +6598,11 @@ def run_status(_args):
     daemon started by `daemon`, `ensure` (autostart) or `restart` all count. Exit 0 =
     running, 1 = not running."""
     cfg = load_config()
-    pf = read_pidfile()
-    pid = pidfile_daemon(pf)
+    pid, pf = incumbent(cfg, HEAL_WAIT)
+    if pid is None and relay_port_held(cfg):
+        print("relay running (pid unknown), port %s is held, but its pidfile %s is missing "
+              "or unreadable" % (cfg.get("listen_port", DEFAULT_PORT), pidfile_path()))
+        return 0
     if pid is None:
         print("relay not running")
         if cfg is None:
@@ -6537,8 +6627,14 @@ def run_stop(_args):
     """Stop the running daemon: SIGTERM to the pidfile's verified daemon pid only, then
     wait until it is gone. Exit 0 when it stopped or none was running, 1 when it is
     still alive after the timeout."""
-    pf = read_pidfile()
-    pid = pidfile_daemon(pf)
+    cfg = load_config()
+    pid, pf = incumbent(cfg, HEAL_WAIT)
+    if pid is None and relay_port_held(cfg):
+        sys.stderr.write(
+            "credo-peer-lan stop: port %s is held by a listener (pid unknown, its pidfile "
+            "%s is missing or unreadable); not stopped\n"
+            % (cfg.get("listen_port", DEFAULT_PORT), pidfile_path()))
+        return 1
     if pid is None:
         print("relay not running")
         return 0
@@ -7138,11 +7234,11 @@ def _disconnect_plan(cfg, rows, running, full, port, task):
 
 def _stop_for_disconnect(cfg):
     """Stop the running relay (its verified pid only, like restart). True when the port
-    is free again or nothing was running."""
-    pf = read_pidfile()
-    pid = pidfile_daemon(pf)
+    is free again or nothing was running. A listener whose pid is unknown is never taken
+    as stopped."""
+    pid, pf = incumbent(cfg, HEAL_WAIT)
     if pid is None:
-        return True
+        return not relay_port_held(cfg)
     return _terminate_incumbent(pid, cfg.get("listen_host", "127.0.0.1"),
                                 int(cfg.get("listen_port", DEFAULT_PORT)), pstart=pf.get("pstart"))
 
@@ -7229,7 +7325,7 @@ def run_disconnect_all(args):
     rows = _disconnect_rows(cfg)
     port = int(cfg.get("listen_port", DEFAULT_PORT))
     task = os.environ.get("CREDO_PEER_LAN_WINPROXY_TASK") or DEFAULT_WIN_TASK
-    running = pidfile_daemon(read_pidfile()) is not None
+    running = incumbent(cfg)[0] is not None or relay_port_held(cfg)
     print("\n".join(_disconnect_plan(cfg, rows, running, args.full, port, task)))
     if args.dry_run:
         print("dry-run: nothing was changed")

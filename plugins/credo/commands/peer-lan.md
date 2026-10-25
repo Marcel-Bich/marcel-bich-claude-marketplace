@@ -339,11 +339,15 @@ the daemon up automatically, detached so it never blocks session start. The hook
 the config, recording pid + version + port) and decides: leave a current/newer daemon
 untouched, replace an OLDER one after a plugin update (`cc-up`), or start fresh. `status`,
 `stop` and `restart` act on that state file too: they only ever signal the pid recorded
-there, after checking it really is this config's daemon. Only one
-daemon runs per machine: the listen port is the single-instance lock, so a second daemon
-on the same `listen_host:listen_port` poll-retries the bind briefly (race-safe) and, if it
+there, after checking it really is this config's daemon. The running daemon keeps that
+state file. When it is missing (removed by hand or by a racing process), the daemon
+rewrites it within a second. Only one daemon runs per machine: the listen port is the
+single-instance lock, so a second daemon on the same `listen_host:listen_port` poll-retries
+the bind briefly (race-safe) and, if it
 stays held, logs that another is already listening and exits 0 without disturbing the
-running one. Disable the auto-start (and the relay) with `CREDO_PEER_LAN` set to
+running one. A listener that holds the port while the state file names no live daemon
+(pid unknown) is treated as running. `status` reports it, `start` and `ensure` leave it
+alone, and `restart` and `stop` refuse to act on a pid they cannot verify. Disable the auto-start (and the relay) with `CREDO_PEER_LAN` set to
 `0`/`false`/`no`/`off`.
 
 Served profiles start the same relay. The hook asks the daemon for the one machine config
@@ -792,7 +796,9 @@ allowlist-scoped firewall rule (the old rule allowed the whole LocalSubnet).
   Reads the state file (`peer-lan.pid`) and checks that the recorded pid is a live relay
   daemon of this config, so a daemon started by `start`, the autostart hook or `restart`
   is found alike. Exit 0 prints pid, version, port and start time (plus a hint when the
-  installed plugin version differs); exit 1 prints `relay not running`. Report the
+  installed plugin version differs); a listener on the port whose state file names no live
+  daemon prints `relay running (pid unknown)` and exits 0; exit 1 prints `relay not running`.
+  Report the
   result. Also show the pairing state; report any PENDING REPAIR line to the user (it
   names the `pair-reset` command; run it only on the user's confirmation):
   ```bash

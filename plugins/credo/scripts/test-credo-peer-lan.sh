@@ -1186,6 +1186,69 @@ grep -q "already listening" "$TMP/BR2/daemon.log"; ok "bind-retry give-up logs t
 ok "bind-retry give-up wrote NO pidfile (never clobbers the incumbent)" "$([ ! -f "$TMP/BR2/cfg/credo/peer-lan.pid" ] && echo 0 || echo 1)"
 kill -KILL "$BR2_HOLD" 2>/dev/null || true
 
+# --- HL: a listening relay whose pidfile is missing still counts as running ---------
+# The pidfile can vanish while the daemon listens (the cause is not proven).
+# status/ensure/start/restart/stop must then find the listener by its port (pid unknown)
+# instead of reporting "not running" or starting a second daemon, and a running daemon
+# rewrites its own pidfile within a tick (self-heal).
+read PHL < <(free_port)
+"$PY" "$TMP/tcplisten.py" "$PHL" & HL_HOLD=$!; PIDS="$PIDS $HL_HOLD"
+for _ in $(seq 1 40); do
+    if "$PY" -c 'import socket,sys; socket.create_connection(("127.0.0.1",int(sys.argv[1])),timeout=1).close()' "$PHL" 2>/dev/null; then break; fi
+    sleep 0.1
+done
+mkdir -p "$TMP/HL/cfg/sessions" "$TMP/HL/cfg/credo" "$TMP/HL/sock"
+cat > "$TMP/HL/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"HL","listen_host":"127.0.0.1","listen_port":$PHL,
+ "roster_interval":60,"machine_timeout":600,"bind_retry_total":1,"bind_retry_interval":0.2,"peers":[]}
+EOF
+hl_cli() { # the relay CLI against the HL config; the port holder is not a daemon, so no pidfile
+    CLAUDE_CONFIG_DIR="$TMP/HL/cfg" CREDO_PEER_LAN_CONFIG="$TMP/HL/cfg/credo/peer-lan.json" \
+        CREDO_PEER_LAN_SOCKDIR="$TMP/HL/sock" "$PY" "$DAEMON" "$@"
+}
+HL_ST="$(hl_cli status 2>&1)"; HL_STRC=$?
+check "HL: status exits 0 while a listener holds the port without a pidfile" "0" "$HL_STRC"
+ok "HL: status reports the listener as running with its pid unknown" \
+    "$(case "$HL_ST" in *"relay running"*"pid unknown"*) echo 0 ;; *) echo 1 ;; esac)"
+HL_EN="$(hl_cli ensure 2>&1)"; HL_ENRC=$?
+check "HL: ensure leaves the listener alone (exit 0)" "0" "$HL_ENRC"
+ok "HL: ensure does not try to start a second daemon beside it" \
+    "$(case "$HL_EN" in *"another daemon already listening"*) echo 1 ;; *) echo 0 ;; esac)"
+HL_SRT="$(hl_cli start 2>&1)"; HL_SRTRC=$?
+check "HL: start leaves the listener alone (exit 0)" "0" "$HL_SRTRC"
+ok "HL: start reports the listener with its pid unknown instead of spawning a daemon" \
+    "$(case "$HL_SRT" in *"pid unknown"*) echo 0 ;; *) echo 1 ;; esac)"
+HL_RS="$(hl_cli restart 2>&1)"; HL_RSRC=$?
+check "HL: restart refuses to replace a listener it cannot identify (exit 1)" "1" "$HL_RSRC"
+ok "HL: restart names the pid as unknown and says why it stopped" \
+    "$(case "$HL_RS" in *"pid unknown"*) echo 0 ;; *) echo 1 ;; esac)"
+ok "HL: the listener is still up after restart" "$(kill -0 "$HL_HOLD" 2>/dev/null && echo 0 || echo 1)"
+HL_SP="$(hl_cli stop 2>&1)"; HL_SPRC=$?
+check "HL: stop does not report success for a listener it cannot identify (exit 1)" "1" "$HL_SPRC"
+kill -KILL "$HL_HOLD" 2>/dev/null || true
+
+read PHS < <(free_port)
+mkdir -p "$TMP/HS/cfg/sessions" "$TMP/HS/cfg/credo" "$TMP/HS/sock"
+cat > "$TMP/HS/cfg/credo/peer-lan.json" <<EOF
+{"this_machine":"HS","listen_host":"127.0.0.1","listen_port":$PHS,
+ "roster_interval":60,"machine_timeout":600,"bind_retry_total":3,"peers":[]}
+EOF
+CLAUDE_CONFIG_DIR="$TMP/HS/cfg" CREDO_PEER_LAN_CONFIG="$TMP/HS/cfg/credo/peer-lan.json" \
+    CREDO_PEER_LAN_SOCKDIR="$TMP/HS/sock" "$PY" "$DAEMON" daemon >"$TMP/HS/daemon.log" 2>&1 &
+HS_PID=$!; PIDS="$PIDS $HS_PID"
+PIDFILE_HS="$TMP/HS/cfg/credo/peer-lan.pid"
+for _ in $(seq 1 40); do [ -f "$PIDFILE_HS" ] && break; sleep 0.1; done
+ok "self-heal: daemon wrote its pidfile" "$([ -f "$PIDFILE_HS" ] && echo 0 || echo 1)"
+mv -f "$PIDFILE_HS" "$PIDFILE_HS.gone"   # the pidfile vanishes while the daemon keeps listening
+healed=""
+for _ in $(seq 1 40); do [ "$(pf_pid "$PIDFILE_HS")" = "$HS_PID" ] && { healed=1; break; }; sleep 0.1; done
+ok "self-heal: the running daemon rewrites its vanished pidfile within a few seconds" "$([ -n "$healed" ] && echo 0 || echo 1)"
+ok "self-heal: the rewrite is logged" "$(grep -q "rewriting it" "$TMP/HS/daemon.log" && echo 0 || echo 1)"
+kill -TERM "$HS_PID" 2>/dev/null || true
+removed=""
+for _ in $(seq 1 40); do [ ! -f "$PIDFILE_HS" ] && { removed=1; break; }; sleep 0.1; done
+ok "self-heal: the healed pidfile is removed on a clean shutdown" "$([ -n "$removed" ] && echo 0 || echo 1)"
+
 # --- EN: ensure decisions (no config / same / newer / unknown -> no-op; older -> replace) --
 # One real incumbent daemon drives every decision: its pidfile's version field is rewritten
 # (keeping the real live pid) and `ensure` is run in the foreground with CREDO_PEER_LAN_VERSION
@@ -1344,14 +1407,26 @@ ok "LC restart: the new daemon logs to the relay log next to the config" "$?"
 ok "LC restart: a process merely mentioning the script is never signaled" "$(kill -0 "$LC_DECOY" 2>/dev/null && echo 0 || echo 1)"
 LC_OUT="$(lc status 2>&1)"; LC_RC=$?
 case "$LC_RC $LC_OUT" in "0 "*"pid $LC_P2"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL LC status after restart: rc=%s %s\n' "$LC_RC" "$LC_OUT" ;; esac
-# a pidfile pointing at the decoy: status says not running, stop never signals it
+# a pidfile pointing at the decoy while the real daemon still listens. The running daemon
+# takes its pidfile back within a few seconds (self-heal), status still finds the running
+# relay, and the decoy is never signaled
+"$PY" -c 'import json,sys; json.dump({"pid": int(sys.argv[2]), "version": "0.0.1", "listen_port": int(sys.argv[3])}, open(sys.argv[1], "w"))' \
+    "$PIDFILE_LC" "$LC_DECOY" "$PLC"
+LC_OUT="$(lc status 2>&1)"; LC_RC=$?
+check "LC status: a pidfile naming a non-daemon process does not hide the running daemon" "0" "$LC_RC"
+healed=""
+for _ in $(seq 1 40); do [ "$(pf_pid "$PIDFILE_LC")" = "$LC_P2" ] && { healed=1; break; }; sleep 0.1; done
+ok "LC: the running daemon takes its pidfile back from the decoy" "$([ -n "$healed" ] && echo 0 || echo 1)"
+ok "LC: the decoy is never signaled while the daemon listens" "$(kill -0 "$LC_DECOY" 2>/dev/null && echo 0 || echo 1)"
+# no listener and a decoy pidfile. Status reads it as not running, and stop never signals it
+kill -TERM "$LC_P2" 2>/dev/null
+for _ in $(seq 1 40); do kill -0 "$LC_P2" 2>/dev/null || break; sleep 0.1; done
 "$PY" -c 'import json,sys; json.dump({"pid": int(sys.argv[2]), "version": "0.0.1", "listen_port": int(sys.argv[3])}, open(sys.argv[1], "w"))' \
     "$PIDFILE_LC" "$LC_DECOY" "$PLC"
 LC_OUT="$(lc status 2>&1)"; LC_RC=$?
 check "LC status: a pidfile naming a non-daemon process reads as not running" "1" "$LC_RC"
 lc stop >/dev/null 2>&1
 ok "LC stop: never signals a pidfile pid that is not this config's daemon" "$(kill -0 "$LC_DECOY" 2>/dev/null && echo 0 || echo 1)"
-ok "LC stop: the real daemon (not in the pidfile) is untouched too" "$(kill -0 "$LC_P2" 2>/dev/null && echo 0 || echo 1)"
 kill -TERM "$LC_P2" 2>/dev/null
 for _ in $(seq 1 40); do kill -0 "$LC_P2" 2>/dev/null || break; sleep 0.1; done
 rm -f -- "$PIDFILE_LC"
