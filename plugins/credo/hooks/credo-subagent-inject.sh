@@ -80,7 +80,7 @@ if [[ "$light_block" -eq 0 ]]; then
     # item/audit sentence is dropped from the priming. Security, quality (verify),
     # honesty, delegation, and output-hygiene rules ALWAYS stay in - they are unconditional.
     HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || HOOK_DIR=""
-    backend="$("$HOOK_DIR/../scripts/credo-config.sh" backend 2>/dev/null || echo credo)"
+    backend="$(CREDO_SESSION_ID="$session_id" "$HOOK_DIR/../scripts/credo-config.sh" backend 2>/dev/null || echo credo)"
     [[ -n "$backend" ]] || backend="credo"
     if [[ "$backend" == "gsd" ]]; then
         item_clause=""

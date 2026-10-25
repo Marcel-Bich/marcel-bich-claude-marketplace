@@ -58,7 +58,7 @@ fi
 [[ "$event" == "SessionStart" ]] || exit 0
 
 # The backend gate (python YAML read) runs only here, not on every prompt.
-backend="$("$SCRIPTS/credo-config.sh" backend 2>/dev/null || echo credo)"
+backend="$(CREDO_SESSION_ID="$session_id" "$SCRIPTS/credo-config.sh" backend 2>/dev/null || echo credo)"
 [[ "$backend" == "gsd" ]] && exit 0
 
 # --- session state: credo active? autonomous? --------------------------------

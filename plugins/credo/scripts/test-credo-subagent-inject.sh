@@ -80,5 +80,23 @@ check "output event name is SubagentStart" SubagentStart \
 check "output is suppressed from the chat" true \
     "$(printf '%s' "$raw" | jq -r '.suppressOutput' 2>/dev/null)"
 
+# --- session pin: the task backend comes from the session's pinned repo -----------
+# Backend gsd drops the credo item clause; credo keeps it. The pin is found only
+# through the session_id from the hook's stdin (no CREDO_SESSION_ID in the env).
+PIN_DIR="$TMP/pins"
+PIN_REPO="$TMP/pinrepo"
+mkdir -p "$PIN_DIR" "$PIN_REPO/.credo"
+printf 'task_backend: gsd\n' > "$PIN_REPO/.credo/config"
+printf '%s\n' "$PIN_REPO" > "$PIN_DIR/$SID"
+item_ctx() { # pin dir -> the injected context for a general-purpose subagent
+    jq -n --arg s "$SID" '{session_id: $s, agent_type: "general-purpose", hook_event_name: "SubagentStart"}' \
+        | env -u CREDO_TASK_BACKEND -u CREDO_PROJECT -u CREDO_DIR CREDO_SESSION_PROJECTS_DIR="$1" bash "$HOOK" 2>/dev/null \
+        | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null
+}
+case "$(item_ctx "$TMP/nopins")" in *"Record and gate work as a credo item"*) unpinned_item=yes ;; *) unpinned_item=no ;; esac
+check "no pin: credo backend keeps the item clause" yes "$unpinned_item"
+case "$(item_ctx "$PIN_DIR")" in *"Record and gate work as a credo item"*) pinned_item=yes ;; *) pinned_item=no ;; esac
+check "pinned gsd backend: item clause dropped" no "$pinned_item"
+
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]

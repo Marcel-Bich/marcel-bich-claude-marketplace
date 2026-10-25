@@ -171,7 +171,7 @@ read -r -d '' SHORTHANDS <<'SH'
 SH
 fi
 
-backend="$("${HOOK_DIR}/../scripts/credo-config.sh" backend 2>/dev/null || echo credo)"
+backend="$(CREDO_SESSION_ID="$session_id" "${HOOK_DIR}/../scripts/credo-config.sh" backend 2>/dev/null || echo credo)"
 [[ -n "$backend" ]] || backend="credo"
 
 # --- model preset: main-agent prompt + per-spawn rule (every session) -------
@@ -184,9 +184,9 @@ backend="$("${HOOK_DIR}/../scripts/credo-config.sh" backend 2>/dev/null || echo 
 PRESET_BLOCK=""
 PRESET_SCRIPT="${_scripts_dir:-${CLAUDE_PLUGIN_ROOT:-}/scripts}/credo-preset.sh"
 if [[ -x "$PRESET_SCRIPT" ]]; then
-    _preset_prompt="$("$PRESET_SCRIPT" mainagent --field prompt 2>/dev/null)" || _preset_prompt=""
+    _preset_prompt="$(CREDO_SESSION_ID="$session_id" "$PRESET_SCRIPT" mainagent --field prompt 2>/dev/null)" || _preset_prompt=""
     if [[ -n "$_preset_prompt" ]]; then
-        _preset_name="$("$PRESET_SCRIPT" active 2>/dev/null)" || _preset_name="balanced"
+        _preset_name="$(CREDO_SESSION_ID="$session_id" "$PRESET_SCRIPT" active 2>/dev/null)" || _preset_name="balanced"
         _spawn_rule="Before each subagent spawn, run \"${PRESET_SCRIPT}\" stage <role> <attempt> (roles explore, build, review and hard; attempt 1 for the first try of that role on an item, plus one per failed try). Pass its alias as the Agent model, its effort as effort, and append its prompt block to the Agent prompt. action back-to-human means do not spawn."
         PRESET_BLOCK="[credo] Model preset '${_preset_name}' - instructions for the main agent (they apply to the whole session, also after a compaction):"$'\n'"${_preset_prompt}"$'\n\n'"${_spawn_rule}"
     fi
@@ -334,7 +334,7 @@ if [[ "$active" == true && -z "${TMUX:-}" && "$mode" != "autonomous" \
     esac
 fi
 if [[ "$tmux_hint" == true ]]; then
-    _hint_cfg="$("${HOOK_DIR}/../scripts/credo-config.sh" get tmux.hint 2>/dev/null)" || _hint_cfg=""
+    _hint_cfg="$(CREDO_SESSION_ID="$session_id" "${HOOK_DIR}/../scripts/credo-config.sh" get tmux.hint 2>/dev/null)" || _hint_cfg=""
     [[ "$(printf '%s' "$_hint_cfg" | tr '[:upper:]' '[:lower:]')" == "false" ]] && tmux_hint=false
 fi
 if [[ "$tmux_hint" == true ]]; then

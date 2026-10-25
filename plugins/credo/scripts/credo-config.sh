@@ -7,6 +7,12 @@
 #       < profile ($CLAUDE_CONFIG_DIR/credo/config, per Claude Code profile)
 #         < project (.credo/config)
 #
+# The project layer is the .credo/config of the target repo, chosen in this order:
+# CREDO_PROJECT, CREDO_DIR, the session project pin (set by /credo:project, see
+# session_pin_repo below), the cwd git toplevel, else the cwd. get, source, paths,
+# backend and resolve-project all use this one target, so a session pinned from a
+# launch hub reads the pinned repo's whole config (preset, backend, every key).
+#
 # The profile layer lets a second Claude Code profile (a different
 # CLAUDE_CONFIG_DIR, e.g. ~/.claude-private) override the shared global per key,
 # while every key it does not set still falls back to global. It is optional and
@@ -46,8 +52,8 @@
 #   CREDO_CONFIG_STDLIB_YAML  1 = skip PyYAML and use the bundled stdlib parser (tests)
 #   CREDO_SKIP_ENSURE         if set to 1, "get" does not auto-create the global layer
 #   CREDO_SESSION_PROJECTS_DIR session-pin dir (default $CLAUDE_CONFIG_DIR/credo/session-projects)
-#   CREDO_SESSION_ID           session id for the pin lookup (test override)
-#   CLAUDE_CODE_SESSION_ID     session id for the pin lookup (set by Claude Code)
+#   CREDO_SESSION_ID           session id for the pin lookup (hooks pass their stdin session_id)
+#   CLAUDE_CODE_SESSION_ID     session id for the pin lookup, used when CREDO_SESSION_ID is unset
 #
 # Exit codes: 0 ok, 1 hard error, 3 key not found, 4 needs explicit target
 #   (resolve-project and rules: cwd is a hub or has no credo project).
@@ -86,10 +92,32 @@ else
     PROFILE=""
 fi
 
+# --- the session project pin (set by /credo:project) --------------------------
+# Prints the repo path pinned to this session and returns 0. Returns 1 (silently)
+# when there is no usable pin: no session id (CREDO_SESSION_ID, else
+# CLAUDE_CODE_SESSION_ID), an id outside [A-Za-z0-9._-], no pin file, or a first
+# line that is not an existing directory. Shared by the project layer and by
+# resolve-project, so both always agree on the pinned repo.
+session_pin_repo() {
+    local sid pin_root pinned
+    sid="${CREDO_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
+    [ -n "$sid" ] || return 1
+    case "$sid" in *[!A-Za-z0-9._-]*) return 1 ;; esac
+    pin_root="${CREDO_SESSION_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-projects}"
+    [ -f "$pin_root/$sid" ] || return 1
+    pinned="$(sed -n '1p' "$pin_root/$sid" 2>/dev/null | tr -d '\r')" || return 1
+    if [ -z "$pinned" ] || [ ! -d "$pinned" ]; then
+        return 1
+    fi
+    printf '%s\n' "$pinned"
+}
+
 if [ -n "${CREDO_PROJECT:-}" ]; then
     PROJECT="$CREDO_PROJECT"
 elif [ -n "${CREDO_DIR:-}" ]; then
     PROJECT="$CREDO_DIR/config"
+elif PIN_REPO="$(session_pin_repo)"; then
+    PROJECT="$PIN_REPO/.credo/config"
 elif REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
     PROJECT="$REPO_ROOT/.credo/config"
 else
@@ -447,22 +475,9 @@ PY
             printf '%s\n' "$CREDO_DIR"
             exit 0
         fi
-        pin_sid="${CREDO_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
-        if [ -n "$pin_sid" ]; then
-            case "$pin_sid" in
-                *[!A-Za-z0-9._-]*) : ;;   # invalid session id -> skip the pin
-                *)
-                    pin_root="${CREDO_SESSION_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-projects}"
-                    pin_file="$pin_root/$pin_sid"
-                    if [ -f "$pin_file" ]; then
-                        pinned="$(sed -n '1p' "$pin_file" 2>/dev/null | tr -d '\r')"
-                        if [ -n "$pinned" ] && [ -d "$pinned" ]; then
-                            printf '%s\n' "$pinned/.credo"
-                            exit 0
-                        fi
-                    fi
-                    ;;
-            esac
+        if pinned="$(session_pin_repo)"; then
+            printf '%s\n' "$pinned/.credo"
+            exit 0
         fi
         base="$(cwd_base)"
         if [ "$(read_hub "$base/.credo/config")" = "true" ]; then

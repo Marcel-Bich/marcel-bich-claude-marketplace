@@ -79,7 +79,7 @@ optimize_will_ask() {
     git rev-parse --git-dir >/dev/null 2>&1 || return 1
     local state="$SCRIPTS/credo-optimize-state.sh" backend optin pending
     [[ -x "$state" ]] || return 1
-    backend="$("$SCRIPTS/credo-config.sh" backend 2>/dev/null || echo credo)"
+    backend="$(CREDO_SESSION_ID="$session_id" "$SCRIPTS/credo-config.sh" backend 2>/dev/null || echo credo)"
     [[ "$backend" == "gsd" ]] && return 1
     optin="$("$state" optin 2>/dev/null | tr -d '[:space:]')" || optin=""
     [[ -z "$optin" ]] && return 0

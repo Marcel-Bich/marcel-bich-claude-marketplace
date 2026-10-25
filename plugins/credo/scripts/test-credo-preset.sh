@@ -29,6 +29,7 @@ lacks() { # name needle haystack
 
 # Isolated cascade: no profile layer, no real user config, no session state.
 unset CLAUDE_CONFIG_DIR CLAUDE_PLUGIN_ROOT CLAUDE_CODE_SESSION_ID CREDO_CONFIG_STDLIB_YAML
+unset CREDO_SESSION_ID CREDO_SESSION_PROJECTS_DIR CREDO_DIR CREDO_TASK_BACKEND
 export CREDO_GLOBAL="$TMP/global/config"
 export CREDO_PROFILE=""
 export CREDO_PROJECT="$TMP/project/.credo/config"
@@ -529,6 +530,64 @@ contains "setup example c: xhigh effort stage" "2. claude-haiku-5-5 / xhigh, att
 contains "setup example c: back-to-human" "3. back-to-human" "$ex_out"
 ex_out="$(ex_show d)"; check "setup example d: no invalid value" "" "$(grep -v 'not set in preset' "$TMP/err")"
 contains "setup example d: until-done stage" "1. claude-opus-5-5 / medium, attempts until-done" "$ex_out"
+reset_cfg
+
+# --- 14. session project pin: the whole project layer follows the pin ---------
+# Precedence: CREDO_PROJECT > CREDO_DIR > session pin > cwd git toplevel (or cwd).
+# Each source writes its own `probe` value, so a failure names the layer that won.
+PIN="$TMP/pins"
+PINREPO="$TMP/pinrepo"
+HUB="$TMP/hub"
+pin_fixture() {
+    reset_cfg
+    rm -rf "$PIN" "$PINREPO" "$HUB" "$TMP/envproj" "$TMP/envdir"
+    mkdir -p "$PIN" "$PINREPO/.credo" "$HUB/.credo" "$TMP/envproj/.credo" "$TMP/envdir/.credo"
+    printf 'preset: quality\n' | write_global
+    printf 'hub: true\npreset: balanced\nprobe: hub\n' > "$HUB/.credo/config"
+    printf 'preset: budget\nprobe: pin\ntask_backend: gsd\n' > "$PINREPO/.credo/config"
+    printf 'preset: quality\nprobe: env\n' > "$TMP/envproj/.credo/config"
+    printf 'preset: quality\nprobe: envdir\n' > "$TMP/envdir/.credo/config"
+    printf '%s\n' "$PINREPO" > "$PIN/s-pin"
+}
+# run_hub <session-id> <command...>: hub cwd, pin dir set, no explicit project target
+run_hub() {
+    local sid="$1"; shift
+    ( cd "$HUB" && unset CREDO_PROJECT CREDO_DIR && CREDO_SESSION_ID="$sid" CREDO_SESSION_PROJECTS_DIR="$PIN" "$@" 2>/dev/null )
+}
+
+pin_fixture
+check "pin: hub cwd uses the pinned preset" "budget" "$(run_hub s-pin "$SUT" active)"
+check "pin: config get reads the pinned project layer" "pin" "$(run_hub s-pin "$CFG" get probe)"
+check "pin: config get preset from the pinned repo" "budget" "$(run_hub s-pin "$CFG" get preset)"
+check "pin: backend from the pinned repo" "gsd" "$(run_hub s-pin "$CFG" backend)"
+check "pin: source names the pinned project file" "project: $PINREPO/.credo/config" "$(run_hub s-pin "$CFG" source preset)"
+contains "pin: paths show the pinned project file" "project: $PINREPO/.credo/config" "$(run_hub s-pin "$CFG" paths)"
+check "pin: resolve-project prints the pinned .credo" "$PINREPO/.credo" "$(run_hub s-pin "$CFG" resolve-project)"
+check "pin: CLAUDE_CODE_SESSION_ID is the fallback id" "pin" "$(run_hub "" env CLAUDE_CODE_SESSION_ID=s-pin "$CFG" get probe)"
+
+check "CREDO_PROJECT beats the pin" "env" "$(run_hub s-pin env CREDO_PROJECT="$TMP/envproj/.credo/config" "$CFG" get probe)"
+check "CREDO_DIR beats the pin" "envdir" "$(run_hub s-pin env CREDO_DIR="$TMP/envdir/.credo" "$CFG" get probe)"
+check "CREDO_PROJECT beats CREDO_DIR" "env" "$(run_hub s-pin env CREDO_PROJECT="$TMP/envproj/.credo/config" CREDO_DIR="$TMP/envdir/.credo" "$CFG" get probe)"
+check "resolve-project: CREDO_DIR beats the pin" "$TMP/envdir/.credo" "$(run_hub s-pin env CREDO_DIR="$TMP/envdir/.credo" "$CFG" resolve-project)"
+
+check "no session id: cwd hub config" "hub" "$(run_hub "" "$CFG" get probe)"
+check "no pin file for the session: cwd hub config" "hub" "$(run_hub s-none "$CFG" get probe)"
+printf '%s\n' "$PINREPO" > "$PIN/s+bad"
+check "invalid session id: pin ignored, cwd hub config" "hub" "$(run_hub 's+bad' "$CFG" get probe)"
+printf '%s\n' "$TMP/no-such-repo" > "$PIN/s-gone"
+check "pin dir missing: pin ignored, cwd hub config" "hub" "$(run_hub s-gone "$CFG" get probe)"
+run_hub s-gone "$CFG" resolve-project >/dev/null
+check "pin dir missing: resolve-project falls back to the hub rule (exit 4)" 4 "$?"
+check "hub cwd without a pin: cwd preset unchanged" "balanced" "$(run_hub "" "$SUT" active)"
+
+# SessionStart from the hub: the hook passes the stdin session_id to credo-preset.sh
+hub_hook_out="$(cd "$HUB" && printf '{"session_id":"s-pin","source":"startup","cwd":"%s"}' "$HUB" \
+    | env -u CREDO_PROJECT -u CREDO_DIR CLAUDE_CONFIG_DIR="$TMP/hook/cfg" CREDO_SESSION_PROJECTS_DIR="$PIN" \
+      CREDO_SESSION_MODES_DIR="$TMP/hook/modes" CREDO_SESSION_DECISIONS_DIR="$TMP/hook/decisions" \
+      CREDO_SESSION_START_SHORTHANDS=false CREDO_TMUX_HINT=false CREDO_TASK_BACKEND= \
+      bash "$HOOK" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null)"
+contains "session start from a hub: pinned preset injected" "Model preset 'budget'" "$hub_hook_out"
+lacks "session start from a hub: cwd preset not injected" "Model preset 'balanced'" "$hub_hook_out"
 reset_cfg
 
 printf 'test-credo-preset: %d passed, %d failed\n' "$PASS" "$FAIL"

@@ -18,7 +18,9 @@ and is never changed here. This command only sets the PROJECT layer: which repo'
 
 Why this exists: when your shell cwd is a launch hub (a directory you start other
 repos from) rather than the repo you are actually working on, credo would otherwise
-resolve its project layer to the wrong place. Pin the real target instead.
+resolve its project layer to the wrong place. Pin the real target instead. The pin
+covers the whole project config of that repo (preset, task backend and every other
+key), not only its items; without a pin the cwd repo is used as before.
 
 ## With an argument (set the pin)
 
