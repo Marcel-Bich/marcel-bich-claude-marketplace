@@ -541,8 +541,10 @@ export const register: Register = on => {
       const text = open.questions.join(' ')
       meta.push({ width: 3 + text.length, node: <Text key="questions"><Text>❓ </Text><Text bold color="blue">{text}</Text></Text> })
     }
-    if (open.vetos.length) {
-      const text = open.vetos.join(' ')
+    // a value stored by an older version has no vetos field
+    const vetos = open.vetos ?? []
+    if (vetos.length) {
+      const text = vetos.join(' ')
       meta.push({ width: 3 + text.length, node: <Text key="vetos"><Text>✋ </Text><Text bold color="yellow">{text}</Text></Text> })
     }
 
