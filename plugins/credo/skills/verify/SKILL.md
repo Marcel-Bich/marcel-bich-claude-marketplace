@@ -97,7 +97,7 @@ time and answer per step:
 Example:
 
 ```
-### 🧪 B) #37 Auto-Grant + Auto-Submit
+### 🧪 T1) #37 Auto-Grant + Auto-Submit
 1. Hard-reload localhost:5173 (Ctrl+Shift+R), Network tab, filter api.
 -> Answer: on load, without a click, does a POST /api/games appear? Status? With token+seed?
 2. Win the board (just play).
@@ -106,37 +106,22 @@ Example:
 
 Use plain `-` and `->`, no special arrow or dash characters.
 
-### Test and question letters (visible, continuous)
+### Typed codes: tests, questions, vetos (visible, monotonic)
 
-Every manual test block AND every question to the user gets a letter, so the user can
-answer unambiguously ("B vf", "B2 vf", "Y: option 2"). This applies in every session mode
-and every repo where credo is active:
+Every manual test block, every question to the user and every veto-able decision gets a typed code, so the user can answer unambiguously ("T3 vf", "Q4: option 2", "V12 ok"). This applies in every session mode and every repo where credo is active. The agent keeps the convention by following this text; no hook enforces it.
 
-- **One continuous sequence, shared by tests and questions.** Letters run A, B, C, ... Z
-  across replies and never restart at A per reply; after Z the sequence wraps to A again.
-  If the previous reply ended at D, the next test or question starts at E. Tests and
-  questions draw from the same sequence (a test C and a question C never coexist).
-- **Steps are numbered inside a test** (1. 2. 3.), so a single step is addressable as
-  letter plus number ("B2 vf" = step 2 of test B checked and passing).
-- **Visible heading.** Each test block and each question starts with its own markdown
-  `###` heading carrying a leading symbol, 🧪 for tests and ❓ for questions, then the
-  letter and a short topic: `### 🧪 T) Trainer` / `### ❓ Y) Which rank?`. A question asked
-  through the Ask tool carries the same `❓ Y)` prefix in its question text.
-- **Open-letters footer.** End every reply that has open tests or questions with one line
-  listing the open letters in bold, in the language-neutral emoji form (the same in every
-  conversation language, no translated labels), e.g.
-  `**🧪: C, D** · **❓: Y, Z**`. A letter leaves the footer when
-  the user answered it (vf, a decision, "skip"); omit a part that has no open letters, and
-  omit the footer when nothing is open. The footer is a comma list of codes, never prose:
-  an open question about an item still gets its own letter (`### ❓ Y) #177 <topic>`), and
-  item refs may stand next to letters (`**❓: Y, #177**`). credo's band reads
-  this line (it still accepts the older English and German word labels); from prose it
-  keeps only `#N` refs and uppercase letter codes.
-- **Survives a compact.** The next free letter and the open letters are part of the
-  handoff state (the credo `compact-plus` skill records them in HANDOFF.md), so the
-  sequence continues after a `/compact` instead of restarting at A.
-- **Separate from other numbering.** Letters are neither item numbers (`#N`) nor harness
-  task numbers (`§cct_N`); never mix them.
+- **Three separate counters per session.** Tests use `T1, T2, T3 ...`, questions `Q1, Q2, Q3 ...`, vetos `V1, V2, V3 ...`. Each counter is monotonic: a number is never reused, never reset, and there is no wrap-around. The numbers carry on across replies and across compacts. When unsure whether a number is free, skip it rather than repeat one: one number too many is fine, a repeated number is not.
+- **Steps are numbered inside a test** (1. 2. 3.). A step is addressed with a dot: "T3.2 vf" = step 2 of test T3 checked and passing. The dot is required, because "T32" would read as test 32.
+- **Visible headings.** Each test block, question and veto starts with its own markdown `###` heading line, never inline text:
+  - test: `### 🧪 T3) <topic>`
+  - question: `### ❓ Q4) <topic>` (a question asked through the Ask tool carries the same `❓ Q4)` prefix in its question text)
+  - veto: `### ✋✋ V2) Veto possible: <what was decided or done> ✋✋` (in a German conversation the marker word is `Veto möglich`). Use it whenever an agent decides or does something on its own that the user may want to overrule, typically in autonomous runs, instead of a plain "veto possible" sentence.
+- **Answers.** `T3 vf` (test passed), `T3.2 vf` (step 2 passed), `Q4: <answer>` (question answered), `V12 <objection>` (veto objected to: the agent acts on the objection, and the veto is closed), `V12 ok` (veto accepted, closed).
+- **Vetos stay open.** A veto has no deadline. It can be raised or resolved at any time, also long after the fact. It stays open, in every footer, until one of these happens: the user resolves it by its code; the user resolves all open vetos at once ("drop all vetos", "alle vetos weg"); or the context shows that the user already accepted that point elsewhere. A closed veto leaves the footer and the band.
+- **Open-codes footer.** End every reply that has open tests, questions or vetos with one line listing ALL still-open codes in bold, in the language-neutral emoji form (the same in every conversation language, no translated labels): `**🧪: T3** · **❓: Q4, #177** · **✋: V2, V5**`. Repeat the still-open codes in every reply: the band reads only the footer of the last reply. Omit a part with no open codes, and omit the footer when nothing is open. The footer is a comma list of codes, never prose. An open question about an item still gets its own code (`### ❓ Q4) #177 <topic>`), and item refs may stand next to codes (`**❓: Q4, #177**`). credo's band reads this line; it still accepts the older English and German word labels for tests and questions (vetos have no word label).
+- **Legacy codes.** Open codes from before this convention (single letters such as `B` or `DX`) stay as they are until closed and may still appear in footers. All new codes use T, Q or V.
+- **Survives a compact.** The next free number per type and all open codes are part of the handoff state (the credo `compact-plus` skill records them in HANDOFF.md), so the numbering continues after a `/compact` instead of restarting at 1.
+- **Separate from other numbering.** Typed codes are neither item numbers (`#N`) nor harness task numbers (`§cct_N`); never mix them.
 
 ## Bringing up a down surface (local only, autonomous-capable)
 

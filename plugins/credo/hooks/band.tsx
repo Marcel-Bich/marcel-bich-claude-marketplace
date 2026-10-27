@@ -2,7 +2,7 @@
 // prompt. It only READS state through credo's core scripts and renders it; the
 // core works the same without it (and in harnesses without mods).
 //
-// Lines: item counts per status, session mode/role + open test/question letters
+// Lines: item counts per status, session mode/role + open test/question/veto codes
 // + controls, and (only while this session runs autonomously) the 5h figure,
 // the next ladder rung and the next wake. One pane shows items or the
 // shorthand cheatsheet; the prompt hint lists the shorthands the band hides.
@@ -32,7 +32,7 @@ const blink = atom({ plugin: 'credo', key: 'blink' } as const, false)
 const session = atom({ plugin: 'credo', key: 'session' } as const, { mode: null, role: null, paused: false })
 // blink phase of the mode/role tag when an autonomous run gets paused or re-armed
 const sessionBlink = atom({ plugin: 'credo', key: 'sessionBlink' } as const, false)
-const letters = atom({ plugin: 'credo', key: 'letters' } as const, { tests: [], questions: [] })
+const letters = atom({ plugin: 'credo', key: 'letters' } as const, { tests: [], questions: [], vetos: [] })
 const auto = atom({ plugin: 'credo', key: 'auto' } as const, { running: false, wake: null, five: null, ladder: [] })
 const itemList = atom({ plugin: 'credo', key: 'itemList' } as const, null)
 const shorthands = atom({ plugin: 'credo', key: 'shorthands' } as const, [])
@@ -356,7 +356,7 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     void refreshAll($)
-    // the main loop's answer ends with the open letters (credo verify convention)
+    // the main loop's answer ends with the open codes (credo verify convention)
     if (e.agentId === undefined && e.answer) {
       const parsed = parseLetters(e.answer)
       await update($, letters, () => parsed)
@@ -446,7 +446,7 @@ export const register: Register = on => {
       </Box>
     ) : null
     // without a credo project (no item system) the counts and the item controls
-    // are left out; mode/role, open letters and autonomy are session state and
+    // are left out; mode/role, open codes and autonomy are session state and
     // still show, as long as there is any
     const hasItems = c !== null
 
@@ -498,7 +498,7 @@ export const register: Register = on => {
       node: chip(s),
       gap: i > 0 && shown[i - 1]?.color === s.color ? SAME_COLOR_GAP : GAP,
     }))
-    // second line: session mode/role, open letters, then the controls
+    // second line: session mode/role, open codes, then the controls
     const meta: Piece[] = []
 
     // third line, only while this session runs autonomously: 5h now, the next ladder rung, next wake
@@ -530,7 +530,8 @@ export const register: Register = on => {
     const sesColor = (await read($, sessionBlink)) ? HIGHLIGHT : 'cyan'
     if (tags) meta.push({ width: tags.length, node: <Text key="ses" color={sesColor}>{tags}</Text> })
 
-    // open test and question letters, so nothing waiting on the user gets lost
+    // open test, question and veto codes, so nothing waiting on the user gets lost;
+    // vetos stay open until the user resolves them, so they stand out most (bold yellow)
     const open = await read($, letters)
     if (open.tests.length) {
       const text = open.tests.join(' ')
@@ -539,6 +540,10 @@ export const register: Register = on => {
     if (open.questions.length) {
       const text = open.questions.join(' ')
       meta.push({ width: 3 + text.length, node: <Text key="questions"><Text>❓ </Text><Text bold color="blue">{text}</Text></Text> })
+    }
+    if (open.vetos.length) {
+      const text = open.vetos.join(' ')
+      meta.push({ width: 3 + text.length, node: <Text key="vetos"><Text>✋ </Text><Text bold color="yellow">{text}</Text></Text> })
     }
 
     if (!hasItems && meta.length === 0 && autoLine.length === 0)

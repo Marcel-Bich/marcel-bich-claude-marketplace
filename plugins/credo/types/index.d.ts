@@ -17,8 +17,8 @@ export type CredoCounts = {
 /** mode and role from scripts/credo-session-status.sh --json; paused only while mode is autonomous */
 export type CredoSession = { mode: string | null; role: string | null; paused: boolean }
 
-/** open test / question letters parsed from the last main-loop answer */
-export type CredoLetters = { tests: string[]; questions: string[] }
+/** open test / question / veto codes parsed from the last main-loop answer */
+export type CredoLetters = { tests: string[]; questions: string[]; vetos: string[] }
 
 /** autonomy of this session plus the 5h figure and the ladder rungs */
 export type CredoAuto = { running: boolean; wake: number | null; five: number | null; ladder: number[] }

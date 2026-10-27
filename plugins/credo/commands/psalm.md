@@ -50,7 +50,7 @@ What would you like to explore?
 - Item Lifecycle: work items with a hard Definition of Done
 - Budget and Autonomy: unattended work within 5h and weekly caps
 - Verify and Safety: visual verify, filesystem protection, subagent priming
-- Chat Shorthands: dd / vf / cf / ??? / cc-up / cm / ph / exclude / #N vs §cct_N / test and question letters
+- Chat Shorthands: dd / vf / cf / ??? / cc-up / cm / ph / exclude / #N vs §cct_N / typed codes (test, question, veto)
 - The Wider Marketplace: hydra, dogma, import, limit and more (optional)
 - Something else: Ask your own question
 ```
@@ -149,7 +149,7 @@ You can type a few short shorthands in chat; credo's SessionStart hook teaches t
 - `cc-up` - you fully updated Claude Code (plugins, reload, restart); the agent takes it at face value.
 - `cm` - commit (repo rules, no push). `ph` - commit and push.
 - `exclude` / `excluded` - always `.git/info/exclude`, never `.gitignore` (say "ignore" / "gitignore" for that).
-- Test/question letters - tests `### 🧪 B) ...`, questions `### ❓ Y) ...`, one continuous letter sequence (A..Z, then A again); answer `B vf`, `B2 vf`, `Y: ...`; open letters listed in bold at the end of each reply as a language-neutral footer `**🧪: C, D** · **❓: Y**`.
+- Typed codes - tests `### 🧪 T3) ...`, questions `### ❓ Q4) ...`, vetos `### ✋✋ V2) Veto possible: ... ✋✋`, one monotonic counter each (T, Q, V; never reused); answer `T3 vf`, `T3.2 vf`, `Q4: ...`, `V12 ok`, `V12 <objection>`; all open codes listed in bold at the end of each reply as a language-neutral footer `**🧪: T3** · **❓: Q4** · **✋: V2**`.
 - `#N` vs `§cct_N` - `#N` only for real items (credo items, issues, PRs, tickets); Claude's harness tasks and other numbering are `§cct_N` (`§cct_2 dd` = task 2 done).
 
 ### The Full Commandments (credo)
