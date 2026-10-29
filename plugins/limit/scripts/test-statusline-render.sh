@@ -159,6 +159,85 @@ out=$(render)
 has "reset window shows 0 %" "0.0% reset: " "$out"
 has "reset marker" "(reset)" "$out"
 
+echo ">>> idle 5h window: utilization 0 with resets_at null is a valid response"
+# Invented fixture of the API shape for a profile without usage in the current 5h
+# window: five_hour has utilization 0 and resets_at null, seven_day is valid.
+write_idle_cache() {
+    jq -n --arg sr "$(iso $((NOW + 3 * 86400)))" '{
+        five_hour: {utilization: 0.0, resets_at: null},
+        seven_day: {utilization: 9.0, resets_at: $sr},
+        seven_day_opus: null, seven_day_sonnet: null,
+        limits: [
+          {kind: "session", group: "session", percent: 0, resets_at: null, is_active: false},
+          {kind: "weekly_all", group: "weekly", percent: 9, resets_at: $sr, scope: null}
+        ]}' > "$CACHE"
+}
+write_idle_cache
+out=$(render)
+hasnt "idle window is not an invalid response" "invalid_response" "$out"
+# The global 5h line comes first; the local highscore line follows it.
+first5=$(grep -E '^5h all \[' <<< "$out" | head -1)
+hasre "idle 5h line shows 0.0 % with no reset part" '^5h all \[[=-]{10}\] +0\.0%' "$first5"
+hasnt "idle 5h line has no reset text" "reset" "$first5"
+hasnt "no reset text on any 5h line" "reset" "$(grep -F '5h all' <<< "$out")"
+hasnt "no 1970 date in the output" "1970" "$out"
+# The line format is shared by all layouts; check the other two presets too.
+for pr in professional casual; do
+    out_p=$(CLAUDE_MB_LIMIT_PRESET=$pr render)
+    hasnt "idle window in the $pr preset is not an invalid response" "invalid_response" "$out_p"
+    first5_p=$(grep -E '^5h all \[' <<< "$out_p" | head -1)
+    hasre "idle 5h line in the $pr preset shows 0.0 % with no reset part" '^5h all \[[=-]{10}\] +0\.0%' "$first5_p"
+    hasnt "idle 5h line in the $pr preset has no reset text" "reset" "$first5_p"
+done
+has "7d line present" "7d all [" "$out"
+has "7d line keeps its reset" "reset: " "$(grep -F '7d all [' <<< "$out")"
+echo ">>> a missing five_hour.utilization is still an invalid response"
+jq -n --arg r "$(iso $((NOW + 7200)))" \
+    '{five_hour: {resets_at: $r}, seven_day: {utilization: 9.0, resets_at: $r}, limits: []}' > "$CACHE"
+has "missing five_hour.utilization gives invalid_response" "invalid_response" "$(render)"
+write_cache 50 "$(iso $((NOW + 7200)))" 30
+
+echo ">>> idle 7d window: utilization with resets_at null is valid while 5h is active"
+jq -n --arg fr "$(iso $((NOW + 7200)))" '{
+    five_hour: {utilization: 50.0, resets_at: $fr},
+    seven_day: {utilization: 9.0, resets_at: null},
+    seven_day_opus: null, seven_day_sonnet: null,
+    limits: [
+      {kind: "session", group: "session", percent: 50, resets_at: $fr, is_active: true},
+      {kind: "weekly_all", group: "weekly", percent: 9, resets_at: null, scope: null}
+    ]}' > "$CACHE"
+out=$(render)
+hasnt "7d idle window is not an invalid response" "invalid_response" "$out"
+hasre "7d idle line shows 9.0 % with no reset part" '^7d all \[[=-]{10}\] +9\.0%' "$(grep -E '^7d all \[' <<< "$out" | head -1)"
+hasnt "no reset text on the 7d line" "reset" "$(grep -F '7d all' <<< "$out")"
+has "5h line keeps its reset" "reset: " "$(grep -F '5h all [' <<< "$out" | head -1)"
+hasnt "no 1970 date with a 7d idle window" "1970" "$out"
+
+echo ">>> both windows idle: utilization 0 and resets_at null on 5h and 7d"
+jq -n '{
+    five_hour: {utilization: 0.0, resets_at: null},
+    seven_day: {utilization: 0.0, resets_at: null},
+    seven_day_opus: null, seven_day_sonnet: null,
+    limits: [{kind: "session", group: "session", percent: 0, resets_at: null, is_active: false}]}' > "$CACHE"
+out=$(render)
+hasnt "both idle is not an invalid response" "invalid_response" "$out"
+hasre "idle 5h line shows 0.0 % (both idle)" '^5h all \[[=-]{10}\] +0\.0%' "$(grep -E '^5h all \[' <<< "$out" | head -1)"
+hasre "idle 7d line shows 0.0 % (both idle)" '^7d all \[[=-]{10}\] +0\.0%' "$(grep -E '^7d all \[' <<< "$out" | head -1)"
+hasnt "no reset text on any idle line (both idle)" "reset" "$(grep -E '^(5h|7d) all' <<< "$out")"
+hasnt "no 1970 date (both idle)" "1970" "$out"
+
+echo ">>> both five_hour and seven_day utilization missing: invalid_response"
+jq -n --arg r "$(iso $((NOW + 7200)))" '{five_hour: {resets_at: null}, seven_day: {resets_at: $r}, limits: []}' > "$CACHE"
+has "both utilizations missing gives invalid_response" "invalid_response" "$(render)"
+
+echo ">>> scoped limit with resets_at null: its percent is shown without a reset part"
+write_cache 50 "$(iso $((NOW + 7200)))" 30
+jq '(.limits[] | select(.scope.model.display_name == "Fable") | .resets_at) = null' "$CACHE" > "$CACHE.tmp" && mv -f "$CACHE.tmp" "$CACHE"
+out=$(render)
+hasre "scoped line with null resets_at shows its percent" '7d Fable \[[=-]{10}\] +12\.0%' "$out"
+hasnt "no reset text on the scoped line" "reset" "$(grep -F '7d Fable' <<< "$out")"
+write_cache 50 "$(iso $((NOW + 7200)))" 30
+
 echo ">>> presets: professional is the default, casual and enthusiast select the other layouts"
 edit_cache() { jq "$@" "$CACHE" > "$CACHE.tmp" && mv -f "$CACHE.tmp" "$CACHE"; }
 write_cache 50 "$(iso $((NOW + 7200)))" 30
@@ -281,6 +360,31 @@ has "Sonnet line carries its AvgPeak (100.0 fills the width)" "[AvgPeak:100.0%]"
 has "DoD example: 5h Avg 1.3 %/h is right-aligned" "[Avg:  1.3%/h]" "$out"
 widths=$(grep -oE '\[(AvgPeak|Avg):[ 0-9.]+%' <<< "$out" | sed -E 's/.*:([ 0-9.]+)%$/\1/' | awk '{print length($0)}' | sort -u | paste -sd, -)
 has_n "Opus, Sonnet and 5h values are all 5 characters wide" "5" "$widths"
+
+# Idle history checks run after the averages above on purpose: the forced history
+# writes would make the young history's average rate time-sensitive for the renders
+# in between. The averages section rewrote HIST, so the last line is from this block.
+echo ">>> idle 5h window: history sample and an unknown window start"
+write_idle_cache
+echo 0 > "$DATA_DIR/history-last-write_${FAKE_PROFILE}"
+render >/dev/null
+last_hist=$(tail -n 1 "$HIST")
+has_n "idle history sample records 5h api 0" "0" "$(jq -r '."5h".api' <<< "$last_hist")"
+has_n "idle history sample has no 5h reset key" "null" "$(jq -r '."5h".reset // "null"' <<< "$last_hist")"
+# Forget the stored windows (highscores stay): no 5h reset stored yet, so the local
+# window start is unknown (-1). The history sample must not take the all-time token
+# sum as its 5h local value.
+jq '.windows = {}' "$HS_STATE" > "$HS_STATE.tmp" && mv -f "$HS_STATE.tmp" "$HS_STATE"
+echo 0 > "$DATA_DIR/history-last-write_${FAKE_PROFILE}"
+render >/dev/null
+last_hist=$(tail -n 1 "$HIST")
+has_n "unknown 5h window start: history local 5h is 0, not the all-time sum" "0" "$(jq -r '."5h".local' <<< "$last_hist")"
+# The highscore view reads the same cache: an idle 5h line has no "resets in n/a" note.
+hs_idle=$(bash "$SCRIPT_DIR/show-highscores.sh" 2>&1)
+has "highscore view: idle 5h line shows its utilization" "- **5h:** 0%" "$hs_idle"
+hasnt "highscore view: no resets-in note for an idle window" "resets in n/a" "$hs_idle"
+write_cache 50 "$(iso $((NOW + 7200)))" 30
+echo "$(date +%s)" > "$DATA_DIR/history-last-write_${FAKE_PROFILE}"
 
 echo ">>> show-highscores uses the device label"
 out=$(bash "$SCRIPT_DIR/show-highscores.sh" 2>&1)

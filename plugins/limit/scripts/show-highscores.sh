@@ -78,6 +78,13 @@ format_reset_datetime() {
     fi
 }
 
+# Reset note for a usage line. An idle window has no resets_at: no note, not "n/a".
+reset_note() {
+    local reset_at="${1:-}"
+    [[ -z "$reset_at" || "$reset_at" == "null" ]] && return 0
+    echo " (resets in $(format_time_until "$reset_at") - $(format_reset_datetime "$reset_at"))"
+}
+
 # Calculate time until reset (relative)
 format_time_until() {
     local reset_at="${1:-}"
@@ -229,12 +236,13 @@ main() {
     if [[ -f "$API_CACHE" ]]; then
         local five_util five_reset seven_util seven_reset
         five_util=$(json_get "$API_CACHE" ".five_hour.utilization" "n/a")
-        five_reset=$(json_get "$API_CACHE" ".five_hour.resets_at" "")
+        # json_get turns an empty default into "0" (epoch), so a null reset passes "null".
+        five_reset=$(json_get "$API_CACHE" ".five_hour.resets_at" "null")
         seven_util=$(json_get "$API_CACHE" ".seven_day.utilization" "n/a")
-        seven_reset=$(json_get "$API_CACHE" ".seven_day.resets_at" "")
+        seven_reset=$(json_get "$API_CACHE" ".seven_day.resets_at" "null")
 
-        echo "- **5h:** ${five_util}% (resets in $(format_time_until "$five_reset") - $(format_reset_datetime "$five_reset"))"
-        echo "- **7d:** ${seven_util}% (resets in $(format_time_until "$seven_reset") - $(format_reset_datetime "$seven_reset"))"
+        echo "- **5h:** ${five_util}%$(reset_note "$five_reset")"
+        echo "- **7d:** ${seven_util}%$(reset_note "$seven_reset")"
         jq -r '.limits[]? | select(.kind != "session" and .kind != "weekly_all")
             | "- **\(.kind)\((.scope.model.display_name // .scope.surface) as $n | if $n then " (" + $n + ")" else "" end):** \(.percent // 0)%"' \
             "$API_CACHE" 2>/dev/null || true

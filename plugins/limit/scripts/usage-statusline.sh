@@ -635,8 +635,9 @@ format_limit_line() {
         bar=" $(progress_bar "$pct" "$BAR_WIDTH" "$highscore_mode")"
     fi
 
+    # An empty or null reset_at (idle window, or a line without API data) has no reset part.
     local reset_str=""
-    if [[ "$SHOW_RESET" == "true" ]]; then
+    if [[ "$SHOW_RESET" == "true" ]] && [[ -n "$reset_at" ]] && [[ "$reset_at" != "null" ]]; then
         reset_str=" reset: $(format_reset_datetime "$reset_at")"
     fi
 
@@ -1320,9 +1321,10 @@ format_output() {
         extra_limit=$(echo "$response" | jq -r '.extra_usage.monthly_limit // empty' 2>/dev/null)
         extra_used=$(echo "$response" | jq -r '.extra_usage.used_credits // empty' 2>/dev/null)
 
-        # Check if response has required data
-        if [[ -z "$five_hour_util" ]] || [[ -z "$five_hour_reset" ]]; then
-            debug_log "Invalid API response: missing five_hour data (util=$five_hour_util, reset=$five_hour_reset)"
+        # Check if response has required data. A null five_hour.resets_at is a valid
+        # idle window (no usage in the current 5h window), not an invalid response.
+        if [[ -z "$five_hour_util" ]]; then
+            debug_log "Invalid API response: missing five_hour.utilization"
             api_available="false"
             if [[ -z "$API_ERROR" ]]; then
                 set_api_error "invalid_response"
@@ -1907,9 +1909,14 @@ format_output() {
         # History entry (10-min interval) for the averages, only with API values
         # that belong to the current window.
         if [[ "$api_available" == "true" ]] && [[ "$five_expired" != "true" ]]; then
+            # An unknown window start (-1: no stored reset yet, e.g. an idle window)
+            # has no local token count; the all-time sum must not stand in for it.
+            local hist_local_5h=0 hist_local_7d=0
+            [[ "$start_5h" -ge 0 ]] && hist_local_5h="$window_tokens_5h"
+            [[ "$start_7d" -ge 0 ]] && hist_local_7d="$window_tokens_7d"
             append_history \
-                "${five_pct:-0}" "$window_tokens_5h" "$highscore_5h" \
-                "${seven_pct:-0}" "$window_tokens_7d" "$highscore_7d" \
+                "${five_pct:-0}" "$hist_local_5h" "$highscore_5h" \
+                "${seven_pct:-0}" "$hist_local_7d" "$highscore_7d" \
                 "${opus_pct:-0}" "${sonnet_pct:-0}" \
                 "$CURRENT_PLAN" "$LOCAL_DEVICE_LABEL" \
                 "$five_hour_reset" "$seven_day_reset" || true
