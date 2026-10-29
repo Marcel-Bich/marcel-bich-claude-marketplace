@@ -6,6 +6,12 @@ Changelog of the limit plugin. Newest first. Months group releases; no day dates
 
 ### v2.37
 
+#### v2.37.1
+
+##### Fixed
+
+- A limit window without usage (`resets_at` null, utilization 0) no longer shows `invalid_response` and hides the other API lines; the line shows its percent without a reset part, and the highscore view omits the "resets in" note
+
 #### v2.37.0
 
 ##### Added
