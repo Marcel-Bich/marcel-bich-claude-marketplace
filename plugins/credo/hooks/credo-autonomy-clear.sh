@@ -211,6 +211,16 @@ case "$prompt" in
         ;;
 esac
 
+# The periodic quality reminder (scripts/credo-reminder.py) is an injected prompt that
+# starts with its marker: it never pauses autonomy and is no user turn (the turn counter
+# in that script skips it too). Prefix match only, so a user quoting it still pauses.
+case "$prompt" in
+    "[credo-reminder]"*)
+        emit_self_wake
+        exit 0
+        ;;
+esac
+
 if [ -z "$SCRIPT_DIR" ] || [ ! -f "$SCRIPT_DIR/credo-autonomy-lib.sh" ]; then
     echo "credo-autonomy-clear: credo-autonomy-lib.sh not found; autonomy state untouched" >&2
     exit 1

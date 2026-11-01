@@ -93,7 +93,7 @@ case "$1" in
         cat "$(cat "$FAKE_STATE")" ;;
     send-keys)
         if [ "$4" = "-l" ]; then
-            printf '%s\n' "● Done." "" "$R" "❯ ${FAKE_TYPE_PREFIX:-}$5" "$R" > "$FAKE_STATE.typed"
+            printf '%s\n' "● Done." "" "$R" "❯ ${FAKE_TYPE_PREFIX:-}$(cat "$FAKE_STATE.prefix" 2>/dev/null)$5" "$R" > "$FAKE_STATE.typed"
             [ -n "${FAKE_TYPE_BELOW_FILE:-}" ] && cat "$FAKE_TYPE_BELOW_FILE" >> "$FAKE_STATE.typed"
             echo "$FAKE_STATE.typed" > "$FAKE_STATE"
             printf '%s' "$5" > "$FAKE_STATE.last"
@@ -109,7 +109,7 @@ case "$1" in
                 printf '%s\n' "● Working." "" "✻ Brewing... (3s · ↓ 10 tokens)" "" "$R" "❯ ." "$R" > "$FAKE_STATE.typed"
             fi
         elif [ "$4" = "BSpace" ]; then
-            echo "$FAKE_IDLE" > "$FAKE_STATE"
+            echo "$FAKE_IDLE" > "$FAKE_STATE"; : > "$FAKE_STATE.prefix"
         elif [ "$4" = "Enter" ]; then
             last="$(cat "$FAKE_STATE.last" 2>/dev/null)"
             if [ "$last" = "." ]; then
@@ -402,6 +402,18 @@ check "cancel while typing -> rc 0" "0" "$rc"
 for _ in $(seq 1 30); do grep -q 'BSpace' "$FAKE_TMUX_LOG" && break; sleep 0.2; done
 grep -qxF -- "$BS15" "$FAKE_TMUX_LOG"; ok "cancel while typing: own text taken back" "$?"
 check "cancel while typing: no Enter" "0" "$(grep -c 'send-keys -t %5 Enter' "$FAKE_TMUX_LOG")"
+
+# --- one visible character is a leftover: removed (End, BSpace), then the commands go in ---
+# the box holds one character "x"; the fake's BSpace empties the box (FAKE_IDLE, empty)
+printf '%s\n' "● Done." "" "$R" "❯ x" "$R" "  ? for shortcuts" > "$TMP/onechar.txt"
+reset "$TMP/onechar.txt"
+printf x > "$FAKE_STATE.prefix"   # the stray character stays in the field until BSpace
+out="$(FAKE_DOT_CLEARS_AT=1 H run --user-confirmed --delay 0.1 --nudge-wait 1)"; rc=$?
+check "leftover: run starts (rc 0)" "0" "$rc"
+wait_status '"status": "woken"'; ok "leftover: removed, reload commands typed, woken" "$?"
+check "leftover: one BSpace for the one character" "1" "$(grep -c 'send-keys -t %5 BSpace' "$FAKE_TMUX_LOG")"
+ok "leftover: End moves to the end of the field first" "$(grep -q 'send-keys -t %5 End' "$FAKE_TMUX_LOG" && echo 0 || echo 1)"
+ok "leftover: the stray character is never typed with a command" "$(grep -q 'x/reload' "$FAKE_TMUX_LOG" && echo 1 || echo 0)"
 
 # --- self-reload and self-compact never run at the same time --------------------------
 CMARK="$CFG/credo/self-compact-$SID.json"

@@ -42,6 +42,12 @@ expect "real user message pauses" paused
 arm; run_prompt "[CREDO-AUTONOMY-WAKE] standby check"
 expect "wake marker keeps autonomy" kept
 
+arm; run_prompt "[credo-reminder] Quality check from the user: re-read the rules"
+expect "credo reminder keeps autonomy" kept
+
+arm; run_prompt "please check [credo-reminder] the logs"
+expect "a user message quoting the reminder marker still pauses" paused
+
 arm; run_prompt '<cross-session-message from="uds:/x.sock">hi</cross-session-message>'
 expect "peer message keeps autonomy" kept
 

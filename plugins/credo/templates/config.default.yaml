@@ -276,6 +276,20 @@ optimize:
 tmux:
   hint: true
 
+# --- periodic quality reminder (hooks/credo-reminder.sh, scripts/credo-reminder.py) ---
+# Opt-in per credo session mode, OFF by default (every mode key below is commented out).
+# A mode gets a reminder prompt typed into the session's own tmux pane (needs tmux) when
+# its trigger fires: turns = real user turns since the last reminder, minutes = time since
+# the last reminder. A mode may set both; whichever comes first triggers. The first 10
+# turns of a fresh session only arm the reminder. Allowed modes: active, passive, autonomous.
+# text: optional one-line override of the built-in text after the marker "[credo-reminder]"
+# (empty = built-in). Changes apply to a running worker within a minute.
+reminder:
+  text: ""
+  # active: {turns: 10}              # e.g. every 10 user turns in active mode
+  # passive: {turns: 10}
+  # autonomous: {minutes: 60}        # e.g. every 60 min in autonomous mode (no turns while away)
+
 # --- peer trust guard (PreToolUse, hooks/credo-peer-message.sh) ---------------
 # A Bash command that grants LAN peer trust (credo-peer-lan.py trust add, or a write
 # to the trust file) is recognized by the peer-message hook. quiet: true (default)

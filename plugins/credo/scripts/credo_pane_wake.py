@@ -166,8 +166,8 @@ def send_key_list(plan, keys):
 
 def take_back(pane, text):
     """After an abort before Enter, remove the own typed `text` from the input field -
-    only when the field holds exactly it, the pane still belongs to the target, is not
-    in copy mode and shows no dialog, picker or menu (keys would land there). A busy
+    only when the field ends with it (at most one stray character in front), the pane
+    still belongs to the target, is not in copy mode and shows no dialog, picker or menu (keys would land there). A busy
     session is fine (typing only edits the input). Anything else stays untouched, so
     user input is never deleted. Returns True when removed."""
     plan = pane.plan
@@ -178,9 +178,9 @@ def take_back(pane, text):
         return False
     cap = guard.capture(plan["pane"], plan.get("socket"))
     content = guard.input_content(cap)
-    if content is None or norm(content) != norm(text):
+    if content is None or not guard.own_text_at_end(content, text):
         return False
-    safe, why = guard.assess(cap, expect=text, block_on_background=False)
+    safe, why = guard.assess(cap, expect=content, block_on_background=False)
     if not safe and not why.startswith("busy"):
         return False
     if send_key_list(plan, ["BSpace"] * len(text)):
@@ -189,16 +189,38 @@ def take_back(pane, text):
     return False
 
 
+def clear_leftover(pane):
+    """Owner rule: fewer than 2 visible characters count as an empty input field, but such
+    a leftover is removed before anything is typed: End (to the end of the field), then one
+    BSpace per character of the leftover. The field is captured again. True when it is empty
+    and idle now (nothing to remove, or removed), False when text is still there, in which
+    case the caller stops and types nothing."""
+    plan = pane.plan
+    cap = guard.capture(plan["pane"], plan.get("socket"))
+    count = guard.leftover(cap)
+    if count is None:
+        return guard.assess(cap, block_on_background=False)[0]
+    if not (send_key_list(plan, ["End"]) and send_key_list(plan, ["BSpace"] * count)):
+        return False
+    pane.log("removed a leftover of %d character(s) from the input field" % count)
+    cap = guard.capture(plan["pane"], plan.get("socket"))
+    return guard.assess(cap, block_on_background=False)[0]
+
+
 def type_and_enter(pane, text, before_enter=None):
     """Type `text` literally, run the full check again expecting exactly it, then
-    Enter. before_enter() runs right before Enter. Returns True when the input
-    visibly changed after Enter within the confirm wait, False when unconfirmed.
-    Raises StepFailed (no Enter sent), Cancelled or Woken; on any abort between
-    typing and Enter the own text is taken back (take_back: only when the field holds
-    exactly it), so it never stays in the input field."""
+    Enter. A leftover in the field is removed first (clear_leftover); if text is still
+    there, StepFailed before anything is typed. before_enter() runs right before Enter.
+    Returns True when the input visibly changed after Enter within the confirm wait,
+    False when unconfirmed. Raises StepFailed (no Enter sent), Cancelled or Woken; on any
+    abort between typing and Enter the own text is taken back (take_back: only when the
+    field ends with it), so it never stays in the input field."""
     plan, log = pane.plan, pane.log
     if pane.cancelled():
         raise Cancelled()
+    if not clear_leftover(pane):
+        raise StepFailed("failed: not idle", "the input field still holds text after "
+                         "removing the leftover")
     typed = False
     try:
         typed = True  # from here an abort may leave text behind; take_back checks it

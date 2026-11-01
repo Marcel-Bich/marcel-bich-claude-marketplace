@@ -122,7 +122,7 @@ expect = {"idle_empty": True, "idle_typed": False, "busy_spinner": False, "busy_
           "compacting": False, "busy_far": False, "ask_dialog": False, "permission": False,
           "slash_menu": False, "picker_below": False, "ctrl_c_again": False,
           "placeholder": True, "placeholder_nocursor": True, "gray_typed": False,
-          "truecolor_typed": False, "cursor_on_char": False, "dim_paste": False,
+          "truecolor_typed": False, "cursor_on_char": True, "dim_paste": False,
           "multirow": False, "shell": False, "labelled_rule": True, "old_box_empty": True,
           "old_box_typed": False, "quoted_far_above": True, "ellipsis_message": True,
           "bg_shell_status": False, "bg_shells_line": False, "bg_agents": False,
@@ -229,6 +229,23 @@ t("sgr 38;2 never dim", all(not d for _, d, _ in g.styled_chars("\x1b[38;2;2;2;2
 t("sgr 2 dim, 22 undim", [d for _, d, _ in g.styled_chars("\x1b[2ma\x1b[22mb")] == [True, False])
 t("socket from TMUX", g.socket_from_tmux_env("/tmp/s-1/default,77,0") == "/tmp/s-1/default"
   and g.socket_from_tmux_env("") is None and g.socket_from_tmux_env("rel,1,2") is None)
+# fewer than 2 visible characters count as an empty input field (owner rule, all tmux inputs)
+t("one visible char is empty", g.assess(pane(DONE, [P + "x"]))[0]
+  and g.input_content(pane(DONE, [P + "x"])) == "x")
+t("two visible chars are input", not g.assess(pane(DONE, [P + "xy"]))[0]
+  and g.input_content(pane(DONE, [P + "xy"])) == "xy")
+t("one char and spaces is empty", g.assess(pane(DONE, [P + "x  "]))[0])
+t("expect stays exact for one char", not g.assess(pane(DONE, [P + "x/compact"]), expect="/compact")[0])
+t("own text at the end after one char", g.own_text_at_end("x/compact", "/compact")
+  and g.own_text_at_end("/compact", "/compact"))
+t("own text after two chars is not own", not g.own_text_at_end("xy/compact", "/compact"))
+t("own text not at the end", not g.own_text_at_end("/compact x", "/compact"))
+# a leftover (fewer than 2 visible characters, at least one) is what the tools remove first
+t("leftover: one stray character counts", g.leftover(pane(DONE, [P + "x"])) == 1)
+t("leftover: two visible characters are text, not a leftover", g.leftover(pane(DONE, [P + "xy"])) is None)
+t("leftover: empty field has none", g.leftover(pane(DONE, [P])) is None)
+t("leftover: placeholder has none", g.leftover(pane(DONE, [P + "\x1b[2mTry \"fix\"\x1b[22m"])) is None)
+t("leftover: no input box has none", g.leftover(F["ask_dialog"]) is None)
 
 # wait_until_safe with a fake clock
 class Clock(object):
@@ -288,13 +305,17 @@ t("blocked reasons", g.is_blocked_reason("dialog or menu open: x")
   and not g.is_blocked_reason("no empty prompt input box visible (dialog, menu or not Claude Code)"))
 print("\n".join(res))
 PYEOF
+unit_out="$("$PY" "$TMP/unit.py" "$GUARD" 2>&1)"; unit_rc=$?
+if [ "$unit_rc" -ne 0 ]; then
+    FAIL=$((FAIL + 1)); echo "FAIL pure section crashed (rc $unit_rc): $(printf '%s' "$unit_out" | tail -1)"
+fi
 while IFS= read -r line; do
     case "$line" in
         FAIL*) FAIL=$((FAIL + 1)); echo "$line" ;;
         "") ;;
         *) PASS=$((PASS + 1)) ;;
     esac
-done < <("$PY" "$TMP/unit.py" "$GUARD" 2>&1)
+done <<< "$unit_out"
 
 # --- fakes ---------------------------------------------------------------------------
 BASE="$TMP/base"; FT="$TMP/ftmux"; mkdir -p "$BASE" "$FT"
@@ -325,11 +346,13 @@ case "$1" in
         cat "$(cat "$FAKE_STATE")" ;;
     send-keys)
         if [ "$4" = "-l" ]; then
-            printf '%s\n' "● Done." "" "$R" "❯ ${FAKE_TYPE_PREFIX:-}$5" "$R" ${FAKE_TYPE_BELOW:+"$FAKE_TYPE_BELOW"} > "$FAKE_STATE.typed"
+            printf '%s\n' "● Done." "" "$R" "❯ ${FAKE_TYPE_PREFIX:-}$(cat "$FAKE_STATE.prefix" 2>/dev/null)$5" "$R" ${FAKE_TYPE_BELOW:+"$FAKE_TYPE_BELOW"} > "$FAKE_STATE.typed"
             [ -n "${FAKE_TYPE_BELOW_FILE:-}" ] && cat "$FAKE_TYPE_BELOW_FILE" >> "$FAKE_STATE.typed"
             echo "$FAKE_STATE.typed" > "$FAKE_STATE"
             [ -n "${FAKE_MODE_AFTER_TYPE:-}" ] && echo "$FAKE_MODE_AFTER_TYPE" > "$FAKE_STATE.mode"
             printf '%s' "$5" > "$FAKE_STATE.last"
+        elif [ "$4" = "BSpace" ] && [ -n "${FAKE_IDLE_AFTER_BSPACE:-}" ]; then
+            echo "$FAKE_IDLE_AFTER_BSPACE" > "$FAKE_STATE"; : > "$FAKE_STATE.prefix"
         elif [ "$4" = "Enter" ]; then
             last="$(cat "$FAKE_STATE.last" 2>/dev/null)"
             case "$last" in
@@ -545,6 +568,25 @@ assert any(typed < i < enter for i in caps), "input verified between typing and 
 PYEOF
 ok "auto: two probes before typing, verification before Enter" "$?"
 grep -q '"mode": "auto"' "$MARK"; ok "auto: marker records mode" "$?"
+
+# --- worker: one stray character is a leftover -> End + BSpace, then the compact goes in
+printf '%s\n' "● Done." "" "$R" "❯ x" "$R" "  ? for shortcuts" > "$TMP/onechar.txt"
+echo autonomous > "$MODES/$SID"; echo "$TMP/onechar.txt" > "$FAKE_STATE"; : > "$FAKE_TMUX_LOG"; : > "$MARK"
+printf x > "$FAKE_STATE.prefix"   # the stray character stays in the field until BSpace
+out="$(FAKE_IDLE_AFTER_BSPACE="$TMP/idle.txt" H run --auto --delay 0.1)"; rc=$?
+check "leftover: run --auto -> rc 0" "0" "$rc"
+wait_status '"status": "woken"'; ok "leftover: removed, then /compact typed and woken" "$?"
+check "leftover: one BSpace for the one character" "1" "$(grep -c 'send-keys -t %5 BSpace' "$FAKE_TMUX_LOG")"
+ok "leftover: End moves to the end of the field first" "$(grep -q 'send-keys -t %5 End' "$FAKE_TMUX_LOG" && echo 0 || echo 1)"
+"$PY" - "$FAKE_TMUX_LOG" <<'PYEOF'
+import sys
+lines = open(sys.argv[1]).read().splitlines()
+b = [i for i, l in enumerate(lines) if l.endswith("send-keys -t %5 BSpace")]
+c = [i for i, l in enumerate(lines) if " send-keys -t %5 -l /compact" in l]
+assert b and c and b[0] < c[0], (b, c)
+assert not any("x/compact" in l for l in lines), "stray character must not be typed together"
+PYEOF
+ok "leftover: removal before typing, stray character never typed with the command" "$?"
 
 # --- worker: typed user text -> waits, gives up, nothing typed ------------------------
 rm -f "$MODES/$SID"; echo "$TMP/typed.txt" > "$FAKE_STATE"; : > "$FAKE_TMUX_LOG"

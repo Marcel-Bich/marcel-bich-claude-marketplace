@@ -3,7 +3,8 @@ credo-self-restart.py.
 
 Decides from a `tmux capture-pane -p -e` snapshot whether the Claude Code TUI in a
 pane is idle and safe to receive keys - no busy spinner, the prompt input field is
-EMPTY (or holds exactly an expected line, for the check right before Enter), no
+EMPTY (fewer than EMPTY_BELOW visible characters, or holds exactly an expected line, for
+the check right before Enter), no
 dialog / Ask question / permission prompt / menu is open, and (only with
 block_on_background=True, the default, as credo-self-restart.py uses it) the footer
 under the input box shows no background shells, monitors or background agents still
@@ -194,6 +195,8 @@ def input_content(text):
     if box is None:
         return None
     rows = _content_chars(lines, box)
+    # the exact text, also a single character: nudge and take_back compare against it
+    # (the two-character rule applies to the idle check in assess() only)
     if len(rows) == 1 and _is_placeholder(rows[0]):
         return ""
     joined = " ".join("".join(c for c, _, _ in r) for r in rows)
@@ -217,8 +220,56 @@ def _is_placeholder(chars):
     return not inverted or inverted[0] is vis[0]
 
 
+# Owner rule (all tmux inputs): fewer visible (non-whitespace) characters than this in the
+# input field count as an empty field for the idle check. A stray character is never
+# submitted together with a command (expect= stays exact).
+EMPTY_BELOW = 2
+
+
+def _empty(rows):
+    """True when the input field counts as empty: fewer than EMPTY_BELOW visible
+    characters in all, or one row that holds only a placeholder."""
+    if sum(1 for r in rows for c, _, _ in r if not c.isspace()) < EMPTY_BELOW:
+        return True
+    return len(rows) == 1 and _is_placeholder(rows[0])
+
+
 def _norm(s):
     return "".join((s or "").split())
+
+
+def own_text_at_end(content, text):
+    """True when the input `content` is `text` at its end, with at most one visible
+    character in front of it (the empty-input rule). Used to take back the own typed text
+    after an abort: only that text is removed, the stray character stays."""
+    c, t = _norm(content), _norm(text)
+    return bool(t) and c.endswith(t) and len(c) - len(t) < EMPTY_BELOW
+
+
+def leftover(text):
+    """Number of characters to delete from the input field when it holds a leftover: at
+    least one character and fewer than EMPTY_BELOW visible ones (a stray character the
+    tools remove before typing). None when no input box is visible, the field is empty, or
+    it holds text. Whitespace at the edges of a row is not visible in a capture and is not
+    counted."""
+    lines = (text or "").split("\n")
+    box = find_input_box(lines)
+    if box is None:
+        return None
+    rows = [_body(r) for r in _content_chars(lines, box)]
+    count = sum(len(r) for r in rows)
+    visible = sum(1 for r in rows for c, _, _ in r if not c.isspace())
+    if count == 0 or visible >= EMPTY_BELOW:
+        return None
+    return count
+
+
+def _body(chars):
+    """A row without its leading whitespace (the blank after the prompt marker)."""
+    i = 0
+    while i < len(chars) and chars[i][0].isspace():
+        i += 1
+    return chars[i:]
 
 
 def _no_box_reason(lines):
@@ -268,11 +319,11 @@ def assess(text, expect=None, block_on_background=True):
         if _norm(seen) != _norm(expect):
             return False, "input does not hold exactly the expected text"
         return True, "idle, input holds the expected text"
+    if _empty(rows):
+        return True, "idle, input empty"
     if len(rows) != 1:
         return False, "input has %d rows (text typed)" % len(rows)
-    if not _is_placeholder(rows[0]):
-        return False, "input not empty (user text present)"
-    return True, "idle, input empty"
+    return False, "input not empty (user text present)"
 
 
 # Only CLASSIFIED dialogs and permission prompts count as blocked. The generic

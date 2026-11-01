@@ -283,6 +283,22 @@ A SessionStart hook (`credo-peer-split-hint.sh`) adds one hint line when this se
 
 `/credo:self-compact` (`scripts/credo-self-compact.py`) runs the real Claude Code `/compact` on the same session after `compact-plus` secured its state, to save tokens. A detached worker types `/compact Afterwards reload <handoff> ...` into the session's OWN tmux pane (verified to belong to this Claude process, on this session's tmux server) - only once the session is idle, the input field is empty and no dialog, Ask question, permission prompt or menu is open, confirmed twice; it verifies the typed line before pressing Enter and never retypes user input. Autonomous mode: `run --auto` without a question; interactive modes: ask once via the Ask tool, then `run --user-confirmed`. It refuses without the compact-plus rehydrate breadcrumb and outside tmux. After the compact the session wakes itself: the SessionStart hook (source `compact`) signals the finished compaction deterministically, then the worker types `.` (shared wake helper with self-reload, 60 s fallback); without the signal in time it types `.` only into an idle pane, else it sends an ntfy push. Details: `commands/self-compact.md`.
 
+## Periodic reminder (a quality prompt typed into the own tmux pane)
+
+Opt-in per credo session mode, off by default. The credo config key `reminder` (global `~/.claude/credo/config`, a profile, or a project `.credo/config`) gives each mode a trigger:
+
+```yaml
+reminder:
+  active: {turns: 10}          # every 10 real user turns in active mode
+  passive: {turns: 10}
+  autonomous: {minutes: 60}    # every 60 min in autonomous mode (the user is away, no turns)
+  text: ""                     # optional one-line override of the built-in text
+```
+
+A mode may set `turns`, `minutes` or both (whichever comes first); a mode without a key is off. `turns` counts real user prompts since the last reminder (or since arming), `minutes` the time since then. Injected reminders, a bare `.` and automated prompts are not turns. The built-in text asks the agent to check itself against what was agreed (rules, open items, requirements logs, handoff, superseded decisions dropped); `text` replaces it after the marker `[credo-reminder]`.
+
+Every real user turn is counted (UserPromptSubmit hook `hooks/credo-reminder.sh turn`). The 10th turn arms the session for good; the state is kept per session id, so it survives a compact and a resume. An armed session has one detached worker (`scripts/credo-reminder.py`, started at SessionStart and on demand). When a trigger is due, the worker types the prompt into the session's OWN tmux pane, but only when the pane is idle, the input field holds fewer than 2 visible characters (such a leftover is removed first, with End and BSpace) and no dialog is open; it verifies the text before Enter. Config changes apply within a minute, and the worker stops when the reminder is off or the session's Claude process is gone. It needs tmux; outside tmux nothing is armed. A user prompt reads the config only when a user config layer may set a mode: a cheap shell check runs first, and with the defaults nothing is read (otherwise `credo-config.sh get reminder`, about 0.1 s). Details: `docs/credo-guide.md`.
+
 ## Session move (between profiles)
 
 `/credo:session-move` (`scripts/credo-session-move.py`, skill `session-move`) moves one or more sessions, given by caption / custom title or full id, from one profile (`CLAUDE_CONFIG_DIR`, e.g. `~/.claude`) to another (e.g. `~/.claude-other`). Execution class C: only on the user's explicit invocation, never autonomously, and only from a new session that is not one of the moved ones. It refuses the current session and any live session: a Claude process whose argv names the id (e.g. `--resume <id>`), or a pid file `sessions/<pid>.json` naming the id - in the source, the target or any sibling `.claude*` profile dir or any dir given with `--profile <dir>` (repeatable) - whose pid is alive, whatever the process is called (a dead pid is stale; pid reuse is decided only by the pid file's `procStart` compared with `/proc/<pid>/stat` field 22: mismatch ignored, match / absent / unreadable live, a recognised Claude process never ignored). Without `/proc` (e.g. macOS) it falls back to `ps -axww` (every alive pid from a pid file counts as live); when liveness cannot be determined at all, it refuses. Limit: sessions started with another profile location and Windows-side sessions are not seen unless their profile dir is passed with `--profile`.
@@ -404,6 +420,7 @@ Run Claude Code inside [tmux](https://github.com/tmux/tmux). Several credo featu
 
 - **`/credo:self-compact`** - tmux only. Outside tmux it refuses and you compact by hand.
 - **`/credo:self-reload`** - tmux only (types `/reload-plugins` and `/reload-skills` into the own pane).
+- **Periodic reminder** (`reminder` config key) - tmux only (types the reminder prompt into the own pane).
 - **`/credo:self-restart`** - works without tmux (new Windows Terminal tab / terminal window), but only inside tmux it waits until the pane is idle with an empty input field, so a prompt you are typing is never lost, and relaunches in the same pane.
 
 This fits WSL too, because tmux runs inside the WSL distro like on any Linux and the Windows Terminal tab is just the window around it. Native Windows has no tmux - use WSL.
