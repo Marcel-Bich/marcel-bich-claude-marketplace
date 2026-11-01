@@ -312,6 +312,9 @@ echo ">>> averages: AvgPeak and Avg values are right-aligned to 5 characters (10
 # AvgPeak 100.0. Their rise is 200 over 144 h: 33.3 %/d. The current samples sit at 0.
 # The history write is held back so the renders above cannot add samples.
 HIST="$DATA_DIR/limit-history_${FAKE_PROFILE}.jsonl"
+# The rate divides by the span up to the real render time, so take a fresh NOW here:
+# with the NOW from the start of the file, a slow run stretches the span and 33.9 drifts.
+NOW=$(date -u +%s)
 date +%s > "$DATA_DIR/history-last-write_${FAKE_PROFILE}"
 H_5H_FUT=$(iso $((NOW + 5 * 3600)))
 H_7D_FUT=$(iso $((NOW + 5 * 86400)))
