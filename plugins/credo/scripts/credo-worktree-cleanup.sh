@@ -280,6 +280,8 @@ evaluate() { # path branch locked prunable lock-reason
     # Locked first: the lock is the owner's opt-out and is reported with its reason (git does
     # not prune a locked worktree whose directory is gone either).
     if [ -n "$locked" ]; then
+        # a "keep: ..." lock is the owner's answer already; ask only for other locks
+        case "$lock_reason" in keep*) ask="" ;; esac
         add kept "$path" "$branch" "locked: ${lock_reason:-no reason given}$ask" "" "${lock_reason:-no reason given}"
         return
     fi

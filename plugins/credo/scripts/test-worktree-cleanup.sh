@@ -100,7 +100,7 @@ contains "dry-run dirty kept" "kept $W/dirty branch=wt/dirty reason=uncommitted 
 contains "dry-run fresh kept" "kept $W/fresh branch=wt/fresh reason=no commits yet" "$out"
 contains "dry-run locked kept with reason" "kept $W/locked branch=wt/locked reason=locked: keep: owner" "$out"
 contains "dry-run merged dirty asks the owner" "kept $W/dirty branch=wt/dirty reason=uncommitted changes to tracked files (ask owner)" "$out"
-contains "dry-run merged locked asks the owner" "kept $W/locked branch=wt/locked reason=locked: keep: owner (ask owner)" "$out"
+contains "dry-run merged keep-locked asks nobody" "kept $W/locked branch=wt/locked reason=locked: keep: owner" "$out"
 check "dry-run unmerged asks nobody" "" "$(printf '%s\n' "$out" | grep "$W/unmerged" | grep "ask owner" || true)"
 check "dry-run main not listed" "" "$(printf '%s\n' "$out" | grep " $R branch=" || true)"
 check "dry-run removed nothing" "yes yes yes yes yes" "$(exists "$W/merged") $(exists "$W/unmerged") $(exists "$W/dirty") $(exists "$W/fresh") $(exists "$W/here")"
@@ -412,7 +412,7 @@ contains "rebased is a candidate" "candidate $W6/rb branch=wt/rb reason=merged i
 contains "rebased plus a new commit kept" "kept $W6/rb2 branch=wt/rb2 reason=not merged into main" "$out"
 contains "ignored scratch goes with it" "candidate $W6/ignored branch=wt/ignored reason=merged into main, clean" "$out"
 contains "untracked file kept, owner asked" "kept $W6/untracked branch=wt/untracked reason=1 untracked file(s), not committed (ask owner)" "$out"
-contains "merged locked kept, owner asked" "kept $W6/lockedm branch=wt/lockedm reason=locked: keep: owner (ask owner)" "$out"
+contains "merged keep-locked kept, no question" "kept $W6/lockedm branch=wt/lockedm reason=locked: keep: owner" "$out"
 contains "unmerged locked kept with reason" "kept $W6/lockedu branch=wt/lockedu reason=locked: keep: owner" "$out"
 check "unmerged locked asks nobody" "" "$(printf '%s\n' "$out" | grep "$W6/lockedu" | grep "ask owner" || true)"
 # A live process has its working directory in the worktree. It is the cleanup itself, run from inside it
