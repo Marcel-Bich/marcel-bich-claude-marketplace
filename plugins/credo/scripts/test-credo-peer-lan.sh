@@ -7801,7 +7801,7 @@ case "$F6B" in *"wider than /16"*) FAIL=$((FAIL + 1)); printf 'FAIL F6 exact sub
 # is checked against a fake powershell.exe and a fake wslpath that only record their argv.
 mkdir -p "$TMP/wa"
 cat > "$TMP/wa.py" <<'PYEOF'
-import base64, importlib.util, inspect, os, sys
+import base64, importlib.util, inspect, json, os, sys
 daemon_path, tmp, scripts = sys.argv[1], sys.argv[2], sys.argv[3]
 os.environ.pop("CREDO_PEER_LAN_NETINFO", None)
 os.environ.pop("WSL_DISTRO_NAME", None)
@@ -7841,6 +7841,7 @@ def fake_launch(port, task):
     calls.append((port, task))
     return result["rc"], result["line"]
 mod.run_winproxy_install = fake_launch
+mod.stdin_is_tty = lambda: True   # W1-W12: an attended session (the no-mode rule needs a terminal)
 cfg = {"listen_port": 48610}
 def run():
     lines = []
@@ -7904,6 +7905,53 @@ launched, lines = run()
 expect(launched is False and len(calls) == 3, "W10 attempt marker cannot be written: no launch (no repeat risk)")
 os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(tmp, "profile")
 
+# W13: no mode file and no terminal (a session nobody is at): owner action, nothing started
+use_session("sid-wa-9")
+mod.stdin_is_tty = lambda: False
+n = len(calls)
+launched, lines = run()
+expect(launched is False and len(calls) == n and any("no terminal attached" in l for l in lines),
+       "W13 no mode file and no terminal: no launch, owner action %r" % lines)
+mod.stdin_is_tty = lambda: True
+# W14: the mode file says active, but the autonomy state is armed (active, not paused): autonomous
+use_session("sid-wa-10")
+set_mode("sid-wa-10", "active")
+armed = os.path.join(tmp, "profile", "credo", "autonomy", "sid-wa-10")
+os.makedirs(armed, exist_ok=True)
+open(os.path.join(armed, "active"), "w").close()
+n = len(calls)
+launched, lines = run()
+expect(launched is False and len(calls) == n and any("autonomous session" in l for l in lines),
+       "W14 armed autonomy state beats an active mode file: no launch %r" % lines)
+# W15: the same state with a paused file is not autonomous any more: the active session launches
+open(os.path.join(armed, "paused"), "w").close()
+launched, lines = run()
+expect(launched is True and len(calls) == n + 1, "W15 paused autonomy state: the active session launches")
+# W16: an unknown mode word fails closed
+use_session("sid-wa-11")
+set_mode("sid-wa-11", "weird")
+n = len(calls)
+launched, lines = run()
+expect(launched is False and len(calls) == n and any("unknown session mode" in l for l in lines),
+       "W16 unknown mode word: no launch %r" % lines)
+# X1/X2: check --no-install never reaches the install; a plain check does (once)
+import argparse, contextlib, io
+spied = []
+mod.winproxy_auto_install = lambda cfg_, say=None: spied.append(1) or False
+ncfg = os.path.join(tmp, "check-cfg", "peer-lan.json")
+os.makedirs(os.path.dirname(ncfg), exist_ok=True)
+with open(ncfg, "w") as fh:
+    json.dump({"this_machine": "WA", "listen_port": 48610, "peers": []}, fh)
+os.environ["CREDO_PEER_LAN_CONFIG"] = ncfg
+os.environ["CREDO_PEER_LAN_NETINFO"] = '{"ip":"127.0.0.1"}'
+with contextlib.redirect_stdout(io.StringIO()):
+    mod.run_check(argparse.Namespace(no_install=True))
+expect(not spied, "X1 check --no-install never calls the install")
+with contextlib.redirect_stdout(io.StringIO()):
+    mod.run_check(argparse.Namespace(no_install=False))
+expect(len(spied) == 1, "X2 a plain check calls the install once")
+os.environ.pop("CREDO_PEER_LAN_NETINFO", None)
+
 # the real launcher: fake powershell.exe and wslpath that record their argv only
 bin_dir = os.path.join(tmp, "wabin")
 os.makedirs(bin_dir, exist_ok=True)
@@ -7926,9 +7974,11 @@ expect(args[:3] == ["-NoProfile", "-NonInteractive", "-EncodedCommand"] and len(
        "W11 powershell gets one encoded command %r" % args[:3])
 cmd = base64.b64decode(args[3]).decode("utf-16-le") if len(args) == 4 else ""
 for needle in ("Start-Process powershell -Verb RunAs", "'-ResultFile'", "'-Install'",
-               "'-TaskName','credo-peer-lan-proxy'", "'-Port','48610'", "Copy-Item -LiteralPath '\\\\wsl.localhost"):
+               "'-TaskName','credo-peer-lan-proxy'", "'-Port','48610'", "Copy-Item -LiteralPath '\\\\wsl.localhost",
+               "[guid]::NewGuid().ToString('N')"):
     expect(needle in cmd, "W11 command has %r" % needle)
 expect("-Uninstall" not in cmd, "W11 command is the install, not the uninstall")
+expect("Join-Path $env:TEMP 'credo-peer-lan" not in cmd, "W11 temp copy and result file get random names")
 os.remove(rec)
 os.environ["FAKE_WSLPATH"] = "\\\\wsl.localhost\\Ubuntu\\it's\\credo-peer-lan-winproxy.ps1"
 rc, line = REAL_LAUNCH(48610, "credo-peer-lan-proxy")
@@ -7941,6 +7991,10 @@ print("WA_OK" if not fails else "WA_FAIL " + " | ".join(fails))
 PYEOF
 WA_OUT="$("$PY" "$TMP/wa.py" "$DAEMON" "$TMP/wa" "$SCRIPT_DIR" 2>&1)"
 case "$WA_OUT" in *WA_OK*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL WA (winproxy auto install): %s\n' "$WA_OUT" ;; esac
+# the CLI accepts --no-install (read only check; the config here does not exist, so nothing else runs)
+NI_OUT="$(CREDO_PEER_LAN_CONFIG="$TMP/wa/no-config/peer-lan.json" "$PY" "$DAEMON" check --no-install 2>&1)"; NI_RC=$?
+check "WA check --no-install is accepted by the CLI (exit 0)" "0" "$NI_RC"
+case "$NI_OUT" in *"No config"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL WA check --no-install output: %s\n' "$NI_OUT" ;; esac
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

@@ -414,20 +414,23 @@ def lan_status(run_check):
         if host in ("127.0.0.1", "localhost") and isinstance(port, int) and not tcp_listening(port):
             st["loopback_down"].append("%s:%d" % (host, port))
 
-    def run(arg, timeout):
+    def run(args, timeout):
+        # read only: the peer check never starts the elevated Windows -Install (a UAC prompt
+        # it could not answer) and never triggers the Windows task (CREDO_PEER_LAN_WINPROXY=0)
+        env = dict(os.environ, CREDO_PEER_LAN_WINPROXY="0")
         try:
-            r = subprocess.run([sys.executable, script, arg], capture_output=True,
-                               text=True, timeout=timeout)
+            r = subprocess.run([sys.executable, script] + args, capture_output=True,
+                               text=True, timeout=timeout, env=env)
             return r.returncode, (r.stdout or "").strip()
         except (OSError, subprocess.SubprocessError) as exc:
-            return None, "%s failed: %s" % (arg, exc)
+            return None, "%s failed: %s" % (" ".join(args), exc)
 
     if os.path.isfile(script):
-        rc, out = run("status", 10)
+        rc, out = run(["status"], 10)
         st["running"] = rc == 0
         st["status"] = out.splitlines()[0] if out else ""
         if run_check:
-            _, out = run("check", 60)
+            _, out = run(["check", "--no-install"], 60)
             st["check"] = out.splitlines()
             st["disabled"] = [ln.strip() for ln in st["check"] if "DISABLED" in ln]
     return st

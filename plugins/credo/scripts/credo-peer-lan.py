@@ -1428,8 +1428,9 @@ def network_hint_loud_text(hint):
     WLAN, so the agent asks the user about it before it goes on. Used by the peer hooks only;
     they call it solely when the relay is in use (never for local peers)."""
     return ("!!! LAN RELAY OFF ON THIS WLAN !!! This peer message uses the LAN relay (a peer on "
-            "another machine), but the relay is off on this WLAN until the user decides. Ask once "
-            "per session: if you already asked in this session, do not ask again. "
+            "another machine), but the relay is off on this WLAN until the user decides. In an "
+            "interactive session ask once per session: if you already asked in this session, do "
+            "not ask again. "
             + network_hint_text(hint))
 
 
@@ -1794,6 +1795,41 @@ def credo_session_mode(sid):
     return mode if re.fullmatch(r"[a-z]+", mode or "") else None
 
 
+def credo_session_autonomous(sid):
+    """True when session sid runs autonomously: its credo mode file says autonomous, or its
+    autonomy state is armed (<autonomy dir>/<sid>/active without a paused file, the rule of
+    hooks/credo-autonomy-lib.sh). Any doubt about the state counts as autonomous."""
+    if credo_session_mode(sid) == "autonomous":
+        return True
+    base = os.environ.get("CREDO_AUTONOMY_DIR") or os.path.join(own_profile_dir(), "credo", "autonomy")
+    d = os.path.join(base, sid)
+    return os.path.isfile(os.path.join(d, "active")) and not os.path.exists(os.path.join(d, "paused"))
+
+
+def stdin_is_tty():
+    """Seam for the install gate (tests replace it): True when this process has a terminal."""
+    try:
+        return sys.stdin.isatty()
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
+def winproxy_gate(sid):
+    """Why the elevated -Install must not start unattended, or None when it may start. Fail
+    closed: no session id, an autonomous session (mode file or armed autonomy state), a session
+    with no mode file while no terminal is attached, or an unknown mode word."""
+    if not sid:
+        return "no session id"
+    if credo_session_autonomous(sid):
+        return "autonomous session"
+    mode = credo_session_mode(sid)
+    if mode is None and not stdin_is_tty():
+        return "no session mode set and no terminal attached"
+    if mode not in (None, "active", "passive"):
+        return "unknown session mode %s" % mode
+    return None
+
+
 def winproxy_attempt_path(sid, target):
     """The marker of the one elevated -Install attempt of session sid for script version target."""
     return os.path.join(own_profile_dir(), "credo", WINPROXY_ATTEMPT_DIR, "%s-v%d.json" % (sid, target))
@@ -1829,9 +1865,9 @@ def winproxy_install_script(script_win, port, task):
     once), run elevated with -ResultFile, and its result line is printed. Only UAC needs the
     user; a declined prompt is reported as FAILED, never as a silent exit 0."""
     return (
-        "$s = Join-Path $env:TEMP 'credo-peer-lan-winproxy.ps1'; "
+        "$s = Join-Path $env:TEMP ('credo-peer-lan-winproxy-' + [guid]::NewGuid().ToString('N') + '.ps1'); "
         "Copy-Item -LiteralPath '{src}' -Destination $s -Force; "
-        "$r = Join-Path $env:TEMP 'credo-peer-lan-install.txt'; "
+        "$r = Join-Path $env:TEMP ('credo-peer-lan-install-' + [guid]::NewGuid().ToString('N') + '.txt'); "
         "Remove-Item -LiteralPath $r -Force -ErrorAction SilentlyContinue; "
         "try {{ $p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList "
         "'-NoProfile','-ExecutionPolicy','Bypass','-File',('\"' + $s + '\"'),'-Install','-Port','{port}',"
@@ -1901,8 +1937,8 @@ def winproxy_auto_install(cfg, say=None):
     manual = ("run `%s check` in an interactive session: it starts the elevated -Install "
               "itself (one UAC prompt)" % os.path.abspath(__file__))
     sid = current_session_id()
-    if not sid or credo_session_mode(sid) == "autonomous":
-        why = "no session id" if not sid else "autonomous session"
+    why = winproxy_gate(sid)
+    if why:
         say("Windows side: %s. Not started automatically (%s). Owner action: %s."
             % (versions, why, manual))
         return False
@@ -7368,7 +7404,7 @@ def current_state(cfg):
     )
 
 
-def run_check(_args):
+def run_check(args):
     cfg = load_config()
     if cfg is None:
         print(
@@ -7378,7 +7414,7 @@ def run_check(_args):
         return 0
     print_self_address(cfg)
     print("")
-    if winproxy_auto_install(cfg):
+    if not getattr(args, "no_install", False) and winproxy_auto_install(cfg):
         print("")
     state = current_state(cfg)
     print_lan_status(cfg, state)
@@ -8445,6 +8481,10 @@ def main(argv=None):
         "check",
         help="print this machine's address, the network/allowlist status and probe "
         "configured peers",
+    )
+    p_check.add_argument(
+        "--no-install", action="store_true",
+        help="read only: never start the elevated Windows -Install (the peer check uses it)",
     )
     p_check.set_defaults(func=run_check)
 

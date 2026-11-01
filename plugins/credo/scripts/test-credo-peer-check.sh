@@ -164,7 +164,9 @@ chmod +x "$TMP/bin/tmux"
 
 # fake credo-peer-lan.py: status = not running, check = LAN disabled with a reason
 cat > "$TMP/bin/fake-lan.py" <<'PYEOF'
-import sys
+import os, sys
+with open(os.environ["FAKE_LAN_LOG"], "a") as fh:   # what the peer check asked for
+    fh.write("%s WINPROXY=%s\n" % (" ".join(sys.argv[1:]), os.environ.get("CREDO_PEER_LAN_WINPROXY", "-")))
 if sys.argv[1] == "status":
     print("relay not running"); sys.exit(1)
 if sys.argv[1] == "check":
@@ -180,11 +182,16 @@ run_check() { # args...
         CREDO_PEER_CHECK_SOCK_DIRS="$SOCK_RUN:$SOCK_TMP" \
         CREDO_PEER_CHECK_TMUX="$TMP/bin/tmux" \
         CREDO_PEER_CHECK_LAN_SCRIPT="$TMP/bin/fake-lan.py" CREDO_PEER_CHECK_CODEX_PEER="" \
+        FAKE_LAN_LOG="$TMP/lan-calls.log" \
         "$PY" "$CHECK" "$@"
 }
 
 OUT="$(run_check 2>&1)"; RC=$?
 ok "list exits 0" "$RC"
+# read only: the LAN check is asked with --no-install and the Windows proxy trigger off, so a
+# peer list can never start the elevated -Install (UAC) or get killed in the middle of it
+grep -qx 'status WINPROXY=0' "$TMP/lan-calls.log" 2>/dev/null; ok "peer check asks the LAN script for status with the proxy trigger off" "$?"
+grep -qx 'check --no-install WINPROXY=0' "$TMP/lan-calls.log" 2>/dev/null; ok "peer check runs LAN check --no-install (never the install)" "$?"
 has "$OUT" "alpha-session"; ok "claude A listed" "$?"
 has "$OUT" "bravo-session"; ok "claude B listed" "$?"
 has "$OUT" "dead-session"; R=$?; [ "$R" -ne 0 ]; ok "dead descriptor not listed" "$?"

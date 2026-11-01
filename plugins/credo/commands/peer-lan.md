@@ -361,7 +361,7 @@ agent asks the user once:
 Public-category hint is pending, the peer hooks check it as well:
 - A send to a LAN mirror row (`SendMessage` to a name of the form `` `harness`--`network`--...--`session`+sid ``)
   gets one LOUD line in the agent context before it goes out: the LAN relay is OFF on this WLAN,
-  the agent asks the user once via the Ask tool with the same two options (add, or do not add) and
+  in an interactive session the agent asks the user once per session via the Ask tool, with the same two options (add, or do not add), and
   runs `trust-router` or `trust-router --refuse` on the answer. A Public-category hint gets the
   switch-to-Private instruction instead.
 - A peer message that came over the relay (its reply address is a relay proxy socket) gets the
@@ -473,16 +473,22 @@ installed nothing.
 is OLDER than the shipped script, `check` and `start` start the elevated `-Install` themselves
 (the same one UAC prompt; the user only confirms it) and then report the `-Install OK` or
 `-Install FAILED` line. Rules:
-- Only in an interactive session: the session's credo mode is not `autonomous`. An autonomous
-  session does not start it; it reports the open owner action instead (run `check` in an
-  interactive session).
+- Only in an interactive session. It is NOT started when the session is autonomous: the credo
+  mode file says `autonomous`, or its autonomy state is armed (`credo/autonomy/<session>/active`
+  without a `paused` file). It is NOT started when the session has no mode file and no terminal is
+  attached (agent shell calls have no terminal, so the owner runs `check` in a terminal, or sets the
+  session mode to active or passive). An unknown mode word, or no session id, also does not start
+  it. In each case the output names the open owner action.
+- `check --no-install` is the read-only form: it never starts the install. The peer check
+  (`credo-peer-check.py`) always uses it, with the Windows proxy trigger off.
 - Once per session and target version: a marker in the profile's `credo/peer-lan-winproxy-attempts/`
   is written before the start. A declined UAC prompt or a FAILED line is reported and is not
   retried in that session; a new session makes one new attempt.
 - Only where the Windows side can be used: under WSL, not with `CREDO_PEER_LAN_WINPROXY=0`.
   A copy that is not installed at all is not started automatically (set it up once by hand).
-- The elevated run is awaited for up to 300 seconds; a window still open after that is
-  reported, and `check` run later shows the result.
+- `check` and `start` can wait up to 300 seconds for the UAC prompt to be answered. Run them
+  with a Bash timeout of at least 330000 ms, or in a terminal. A window still open after that
+  is reported, and `check` run later shows the result.
 
 Instances are per port: the firewall rule is `credo-peer-lan <port>`, and for any port
 other than the default 48610 the data file is `peer-lan-allow-<port>.json` and the applied
@@ -900,7 +906,8 @@ reported as FAILED, never as a silent exit 0.
   ```
   Under WSL, an OUTDATED installed Windows script makes `check` start the elevated `-Install`
   itself in an interactive session (see Cross-machine networking, "Automatic re-run"); the
-  result line is printed before the status.
+  result line is printed before the status. `check` can wait up to 300 seconds for the UAC
+  prompt. `check --no-install` never starts the install (the read-only peer check uses it).
   A PENDING REPAIR whose address is not reachable from this machine gets the NAT hint
   (see `init`): if that peer sits behind NAT, remove the address here and let it run
   `init` towards this machine.
@@ -934,7 +941,8 @@ reported as FAILED, never as a silent exit 0.
   ```
   If it logs "no config" it exits at once - tell the user to run `init` first. Under WSL it
   also starts the elevated `-Install` when the installed Windows script is OUTDATED (interactive
-  sessions only, see Cross-machine networking, "Automatic re-run"). Disable globally any time with
+  sessions only, see Cross-machine networking, "Automatic re-run"); it can wait up to 300 seconds
+  for the UAC prompt. Disable globally any time with
   `CREDO_PEER_LAN=0` in the environment.
 
 - **restart** - safe stop-then-start regardless of version. Run it in the foreground:
