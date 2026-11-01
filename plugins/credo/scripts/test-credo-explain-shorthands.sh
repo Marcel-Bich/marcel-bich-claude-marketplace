@@ -85,9 +85,7 @@ in_file "credo guide: ?? bullet" '- `??` -' "$PLUGIN_DIR/docs/credo-guide.md"
 in_file "credo guide: ? bullet" '- `?` -' "$PLUGIN_DIR/docs/credo-guide.md"
 in_file "psalm: ?? topic line" '`??` - ' "$PLUGIN_DIR/commands/psalm.md"
 in_file "psalm: ? topic line" '`?` - ' "$PLUGIN_DIR/commands/psalm.md"
-FRAG="$PLUGIN_DIR/changelog.d/132-footer-codes-and-shorthand-suffix.md"
-in_file "changelog fragment: patch bump" 'bump: patch' "$FRAG"
-in_file "changelog fragment: Changed section" '### Changed' "$FRAG"
+in_file "changelog: released shorthand entry" 'applies to the part right before it' "$PLUGIN_DIR/CHANGELOG.md"
 
 echo "explain shorthands: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
