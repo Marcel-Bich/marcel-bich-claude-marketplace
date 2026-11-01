@@ -1,6 +1,6 @@
 ---
 name: explain
-description: Explain something on request, at three depths. Use when the user writes "???" (full: What, Why, Example, Consequences), "??" (medium: the same four parts, each short) or "?" (short: two or three bullets) - alone (the last discussed point) or as a separate last word after a reference, statement, or term ("the audit gate ??"). A question mark attached to a word ("Is it done?") is an ordinary question. Also invoked by the /credo:explain command. Treat the pointed-at subject as the thing to explain, never as a literal question.
+description: Explain something on request, at three depths. Use when the user writes "???" (full: What, Why, Example, Consequences), "??" (medium: the same four parts, each short) or "?" (short: two or three bullets) - alone (the last discussed point) or at the end of any message ("the audit gate ??", "is xyz so bad?"). The longest ending wins ("???" before "??" before "?"), and a normal question ending with "?" gets the "?" depth and format. Also invoked by the /credo:explain command. Treat a pointed-at term or statement as the thing to explain, never as a literal question.
 ---
 
 # Explain in Depth
@@ -15,18 +15,21 @@ thing properly.
 - The user writes `???` on its own - they did not understand the last thing and want it explained
   properly (full level).
 - The user writes `??` on its own - the same at medium depth; `?` on its own gives the short level.
-- The user writes `???`, `??` or `?` directly after a reference, a statement, or a term (for example
-  `the audit gate ??`) - explain that specific thing, not the surrounding sentence.
+- The user writes `???`, `??` or `?` at the end of a message, right after a reference, a statement,
+  or a term (for example `the audit gate ??`) - explain that specific thing, not the surrounding
+  sentence.
+- The user writes a normal question ending with `?` (for example `Is it done?`) - answer that
+  question at the depth and format its mark sets (short for `?`).
 - The `/credo:explain [subject] [level]` command is run - explain the given subject, or, if none is
   given, the thing the user was just pointing at. The level is full (default), medium or short.
 
 ## Recognising the shorthand
 
-- `???` counts when it stands alone or sits right after a term, reference, or statement, with or
-  without a space.
-- `??` and `?` count only when they stand alone or form a separate last word after a term,
-  reference, or statement, with a space or line break before the mark. `the audit gate ??` is the
-  shorthand; `Is it done?` and `why??` are ordinary questions and are answered as questions.
+- `???`, `??` and `?` count alone or at the end of any message, with or without a space, and also
+  when attached to a word (`why??`).
+- The longest ending wins: `???` before `??` before `?`.
+- A normal question ending with `?` gets the depth and format of its mark (`?` short, `??` medium,
+  `???` full).
 - A mark in the middle of a message is never the shorthand.
 
 ## Core principle: it is not a literal question
@@ -35,6 +38,9 @@ thing properly.
 to answer verbatim. Do not reply "yes/no" or treat the marks as asking whether something is true.
 Identify the subject, then explain it. If the subject is genuinely ambiguous (nothing recent to
 point at, no argument given), ask one short clarifying question first, then explain.
+
+The exception is a normal question ending with `?`: answer that question itself, at the depth and
+format its mark sets, instead of explaining a term.
 
 ## Levels
 

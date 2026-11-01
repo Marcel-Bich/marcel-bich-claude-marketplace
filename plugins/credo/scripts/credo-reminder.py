@@ -90,7 +90,9 @@ DEFAULT_TEXT = ("Check yourself against what we agreed: re-read the credo rules,
                 "overrides an older one on the same point (e.g. a limit raised from 3 to 6 means "
                 "6 now applies), so drop superseded agreements instead of carrying them along. "
                 "Make sure every standing agreement is carried into the current handoff so it "
-                "survives compacts and does not go stale in an old requirements file. If anything "
+                "survives compacts and does not go stale in an old requirements file. Check the "
+                "open-codes footer and drop every code that is answered, verified, superseded, "
+                "moved into an item or moot. If anything "
                 "drifted, fix it now and continue as agreed.")
 MODE_NAMES = ("active", "passive", "autonomous")
 ARM_TURNS = 10

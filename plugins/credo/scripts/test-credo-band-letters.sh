@@ -12,7 +12,7 @@ fi
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "$TMP"' EXIT
 cat > "$TMP/t.ts" <<EOF
-import { parseLetters } from '$HERE/../hooks/letters'
+import { parseLetters, resolveLetters } from '$HERE/../hooks/letters'
 
 let pass = 0
 let fail = 0
@@ -90,6 +90,28 @@ eq('english veto heading is not a footer', parseLetters('### ✋✋ V2) Veto pos
 eq('veto heading plus footer', parseLetters('### ✋✋ V2) Veto possible: Renamed the file ✋✋\n\nDone.\n\n**✋: V2**'),
   { tests: [], questions: [], vetos: ['V2'] })
 eq('typed test codes in prose keep only codes', t('Offen zum Testen: T12 und T13 laufen noch'), ['T12', 'T13'])
+// resolution by the person's prompt (band): a typed code answered in the prompt leaves the list
+const open = { tests: ['T3', 'T3.2'], questions: ['Q4', '#177'], vetos: ['V2', 'V5'] }
+const rv = (s: string) => resolveLetters(open, s)
+eq('resolve: V5 vf drops the veto', rv('V5 vf').vetos, ['V2'])
+eq('resolve: V5 ok drops the veto', rv('V5 ok').vetos, ['V2'])
+eq('resolve: T3 vf drops the test', rv('T3 vf').tests, ['T3.2'])
+eq('resolve: T3.2 vf drops only step 2', rv('T3.2 vf').tests, ['T3'])
+eq('resolve: Q4 ja drops the question', rv('Q4 ja').questions, ['#177'])
+eq('resolve: Q4: any answer drops the question', rv('Q4: go with option b').questions, ['#177'])
+eq('resolve: Q4 with a colon and no answer keeps it', rv('Q4:').questions, ['Q4', '#177'])
+eq('resolve: several codes in one prompt', rv('V5 ok, V2 vf, T3 vf, Q4: yes'),
+  { tests: ['T3.2'], questions: ['#177'], vetos: [] })
+eq('resolve: a question about a code keeps it', rv('why is T3 needed?').tests, ['T3', 'T3.2'])
+eq('resolve: a code mentioned in prose keeps it', rv('the T3 test is fine, ok').tests, ['T3', 'T3.2'])
+eq('resolve: an objection does not resolve a veto', rv('V2 this is wrong, see above').vetos, ['V2', 'V5'])
+eq('resolve: lowercase code and verdict', rv('v5 vf').vetos, ['V2'])
+eq('resolve: legacy letter and item ref are not resolved', resolveLetters({ tests: ['B'], questions: ['#177'], vetos: [] }, 'B ok, #177 ja').tests, ['B'])
+eq('resolve: drop all vetos', rv('drop all vetos').vetos, [])
+eq('resolve: alle vetos weg', rv('alle vetos weg').vetos, [])
+eq('resolve: drop all vetos keeps tests and questions', rv('drop all vetos').questions, ['Q4', '#177'])
+eq('resolve: a plain prompt changes nothing', rv('please continue with the next step'), open)
+eq('resolve: older store without vetos', resolveLetters({ tests: ['T1'], questions: [] } as any, 'T1 vf'), { tests: [], questions: [], vetos: [] })
 
 console.log('passed: ' + pass + ', failed: ' + fail)
 process.exit(fail ? 1 : 0)

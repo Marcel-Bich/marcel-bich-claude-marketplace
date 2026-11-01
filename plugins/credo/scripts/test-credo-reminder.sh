@@ -96,7 +96,9 @@ assert m.DEFAULT_TEXT == ("Check yourself against what we agreed: re-read the cr
     "older one on the same point (e.g. a limit raised from 3 to 6 means 6 now applies), so "
     "drop superseded agreements instead of carrying them along. Make sure every standing "
     "agreement is carried into the current handoff so it survives compacts and does not go "
-    "stale in an old requirements file. If anything drifted, fix it now and continue as agreed.")
+    "stale in an old requirements file. Check the open-codes footer and drop every code that is "
+    "answered, verified, superseded, moved into an item or moot. If anything drifted, fix it now "
+    "and continue as agreed.")
 assert m.reminder_prompt(None) == "[credo-reminder] " + m.DEFAULT_TEXT
 assert m.reminder_prompt("   ") == m.reminder_prompt(None)
 assert m.reminder_prompt("Check the\n  rules now") == "[credo-reminder] Check the rules now"
@@ -179,7 +181,7 @@ start_target() { # pidfile extra-env...   (a fake Claude process in its own env)
 }
 
 R="────────────────────────────────────────────────────────────"
-DEF="[credo-reminder] Check yourself against what we agreed: re-read the credo rules, the open items, the requirements logs and the handoff - did you keep every agreement so far, also those from before a compact or from earlier days, and did you declare a blocker or showstopper that our agreements say is none? A newer decision always overrides an older one on the same point (e.g. a limit raised from 3 to 6 means 6 now applies), so drop superseded agreements instead of carrying them along. Make sure every standing agreement is carried into the current handoff so it survives compacts and does not go stale in an old requirements file. If anything drifted, fix it now and continue as agreed."
+DEF="[credo-reminder] Check yourself against what we agreed: re-read the credo rules, the open items, the requirements logs and the handoff - did you keep every agreement so far, also those from before a compact or from earlier days, and did you declare a blocker or showstopper that our agreements say is none? A newer decision always overrides an older one on the same point (e.g. a limit raised from 3 to 6 means 6 now applies), so drop superseded agreements instead of carrying them along. Make sure every standing agreement is carried into the current handoff so it survives compacts and does not go stale in an old requirements file. Check the open-codes footer and drop every code that is answered, verified, superseded, moved into an item or moot. If anything drifted, fix it now and continue as agreed."
 printf '%s\n' "● Done, fixture finished." "" > "$TMP/above_idle.txt"
 printf '%s\n' "● Working on the fixture." "" "✻ Brewing... (3s · ↓ 10 tokens)" "" > "$TMP/above_busy.txt"
 printf '%s\n' "● Done." "" "Do you want to proceed?" "❯ 1. Yes" "  2. No" "" > "$TMP/above_dialog.txt"

@@ -1,10 +1,10 @@
 #!/bin/bash
 # Tests for the "??" (medium) and "?" (short) explain shorthands and for the rule that text
-# written right before an Ask call stays visible (credo item 127). Covers the SessionStart
-# legend, templates/shorthands.json, the explain skill and command, the active and passive
-# session skills, the band hint list, the docs and the changelog fragment. The model reads
-# the shorthands from the legend and the skill text (no script parses chat messages), so
-# these are text checks. Temp config dir only.
+# written right before an Ask call stays visible (credo item 127) and the suffix rule (credo
+# item 133). Covers the SessionStart legend, templates/shorthands.json, the explain skill and
+# command, the active and passive session skills, the band hint list, the docs and the
+# changelog fragment. The model reads the shorthands from the legend and the skill text (no
+# script parses chat messages), so these are text checks. Temp config dir only.
 # Usage: bash test-credo-explain-shorthands.sh
 
 set -uo pipefail
@@ -35,13 +35,13 @@ mkdir -p "$CLAUDE_CONFIG_DIR"
 LEGEND="$(printf '{"session_id":"%s","source":"startup","cwd":"%s"}' "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0127" "$TMP" \
     | (cd "$TMP" && bash "$HOOK" 2>/dev/null) | jq -r '.hookSpecificOutput.additionalContext // ""')"
 has "legend: emitted" "USER SHORTHANDS" "$LEGEND"
-has "legend: ??? kept" '"???" (alone or right after a term/statement)' "$LEGEND"
-has "legend: ?? defined" '"??" (alone, or a separate last word after a term/statement' "$LEGEND"
+has "legend: ??? alone or at the end of a message" '"???" (alone, or at the end of any message' "$LEGEND"
+has "legend: ?? defined" '"??" (alone, or at the end of any message' "$LEGEND"
 has "legend: ?? is medium, about 66 percent" 'medium depth: the four labeled parts, each short, about 66 percent of the "???" length' "$LEGEND"
-has "legend: ? defined" '"?" (alone, or a separate last word after a term/statement) = the short explanation' "$LEGEND"
+has "legend: ? defined" '"?" (alone, or at the end of any message' "$LEGEND"
 has "legend: ? is two or three bullets, about 33 percent" 'two or three bullets, about 33 percent of the "???" length' "$LEGEND"
-has "legend: space rule and attached question mark" 'need a space before them' "$LEGEND"
-has "legend: attached question is an ordinary question" 'Is it done?' "$LEGEND"
+has "legend: the longest ending wins" 'The longest ending wins ("???" before "??" before "?")' "$LEGEND"
+has "legend: normal question ending with ? gets the short format" 'A normal question ending with "?" (e.g. "is xyz so bad?") gets the "?" depth and format' "$LEGEND"
 has "legend: clean structure at every level" 'never crammed into a single line' "$LEGEND"
 has "legend: text before Ask stays visible (buffer)" 'first write that text, then make one trivial tool call' "$LEGEND"
 has "legend: Ask buffer reason" 'hides the text behind the Ask dialog' "$LEGEND"
@@ -63,7 +63,8 @@ in_file "explain skill: ? level" '"?" (short' "$EXPLAIN"
 in_file "explain skill: medium length" 'about 66 percent' "$EXPLAIN"
 in_file "explain skill: short length" 'about 33 percent' "$EXPLAIN"
 in_file "explain skill: short is bullets" 'two or three bullets' "$EXPLAIN"
-in_file "explain skill: attached mark is not the shorthand" 'attached to a word' "$EXPLAIN"
+in_file "explain skill: suffix at the end of any message" 'at the end of any message' "$EXPLAIN"
+in_file "explain skill: normal question ending with ? gets the short format" 'A normal question ending with `?`' "$EXPLAIN"
 in_file "explain skill: clean structure rule" 'never crammed' "$EXPLAIN"
 in_file "explain command: level argument" 'name: level' "$PLUGIN_DIR/commands/explain.md"
 in_file "explain command: medium and short levels" 'medium' "$PLUGIN_DIR/commands/explain.md"
@@ -82,9 +83,9 @@ in_file "credo guide: ?? bullet" '- `??` -' "$PLUGIN_DIR/docs/credo-guide.md"
 in_file "credo guide: ? bullet" '- `?` -' "$PLUGIN_DIR/docs/credo-guide.md"
 in_file "psalm: ?? topic line" '`??` - ' "$PLUGIN_DIR/commands/psalm.md"
 in_file "psalm: ? topic line" '`?` - ' "$PLUGIN_DIR/commands/psalm.md"
-FRAG="$PLUGIN_DIR/changelog.d/127-explain-shortcuts.md"
+FRAG="$PLUGIN_DIR/changelog.d/132-footer-codes-and-shorthand-suffix.md"
 in_file "changelog fragment: patch bump" 'bump: patch' "$FRAG"
-in_file "changelog fragment: Added section" '### Added' "$FRAG"
+in_file "changelog fragment: Changed section" '### Changed' "$FRAG"
 
 echo "explain shorthands: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -13,7 +13,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
 import type { CredoCounts, CredoItemList, CredoRestart, CredoSession, CredoShorthand } from '../types'
-import { parseLetters } from './letters'
+import { parseLetters, resolveLetters } from './letters'
 import { parseMarker, restartNotice, restartToast } from './self-restart-marker'
 import type { RestartMarker } from './self-restart-marker'
 
@@ -360,6 +360,18 @@ export const register: Register = on => {
     if (e.agentId === undefined && e.answer) {
       const parsed = parseLetters(e.answer)
       await update($, letters, () => parsed)
+    }
+    return next(e)
+  })
+
+  // a code the person answers in a prompt leaves the band at once; the next footer
+  // (turn.complete) still replaces the whole state. Only the person's own prompts count,
+  // not plugin, SDK or task-notification prompts.
+  on('prompt.submit', async ($, e, next) => {
+    if (e.origin.kind === 'composer' || e.origin.kind === 'bridge') {
+      const open = await read($, letters)
+      const left = resolveLetters(open, e.text)
+      if (JSON.stringify(left) !== JSON.stringify(open)) await update($, letters, () => left)
     }
     return next(e)
   })

@@ -56,3 +56,34 @@ export function parseLetters(answer: string): CredoLetters {
     vetos: codes(segment(answer, VETO_LABELS)),
   }
 }
+
+// Resolution by the person's prompt: the band drops the code at once, and the next footer
+// still replaces the whole state. A typed code (T3, T3.2, Q4, V12, any case) is answered by
+// the words right after it, up to the next typed code: a verdict word for tests and vetos
+// ("T3 vf", "V5 ok", "T3.2 vf"), any answer after the colon or "ja" for questions ("Q4: ...",
+// "Q4 ja"). A veto answered with an objection stays open. "drop all vetos" and "alle vetos
+// weg" clear every veto. Legacy letters and #N refs are never resolved here.
+const TYPED_CODE = /(?<![A-Za-z0-9])([TQV])(\d+(?:\.\d+)?)(?![A-Za-z0-9])/gi
+const DONE_TV = /^\s*[:-]?\s*(?:vf|ok|passt|erledigt|done|verified)(?![A-Za-z0-9])/i
+const DONE_Q = /^\s*(?:[:-]\s*\S|(?:ja|nein|yes|no|ok|vf|passt|erledigt|done)(?![A-Za-z0-9]))/i
+const ALL_VETOS = /\b(?:drop|clear|remove|resolve)\s+(?:all\s+)?vetos?\b|\b(?:all|alle)\s+vetos?\s+(?:weg|raus|erledigt|ok|vf|done|verified|passt)\b/i
+
+function answeredCodes(prompt: string): string[] {
+  const hits = [...prompt.matchAll(TYPED_CODE)]
+  return hits.flatMap((m, i) => {
+    const letter = (m[1] ?? '').toUpperCase()
+    const rest = prompt.slice((m.index ?? 0) + m[0].length, hits[i + 1]?.index ?? prompt.length)
+    const done = letter === 'Q' ? DONE_Q.test(rest) : DONE_TV.test(rest)
+    return done ? [letter + (m[2] ?? '')] : []
+  })
+}
+
+export function resolveLetters(open: CredoLetters, prompt: string): CredoLetters {
+  const done = new Set(answeredCodes(prompt))
+  const keep = (list: string[] | undefined) => (list ?? []).filter(c => !done.has(c))
+  return {
+    tests: keep(open.tests),
+    questions: keep(open.questions),
+    vetos: ALL_VETOS.test(prompt) ? [] : keep(open.vetos),
+  }
+}

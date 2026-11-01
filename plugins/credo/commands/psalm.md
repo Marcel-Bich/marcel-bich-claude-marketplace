@@ -146,7 +146,7 @@ You can type a few short shorthands in chat; credo's SessionStart hook teaches t
 - `vf` - in a manual test round you were asked to run: you checked it, it passes. On a single Definition of Done point only that point is ticked; only the whole item under test (`#123 vf`) moves to `3_verified/`. Otherwise: verify it for real with runtime proof (verify skill). Unclear? The agent asks.
 - `cf` - start or continue a clarify round (the `1_clarify` items one per round, or `#57 cf`).
 - `???` - explain that in depth: What / Why / Example / Consequences (same as `/credo:explain`).
-- `??` - the same at medium depth: the four parts, each short (about 66 percent of `???`). `?` - the short version: two or three bullets (about 33 percent of `???`). Both work alone or as a separate last word after a term (`the audit gate ??`); `Is it done?` stays an ordinary question.
+- `??` - the same at medium depth: the four parts, each short (about 66 percent of `???`). `?` - the short version: two or three bullets (about 33 percent of `???`). Both work alone or at the end of any message (`the audit gate ??`, `is xyz so bad?`); the longest ending wins, and a normal question ending with `?` gets the short format.
 - `cc-up` - you fully updated Claude Code (plugins, reload, restart); the agent takes it at face value.
 - `cm` - commit (repo rules, no push). `ph` - commit and push.
 - `exclude` / `excluded` - always `.git/info/exclude`, never `.gitignore` (say "ignore" / "gitignore" for that).
