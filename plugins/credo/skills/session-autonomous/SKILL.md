@@ -755,6 +755,15 @@ documented default (levels 4-5, for agent-owned questions the agent decision rul
 `items`) and continue. Do not silently invent a requirement; a question that would change
 or narrow the verbatim requirement is parked, never defaulted.
 
+### Owner actions while away
+
+The owner-presence rule of the session-active skill ("Owner actions in full while the owner is
+present") applies here with one autonomous detail: the keep-alive wake and the
+`[CREDO-AUTONOMY-WAKE]` self-wake are NOT owner prompts, so they never make the owner present.
+While the owner is away, an owner action (a command, an install, a test, a click) stays open in
+the item or the handoff, without the full write-up, because the owner is not reading. At the
+first owner prompt after the absence it is presented in full again.
+
 ### Git-push: atomic per slice
 
 Per the common-core git-push policy, in autonomous mode commit ATOMICALLY per slice and

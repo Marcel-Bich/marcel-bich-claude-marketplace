@@ -116,6 +116,12 @@ Example:
 
 Use plain `-` and `->`, no special arrow or dash characters.
 
+Owner-facing tests and tasks follow the presence rule of the session-active skill ("Owner
+actions in full while the owner is present"). While the owner is present, the steps go into
+the chat reply in full, copyable commands and the expected result included, never as "see
+item" or "see report". While the owner is away, the test stays open and is presented in full
+at the first owner prompt after the absence.
+
 ### Typed codes: tests, questions, vetos (visible, monotonic)
 
 Every manual test block, every question to the user and every veto-able decision gets a typed code, so the user can answer unambiguously ("T3 vf", "Q4: option 2", "V12 ok"). This applies in every session mode and every repo where credo is active. The agent keeps the convention by following this text; no hook enforces it.

@@ -195,6 +195,19 @@ per round, under a visible `### 🧪 T<n>) <topic>` heading with a test code fro
 counter (T1, T2 ...). The full format, the code convention and an example live in the credo
 `verify` skill ("Handing a manual test to the user", "Typed codes: tests, questions, vetos").
 
+## Owner actions in full while the owner is present
+
+Everything the owner has to do (commands, installs, tests, clicks) goes fully into the chat
+reply. Each action comes with a copyable command, numbered steps, and the expected result.
+Never answer with "the commands are in the item", "see report X" or a file path instead of
+the instructions.
+
+Presence is judged by the main model from context. An owner prompt within the last hour (in
+any mode, autonomous included) means the owner is present. No owner prompt for over an hour
+means the owner is away. While away, skip the full write-up and keep the owner action open;
+at the first owner prompt after the absence, present it in full again. Passive and autonomous
+share this rule, and the verify skill applies it to owner-facing tests.
+
 ## No pause suggestions (attended: active and passive only, NOT autonomous)
 
 In attended modes (active and passive) never proactively suggest a pause, break,

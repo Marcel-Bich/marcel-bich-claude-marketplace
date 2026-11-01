@@ -3,7 +3,8 @@
 # (read through credo-config.sh), and the wording invariants of the skills, docs
 # and commands (no fixed fail-count brake, builder range, capacity and stall
 # limits, Ask and veto rules, safety and verify rules, release and
-# dont_ask_twice). Wording checks are grep-based, like the other doc invariants.
+# dont_ask_twice, owner actions in full while the owner is present). Wording checks
+# are grep-based, like the other doc invariants.
 # Usage: bash test-credo-defaults.sh
 
 set -uo pipefail
@@ -105,6 +106,19 @@ has "active: ntfy text in the owner's language with umlauts" "$ACTIVE" "real uml
 has "autonomous: end-of-run report lists finished items" "$AUTO" "end-of-run report: one line per item finished"
 has "budget: money inside approved budgets" "$BUDGET" "inside approved budgets"
 has "budget: active mode applies no budget stops" "$BUDGET" "In active mode credo applies no budget stops"
+
+# --- 5b. owner actions in full while the owner is present (presence rule) ---
+has "active: owner actions in full while the owner is present" "$ACTIVE" "Owner actions in full while the owner is present"
+has "active: presence from an owner prompt within the last hour" "$ACTIVE" "within the last hour"
+has "active: away after more than an hour without owner prompt" "$ACTIVE" "over an hour"
+has "active: away keeps the owner action open" "$ACTIVE" "keep the owner action open"
+has "active: owner action presented again at the first owner prompt" "$ACTIVE" "first owner prompt after the absence"
+has "passive: owner actions rule shared with active" "$PASSIVE" "Owner actions in full while the owner is present"
+has "autonomous: keep-alive and self-wake are not owner prompts" "$AUTO" "NOT owner prompts"
+has "autonomous: owner action stays open while away" "$AUTO" "stays open"
+has "verify: owner-facing tests follow the presence rule" "$VERIFY" "Owner-facing tests and tasks follow the presence rule"
+has "credo guide: owner actions in full" "$GUIDE" "Owner actions in full while the owner is present"
+has "README: owner actions in full" "$PLUGIN_DIR/README.md" "Owner actions (commands, installs, tests, clicks)"
 
 # --- 6. safety (target paths, shell variables, sensitive data, licences, redaction) ---
 has "safety: check target path before every write" "$SAFETY" "target path"

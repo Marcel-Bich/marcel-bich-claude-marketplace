@@ -47,6 +47,7 @@ It covers, all unchanged for passive mode:
 - Git-push policy (G5): commit and push immediately; the commit-identity gate lives in the
   credo `budget` skill; forbidden commit/push -> WARN, work not securable.
 - The credo `safety` skill applies always.
+- Owner actions in full while the owner is present, incl. the away case (session-active).
 - The building blocks a session ties together (`items`, `verify`, `requirements-verbatim`,
   `audit`, `diag`, `orchestration`, `cross-cutting-checklist-generator`, `skill-capture`,
   `budget`, `compact-plus`, `wsl-env`).

@@ -57,6 +57,8 @@ A `SessionStart` hook makes the session credo-aware. Until the session has made 
 
 Each command sets the mode and loads its skill. The three session skills share one canonical common core (defined in the session-active skill) and layer their mode-specific rules on top.
 
+Owner actions (commands, installs, tests, clicks) are written out in full in the chat reply while the owner is present. Presence follows the last owner prompt. An owner prompt within one hour counts as present, in any mode. While the owner is away, the full write-up is skipped and the action stays open until the first owner prompt after the absence.
+
 ### Session roles
 
 Orthogonal to the mode, a session can carry a persistent default role that scopes which part of the item lifecycle it owns. Like the mode, the role is stored on disk keyed by the session id, so it survives compaction and new prompts.
