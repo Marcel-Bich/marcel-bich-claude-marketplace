@@ -3,18 +3,22 @@
 tmux pane as a user prompt, so the agent re-reads its rules and verbatim requirements.
 
 Settings: the credo config, key `reminder` (per credo session mode, see
-templates/config.default.yaml):
+templates/config.default.yaml). The builtin template holds the defaults, so the reminder is
+ON without any user config:
 
     reminder:
+      enabled: true                # false switches the whole reminder off
       active: {turns: 10}          # every 10 real user turns, active mode
       passive: {turns: 10}
       autonomous: {minutes: 60}    # every 60 min, autonomous mode (no turns while away)
       text: ""                     # optional one-line override of the built-in text
 
-A mode with neither key (or no mode key at all) is off. A mode may set turns and minutes;
-whichever comes first triggers. Read with `credo-config.sh get reminder` for the session
-(CREDO_SESSION_ID, so the session's project pin applies) and the session's project dir.
-Off (empty or absent) is the default: nothing is counted, written or started.
+A mode with neither key (or set to off, or with both keys 0) is off. A mode may set turns
+and minutes; whichever comes first triggers. Read with `credo-config.sh get reminder` for
+the session (CREDO_SESSION_ID, so the session's project pin applies) and the session's
+project dir. Switched off by enabled false, the shell hook exits before python runs, so
+nothing is counted, written or started. With every mode off, the turns are still counted, but
+no worker starts.
 
 Arming - every real user turn of a session is counted (UserPromptSubmit, hook
 hooks/credo-reminder.sh turn). The 10th one arms the session for good; the state is on
@@ -97,6 +101,11 @@ DEFAULT_TEXT = ("Check yourself against what we agreed: re-read the credo rules,
                 "drifted, fix it now and continue as agreed.")
 MODE_NAMES = ("active", "passive", "autonomous")
 ARM_TURNS = 10
+# appended, once per session, to the first reminder that is sent (one line, as typed)
+NOTICE = ("Note (first reminder of this session): the periodic reminder is on by default. To "
+          "switch it off, set reminder.enabled: false in your credo config, or set "
+          "reminder.<mode>.turns: 0 and reminder.<mode>.minutes: 0 for one mode (mode: active, "
+          "passive or autonomous). Mention this to the user in one line.")
 REFRESH_SECONDS = 60.0
 AUTOMATED_PREFIXES = (MARKER, "[CREDO-AUTONOMY-WAKE]", "<task-notification>",
                       "[SYSTEM NOTIFICATION - NOT USER INPUT]", "<cross-session-message",
@@ -137,11 +146,20 @@ def _pos_float(value):
     return x if 0 < x < 1e6 else None
 
 
+def switched_off(value):
+    """True for an `enabled` value that switches the reminder off (false, "false", no, off, 0)."""
+    if value is False:
+        return True
+    return value is not None and not isinstance(value, bool) and \
+        str(value).strip().lower() in ("false", "no", "off", "0")
+
+
 def parse_triggers(data):
     """{mode: {"turns": int or None, "minutes": float or None}} for every credo mode whose
-    entry in the `reminder` map sets turns or minutes. Anything else is off."""
+    entry in the `reminder` map sets turns or minutes. Anything else is off, and so is every
+    mode when `enabled` is false."""
     out = {}
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or switched_off(data.get("enabled")):
         return out
     for mode in MODE_NAMES:
         spec = data.get(mode)
@@ -381,13 +399,17 @@ def ensure_worker(sid, cwd):
     return 0
 
 
+def switched_on(sid, cwd):
+    """True when the session's reminder config has at least one mode trigger. It is read only
+    when a worker has to be started, so a turn in steady state costs no config read."""
+    cfg = settings(sid, cwd)
+    return bool(cfg and cfg[0])
+
+
 def cmd_turn(sid, prompt):
     if not valid_sid(sid):
         return 0
     cwd = session_cwd()
-    cfg = settings(sid, cwd)
-    if not cfg or not cfg[0]:
-        return 0
     state_path = paths(config_dir(), sid)[0]
     if is_user_turn(prompt):
         update_state(state_path, lambda st: st.update(
@@ -396,7 +418,7 @@ def cmd_turn(sid, prompt):
     if not st.get("armed"):
         if int(st.get("turns", 0)) < ARM_TURNS or not arm_if_ready(sid, state_path):
             return 0
-    if not worker_running(state_path):
+    if not worker_running(state_path) and switched_on(sid, cwd):
         ensure_worker(sid, cwd)
     return 0
 
@@ -454,9 +476,12 @@ def attempt(pane, plan, text, mode, trig):
     pane.wait_safe(float("inf"))
     if current_mode(plan) != mode or not due_now(plan, trig):
         return
+    # the first reminder that is actually sent in a session also names the switch
+    notice = not read_state(plan["state"]).get("notice_sent")
+    line = "%s %s" % (text, NOTICE) if notice else text
     status, sent = "waiting", True
     try:
-        wk.type_and_enter(pane, text)
+        wk.type_and_enter(pane, line)
         log("reminder sent")
     except wk.StepFailed as exc:
         if exc.status == "failed: pane ownership":
@@ -470,6 +495,8 @@ def attempt(pane, plan, text, mode, trig):
         st["last_reminder_turn"] = int(st.get("turns", 0))
         if sent:
             st["last_sent"] = now_iso()
+            if notice:
+                st["notice_sent"] = True
     update_state(plan["state"], reference, status=status)
 
 

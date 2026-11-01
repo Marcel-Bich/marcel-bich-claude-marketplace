@@ -962,6 +962,64 @@ only from the global and profile layers (a repo's `.credo/config` cannot change 
 reading the config needs `python3`: without python3 the strict config is not read, only
 `CREDO_PEER_TRUST_GUARD_QUIET=false` in the environment selects strict mode.
 
+## Step 12b: Periodic Reminder (Recommended)
+
+Never run this step in autonomous mode (the default stays on, so there is nothing to ask).
+Run it only while no layer has answered yet. `credo-config.sh source reminder.enabled` prints
+`builtin:` when no layer sets the switch; any other layer name (`global:`, `profile:` or
+`project:`) means the question was answered before, so skip the step silently.
+
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" source reminder.enabled
+```
+
+Explain in 2-3 lines. The periodic reminder is on by default: in tmux, a quality prompt is
+typed into the session's own pane every 10 real user turns (active and passive mode) or every
+60 minutes (autonomous mode). Each reminder is one full turn for Claude (it re-reads the rules,
+the open items, the logs and the handoff), so it costs tokens; an unattended autonomous run can
+send up to 24 per day per session. Then ask via AskUserQuestion:
+
+```
+Keep the periodic reminder (on, every 10 turns and every 60 minutes in autonomous mode)?
+
+- Keep the defaults (Recommended) - on, each reminder costs one full turn
+- Change the intervals - I will ask for the new values
+- Off - no periodic reminder (it can be switched on again at any time)
+```
+
+- "Keep the defaults" -> write `enabled: true` as described below. The question is answered.
+- "Change the intervals" -> ask once more via AskUserQuestion:
+
+  ```
+  Which intervals? Turns for active and passive mode, minutes for autonomous mode (0 switches that trigger off).
+
+  - Less often - 20 turns, 120 minutes
+  - More often - 5 turns, 30 minutes
+  - Other - type the values as "turns, minutes", for example "15, 90"
+  ```
+
+  Then write `enabled: true` and the three keys below with the chosen numbers.
+- "Off" -> write `enabled: false` as described below.
+
+**Writing the keys.** Find the file with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" paths` (the
+`profile:` file when a non-default Claude Code profile is active, else the `global:` file; run
+`ensure-global` first when the global file does not exist yet). With Read + Edit, set only these
+keys under the top-level `reminder:` block (create the block if it is missing, keep every other
+key such as `text`):
+
+```yaml
+reminder:
+  enabled: true                # false for "Off"
+  active: {turns: 20}          # the chosen turns, only for "Change the intervals"
+  passive: {turns: 20}
+  autonomous: {minutes: 120}   # the chosen minutes
+```
+
+Verify: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get reminder.enabled` prints `true`
+or `false`. After "Change the intervals", `get reminder.active.turns` and
+`get reminder.autonomous.minutes` print the chosen values. Tell the user in one line which keys
+to edit later, and that `enabled: false` switches the reminder off at any time.
+
 ## Setup Complete
 
 Before the message below: if Step 2c was skipped because `project.state` was `ready` and
@@ -972,7 +1030,9 @@ and `credo-config.sh source release.auto` does not print `project:`, ask Step 2e
 autonomous setup). Likewise, if Step 10 was skipped because `project.state` was
 `ready` and `todo_tools.state` is `off`, run Step 10 now. Likewise, if Step 11 was skipped
 because `project.state` was `ready` and `tmux.installed` or `tmux.inside` is `false`, run
-Step 11 now.
+Step 11 now. Likewise, if Step 12b was skipped because `project.state` was `ready` and
+`credo-config.sh source reminder.enabled` prints `builtin:`, run Step 12b now (not in
+autonomous setup).
 
 **If all steps were skipped (project.state was ready):**
 

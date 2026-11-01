@@ -301,18 +301,26 @@ tmux:
   hint: true
 
 # --- periodic quality reminder (hooks/credo-reminder.sh, scripts/credo-reminder.py) ---
-# Opt-in per credo session mode, OFF by default (every mode key below is commented out).
-# A mode gets a reminder prompt typed into the session's own tmux pane (needs tmux) when
-# its trigger fires: turns = real user turns since the last reminder, minutes = time since
-# the last reminder. A mode may set both; whichever comes first triggers. The first 10
-# turns of a fresh session only arm the reminder. Allowed modes: active, passive, autonomous.
+# ON by default (opt-out). A credo session in tmux gets a reminder prompt typed into its
+# own pane (the input field must be empty and the session idle) when its mode's trigger
+# fires. Turns count the real user turns since the last reminder, minutes the time since
+# the last reminder. A mode may set both; whichever comes first triggers. The first 10 turns of a
+# fresh session only arm the reminder. Allowed modes: active, passive, autonomous.
+# Each reminder is one full turn for the agent (it re-reads the rules, the items, the logs
+# and the handoff), so it costs tokens. Autonomous mode can send up to 24 per day.
+# Off switches, in any user config layer:
+# - enabled: false turns the whole reminder off
+# - turns: 0 and minutes: 0 under a mode (or the mode set to off) turns that mode off
+# Each key merges with these defaults one by one. autonomous: {turns: 5} keeps the default
+# minutes 60, so set minutes: 0 as well to leave only the turns trigger.
 # text: optional one-line override of the built-in text after the marker "[credo-reminder]"
 # (empty = built-in). Changes apply to a running worker within a minute.
 reminder:
+  enabled: true
   text: ""
-  # active: {turns: 10}              # e.g. every 10 user turns in active mode
-  # passive: {turns: 10}
-  # autonomous: {minutes: 60}        # e.g. every 60 min in autonomous mode (no turns while away)
+  active: {turns: 10}          # every 10 user turns in active mode
+  passive: {turns: 10}         # every 10 user turns in passive mode
+  autonomous: {minutes: 60}    # every 60 min in autonomous mode (no turns while away)
 
 # --- peer trust guard (PreToolUse, hooks/credo-peer-message.sh) ---------------
 # A Bash command that grants LAN peer trust (credo-peer-lan.py trust add, or a write

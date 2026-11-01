@@ -64,25 +64,29 @@ In Claude Code builds with mods support, `hooks/band.tsx` draws a band above the
 - The prompt hint gets `Shortcuts: <keys not visible in the band>`; with the long form on, each as `key(word)`.
 - Refresh: on session start, after Bash tool calls, on turn end and every 10 s. The preset is the state value `{ plugin: 'credo', key: 'preset' }`, which the dogma band reads to hide itself at `open only`.
 
-### 2.6 Periodic quality reminder (opt-in, tmux only)
+### 2.6 Periodic quality reminder (on by default, tmux only)
 
-`hooks/credo-reminder.sh` (UserPromptSubmit `turn`, SessionStart `start`) and `scripts/credo-reminder.py` type a short quality prompt into the session's own tmux pane as a user prompt, so the agent checks itself against what was agreed (rules, open items, requirements logs, handoff); the built-in text is in the module as `DEFAULT_TEXT`. The settings are the credo config key `reminder`, per credo session mode, read with `credo-config.sh get reminder` (the session id is passed on, so the session's project pin applies):
+`hooks/credo-reminder.sh` (UserPromptSubmit `turn`, SessionStart `start`) and `scripts/credo-reminder.py` type a short quality prompt into the session's own tmux pane as a user prompt, so the agent checks itself against what was agreed (rules, open items, requirements logs, handoff); the built-in text is in the module as `DEFAULT_TEXT`. The settings are the credo config key `reminder`, per credo session mode, read with `credo-config.sh get reminder` (the session id is passed on, so the session's project pin applies). The builtin template holds the defaults, so the reminder is on without any user config:
 
 ```yaml
 reminder:
+  enabled: true                # false switches the whole reminder off
   active: {turns: 10}          # every 10 real user turns since the last reminder
   passive: {turns: 10}
   autonomous: {minutes: 60}    # every 60 min since the last reminder
   text: ""                     # one-line override of the built-in text after the marker
 ```
 
-- Off by default: the builtin template has every mode key commented out. A mode without a key is off; `turns` and `minutes` may both be set (whichever comes first).
+- On by default: active and passive mode every 10 real user turns, autonomous mode every 60 minutes. Each reminder is one full turn for the agent (it re-reads the rules, the items, the logs and the handoff), so it costs tokens; autonomous mode can send up to 24 per day per session. `/credo:setup` asks once about the reminder and states this cost.
+- Off switches, in any user config layer (the highest layer that sets the key wins): `enabled: false` turns the whole reminder off; under a mode, `turns: 0` and `minutes: 0`, or the mode set to `off`, turn that mode off. Each key merges with the defaults one by one: `autonomous: {turns: 5}` keeps the default `minutes: 60`, so add `minutes: 0` to leave only the turns trigger.
+- Trigger rules: `turns` and `minutes` may both be set (whichever comes first); a mode without a key, or with both keys 0, is off.
 - Arming: every real user turn is counted. The 10th one arms the session for good (state per session id in `<configdir>/credo/reminder-<session-id>.json`, so compact and resume keep it). Arming is the reference point, so the first reminder comes 10 turns or 60 minutes after it.
 - Not counted as turns: injected reminders (prefix `[credo-reminder]`), a bare `.`, automated prompts (self-wake dot, autonomy wake marker, task and system notifications, cross-session messages and notices), blank prompts.
 - Worker: one detached worker per armed session, its pid in the state file; a start on the same pane keeps it, a start on another pane stops it first. It re-reads the config every minute (`CREDO_REMINDER_REFRESH` is a test-only override), checks the trigger of the current credo mode and, when due, waits until the pane is idle, the input field has fewer than 2 visible characters and no dialog is open (`credo_pane_guard`, two probes). A leftover of fewer than 2 visible characters is removed first (End, then one BSpace per character) and the field is checked again; if text remains, nothing is typed and the reminder is skipped. Then it types the prompt, verifies it and presses Enter. The reference point moves to that injection. A reminder that could not be typed safely is skipped and counts as sent. The worker stops when the reminder is off in the config, or when the Claude process of its session is gone. Background work never blocks it.
 - An injected reminder is a real user prompt for Claude Code, but not a user turn for credo: it does not pause an autonomous run (`credo-autonomy-clear.sh` exempts the marker) and is not counted.
-- Cost when off: before any python or `credo-config.sh` call, `hooks/credo-reminder.sh` runs a cheap shell check (awk over the user config layers: global, profile, project candidates) for an active mode key under `reminder:`. With the defaults none exists, so the hook exits at once. Only when a layer sets a mode key is `credo-config.sh get reminder` run (about 0.1 s). The builtin template is not checked, its mode keys are commented out.
-- Enable it: put a mode key into the global credo config (`~/.claude/credo/config`) or into the project `.credo/config`, for example `active: {turns: 10}`. Needs tmux; outside tmux nothing is armed.
+- Cost when switched off: `hooks/credo-reminder.sh` first reads `reminder.enabled` in the shell, in the order `credo-config.sh` resolves the layers (project, then profile, then global; the builtin says true). Only when the layer that decides says `false` does the hook exit before python: nothing is counted or written. Otherwise python counts the turn, and reads the config (`credo-config.sh get reminder`, about 0.1 s) only when a worker has to start. When every mode is off, the turns are still counted but no worker starts.
+- First reminder of a session: the first reminder that is sent carries one extra line (flag `notice_sent` in the state file) that names `reminder.enabled: false` and the per-mode keys `reminder.<mode>.turns: 0` and `reminder.<mode>.minutes: 0`, so the user can switch it off. Later reminders do not carry it, and a resumed session (same id) keeps the flag.
+- Switch it off or change it: set `enabled: false` (or a mode's keys to 0) in the global credo config (`~/.claude/credo/config`), in a profile, or in the project `.credo/config`, or run `/credo:setup`, which asks once. Needs tmux; outside tmux nothing is armed.
 
 ## 3. The `.credo/` structure
 

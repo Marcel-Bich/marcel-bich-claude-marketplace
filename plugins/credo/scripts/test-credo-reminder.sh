@@ -9,10 +9,17 @@
 # dirs are temp dirs, ntfy is off. No real tmux pane is ever addressed.
 #
 # It checks:
-#   - pure: the per-mode triggers (turns, minutes, both), the prompt text, which prompts
-#     count as a user turn, when a trigger is due
+#   - pure: the per-mode triggers (turns, minutes, both), the off switches (enabled false,
+#     a mode at 0 or "off"), the prompt text, which prompts count as a user turn, when a
+#     trigger is due
 #   - hook wiring: UserPromptSubmit runs the turn counter, SessionStart the start
-#   - off by default: the builtin config has every mode off -> no state file, no worker
+#   - on by default: the builtin template holds the defaults (active and passive every 10
+#     turns, autonomous every 60 minutes); with no user config the 10th real user turn arms
+#     the session and the first reminder comes 10 turns later
+#   - off switches: enabled false in the layer that decides (the shell hook exits before
+#     python: nothing counted, credo-config not run); a project config the cascade does not
+#     pick never switches the reminder off; a per-mode 0 switches only that mode off
+#   - first-time notice: only the first sent reminder of a session carries the notice
 #   - turn counting: the 10th real user turn arms the session for good; injected reminders,
 #     bare ".", automated prompts and blank prompts do not count
 #   - outside tmux a session never arms
@@ -119,6 +126,22 @@ assert m.trigger_due(mins, 0, 0, 1060.0, 1000.0) and not m.trigger_due(mins, 0, 
 assert not m.trigger_due(mins, 0, 0, 5000.0, None)
 assert m.trigger_due(both, 13, 10, 0, None) and m.trigger_due(both, 10, 10, 1060.0, 1000.0)
 assert not m.trigger_due(both, 12, 10, 1030.0, 1000.0)
+# off switches: enabled false (bool or string) turns everything off; a mode at 0 or "off"
+# (or null) is off, the other modes keep their triggers
+assert m.parse_triggers({"enabled": False, "active": {"turns": 10}}) == {}
+assert m.parse_triggers({"enabled": "false", "autonomous": {"minutes": 60}}) == {}
+assert m.parse_triggers({"enabled": True, "active": {"turns": 10}}) == {
+    "active": {"turns": 10, "minutes": None}}
+assert m.parse_triggers({"active": {"turns": 0, "minutes": 0}, "autonomous": {"minutes": 0},
+                         "passive": {"turns": 10}}) == {
+    "passive": {"turns": 10, "minutes": None}}
+assert m.parse_triggers({"active": "off", "passive": {"turns": 10}}) == {
+    "passive": {"turns": 10, "minutes": None}}
+assert m.parse_triggers({"active": None, "autonomous": {"minutes": 60}}) == {
+    "autonomous": {"turns": None, "minutes": 60.0}}
+assert m.NOTICE.startswith("Note (first reminder of this session): the periodic reminder is on by default.")
+assert "reminder.enabled: false" in m.NOTICE and "reminder.<mode>.turns: 0" in m.NOTICE
+assert "reminder.<mode>.minutes: 0" in m.NOTICE
 PYEOF
 ok "pure: triggers, prompt text, turn classification, due check" "$?"
 
@@ -183,6 +206,7 @@ start_target() { # pidfile extra-env...   (a fake Claude process in its own env)
 
 R="────────────────────────────────────────────────────────────"
 DEF="[credo-reminder] Check yourself against what we agreed: re-read the credo rules, the open items, the requirements logs and the handoff - did you keep every agreement so far, also those from before a compact or from earlier days, and did you declare a blocker or showstopper that our agreements say is none? A newer decision always overrides an older one on the same point (e.g. a limit raised from 3 to 6 means 6 now applies), so drop superseded agreements instead of carrying them along. Make sure every standing agreement is carried into the current handoff so it survives compacts and does not go stale in an old requirements file. Check the open-codes footer and drop every code that is answered, verified, superseded, moved into an item or moot. Keep credo's output format unless something speaks against it: every test, question and veto code carries its emoji wherever it asks something of the user (🧪 T5, ❓ Q4, ✋ V2 in headings, Ask text and mentions), and the reply ends with the open-codes footer. Clean up merged worktrees and branches with credo-worktree-cleanup.sh; a worktree that may still be needed goes to the owner as a question. If anything drifted, fix it now and continue as agreed."
+NOTICE="Note (first reminder of this session): the periodic reminder is on by default. To switch it off, set reminder.enabled: false in your credo config, or set reminder.<mode>.turns: 0 and reminder.<mode>.minutes: 0 for one mode (mode: active, passive or autonomous). Mention this to the user in one line."
 printf '%s\n' "● Done, fixture finished." "" > "$TMP/above_idle.txt"
 printf '%s\n' "● Working on the fixture." "" "✻ Brewing... (3s · ↓ 10 tokens)" "" > "$TMP/above_busy.txt"
 printf '%s\n' "● Done." "" "Do you want to proceed?" "❯ 1. Yes" "  2. No" "" > "$TMP/above_dialog.txt"
@@ -248,19 +272,40 @@ n_submits() { grep -c . "$FAKE_SUBMITS" 2>/dev/null || true; }
 subs_ge() { [ "$(n_submits)" -ge "$1" ]; }
 subs_gt() { [ "$(n_submits)" -gt "$1" ]; }
 submits_have() { grep -qxF -- "$1" "$FAKE_SUBMITS"; }
+submits_contain() { grep -qF -- "$1" "$FAKE_SUBMITS"; }
 state_eq() { [ "$(state_of "$1" "$2")" = "$3" ]; }
 
-# --- off by default: the builtin config has every mode off ---------------------------
+# --- on by default: no user config -> the builtin template's defaults apply -----------
+# (the global layer is empty here, so the builtin template is the only layer)
+DEF_JSON="$(bash "$SCRIPT_DIR/credo-config.sh" get reminder)"
+printf '%s' "$DEF_JSON" | jq -e '.enabled == true and .active.turns == 10 and .passive.turns == 10 and .autonomous.minutes == 60' >/dev/null
+ok "builtin defaults: enabled, active and passive every 10 turns, autonomous every 60 minutes" "$?"
+SID_B="aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
 start_target "$TMP/t1.pid" TMUX=/tmp/fake-sock,1,0 TMUX_PANE=%5
 TGT="$(cat "$TMP/t1.pid")"; export FAKE_PANE_PIDFILE="$TMP/t1.pid"
-mode_of "$SID" active
-for i in $(seq 1 12); do hook turn "$SID" "user message $i"; done
-ok "builtin config (all modes off): no state file" "$([ -e "$CFG/credo/reminder-$SID.json" ] && echo 1 || echo 0)"
-hook start "$SID" resume
-ok "builtin config (all modes off): start does nothing" "$([ -e "$CFG/credo/reminder-$SID.json" ] && echo 1 || echo 0)"
+mode_of "$SID_B" active
+for i in $(seq 1 9); do hook turn "$SID_B" "user message $i"; done
+check "default on: 9 turns counted" "9" "$(state_of "$SID_B" turns)"
+check "default on: 9 turns not armed" "" "$(state_of "$SID_B" armed | sed 's/false//')"
+hook turn "$SID_B" "the tenth real message"
+check "default on: the 10th turn arms the session" "true" "$(state_of "$SID_B" armed)"
+wait_for 25 alive_worker "$SID_B"; ok "default on: worker running after arming" "$?"
+check "default on: nothing typed right after arming" "0" "$(n_typed)"
+for i in $(seq 11 20); do hook turn "$SID_B" "user message $i"; done
+wait_for 40 subs_ge 1; ok "default on: first reminder 10 turns after arming" "$?"
+ok "default on: first reminder is the default prompt plus the notice" "$([ "$(head -1 "$FAKE_SUBMITS")" = "$DEF $NOTICE" ] && echo 0 || echo 1)"
+stop_worker "$SID_B"
+reset_fake() { : > "$FAKE_SUBMITS"; : > "$FAKE_BUF"; : > "$FAKE_TMUX_LOG"; : > "$FAKE_BUFLOG"; }
+reset_fake
+# a turn with CLAUDE_PROJECT_DIR set (the project dir the session runs in)
+hook_projdir() { # project dir, session id, prompt
+    jq -n --arg s "$2" --arg p "$3" '{session_id: $s, prompt: $p, hook_event_name: "UserPromptSubmit"}' \
+        | (cd "$TMP" && env PATH="$FT:$BASE" CLAUDE_CONFIG_DIR="$CFG" CLAUDE_PROJECT_DIR="$1" \
+            CREDO_REMINDER_TARGET_PID="$TGT" bash "$HOOK_SH" turn >/dev/null 2>&1)
+}
 
-# --- cost when off: with no user config layer holding an active mode, credo-config is not run
-SID_Y="aaaaaaaa-1111-2222-3333-yyyyyyyyyyyy"
+# --- off switches and cost: the layer that decides says enabled false -> the shell hook
+# exits before python and credo-config: nothing is counted, nothing is started
 cat > "$TMP/config-spy.sh" <<EOF
 #!/bin/bash
 echo "\$*" >> "$TMP/configcalls.log"
@@ -268,19 +313,47 @@ exec bash "$SCRIPT_DIR/credo-config.sh" "\$@"
 EOF
 chmod +x "$TMP/config-spy.sh"
 export CREDO_CONFIG_SCRIPT="$TMP/config-spy.sh"
-cp "$SCRIPT_DIR/../templates/config.default.yaml" "$CREDO_GLOBAL"   # the layer credo-config creates
+SID_Y="aaaaaaaa-1111-2222-3333-yyyyyyyyyyyy"
+SID_Z="aaaaaaaa-1111-2222-3333-zzzzzzzzzzzz"
+SID_Q="aaaaaaaa-1111-2222-3333-qqqqqqqqqqqq"
+SID_K="aaaaaaaa-1111-2222-3333-kkkkkkkkkkkk"
+SID_V="aaaaaaaa-1111-2222-3333-vvvvvvvvvvvv"
+SID_F="aaaaaaaa-1111-2222-3333-ffffffffffff"
+SID_Q2="aaaaaaaa-1111-2222-3333-rrrrrrrrrrrr"
+cfg "reminder:\n  enabled: false\n"
 : > "$TMP/configcalls.log"
 hook turn "$SID_Y" "a message"
-ok "builtin template as the global layer: credo-config is not run" "$([ -s "$TMP/configcalls.log" ] && echo 1 || echo 0)"
-ok "builtin template as the global layer: nothing counted" "$([ -e "$CFG/credo/reminder-$SID_Y.json" ] && echo 1 || echo 0)"
-cfg "reminder:\n  active: {turns: 10}\n"
-hook turn "$SID_Y" "a message"
-ok "a mode key in the global layer: credo-config is run" "$([ -s "$TMP/configcalls.log" ] && echo 0 || echo 1)"
+ok "enabled false (global): credo-config is not run" "$([ -s "$TMP/configcalls.log" ] && echo 1 || echo 0)"
+ok "enabled false (global): nothing counted" "$([ -e "$CFG/credo/reminder-$SID_Y.json" ] && echo 1 || echo 0)"
+set_state "$SID_F"; mode_of "$SID_F" autonomous
+hook start "$SID_F" startup
+sleep 1
+ok "enabled false (global): SessionStart starts no worker" "$(alive_worker "$SID_F" && echo 1 || echo 0)"
+cfg 'reminder:\n  enabled: "false"\n'
+hook turn "$SID_Q" "a message"
+ok "enabled \"false\" (quoted string): nothing counted" "$([ -e "$CFG/credo/reminder-$SID_Q.json" ] && echo 1 || echo 0)"
+cfg 'reminder: {enabled: false, text: ""}\n'
+hook turn "$SID_Q2" "a message"
+ok "enabled false in a flow map: nothing counted" "$([ -e "$CFG/credo/reminder-$SID_Q2.json" ] && echo 1 || echo 0)"
 cfg ""
-printf 'reminder:\n  autonomous: {minutes: 60}\n' > "$TMP/project.yaml"
+printf 'reminder:\n  enabled: false\n' > "$TMP/project-off.yaml"
 : > "$TMP/configcalls.log"
-CREDO_PROJECT="$TMP/project.yaml" hook turn "$SID_Y" "a message"
-ok "a mode key in the project layer: credo-config is run" "$([ -s "$TMP/configcalls.log" ] && echo 0 || echo 1)"
+CREDO_PROJECT="$TMP/project-off.yaml" hook turn "$SID_Z" "a message"
+ok "enabled false (project layer): credo-config is not run" "$([ -s "$TMP/configcalls.log" ] && echo 1 || echo 0)"
+ok "enabled false (project layer): nothing counted" "$([ -e "$CFG/credo/reminder-$SID_Z.json" ] && echo 1 || echo 0)"
+# the project config the cascade picks is the one that counts: a file that is not picked
+# (here the session's project dir) never switches the reminder off
+mkdir -p "$TMP/pdir/.credo"
+printf 'reminder:\n  enabled: false\n' > "$TMP/pdir/.credo/config"
+printf 'hello: world\n' > "$TMP/project-nokey.yaml"
+CREDO_PROJECT="$TMP/project-nokey.yaml" hook_projdir "$TMP/pdir" "$SID_K" "a message"
+check "a project config the cascade does not pick: the reminder is still on and counted" "1" "$(state_of "$SID_K" turns)"
+# a project layer that sets enabled true beats enabled false in the global layer
+cfg "reminder:\n  enabled: false\n"
+printf 'reminder:\n  enabled: true\n' > "$TMP/project-on.yaml"
+CREDO_PROJECT="$TMP/project-on.yaml" hook turn "$SID_V" "a message"
+check "project enabled true beats global enabled false: counted" "1" "$(state_of "$SID_V" turns)"
+cfg ""
 unset CREDO_CONFIG_SCRIPT
 
 # --- turn counting and arming (active: every 10 turns; fake Claude process in tmux) ---
@@ -320,7 +393,7 @@ ok "outside tmux: no worker" "$(alive_worker "$SID_X" && echo 1 || echo 0)"
 TGT="$(cat "$TMP/t1.pid")"
 
 # --- injection: autonomous every 0.02 min (1.2 s), active every 2 turns ----------------
-cfg "reminder:\n  active: {turns: 2}\n  autonomous: {minutes: 0.02}\n"
+cfg "reminder:\n  active: {turns: 2}\n  passive: {turns: 0}\n  autonomous: {minutes: 0.02}\n"
 rm -f "$MODES/$SID_D"
 set_state "$SID_D"
 hook start "$SID_D" startup
@@ -329,7 +402,7 @@ sleep 3
 check "no credo mode set: nothing typed" "0" "$(n_typed)"
 mode_of "$SID_D" autonomous
 wait_for 40 subs_ge 1; ok "autonomous: first reminder submitted" "$?"
-check "reminder text is the default prompt" "0" "$(grep -cvxF -- "$DEF" "$FAKE_SUBMITS")"
+ok "first reminder is the default prompt plus the notice" "$([ "$(head -1 "$FAKE_SUBMITS")" = "$DEF $NOTICE" ] && echo 0 || echo 1)"
 S0="$(n_submits)"
 wait_for 40 subs_gt "$S0"; ok "next reminder one interval later" "$?"
 
@@ -365,10 +438,50 @@ S0="$(n_submits)"
 wait_for 40 subs_gt "$S0"; ok "one visible char: removed, reminder submitted" "$?"
 ok "one visible char: the submitted line is the reminder only" "$([ "$(tail -1 "$FAKE_SUBMITS")" = "$DEF" ] && echo 0 || echo 1)"
 ok "one visible char: the box was emptied before typing" "$(grep -qx '' "$FAKE_BUFLOG" && echo 0 || echo 1)"
-ok "all submitted reminders are the default prompt" "$([ "$(grep -cvxF -- "$DEF" "$FAKE_SUBMITS")" = 0 ] && echo 0 || echo 1)"
+ok "later reminders are the default prompt only" "$([ "$(tail -n +2 "$FAKE_SUBMITS" | grep -cvxF -- "$DEF")" = 0 ] && echo 0 || echo 1)"
 stop_worker "$SID_D"
 
+# --- first-time notice: only the first sent reminder of a session carries the notice -----
+SID_N="aaaaaaaa-1111-2222-3333-nnnnnnnnnnnn"
+cfg "reminder:\n  autonomous: {minutes: 0.02}\n"
+set_state "$SID_N"; mode_of "$SID_N" autonomous
+S0="$(n_submits)"
+hook start "$SID_N" startup
+wait_for 40 subs_gt "$S0"; ok "notice: first reminder submitted" "$?"
+ok "notice: the first reminder of the session carries the notice" "$([ "$(sed -n "$((S0 + 1))p" "$FAKE_SUBMITS")" = "$DEF $NOTICE" ] && echo 0 || echo 1)"
+wait_for 40 subs_gt "$((S0 + 1))"; ok "notice: second reminder submitted" "$?"
+ok "notice: the second reminder is the default prompt only" "$([ "$(sed -n "$((S0 + 2))p" "$FAKE_SUBMITS")" = "$DEF" ] && echo 0 || echo 1)"
+wait_for 20 state_eq "$SID_N" notice_sent true; ok "notice: the state records that it was sent" "$?"
+stop_worker "$SID_N"
+S0="$(n_submits)"
+hook start "$SID_N" resume
+wait_for 40 subs_gt "$S0"; ok "notice: a resumed session (same id) gets a reminder again" "$?"
+ok "notice: the resumed session's reminder is the default prompt only" "$([ "$(sed -n "$((S0 + 1))p" "$FAKE_SUBMITS")" = "$DEF" ] && echo 0 || echo 1)"
+stop_worker "$SID_N"
+SID_N2="aaaaaaaa-1111-2222-3333-mmmmmmmmmmmm"
+set_state "$SID_N2"; mode_of "$SID_N2" autonomous
+S0="$(n_submits)"
+hook start "$SID_N2" startup
+wait_for 40 subs_gt "$S0"; ok "notice: a new session gets its own first reminder" "$?"
+ok "notice: a new session's first reminder carries the notice" "$([ "$(sed -n "$((S0 + 1))p" "$FAKE_SUBMITS")" = "$DEF $NOTICE" ] && echo 0 || echo 1)"
+stop_worker "$SID_N2"
+
+# --- a per-mode 0 switches only that mode off (active turns 0; autonomous still on) --------
+SID_M="aaaaaaaa-1111-2222-3333-mmmmmmmmmmmz"
+cfg "reminder:\n  active: {turns: 0}\n  autonomous: {minutes: 0.02}\n"
+set_state "$SID_M"; mode_of "$SID_M" active
+hook start "$SID_M" startup
+wait_for 25 alive_worker "$SID_M"; ok "per-mode 0: worker runs for the other modes" "$?"
+S0="$(n_submits)"
+for i in 1 2 3; do hook turn "$SID_M" "active message $i"; done
+sleep 3
+check "per-mode 0: no reminder in the active mode, however many turns" "$S0" "$(n_submits)"
+mode_of "$SID_M" autonomous
+wait_for 40 subs_gt "$S0"; ok "per-mode 0: autonomous mode still gets its reminder" "$?"
+stop_worker "$SID_M"
+
 # --- mode filter: passive has no trigger in this config -------------------------------
+cfg "reminder:\n  active: {turns: 2}\n  passive: {turns: 0}\n  autonomous: {minutes: 0.02}\n"
 mode_of "$SID_P" passive
 set_state "$SID_P"
 hook start "$SID_P" startup
@@ -381,6 +494,7 @@ check "passive without a trigger: 13 turns" "13" "$(state_of "$SID_P" turns)"
 stop_worker "$SID_P"
 
 # --- turns trigger (active: every 2 turns since the last reminder) --------------------
+cfg "reminder:\n  active: {turns: 2}\n  passive: {turns: 0}\n  autonomous: {minutes: 0.02}\n"
 mode_of "$SID_T" active
 set_state "$SID_T"
 hook start "$SID_T" startup
@@ -400,17 +514,17 @@ cfg "reminder:\n  autonomous: {minutes: 0.02}\n  text: \"Check the rules now\"\n
 set_state "$SID_H"
 mode_of "$SID_H" autonomous
 hook start "$SID_H" startup
-wait_for 40 submits_have "[credo-reminder] Check the rules now"; ok "custom text submitted after the marker" "$?"
+wait_for 40 submits_contain "[credo-reminder] Check the rules now"; ok "custom text submitted after the marker" "$?"
 stop_worker "$SID_H"
 
-# --- the config turns the reminder off: the worker stops -----------------------------
+# --- enabled false: the running worker stops after the config is read -----------------
 cfg "reminder:\n  autonomous: {minutes: 60}\n"
 set_state "$SID_O"
 mode_of "$SID_O" autonomous
 hook start "$SID_O" startup
 wait_for 25 alive_worker "$SID_O"; ok "off switch: worker running" "$?"
 O_W="$(worker_pid_of "$CFG/credo/reminder-$SID_O.json")"
-cfg "reminder:\n  text: \"\"\n"
+cfg "reminder:\n  enabled: false\n"
 wait_for 60 pid_gone "$O_W"; ok "off switch: worker stops after the config is read" "$?"
 case "$(state_of "$SID_O" status)" in stopped*) ok "off switch: state says stopped" 0 ;; *) ok "off switch: state says stopped ($(state_of "$SID_O" status))" 1 ;; esac
 
