@@ -6,6 +6,35 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.84
 
+#### v0.84.11
+
+##### Added
+
+- Config keys `builders.min_per_area` (default 2) and `builders.max_per_area` (default 4) for parallel writing builders per independent area
+- Config key `release.auto` (default off) with `release.fallback_fragments` (15) and `release.fallback_days` (7); `/credo:setup` and the migration ask once
+- Opt-in config key `dont_ask_twice` (default off): search the requirement logs, items, handoff and earlier Ask answers before asking again
+- Idle capacity rule for passive and autonomous mode, and stall limits (30 min or 60 tool calls, stop after 15 min without a step)
+- Safety rules: target path check before every write, no deletion through paths with a shell variable, no sensitive data in web searches, licence rule for reused code, own disposable files may be deleted
+- Verify rule: flaky tests are fixed, never retried, skipped or deferred
+- Restart survival helper `scripts/credo_runtime.py` (stdlib only). `keep` copies the session scratchpad (helper scripts, collection files, pending lists) into `.credo/process/runtime/<session>/` together with a manifest. It copies only and never deletes.
+- compact-plus and `/credo:self-restart` (`run`, new `--scratchpad DIR` option) snapshot the scratchpad before a restart or compact. The SessionStart check names the snapshot once after the restart.
+- Restart list of background services (`credo_runtime.py service add`, `start`, `status`). Each service runs in one detached tmux session `credo-svc-<name>` when tmux is used, else under `systemd-run --user` when systemd is booted, else under nohup. Each service has a durable script under `.credo/process/runtime/services/`.
+- tmux pane references by name, written as `session:window.pane (purpose, last %ID)` and resolved before use (`credo_runtime.py pane add`, `resolve`, `status`). SSH panes are flagged.
+- SessionStart post-restart check on startup and resume only. It reports services that are not running, SSH panes the user must reconnect (tmux only), and the scratchpad pointer.
+- compact-plus handoff rules resolve plugin script paths by glob (`sort -V`), never by a pinned plugin version.
+- `??` and `?` chat shorthands: the explanation of the thing before them at medium depth (the four parts, each short, about 66 percent of `???`) and at short depth (two or three bullets, about 33 percent). Alone, or as a separate last word after a term; a question mark attached to a word stays an ordinary question.
+- `/credo:explain` takes an optional level: `full` (default), `medium` or `short`.
+- Explanations use clean structure at every level: bold labels or bullet points, never crammed into one line.
+- Session-start legend and the active and passive session skills: text written right before an Ask call is shown first, followed by one trivial tool call, so the TUI does not hide it behind the Ask dialog.
+
+##### Changed
+
+- Fix rounds follow the active preset stage ladder instead of a fixed 2-FAIL emergency brake (audit, items, orchestration)
+- Resource gate checks CPU and RAM before every agent start and stops at `resources.max_busy_percent` (default 90); `gate_from_agents`, `min_free_ram_gb`, `max_load_per_cpu`, the `--running` and `--heavy` flags are removed
+- Builder guidance uses the configured 2-4 range per area instead of a fixed 3-4
+- Active mode applies no budget stops; autonomous mode never uses the Ask tool
+- Findings beyond the Definition of Done go into one collection item per project instead of their own items
+
 #### v0.84.10
 
 ##### Added
