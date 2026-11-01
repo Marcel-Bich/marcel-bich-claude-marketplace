@@ -2047,6 +2047,8 @@ class Analysis:
         raw = self.top.text[span[0]:span[1]]
         if CONT_RE.search(raw) and ("$" in raw or "`" in raw):
             return
+        if "$(" in raw or "`" in raw:
+            return  # any substitution: _expansions misses some ($((...)), $'...' and # inside $(...))
         self.text_bodies.add(slot)
 
     def shadowing(self):

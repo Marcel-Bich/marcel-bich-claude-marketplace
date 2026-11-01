@@ -364,10 +364,10 @@ CASES = (
     ("allow", "N", "cat <<EOF\nsee <dogma>/x\nEOF"),
     ("allow", "N", "cat <<EOF\na>/x\nEOF"),
     ("allow", "N", "cat <<EOF\n<tag>/path\nEOF"),
-    ("allow", "N", "cat <<EOF\nsee <dogma>/x `echo done` and a>/x\nEOF"),
+    ("deny", "N", "cat <<EOF\nsee <dogma>/x `echo done` and a>/x\nEOF"),
     ("allow", "N", "cat > /home/myuser/git/notes.md <<EOF\nsee <dogma>/x\nEOF"),
     ("allow", "N", "tee {R}/x.txt <<EOF\nsee <dogma>/x\nEOF"),
-    ("allow", "N", "cat <<EOF\n\\$(cat > /x)\nEOF"),
+    ("deny", "N", "cat <<EOF\n\\$(cat > /x)\nEOF"),
     ("allow", "N", "cat <<'EOF'\nsee <dogma>/x\nEOF"),
     ("deny", "N", "cat <<EOF\nsee <dogma>/x\n$(rm -rf /home)\nEOF"),
     ("deny", "N", "cat <<EOF\n<tag>/path `rm -rf /home`\nEOF"),
@@ -377,6 +377,10 @@ CASES = (
     ("deny", "N", "cat > /home/myuser/.bashrc <<EOF\nsee <dogma>/x\nEOF"),
     ("deny", "N", "cat > {R}/x.sh <<EOF\nrm -rf ~\nEOF\nsh < {R}/x.sh"),
     ("deny", "N", "cat > {R}/x.sh <<EOF\nrm -rf ~\nEOF\nbash {R}/x.sh"),
+    # a body with any substitution stays shell text as a whole (arithmetic, $'...' and comments inside $(...))
+    ("deny", "N", "cat <<EOF\n$(( $(echo x > /home/myuser/.bashrc) ))\nEOF"),
+    ("deny", "N", "cat <<EOF\n$(echo $'\\')' ; cat > /home/myuser/.bashrc)\nEOF"),
+    ("deny", "N", "cat <<EOF\n$(echo a # )\ncat > /home/myuser/.bashrc)\nEOF"),
     # a line continuation joins a substitution into the body: still judged
     ("deny", "N", "cat <<EOF\nsee <dogma>/x $\\\n(cat > /x)\nEOF"),
     # a line continuation without a substitution: the joined body is text
