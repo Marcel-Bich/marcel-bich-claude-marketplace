@@ -92,7 +92,8 @@ DEFAULT_TEXT = ("Check yourself against what we agreed: re-read the credo rules,
                 "Make sure every standing agreement is carried into the current handoff so it "
                 "survives compacts and does not go stale in an old requirements file. Check the "
                 "open-codes footer and drop every code that is answered, verified, superseded, "
-                "moved into an item or moot. If anything "
+                "moved into an item or moot. "
+                "Keep credo's output format unless something speaks against it: every test, question and veto code carries its emoji wherever it asks something of the user (🧪 T5, ❓ Q4, ✋ V2 in headings, Ask text and mentions), and the reply ends with the open-codes footer. If anything "
                 "drifted, fix it now and continue as agreed.")
 MODE_NAMES = ("active", "passive", "autonomous")
 ARM_TURNS = 10
