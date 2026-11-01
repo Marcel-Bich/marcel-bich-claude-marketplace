@@ -586,19 +586,24 @@ set11 ' '
 out="$("$SUT" "$R11")"
 contains "[ ]: lossless kept with reason" "kept $W11/lo1 branch=wt/lo1 reason=only .credo changes already in main (lossless), not removed: the cleanup setting is off" "$out"
 check "[ ]: nothing removed" "yes yes" "$(exists "$W11/lo1") $(exists "$W11/lo2")"
-out="$("$SUT" --allow-lossless "$R11")"
-check "[ ] with --allow-lossless: still kept" "yes yes" "$(exists "$W11/lo1") $(exists "$W11/lo2")"
+out="$("$SUT" --allow-lossless "$W11/lo1" "$R11")"
+check "[ ] with --allow-lossless <path>: still kept" "yes yes" "$(exists "$W11/lo1") $(exists "$W11/lo2")"
 set11 '?'
 out="$("$SUT" --dry-run "$R11")"
 contains "[?]: lossless listed as candidate" "candidate $W11/lo1 branch=wt/lo1 reason=merged into main, only .credo changes already in main (lossless)" "$out"
 out="$("$SUT" "$R11")"
 check "[?]: listed, not removed" "yes yes" "$(exists "$W11/lo1") $(exists "$W11/lo2")"
 contains "[?]: real run lists the candidate" "candidate $W11/lo1 branch=wt/lo1" "$out"
-out="$("$SUT" --allow-lossless "$R11")"
-contains "[?] with --allow-lossless: removed" "removed $W11/lo1 branch=wt/lo1 reason=merged into main, only .credo changes already in main (lossless)" "$out"
+out="$("$SUT" --allow-lossless "$W11/lo1" "$R11")"
+contains "[?] with --allow-lossless <path>: removed" "removed $W11/lo1 branch=wt/lo1 reason=merged into main, only .credo changes already in main (lossless)" "$out"
 contains "allow: branch deleted" "branch_deleted=wt/lo1" "$out"
-check "allow: both removed" "no no" "$(exists "$W11/lo1") $(exists "$W11/lo2")"
-check "allow: main .credo intact" "a
+check "allow <path>: only the named worktree is removed" "no yes" "$(exists "$W11/lo1") $(exists "$W11/lo2")"
+out="$("$SUT" --allow-lossless wt/lo2 "$R11")"
+check "allow <branch>: the named worktree is removed" no "$(exists "$W11/lo2")"
+contains "allow <branch>: removed" "removed $W11/lo2 branch=wt/lo2" "$out"
+out="$("$SUT" --dry-run --allow-lossless nope "$R11" 2>&1 >/dev/null)"
+contains "allow without match warns on stderr" "--allow-lossless matches no worktree: nope" "$out"
+check "main .credo intact after allow runs" "a
 b" "$(cat "$R11/.credo/log.md")"
 set11 x
 mk11 lo3
@@ -638,15 +643,168 @@ mk12 lw; mk12 lw2
 set12 '?'
 out="$(cd "$R12" && CREDO_DIR="$R12/.credo" "$MOVE" 6 done 2>&1)"
 contains "item close [?]: lossless candidate listed" "worktree cleanup: candidate $W12/lw branch=wt/lw reason=merged into main, only .credo changes already in main (lossless)" "$out"
-contains "item close [?]: hint names --allow-lossless" "credo-worktree-cleanup.sh\" --allow-lossless" "$out"
+contains "item close [?]: hint names --allow-lossless per lossless candidate" "--allow-lossless wt/lw" "$out"
+contains "item close [?]: second lossless candidate has its own flag" "--allow-lossless wt/lw2" "$out"
+check "item close [?]: one flag per lossless candidate" 2 "$(printf '%s\n' "$out" | grep -o -- '--allow-lossless' | wc -l | tr -d ' ')"
 check "item close [?]: lossless kept" yes "$(exists "$W12/lw")"
 set12 x
 out="$(cd "$R12" && CREDO_DIR="$R12/.credo" "$MOVE" 7 done 2>&1)"
 contains "item close [x]: lossless removed" "worktree cleanup: removed $W12/lw branch=wt/lw" "$out"
 check "item close [x]: both lossless gone" "no no" "$(exists "$W12/lw") $(exists "$W12/lw2")"
 
-# argument errors
+# ---------- owner setting unreadable: deny, not missing (#141 review) ----------
+# A missing helper script or a failing credo-dogma-mode.sh (with or without output) is deny ([ ]).
+# "missing" is only a checkbox line that does not exist.
+R15="$TMP/repo15"; W15="$TMP/repo15-worktrees"
+mkdir -p "$R15"
+git -C "$R15" init -q -b main
+echo base > "$R15/f"; git -C "$R15" add f; git -C "$R15" commit -q -m init
+mkdir -p "$R15/.credo"; printf 'a\nb\n' > "$R15/.credo/log.md"
+git -C "$R15" add .credo; git -C "$R15" commit -q -m credo
+echo DOGMA-PERMISSIONS.md >> "$R15/.git/info/exclude"
+git -C "$R15" worktree add -q -b wt/ld "$W15/ld"
+commit_in "$W15/ld" ld.txt ld
+git -C "$R15" merge -q --no-ff -m "merge ld" wt/ld
+printf 'a\n' > "$W15/ld/.credo/log.md"
+mkdir -p "$TMP/lone" "$TMP/failing" "$TMP/empty"
+cp "$SUT" "$TMP/lone/credo-worktree-cleanup.sh"          # no credo-dogma-mode.sh next to it
+cp "$SUT" "$TMP/failing/credo-worktree-cleanup.sh"
+printf '#!/bin/bash\necho ask\nexit 3\n' > "$TMP/failing/credo-dogma-mode.sh"   # prints a mode, then fails
+cp "$SUT" "$TMP/empty/credo-worktree-cleanup.sh"
+printf '#!/bin/bash\nexit 0\n' > "$TMP/empty/credo-dogma-mode.sh"               # no output at all
+DENY_LINE="kept $W15/ld branch=wt/ld reason=only .credo changes already in main (lossless), not removed: the cleanup setting is off"
+out="$("$SUT" --dry-run "$R15")"
+contains "readable setting, no checkbox: lossless listed (missing)" "candidate $W15/ld branch=wt/ld" "$out"
+out="$(bash "$TMP/lone/credo-worktree-cleanup.sh" --dry-run "$R15")"
+contains "no credo-dogma-mode.sh: deny, kept" "$DENY_LINE" "$out"
+out="$(bash "$TMP/failing/credo-worktree-cleanup.sh" --dry-run "$R15")"
+contains "failing credo-dogma-mode.sh: deny, even with output" "$DENY_LINE" "$out"
+out="$(bash "$TMP/empty/credo-worktree-cleanup.sh" --dry-run "$R15")"
+contains "credo-dogma-mode.sh without output: deny" "$DENY_LINE" "$out"
+bash "$TMP/failing/credo-worktree-cleanup.sh" --allow-lossless wt/ld "$R15" >/dev/null 2>&1
+check "deny: --allow-lossless does not override a failing setting" yes "$(exists "$W15/ld")"
+
+# ---------- item close with an unreadable owner setting: nothing listed, nothing removed ----------
+R20="$TMP/repo20"; W20="$TMP/repo20-worktrees"
+mkdir -p "$R20"
+git -C "$R20" init -q -b main
+echo base > "$R20/f"; git -C "$R20" add f; git -C "$R20" commit -q -m init
+mkdir -p "$R20/.credo/items/1_todo/2_go" "$R20/.credo/items/2_done"
+printf -- '---\nid: 9\ntitle: t\n---\n' > "$R20/.credo/items/1_todo/2_go/9-t.md"
+printf 'a\nb\n' > "$R20/.credo/log.md"
+git -C "$R20" add .credo; git -C "$R20" commit -q -m credo
+echo DOGMA-PERMISSIONS.md >> "$R20/.git/info/exclude"
+git -C "$R20" worktree add -q -b wt/lw20 "$W20/lw20"
+commit_in "$W20/lw20" lw20.txt lw20
+git -C "$R20" merge -q --no-ff -m "merge lw20" wt/lw20
+printf 'a\n' > "$W20/lw20/.credo/log.md"
+mkdir -p "$TMP/scripts-fail"
+cp -R "$SCRIPT_DIR/." "$TMP/scripts-fail/"
+printf '#!/bin/bash\nexit 3\n' > "$TMP/scripts-fail/credo-dogma-mode.sh"
+out="$(cd "$R20" && CREDO_DIR="$R20/.credo" bash "$TMP/scripts-fail/credo-item-move.sh" 9 done 2>&1)"
+check "item close, failing setting: no cleanup output" "" "$(printf '%s\n' "$out" | grep 'worktree cleanup' || true)"
+check "item close, failing setting: worktree kept" yes "$(exists "$W20/lw20")"
+
+# ---------- a live process at removal time: the re-check runs the process check too (#141 review) ----------
+R17="$TMP/repo17"; W17="$TMP/repo17-worktrees"
+mkdir -p "$R17"
+git -C "$R17" init -q -b main
+echo base > "$R17/f"; git -C "$R17" add f; git -C "$R17" commit -q -m init
+mkdir -p "$R17/.credo"; printf 'a\nb\n' > "$R17/.credo/log.md"
+git -C "$R17" add .credo; git -C "$R17" commit -q -m credo
+echo DOGMA-PERMISSIONS.md >> "$R17/.git/info/exclude"
+git -C "$R17" worktree add -q -b wt/lp "$W17/lp"
+commit_in "$W17/lp" lp.txt lp
+git -C "$R17" merge -q --no-ff -m "merge lp" wt/lp
+printf 'a\n' > "$W17/lp/.credo/log.md"
+PG="$TMP/procgit"; mkdir -p "$PG"
+# Wrapper git: on the second status call (the re-check before removal) it starts a process whose
+# working directory is the candidate. The first check ran before that process existed.
+cat > "$PG/git" <<'EOF'
+#!/bin/bash
+if [[ " $* " == *" status --porcelain --untracked-files=all "* ]]; then
+    n=$(cat "$PG_DIR/count" 2>/dev/null || echo 0)
+    n=$((n + 1))
+    echo "$n" > "$PG_DIR/count"
+    if [ "$n" -eq 2 ]; then
+        ( cd "$PG_WT" && exec sleep 60 ) >/dev/null 2>&1 &
+        echo $! > "$PG_DIR/pid"
+        for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+            [ "$(readlink "/proc/$(cat "$PG_DIR/pid")/cwd" 2>/dev/null)" = "$PG_WT" ] && break
+            sleep 0.05
+        done
+    fi
+fi
+exec "$PG_REAL" "$@"
+EOF
+chmod +x "$PG/git"
+REAL_GIT="$(command -v git)"
+out="$(PG_DIR="$PG" PG_WT="$W17/lp" PG_REAL="$REAL_GIT" PATH="$PG:$PATH" "$SUT" --allow-lossless wt/lp "$R17" 2>&1)"
+kill "$(cat "$PG/pid" 2>/dev/null)" 2>/dev/null || true
+contains "re-check: a process found at removal time keeps the worktree" "failed $W17/lp branch=wt/lp reason=" "$out"
+contains "re-check: the live process is named" "live process inside it (pid" "$out"
+check "re-check: worktree still there" yes "$(exists "$W17/lp")"
+
+# ---------- ignored real files under .credo/ make a worktree dirty; setup links do not (#141 review) ----------
+R18="$TMP/repo18"; W18="$TMP/repo18-worktrees"
+mkdir -p "$R18"
+git -C "$R18" init -q -b main
+echo base > "$R18/f"; git -C "$R18" add f; git -C "$R18" commit -q -m init
+# link1 is created before .credo exists in main, so its .credo can be a symlink into main
+git -C "$R18" worktree add -q -b wt/link1 "$W18/link1"
+commit_in "$W18/link1" link1.txt link1
+mkdir -p "$R18/.credo"; printf 'a\nb\n' > "$R18/.credo/log.md"; printf 'main only\n' > "$R18/.credo/cache.bak"
+git -C "$R18" add .credo/log.md; git -C "$R18" commit -q -m credo
+printf '*.bak\n/.credo\n' >> "$R18/.git/info/exclude"   # main ignores the scratch file and the .credo setup link
+git -C "$R18" merge -q --no-ff -m "merge link1" wt/link1
+ln -s "$R18/.credo" "$W18/link1/.credo"                 # the setup link: .credo is a symlink into main
+mk18() { # name: merged worktree with an own commit
+    git -C "$R18" worktree add -q -b "wt/$1" "$W18/$1"
+    commit_in "$W18/$1" "$1.txt" "$1"
+    git -C "$R18" merge -q --no-ff -m "merge $1" "wt/$1"
+}
+mk18 ign1; printf 'scratch\n' > "$W18/ign1/.credo/cache.bak"
+mk18 ign2; printf 'a\n' > "$W18/ign2/.credo/log.md"; printf 'scratch\n' > "$W18/ign2/.credo/cache.bak"
+mk18 ign3; ln -s "$R18/.credo/cache.bak" "$W18/ign3/.credo/cache.bak"   # a setup link for one ignored file
+out="$("$SUT" --dry-run "$R18")"
+contains "ignored real file under .credo/: owner asked" "kept $W18/ign1 branch=wt/ign1 reason=1 ignored file(s) under .credo/ (ask owner)" "$out"
+contains "lossless plus an ignored real file: not lossless, owner asked" "kept $W18/ign2 branch=wt/ign2 reason=uncommitted changes to tracked files, 1 ignored file(s) under .credo/ (ask owner)" "$out"
+contains ".credo symlink into main is no change: clean candidate" "candidate $W18/link1 branch=wt/link1 reason=merged into main, clean" "$out"
+contains "setup link for an ignored file is no change: clean candidate" "candidate $W18/ign3 branch=wt/ign3 reason=merged into main, clean" "$out"
+out="$("$SUT" "$R18")"
+check "real run: setup-link worktrees removed, ignored-real ones kept" "no no yes yes" "$(exists "$W18/link1") $(exists "$W18/ign3") $(exists "$W18/ign1") $(exists "$W18/ign2")"
+check "real run: link targets in main survive" "main only" "$(cat "$R18/.credo/cache.bak")"
+
+# ---------- a .credo file with a NUL byte is never lossless, whatever awk does with it (#141 review) ----------
+R19="$TMP/repo19"; W19="$TMP/repo19-worktrees"
+mkdir -p "$R19"
+git -C "$R19" init -q -b main
+echo base > "$R19/f"; git -C "$R19" add f; git -C "$R19" commit -q -m init
+mkdir -p "$R19/.credo"
+printf 'x\n' > "$R19/.credo/nul.md"; printf 'y\n\000z\n' > "$R19/.credo/nulm.md"; printf 'x\n' > "$R19/.credo/nuls.md"
+git -C "$R19" add .credo; git -C "$R19" commit -q -m credo
+echo DOGMA-PERMISSIONS.md >> "$R19/.git/info/exclude"
+mk19() { # name: merged worktree with an own commit
+    git -C "$R19" worktree add -q -b "wt/$1" "$W19/$1"
+    commit_in "$W19/$1" "$1.txt" "$1"
+    git -C "$R19" merge -q --no-ff -m "merge $1" "wt/$1"
+}
+mk19 nulok; : > "$W19/nulok/.credo/nul.md"                       # control: an empty file is lossless
+mk19 nulw; printf 'x\000z\n' > "$W19/nulw/.credo/nul.md"        # NUL in the worktree file
+mk19 nulm; printf 'y\n' > "$W19/nulm/.credo/nulm.md"            # its line is in main, but main's file has a NUL
+mk19 nuls; printf 'x\000z\n' > "$W19/nuls/.credo/nuls.md"
+git -C "$W19/nuls" add .credo/nuls.md
+printf 'x\n' > "$W19/nuls/.credo/nuls.md"                       # the index keeps the NUL line
+out="$("$SUT" --dry-run "$R19")"
+contains "control: empty .credo file is lossless" "candidate $W19/nulok branch=wt/nulok reason=merged into main, only .credo changes already in main (lossless)" "$out"
+contains "NUL byte in the worktree file: owner asked" "kept $W19/nulw branch=wt/nulw reason=uncommitted changes to tracked files (ask owner)" "$out"
+contains "NUL byte in the main file: owner asked" "kept $W19/nulm branch=wt/nulm reason=uncommitted changes to tracked files (ask owner)" "$out"
+contains "NUL byte in the index: owner asked" "kept $W19/nuls branch=wt/nuls reason=uncommitted changes to tracked files (ask owner)" "$out"
+
+# ---------- argument errors ----------
 "$SUT" --bogus >/dev/null 2>&1; check "bad arg exit 1" 1 "$?"
+"$SUT" "$R11" --allow-lossless >/dev/null 2>&1; check "bare --allow-lossless (no value): exit 1" 1 "$?"
+"$SUT" --allow-lossless --dry-run "$R11" >/dev/null 2>&1; check "--allow-lossless followed by an option: exit 1" 1 "$?"
 "$SUT" --keep >/dev/null 2>&1; check "--keep without value exit 1" 1 "$?"
 mkdir -p "$TMP/plain"
 "$SUT" "$TMP/plain" >/dev/null 2>&1; check "not a repo exit 2" 2 "$?"

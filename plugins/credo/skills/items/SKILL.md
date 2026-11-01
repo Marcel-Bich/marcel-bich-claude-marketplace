@@ -898,8 +898,8 @@ The helper reads the DOGMA-PERMISSIONS checkbox in the `### Hydra` subsection (v
 - `[?]` or no checkbox (older files predate the setting) - the move output lists the
   `candidate` worktrees and the owner questions (kept, marked `(ask owner)`) and says to ask
   the user; on a yes run
-  `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-worktree-cleanup.sh"` (add `--allow-lossless` after
-  the owner's yes when a `(lossless)` candidate is listed; in autonomous mode leave
+  `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-worktree-cleanup.sh"` (after the owner's yes, add one
+  `--allow-lossless <branch>` per approved `(lossless)` candidate; the hint prints them; in autonomous mode leave
   them for the user and mention them in the run report).
 - `[ ]` - never.
 
@@ -918,8 +918,11 @@ already present in the same file of the main checkout; a repeated line needs a s
 A deleted or renamed `.credo/` file, a file without a counterpart in the main checkout, a symlink
 or any path outside `.credo/` is not lossless. A lossless worktree is removed like a clean one,
 but only with `[x]`. With `[?]` or no setting the report lists it as `candidate ... (lossless)`;
-after the owner's yes the agent runs the script with `--allow-lossless` (the one-off approval;
-it never overrides `[ ]`). With `[ ]` it is kept.
+after the owner's yes the agent runs the script with `--allow-lossless <branch>` for each approved
+worktree (a path or a branch, repeatable; a bare `--allow-lossless` is an error; the one-off
+approval never overrides `[ ]`). With `[ ]` it is kept. A helper that is missing or fails is read
+as `[ ]`. A real ignored file under `.credo/` makes a worktree dirty; a setup link into the main
+checkout does not count.
 It never touches the main worktree, the worktree it runs in, ones named by `--keep`, unmerged
 ones, and a worktree whose branch has no commit of its own (a fast-forward from main is not
 one) while it is younger than 24h (an agent may be starting in it).

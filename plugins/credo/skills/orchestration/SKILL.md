@@ -293,7 +293,7 @@ longer applies; in every other mode ask the user first via the Ask tool (credo `
 "Keeping a worktree"). A merged worktree that still holds changes, a live process or a lock is
 an owner question (its report line says `(ask owner)`); the agent never removes it itself. A
 worktree whose only changes are `.credo/` lines that already exist in the main checkout (lossless)
-is removed by the same cleanup with `[x]`; with `[?]` it waits for the owner's yes (`--allow-lossless`).
+is removed by the same cleanup with `[x]`; with `[?]` it waits for the owner's yes (`--allow-lossless <branch>`, one per worktree).
 Builders never unlock, and never touch a lock they did not set.
 
 ## Parallel safety

@@ -532,7 +532,8 @@ esac
 #   [x]          -> remove merged+clean worktrees now (credo-worktree-cleanup.sh), also the
 #                   lossless ones (only .credo changes already in the main checkout, #141)
 #   [?]/missing  -> list the candidates and tell the agent to ask the user first; a lossless
-#                   candidate is removed only after a yes, with --allow-lossless
+#                   candidate is removed only after a yes, with one --allow-lossless <branch> each
+#   deny/failing -> nothing (a helper that fails or is missing is read as [ ], #141)
 #   [ ]          -> nothing
 # Every run covers all worktrees of the repository (the first one sweeps the backlog).
 # Like the unblock sweep, this never fails the move.
@@ -541,7 +542,7 @@ case "$TARGET" in
         WT_REPO="$(git -C "$(dirname "$CREDO_DIR")" rev-parse --show-toplevel 2>/dev/null || true)"
         if [ -n "$WT_REPO" ] && [ -x "$SCRIPT_DIR/credo-worktree-cleanup.sh" ] \
             && [ "$(git -C "$WT_REPO" worktree list 2>/dev/null | wc -l)" -gt 1 ]; then
-            WT_MODE="$("$SCRIPT_DIR/credo-dogma-mode.sh" --id 36ch Hydra 'clean up merged worktrees automatically' "$WT_REPO" 2>/dev/null || echo missing)"
+            WT_MODE="$("$SCRIPT_DIR/credo-dogma-mode.sh" --id 36ch Hydra 'clean up merged worktrees automatically' "$WT_REPO" 2>/dev/null || echo deny)"
             case "$WT_MODE" in
                 auto)
                     "$SCRIPT_DIR/credo-worktree-cleanup.sh" "$WT_REPO" 2>&1 \
@@ -553,10 +554,15 @@ case "$TARGET" in
                     WT_CANDIDATES="$("$SCRIPT_DIR/credo-worktree-cleanup.sh" --dry-run "$WT_REPO" 2>/dev/null | grep -E '^candidate |\(ask owner\)$' || true)"
                     if [ -n "$WT_CANDIDATES" ]; then
                         printf '%s\n' "$WT_CANDIDATES" | sed 's/^/credo-item-move: worktree cleanup: /'
-                        # a lossless candidate is removed only after the owner's yes: --allow-lossless
-                        WT_FLAG=""
-                        case "$WT_CANDIDATES" in *"(lossless)"*) WT_FLAG=" --allow-lossless" ;; esac
-                        echo "credo-item-move: worktree cleanup is set to ask (DOGMA-PERMISSIONS [?] or no checkbox): ask the user (the kept ones are owner questions; lossless candidates only after a yes), then run: \"$SCRIPT_DIR/credo-worktree-cleanup.sh\"$WT_FLAG \"$WT_REPO\""
+                        # a lossless candidate is removed only after the owner's yes: one --allow-lossless
+                        # <branch> per listed lossless candidate, so each one is approved on its own
+                        WT_FLAGS=""
+                        WT_LOSSLESS="$(printf '%s\n' "$WT_CANDIDATES" | awk '/^candidate .*\(lossless\)$/ { for (i = 1; i <= NF; i++) if ($i ~ /^branch=/) print substr($i, 8) }')"
+                        while IFS= read -r WT_BRANCH; do
+                            [ -n "$WT_BRANCH" ] || continue
+                            WT_FLAGS="$WT_FLAGS --allow-lossless $(printf '%q' "$WT_BRANCH")"
+                        done <<< "$WT_LOSSLESS"
+                        echo "credo-item-move: worktree cleanup is set to ask (DOGMA-PERMISSIONS [?] or no checkbox): ask the user (the kept ones are owner questions; lossless candidates only after a yes, approved one by one), then run: \"$SCRIPT_DIR/credo-worktree-cleanup.sh\"$WT_FLAGS \"$WT_REPO\""
                     fi
                     ;;
             esac

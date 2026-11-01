@@ -35,13 +35,15 @@
 # of the same relative path. The check is a multiset: each occurrence of a line needs its own
 # occurrence in the main file; lines are compared byte for byte. A deleted, renamed, copied,
 # unmerged or type-changed entry, a symlink, a file without a counterpart in the main checkout,
-# a path git quotes (special characters) and any path outside .credo/ are never lossless. A
-# staged change must be covered in its index version as well. A lossless worktree is removed
-# only when the owner setting "clean up merged worktrees automatically" (DOGMA-PERMISSIONS,
-# stable id 36ch, read with credo-dogma-mode.sh) is [x]. With [?] or no setting it is listed as
-# a candidate (`candidate ... (lossless)`) and kept; with [ ] it is kept. --allow-lossless
-# approves the removal of lossless worktrees for one run after the owner answered yes; it never
-# overrides [ ].
+# a path git quotes (special characters) and any path outside .credo/ are never lossless. A file
+# with a NUL byte (in the worktree, in the main checkout or in the index) is never lossless either.
+# A staged change must be covered in its index version as well. A real ignored file under .credo/
+# makes the worktree dirty (a setup link into the main checkout does not count). A lossless worktree
+# is removed only when the owner setting "clean up merged worktrees automatically" (DOGMA-PERMISSIONS,
+# stable id 36ch, read with credo-dogma-mode.sh) is [x]. With [?] or no such checkbox line it is
+# listed as a candidate (`candidate ... (lossless)`) and kept; with [ ] it is kept. A helper that
+# is missing or fails is read as [ ]. --allow-lossless <path|branch> (repeatable) approves one
+# lossless worktree for this run after the owner answered yes; it never overrides [ ].
 #
 # Opt-out: a worktree the owner wants to keep is locked (`git worktree lock --reason
 # "keep: owner" <path>`). A locked worktree is never removed and is reported with its lock
@@ -59,16 +61,17 @@
 # it. The branch is kept, and the report prints `owner_command=git branch -D <branch>` for
 # the owner to run; this script never force-deletes. Afterwards `git worktree prune` drops
 # admin entries of worktree directories that no longer exist. Nothing else is ever deleted.
-# A lossless worktree gets the same removal; right before it the lossless check runs again, so
-# a worktree that changed since the first check is kept.
+# A lossless worktree gets the same removal; right before it the lossless check and the live-process
+# check run again, so a worktree that changed, or got a process inside, since the first check is kept.
 #
 # Usage:
 #   credo-worktree-cleanup.sh [--dry-run] [--json] [--base <branch>] [--fresh-hours N]
-#                             [--keep <path|branch>]... [--allow-lossless] [dir]
+#                             [--keep <path|branch>]... [--allow-lossless <path|branch>]... [dir]
 #   credo-worktree-cleanup.sh --list-locked [--json] [dir]
 #     --dry-run      list candidates and kept worktrees, remove nothing
-#     --allow-lossless  one-off approval (an owner answer): remove lossless worktrees in this run
-#                    although the owner setting is not [x]; never overrides [ ]
+#     --allow-lossless  one-off approval of one lossless worktree (an owner answer): a path or a
+#                    branch, repeatable; the worktree is removed in this run although the owner
+#                    setting is not [x]; a bare --allow-lossless is an error; never overrides [ ]
 #     --keep         keep this worktree (by path or branch name) in this run only;
 #                    repeatable; an existing directory is matched as a path first; a --keep
 #                    that matches no worktree is warned about on stderr
@@ -105,7 +108,7 @@ MODE="kv"
 BASE=""
 FRESH_HOURS=24
 LIST_LOCKED=0
-ALLOW_LOSSLESS=0
+ALLOW=()   # --allow-lossless values: a path or a branch each, repeatable
 KEEP=()
 DIR=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -119,7 +122,9 @@ while [ $# -gt 0 ]; do
             FRESH_HOURS="$2"; shift ;;
         --keep) [ -n "${2:-}" ] || die "--keep needs a path or branch"; KEEP+=("$2"); shift ;;
         --list-locked) LIST_LOCKED=1 ;;
-        --allow-lossless) ALLOW_LOSSLESS=1 ;;
+        --allow-lossless)
+            case "${2:-}" in ''|-*) die "--allow-lossless needs a path or branch" ;; esac
+            ALLOW+=("$2"); shift ;;
         -*) die "unknown argument: $1" ;;
         *) [ -z "$DIR" ] || die "unexpected argument: $1"; DIR="$1" ;;
     esac
@@ -206,13 +211,14 @@ fi
 git -C "$MAIN" show-ref --verify --quiet "refs/heads/$BASE" || die "no such branch: $BASE" 2
 
 # Owner setting for lossless removal (DOGMA-PERMISSIONS, stable id 36ch, read without dogma):
-# auto ([x]) removes lossless worktrees, deny ([ ]) keeps them, anything else (ask, missing)
-# lists them as candidates. Read through the script next to this one; no script means missing.
-CLEANUP_MODE="$("$SCRIPT_DIR/credo-dogma-mode.sh" --id 36ch Hydra 'clean up merged worktrees automatically' "$MAIN" 2>/dev/null)" || CLEANUP_MODE=missing
-LOSSLESS_OK=0   # 1 when this run may remove lossless worktrees
-if [ "$CLEANUP_MODE" = "auto" ] || { [ "$ALLOW_LOSSLESS" -eq 1 ] && [ "$CLEANUP_MODE" != "deny" ]; }; then
-    LOSSLESS_OK=1
-fi
+# auto ([x]) removes lossless worktrees; ask ([?]) and missing (no such checkbox line) list them as
+# candidates; deny ([ ]) keeps them. A helper that is missing or fails, or an unknown answer, is
+# deny: the setting cannot be read, so nothing is removed on its behalf.
+CLEANUP_MODE="$("$SCRIPT_DIR/credo-dogma-mode.sh" --id 36ch Hydra 'clean up merged worktrees automatically' "$MAIN" 2>/dev/null)" || CLEANUP_MODE=deny
+case "$CLEANUP_MODE" in
+    auto|ask|missing|deny) ;;
+    *) CLEANUP_MODE=deny ;;
+esac
 
 NOW="$(date +%s)"
 RESULTS=()   # status SEP path SEP branch SEP reason SEP branch-result SEP lock-reason
@@ -241,6 +247,35 @@ keep_matches() { # real-path branch
     for i in "${!KEEP[@]}"; do
         if [ "${KEEP_REAL[$i]}" = "$1" ] || { [ "${KEEP_PATHHIT[$i]}" -eq 0 ] && [ -n "$2" ] && [ "${KEEP[$i]#refs/heads/}" = "$2" ]; }; then
             KEEP_USED[$i]=1
+            matched=0
+        fi
+    done
+    return "$matched"
+}
+
+# --allow-lossless values, matched like --keep: a value that is the path of a worktree names that
+# worktree only; any other value names a branch. Each one marks its use for the warning below.
+ALLOW_REAL=()
+ALLOW_USED=()
+ALLOW_PATHHIT=()   # 1 when the value is the path of some worktree: then it is a path only
+for k in "${ALLOW[@]+"${ALLOW[@]}"}"; do
+    kr="$(norm_path "$k")"
+    ALLOW_REAL+=("$kr"); ALLOW_USED+=(0)
+    hit=0
+    for r in "${WT[@]+"${WT[@]}"}"; do
+        IFS="$SEP" read -r wp _ <<< "$r"
+        if [ "$(norm_path "$wp")" = "$kr" ]; then hit=1; fi
+    done
+    ALLOW_PATHHIT+=("$hit")
+done
+
+# Succeeds when a --allow-lossless names this worktree (by path, or by branch name unless the value
+# is a worktree path); marks it used. Called for every worktree, candidate or not.
+allow_matches() { # real-path branch
+    local i matched=1
+    for i in "${!ALLOW[@]}"; do
+        if [ "${ALLOW_REAL[$i]}" = "$1" ] || { [ "${ALLOW_PATHHIT[$i]}" -eq 0 ] && [ -n "$2" ] && [ "${ALLOW[$i]#refs/heads/}" = "$2" ]; }; then
+            ALLOW_USED[$i]=1
             matched=0
         fi
     done
@@ -301,21 +336,30 @@ missing_lines() { # main-file content-file|-
         END { print missing + 0 }' "$1" "$2"
 }
 
+# Prints how many NUL bytes the input holds. Counted with tr: the awk line handling is not relied on
+# for such content.
+nul_count() { tr -cd '\000' | wc -c | tr -d ' '; }
+
 # Verdict for one change of a merged worktree: lossless when it is a .credo/ file (not a symlink)
 # that exists in the main checkout and whose lines are all there. A deletion, rename, copy,
 # conflict or type change, a path git quotes, and any path outside .credo/ are never lossless.
 # A staged change is also checked in its index version: removing the worktree drops its index.
 lossless_entry() { # worktree XY rel-path -> 0 when this change is lossless
-    local wt="$1" xy="$2" p="$3" mf="$MAIN_REAL/$3" idx_missing
+    local wt="$1" xy="$2" p="$3" mf="$MAIN_REAL/$3" idx_nul idx_missing
     case "$p" in .credo/*) ;; *) return 1 ;; esac
     case "$p" in *\"*|*\\*) return 1 ;; esac
     case "$xy" in *[DRCUT]*) return 1 ;; esac
     [ -f "$wt/$p" ] && [ ! -L "$wt/$p" ] || return 1
     [ -f "$mf" ] && [ ! -L "$mf" ] || return 1
+    # a NUL byte makes a file never lossless: the line comparison is not trusted for such content
+    [ "$(nul_count < "$wt/$p")" = 0 ] || return 1
+    [ "$(nul_count < "$mf")" = 0 ] || return 1
     [ "$(missing_lines "$mf" "$wt/$p")" = 0 ] || return 1
     case "${xy:0:1}" in
         ' '|'?') return 0 ;;
     esac
+    idx_nul="$(git -C "$wt" show ":$p" 2>/dev/null | nul_count)" || return 1
+    [ "$idx_nul" = 0 ] || return 1
     idx_missing="$(git -C "$wt" show ":$p" 2>/dev/null | missing_lines "$mf" -)" || return 1
     [ "$idx_missing" = 0 ]
 }
@@ -324,7 +368,8 @@ lossless_entry() { # worktree XY rel-path -> 0 when this change is lossless
 # (only lossless .credo changes), dirty (anything else, CHG_WHY gives the reason) or error (git
 # status failed). Sets CHG_CLASS and CHG_WHY.
 classify_changes() { # worktree-path
-    local wt="$1" st line xy p n=0 tracked=0 untracked=0 lossless=1
+    local wt="$1" st="" line="" xy="" p="" p_ign="" ign="" n=0 tracked=0 untracked=0 lossless=1
+    local ign_n=0 ign_err=0
     CHG_CLASS="clean"; CHG_WHY=""
     if ! st="$(git -C "$wt" -c core.quotePath=false status --porcelain --untracked-files=all 2>/dev/null)"; then
         CHG_CLASS="error"
@@ -338,8 +383,22 @@ classify_changes() { # worktree-path
         if [ "$xy" = "??" ]; then untracked=$((untracked + 1)); else tracked=$((tracked + 1)); fi
         if [ "$lossless" -eq 1 ] && ! lossless_entry "$wt" "$xy" "$p"; then lossless=0; fi
     done <<< "$st"
-    if [ "$n" -eq 0 ]; then return 0; fi
-    if [ "$lossless" -eq 1 ]; then CHG_CLASS="lossless"; return 0; fi
+    # Ignored files are not in the status, but they go with the worktree, so a real ignored file under
+    # .credo/ makes it dirty: it may hold the only copy. A setup link into the main checkout is no change.
+    if ! ign="$(git -C "$wt" -c core.quotePath=false ls-files --others --ignored --exclude-standard -- .credo/ 2>/dev/null)"; then
+        ign_err=1
+    else
+        while IFS= read -r p_ign; do
+            [ -n "$p_ign" ] || continue
+            if link_into_main "$wt" "$p_ign"; then continue; fi
+            ign_n=$((ign_n + 1))
+        done <<< "$ign"
+    fi
+    if [ "$n" -eq 0 ] && [ "$ign_n" -eq 0 ] && [ "$ign_err" -eq 0 ]; then return 0; fi
+    if [ "$n" -gt 0 ] && [ "$lossless" -eq 1 ] && [ "$ign_n" -eq 0 ] && [ "$ign_err" -eq 0 ]; then
+        CHG_CLASS="lossless"
+        return 0
+    fi
     CHG_CLASS="dirty"
     if [ "$tracked" -gt 0 ]; then CHG_WHY="uncommitted changes to tracked files"; fi
     if [ "$untracked" -gt 0 ]; then
@@ -347,6 +406,20 @@ classify_changes() { # worktree-path
             CHG_WHY="$CHG_WHY, $untracked untracked file(s)"
         else
             CHG_WHY="$untracked untracked file(s), not committed"
+        fi
+    fi
+    if [ "$ign_n" -gt 0 ]; then
+        if [ -n "$CHG_WHY" ]; then
+            CHG_WHY="$CHG_WHY, $ign_n ignored file(s) under .credo/"
+        else
+            CHG_WHY="$ign_n ignored file(s) under .credo/"
+        fi
+    fi
+    if [ "$ign_err" -eq 1 ]; then
+        if [ -n "$CHG_WHY" ]; then
+            CHG_WHY="$CHG_WHY, cannot list ignored .credo/ files"
+        else
+            CHG_WHY="cannot list ignored .credo/ files"
         fi
     fi
     CHG_WHY="${CHG_WHY:-uncommitted changes}"
@@ -382,6 +455,7 @@ evaluate() { # path branch locked prunable lock-reason
     # Mark --keep usage first, whatever the worktree is kept for otherwise (lock, cwd, ...),
     # so a --keep naming such a worktree is not reported as matching nothing.
     if keep_matches "$real" "$branch"; then keepit=1; fi
+    allow_matches "$real" "$branch" || true   # marks the --allow-lossless values that name this worktree
     # Merged is decided before the lock. Only a merged worktree is an owner question.
     if [ -n "$branch" ] && [ "$branch" != "$BASE" ] && is_merged "$branch"; then merged=1; fi
     if [ "$merged" -eq 1 ]; then ask=" (ask owner)"; fi
@@ -457,6 +531,9 @@ done
 for i in "${!KEEP[@]}"; do
     [ "${KEEP_USED[$i]}" -eq 1 ] || echo "credo-worktree-cleanup: --keep matches no worktree: ${KEEP[$i]}" >&2
 done
+for i in "${!ALLOW[@]}"; do
+    [ "${ALLOW_USED[$i]}" -eq 1 ] || echo "credo-worktree-cleanup: --allow-lossless matches no worktree: ${ALLOW[$i]}" >&2
+done
 
 # --- remove (only verified candidates) ----------------------------------------
 if [ "$DRY" -eq 0 ]; then
@@ -465,8 +542,11 @@ if [ "$DRY" -eq 0 ]; then
         case "$status" in
             candidate) sfx="" ;;
             candidate-lossless)
-                # the owner setting [x] or the one-off --allow-lossless approves this removal
-                [ "$LOSSLESS_OK" -eq 1 ] || continue
+                # the owner setting [x], or an --allow-lossless that names this worktree (the owner's yes)
+                wreal="$(norm_path "$path")"
+                if [ "$CLEANUP_MODE" != "auto" ] && { [ "$CLEANUP_MODE" = "deny" ] || ! allow_matches "$wreal" "$branch"; }; then
+                    continue
+                fi
                 sfx="-lossless" ;;
             *) continue ;;
         esac
@@ -475,6 +555,12 @@ if [ "$DRY" -eq 0 ]; then
             classify_changes "$path"
             if [ "$CHG_CLASS" != "lossless" ]; then
                 RESULTS[$i]="failed$sfx$SEP$path$SEP$branch$SEP$reason, changed since the check: not removed$SEP"
+                continue
+            fi
+            # the live-process check runs again too, from a fresh /proc read (the one before is older)
+            PROC_READ=0; PROC_CWDS=""
+            if process_inside "$wreal"; then
+                RESULTS[$i]="failed$sfx$SEP$path$SEP$branch$SEP$reason, live process inside it (pid $FOUND_PID): not removed$SEP"
                 continue
             fi
         fi
