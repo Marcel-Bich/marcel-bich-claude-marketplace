@@ -99,6 +99,7 @@ only.
 """
 
 import argparse
+import base64
 import copy
 import errno
 import getpass
@@ -1421,6 +1422,17 @@ def network_hint_text(hint):
                    "unknown or unsure.")
 
 
+def network_hint_loud_text(hint):
+    """The LOUD variant for a peer message that uses the LAN relay (a send to a LAN mirror row,
+    or a message that came over the relay) while a hint is pending: the relay is off on this
+    WLAN, so the agent asks the user about it before it goes on. Used by the peer hooks only;
+    they call it solely when the relay is in use (never for local peers)."""
+    return ("!!! LAN RELAY OFF ON THIS WLAN !!! This peer message uses the LAN relay (a peer on "
+            "another machine), but the relay is off on this WLAN until the user decides. Ask once "
+            "per session: if you already asked in this session, do not ask again. "
+            + network_hint_text(hint))
+
+
 def network_hint_summary(hint):
     """One line for check and status (the user reads it there, the agent gets the text).
     Free-text fields go through hint_field, as in network_hint_text."""
@@ -1751,6 +1763,167 @@ def ps_script_version(path):
     return int(m.group(1)) if m else None
 
 
+# ---------------------------------------------------------------------------
+# Elevated -Install re-run by credo itself (WSL; #129). `check` and `start` call
+# winproxy_auto_install: an OUTDATED installed script is re-installed with one UAC prompt,
+# but only in an interactive session and once per session and target version.
+# ---------------------------------------------------------------------------
+WINPROXY_ATTEMPT_DIR = "peer-lan-winproxy-attempts"
+WINPROXY_INSTALL_TIMEOUT = 300.0
+WINPROXY_SESSION_RE = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def current_session_id():
+    """The Claude Code session of this process (set for tool calls), or "" when unknown."""
+    sid = os.environ.get("CREDO_SESSION_ID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
+    return sid if WINPROXY_SESSION_RE.fullmatch(sid) and sid not in (".", "..") else ""
+
+
+def credo_session_mode(sid):
+    """The credo session mode (active, passive, autonomous) of session sid as written by
+    hooks/session-mode-set.sh, or None when no mode is set or it cannot be read."""
+    if not sid:
+        return None
+    modes = os.environ.get("CREDO_SESSION_MODES_DIR") or \
+        os.path.join(own_profile_dir(), "credo", "session-modes")
+    try:
+        with open(os.path.join(modes, sid)) as fh:
+            mode = fh.readline().strip()
+    except OSError:
+        return None
+    return mode if re.fullmatch(r"[a-z]+", mode or "") else None
+
+
+def winproxy_attempt_path(sid, target):
+    """The marker of the one elevated -Install attempt of session sid for script version target."""
+    return os.path.join(own_profile_dir(), "credo", WINPROXY_ATTEMPT_DIR, "%s-v%d.json" % (sid, target))
+
+
+def _read_attempt(path):
+    try:
+        with open(path) as fh:
+            rec = json.load(fh)
+    except Exception:
+        return {}
+    return rec if isinstance(rec, dict) else {}
+
+
+def _write_attempt(path, record):
+    """Atomic write of the attempt marker. False when it cannot be written: then nothing is
+    launched, because a launch without a marker could repeat."""
+    try:
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        tmp = "%s.%d.tmp" % (path, os.getpid())
+        with open(tmp, "w") as fh:
+            json.dump(record, fh)
+            fh.write("\n")
+        os.replace(tmp, path)
+        return True
+    except OSError:
+        return False
+
+
+def winproxy_install_script(script_win, port, task):
+    """PowerShell text that runs the elevated -Install like the documented wrapper: the
+    installer is copied to %TEMP% first (an elevated -File from the UNC path can close at
+    once), run elevated with -ResultFile, and its result line is printed. Only UAC needs the
+    user; a declined prompt is reported as FAILED, never as a silent exit 0."""
+    return (
+        "$s = Join-Path $env:TEMP 'credo-peer-lan-winproxy.ps1'; "
+        "Copy-Item -LiteralPath '{src}' -Destination $s -Force; "
+        "$r = Join-Path $env:TEMP 'credo-peer-lan-install.txt'; "
+        "Remove-Item -LiteralPath $r -Force -ErrorAction SilentlyContinue; "
+        "try {{ $p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList "
+        "'-NoProfile','-ExecutionPolicy','Bypass','-File',('\"' + $s + '\"'),'-Install','-Port','{port}',"
+        "'-TaskName','{task}','-ResultFile',('\"' + $r + '\"') }} "
+        "catch {{ Write-Host ('-Install FAILED: elevation was declined or could not start (' + "
+        "$_.Exception.Message + ')'); exit 1 }}; "
+        "if (Test-Path -LiteralPath $r) {{ Get-Content -LiteralPath $r; exit $p.ExitCode }} "
+        "else {{ Write-Host ('-Install FAILED: the elevated run wrote no result line (exit code ' + "
+        "$p.ExitCode + ')'); exit 1 }}"
+    ).format(src=script_win, port=int(port), task=task)
+
+
+def run_winproxy_install(port, task):
+    """The one place that starts the elevated -Install (tests replace this function). Returns
+    (exit code or None, result line or the reason it did not run). One UAC prompt, the user
+    only confirms it; waits up to WINPROXY_INSTALL_TIMEOUT seconds."""
+    ps_exe = win_tool("powershell.exe")
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), WIN_PS1)
+    if not ps_exe or not os.path.isfile(script):
+        return None, "powershell.exe or %s not found" % WIN_PS1
+    try:
+        win_path = subprocess.run(["wslpath", "-w", script], capture_output=True, text=True,
+                                  timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        win_path = ""
+    if not win_path or not re.fullmatch(r"[^'\"`$\r\n]+", win_path):
+        return None, "could not convert the script path with wslpath"
+    command = winproxy_install_script(win_path, port, task)
+    encoded = base64.b64encode(command.encode("utf-16-le")).decode("ascii")
+    try:
+        proc = subprocess.run([ps_exe, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              timeout=WINPROXY_INSTALL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None, ("the elevated run did not finish within %d s; its window may still be open, "
+                      "check again later" % WINPROXY_INSTALL_TIMEOUT)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, "the elevated run did not start (%s)" % exc
+    lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+    result = next((ln for ln in reversed(lines)
+                   if ln.startswith(("-Install OK", "-Install FAILED"))), "")
+    return proc.returncode, result or ("no result line (exit code %s)" % proc.returncode)
+
+
+def winproxy_auto_install(cfg, say=None):
+    """#129: start the elevated -Install itself when the installed Windows script is OLDER than
+    the shipped one. WSL only; `check` and `start` call it. Only in an interactive session (the
+    credo session mode is not autonomous; autonomous sessions get an owner action line) and
+    once per session and target version: the marker is written BEFORE the launch, so a
+    declined UAC or a failure is reported and never retried in that session. Lines go to say
+    (default: print). Returns True only when the elevated -Install was started."""
+    say = say or (lambda text: print(text, flush=True))
+    if not is_wsl() or str(os.environ.get("CREDO_PEER_LAN_WINPROXY", "1")).lower() in \
+            ("0", "false", "no", "off"):
+        return False
+    want = ps_script_version(os.path.join(os.path.dirname(os.path.abspath(__file__)), WIN_PS1))
+    pd = win_programdata_dir()
+    have = ps_script_version(os.path.join(pd, WIN_PS1)) if pd else None
+    if want is None or have is None or have >= want:
+        return False
+    port = int(cfg.get("listen_port", DEFAULT_PORT))
+    task = os.environ.get("CREDO_PEER_LAN_WINPROXY_TASK") or DEFAULT_WIN_TASK
+    if not re.fullmatch(r"[A-Za-z0-9._ -]+", task):
+        say("Windows side: the scheduled task name is not valid; the elevated -Install was not started.")
+        return False
+    versions = "installed Windows script v%d, plugin v%d" % (have, want)
+    manual = ("run `%s check` in an interactive session: it starts the elevated -Install "
+              "itself (one UAC prompt)" % os.path.abspath(__file__))
+    sid = current_session_id()
+    if not sid or credo_session_mode(sid) == "autonomous":
+        why = "no session id" if not sid else "autonomous session"
+        say("Windows side: %s. Not started automatically (%s). Owner action: %s."
+            % (versions, why, manual))
+        return False
+    path = winproxy_attempt_path(sid, want)
+    if os.path.exists(path):
+        prev = _read_attempt(path).get("result") or "no result recorded"
+        say("Windows side: %s. The elevated -Install was already started in this session (%s); "
+            "not retried here. A new session tries again." % (versions, prev))
+        return False
+    if not _write_attempt(path, {"target": want, "installed": have, "result": None}):
+        say("Windows side: %s. The attempt marker cannot be written under the credo profile dir, "
+            "so the elevated -Install was not started. Owner action: %s." % (versions, manual))
+        return False
+    say("Windows side: %s. Starting the elevated -Install now; confirm the one UAC prompt."
+        % versions)
+    rc, result = run_winproxy_install(port, task)
+    _write_attempt(path, {"target": want, "installed": have, "result": result, "exit": rc})
+    say("Windows side: %s" % result)
+    return True
+
+
 def win_firewall_status(state, port):
     """Human-readable lines about the WSL Windows firewall sync (read-only)."""
     lines = []
@@ -1770,8 +1943,9 @@ def win_firewall_status(state, port):
             )
         elif want is not None and have < want:
             lines.append(
-                "installed task script: OUTDATED (installed v%d, plugin v%d) - re-run "
-                "the elevated -Install once (one UAC prompt)" % (have, want)
+                "installed task script: OUTDATED (installed v%d, plugin v%d) - check "
+                "starts the elevated -Install itself in an interactive session (one UAC "
+                "prompt)" % (have, want)
             )
         else:
             lines.append("installed task script: v%d (current)" % have)
@@ -6914,6 +7088,7 @@ def run_start(_args):
     if cfg is None:
         log("no config at %s; nothing to do (no-op)" % config_path())
         return 0
+    winproxy_auto_install(cfg)
     pid, pf = incumbent(cfg, bind_window(cfg))
     if pid is not None:
         running_v, cur_v = version_tuple(pf.get("version")), version_tuple(VERSION)
@@ -7203,6 +7378,8 @@ def run_check(_args):
         return 0
     print_self_address(cfg)
     print("")
+    if winproxy_auto_install(cfg):
+        print("")
     state = current_state(cfg)
     print_lan_status(cfg, state)
     hint = network_hint(cfg, state.get("netinfo"), state)
@@ -7305,16 +7482,18 @@ def _not_that_wlan(name, prof, net):
                net.get("subnet") or "?", net.get("gateway_mac") or "?"))
 
 
-def run_network_hint(_args):
+def run_network_hint(args):
     """Print the agent text of the pending router-change hint (the SessionStart hook calls
-    this). Reads one file and detects nothing; prints nothing when no hint is pending."""
+    this; --loud prints the LAN-use warning the peer hooks add). Reads one file and detects
+    nothing; prints nothing when no hint is pending."""
     try:
         with open(network_hint_path()) as fh:
             hint = json.load(fh)
     except Exception:
         return 0
     if isinstance(hint, dict) and hint.get("kind") in ("router-mac", "windows-category"):
-        print(network_hint_text(hint))
+        loud = getattr(args, "loud", False)
+        print(network_hint_loud_text(hint) if loud else network_hint_text(hint))
     return 0
 
 
@@ -8350,6 +8529,10 @@ def main(argv=None):
     p_nhint = sub.add_parser(
         "network-hint",
         help="print the pending router-change hint for the agent (the SessionStart hook uses it)",
+    )
+    p_nhint.add_argument(
+        "--loud", action="store_true",
+        help="print the LOUD LAN-use warning instead (the peer send/receive hooks use it)",
     )
     p_nhint.set_defaults(func=run_network_hint)
 

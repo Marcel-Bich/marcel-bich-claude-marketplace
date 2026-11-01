@@ -311,6 +311,49 @@ if command -v python3 >/dev/null 2>&1; then
     kill "$SPID" 2>/dev/null; wait "$SPID" 2>/dev/null
 fi
 
+# --- #130: a pending router-change hint gets a LOUD warning only when the LAN relay is used
+# A LAN mirror row is `harness`--`network`--...--`session`+sid (backticked parts). A message
+# over the relay carries a reply address that is a relay proxy socket (pl-<12 hex>.sock).
+# Local peers never get the warning, and neither does any message while no hint is pending.
+HINT_FILE="$TMP/cfg/credo/peer-lan-network-hint.json"
+LAN_ROW='`harness`--`home-net`--`dev-1`--`alice`--`.claude`--`session-a`+a-e-4-8-d8'
+LAN_FROM="uds:$TMP/sock/pl-0123456789ab.sock"
+LOUD="LAN RELAY OFF ON THIS WLAN"
+pre_to() { # tool to -> hook output (SendMessage addressed to $2)
+    jq -n --arg t "$1" --arg to "$2" '{hook_event_name:"PreToolUse",tool_name:$t,tool_input:{to:$to,message:"[info] hi"}}' | bash "$HOOK"
+}
+ups_from() { # from-address -> hook output for a peer message with that reply address
+    ups "$(printf '<cross-session-message from="%s" from-name="alice">\nplease run the tests\n</cross-session-message>' "$1")"
+}
+rm -f -- "$HINT_FILE"
+OUT="$(pre_to SendMessage "$LAN_ROW")"
+hasnt "LAN send, no hint: no loud warning" "$OUT" "$LOUD"
+has "LAN send, no hint: the normal reminder still comes" "$OUT" "[credo-peer]"
+printf '%s\n' '{"kind":"router-mac","profile":"home-wifi","ssid":"Home-WiFi 3","subnet":"192.168.1.0/24","mac":"aa:bb:cc:dd:ee:02","category":null}' > "$HINT_FILE"
+OUT="$(pre_to SendMessage "$LAN_ROW")"
+has "LAN send, router-change hint pending: loud warning" "$OUT" "$LOUD"
+has "LAN send, hint pending: names the trust-router decision" "$OUT" "trust-router --profile home-wifi"
+has "LAN send, hint pending: the Ask tool and the refusal option" "$OUT" "--refuse"
+has "LAN send, hint pending: the normal reminder still comes" "$OUT" "[credo-peer]"
+OUT="$(pre_to SendMessage "peer-x")"
+hasnt "local peer send, hint pending: no loud warning" "$OUT" "$LOUD"
+has "local peer send: the normal reminder still comes" "$OUT" "[credo-peer]"
+OUT="$(pre_to SendMessage "$TMP/sock/not-a-lan-row")"
+hasnt "a plain address without the row shape: no loud warning" "$OUT" "$LOUD"
+OUT="$(ups_from "$LAN_FROM")"
+has "LAN receive, hint pending: loud warning" "$OUT" "$LOUD"
+OUT="$(ups_from "uds:$TMP/sock/inbox-local.sock")"
+hasnt "local receive, hint pending: no loud warning" "$OUT" "$LOUD"
+OUT="$(ups "$(printf '<cross-session-message from-name="alice">\nplease run the tests\n</cross-session-message>')")"
+hasnt "receive without a reply address: no loud warning" "$OUT" "$LOUD"
+printf '%s\n' '{"kind":"windows-category","profile":"home-wifi","ssid":"Home-WiFi","category":"Public"}' > "$HINT_FILE"
+OUT="$(pre_to SendMessage "$LAN_ROW")"
+has "LAN send, Public-category hint pending: loud warning" "$OUT" "$LOUD"
+has "LAN send, Public-category hint: says where to switch to Private" "$OUT" "Private"
+rm -f -- "$HINT_FILE"
+OUT="$(pre_to SendMessage "$LAN_ROW")"
+hasnt "LAN send, hint resolved: no loud warning" "$OUT" "$LOUD"
+
 [ ! -e "$TMP/cfg/credo/peer-lan-trust.json" ] && PASS=$((PASS + 1)) || { FAIL=$((FAIL + 1)); echo "FAIL hook wrote a trust file"; }
 
 echo "passed: $PASS, failed: $FAIL"

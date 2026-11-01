@@ -7795,5 +7795,152 @@ case "$F6A" in *"wider than /16"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); 
 F6B="$(fx_run "$FX_NI_WIDE" bind --name lab-exact --subnet 10.1.2.0/24 --allow peers)"; check "F6: an exact --subnet binds (exit 0)" "0" "$?"
 case "$F6B" in *"wider than /16"*) FAIL=$((FAIL + 1)); printf 'FAIL F6 exact subnet flagged: %s\n' "$F6B" ;; *) PASS=$((PASS + 1)) ;; esac
 
+# --- WA: #129 the elevated -Install re-run by credo (outdated script; interactive only) -------
+# A launch is faked (no powershell.exe runs): the decision, the once-per-session marker and
+# the autonomous / up-to-date / declined cases are checked on the module. The real launcher
+# is checked against a fake powershell.exe and a fake wslpath that only record their argv.
+mkdir -p "$TMP/wa"
+cat > "$TMP/wa.py" <<'PYEOF'
+import base64, importlib.util, inspect, os, sys
+daemon_path, tmp, scripts = sys.argv[1], sys.argv[2], sys.argv[3]
+os.environ.pop("CREDO_PEER_LAN_NETINFO", None)
+os.environ.pop("WSL_DISTRO_NAME", None)
+os.environ.pop("CREDO_SESSION_ID", None)
+os.environ.pop("CREDO_PEER_LAN_WINPROXY_TASK", None)
+os.environ["CREDO_PEER_LAN_WINPROXY"] = "1"
+os.environ["CREDO_PEER_LAN_PROCVERSION"] = os.path.join(tmp, "wsl-procversion")
+with open(os.environ["CREDO_PEER_LAN_PROCVERSION"], "w") as fh:
+    fh.write("Linux version 6.6.0-microsoft-standard-WSL2 (test)\n")
+os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(tmp, "profile")
+os.environ["CREDO_SESSION_MODES_DIR"] = os.path.join(tmp, "modes")
+os.environ["CREDO_PEER_LAN_WINPROGRAMDATA"] = os.path.join(tmp, "pd")
+os.makedirs(os.path.join(tmp, "pd"), exist_ok=True)
+spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+fails = []
+def expect(cond, msg):
+    if not cond:
+        fails.append(msg)
+WANT = mod.ps_script_version(os.path.join(scripts, "credo-peer-lan-winproxy.ps1"))
+expect(WANT is not None and WANT >= 4, "shipped script version readable (%r)" % WANT)
+INST = os.path.join(tmp, "pd", "credo-peer-lan-winproxy.ps1")
+def install_version(v):
+    with open(INST, "w") as fh:
+        fh.write("$ScriptVersion = %d\n" % v)
+def set_mode(sid, mode):
+    os.makedirs(os.environ["CREDO_SESSION_MODES_DIR"], exist_ok=True)
+    with open(os.path.join(os.environ["CREDO_SESSION_MODES_DIR"], sid), "w") as fh:
+        fh.write(mode + "\n")
+def use_session(sid):
+    os.environ["CLAUDE_CODE_SESSION_ID"] = sid
+calls = []
+OK = "-Install OK: script v%d installed, task 'credo-peer-lan-proxy', firewall rule 'credo-peer-lan 48610', port 48610." % WANT
+result = {"rc": 0, "line": OK}
+REAL_LAUNCH = mod.run_winproxy_install
+def fake_launch(port, task):
+    calls.append((port, task))
+    return result["rc"], result["line"]
+mod.run_winproxy_install = fake_launch
+cfg = {"listen_port": 48610}
+def run():
+    lines = []
+    launched = mod.winproxy_auto_install(cfg, say=lines.append)
+    return launched, lines
+
+install_version(WANT - 1)
+use_session("sid-wa-1")
+launched, lines = run()
+expect(launched is True and len(calls) == 1, "W1 outdated + interactive: one launch %r" % calls)
+expect(calls and calls[0] == (48610, "credo-peer-lan-proxy"), "W1 launch uses port and task %r" % calls)
+expect(any(" OK" in l for l in lines), "W1 the OK result is reported %r" % lines)
+launched, lines = run()
+expect(launched is False and len(calls) == 1, "W2 same session again: no second launch")
+expect(any("already" in l for l in lines), "W2 says the attempt was already made %r" % lines)
+use_session("sid-wa-2")
+launched, lines = run()
+expect(launched is True and len(calls) == 2, "W3 a new session gets its own attempt")
+use_session("sid-wa-3")
+set_mode("sid-wa-3", "autonomous")
+launched, lines = run()
+expect(launched is False and len(calls) == 2, "W4 autonomous: no launch")
+expect(any("Owner action" in l and " check" in l for l in lines), "W4 autonomous: owner action line %r" % lines)
+expect(not os.path.exists(mod.winproxy_attempt_path("sid-wa-3", WANT)), "W4 autonomous: no attempt marker written")
+os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+launched, lines = run()
+expect(launched is False and len(calls) == 2 and any("Owner action" in l for l in lines),
+       "W5 no session id: no launch, owner action line %r" % lines)
+use_session("sid-wa-4")
+install_version(WANT)
+launched, lines = run()
+expect(launched is False and lines == [] and len(calls) == 2, "W6 up to date: nothing to say, no launch")
+os.remove(INST)
+launched, lines = run()
+expect(launched is False and lines == [] and len(calls) == 2, "W7 not installed at all: not this case, nothing")
+install_version(WANT - 1)
+use_session("sid-wa-5")
+result["rc"], result["line"] = 1, "-Install FAILED: elevation was declined or could not start (canceled by the user)"
+launched, lines = run()
+expect(launched is True and len(calls) == 3 and any("FAILED" in l for l in lines), "W8 declined/failed: reported %r" % lines)
+launched, lines = run()
+expect(launched is False and len(calls) == 3, "W8 declined/failed: not retried in the same session")
+result["rc"], result["line"] = 0, OK
+use_session("sid-wa-6")
+os.environ["CREDO_PEER_LAN_WINPROXY"] = "0"
+launched, lines = run()
+expect(launched is False and len(calls) == 3 and lines == [], "W9 CREDO_PEER_LAN_WINPROXY=0: nothing")
+os.environ["CREDO_PEER_LAN_WINPROXY"] = "1"
+native = os.path.join(tmp, "native-procversion")
+with open(native, "w") as fh:
+    fh.write("Linux version 6.6.0 (native)\n")
+os.environ["CREDO_PEER_LAN_PROCVERSION"] = native
+launched, lines = run()
+expect(launched is False and len(calls) == 3 and lines == [], "W9 native Linux: nothing")
+os.environ["CREDO_PEER_LAN_PROCVERSION"] = os.path.join(tmp, "wsl-procversion")
+use_session("sid-wa-7")
+os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(tmp, "not-a-dir")
+with open(os.environ["CLAUDE_CONFIG_DIR"], "w") as fh:
+    fh.write("a file where the profile dir should be\n")
+launched, lines = run()
+expect(launched is False and len(calls) == 3, "W10 attempt marker cannot be written: no launch (no repeat risk)")
+os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(tmp, "profile")
+
+# the real launcher: fake powershell.exe and wslpath that record their argv only
+bin_dir = os.path.join(tmp, "wabin")
+os.makedirs(bin_dir, exist_ok=True)
+rec = os.path.join(tmp, "ps-args.txt")
+fake_ps = os.path.join(bin_dir, "fake-powershell.exe")
+with open(fake_ps, "w") as fh:
+    fh.write("#!/bin/sh\nprintf '%%s\\n' \"$@\" > '%s'\necho '-Install OK: fake'\n" % rec)
+os.chmod(fake_ps, 0o755)
+fake_wsl = os.path.join(bin_dir, "wslpath")
+with open(fake_wsl, "w") as fh:
+    fh.write("#!/bin/sh\nprintf '%s\\n' \"$FAKE_WSLPATH\"\n")
+os.chmod(fake_wsl, 0o755)
+os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
+mod.win_tool = lambda name: fake_ps if name == "powershell.exe" else None
+os.environ["FAKE_WSLPATH"] = "\\\\wsl.localhost\\Ubuntu\\home\\user\\credo\\credo-peer-lan-winproxy.ps1"
+rc, line = REAL_LAUNCH(48610, "credo-peer-lan-proxy")
+expect(rc == 0 and line == "-Install OK: fake", "W11 real launcher returns the result line (%r, %r)" % (rc, line))
+args = open(rec).read().splitlines()
+expect(args[:3] == ["-NoProfile", "-NonInteractive", "-EncodedCommand"] and len(args) == 4,
+       "W11 powershell gets one encoded command %r" % args[:3])
+cmd = base64.b64decode(args[3]).decode("utf-16-le") if len(args) == 4 else ""
+for needle in ("Start-Process powershell -Verb RunAs", "'-ResultFile'", "'-Install'",
+               "'-TaskName','credo-peer-lan-proxy'", "'-Port','48610'", "Copy-Item -LiteralPath '\\\\wsl.localhost"):
+    expect(needle in cmd, "W11 command has %r" % needle)
+expect("-Uninstall" not in cmd, "W11 command is the install, not the uninstall")
+os.remove(rec)
+os.environ["FAKE_WSLPATH"] = "\\\\wsl.localhost\\Ubuntu\\it's\\credo-peer-lan-winproxy.ps1"
+rc, line = REAL_LAUNCH(48610, "credo-peer-lan-proxy")
+expect(rc is None and "could not convert" in line and not os.path.exists(rec),
+       "W12 a script path with a quote is refused, nothing is started (%r)" % line)
+# check and start both reach the decision (static: the call is in their bodies)
+expect("winproxy_auto_install(cfg" in inspect.getsource(mod.run_check), "check calls the auto install")
+expect("winproxy_auto_install(cfg" in inspect.getsource(mod.run_start), "start calls the auto install")
+print("WA_OK" if not fails else "WA_FAIL " + " | ".join(fails))
+PYEOF
+WA_OUT="$("$PY" "$TMP/wa.py" "$DAEMON" "$TMP/wa" "$SCRIPT_DIR" 2>&1)"
+case "$WA_OUT" in *WA_OK*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL WA (winproxy auto install): %s\n' "$WA_OUT" ;; esac
+
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

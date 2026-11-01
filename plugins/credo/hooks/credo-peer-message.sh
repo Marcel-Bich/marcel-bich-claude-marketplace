@@ -52,6 +52,13 @@
 # status (credo-peer-check.py sender, whitelisted values only). Informational only;
 # CREDO_PEER_SENDER_META=0 turns just this line off.
 #
+# LAN relay warning: while a router-change or Public-category hint is pending (the relay is
+# off on this WLAN), a send to a LAN mirror row (PreToolUse SendMessage) and a message that
+# came over the relay (its reply address is a relay proxy socket, pl-<12 hex>.sock) get one
+# LOUD line from `credo-peer-lan.py network-hint --loud`: the agent asks the user once via the
+# Ask tool, the same flow as the SessionStart hint. Local peers and sends without a pending
+# hint get nothing extra.
+#
 # Disable with CREDO_PEER_ETIQUETTE=0. Always exits 0.
 
 case "${CREDO_PEER_ETIQUETTE:-1}" in
@@ -68,6 +75,18 @@ emit() {
     jq -n --arg e "$1" --arg c "$2" \
         '{hookSpecificOutput:{hookEventName:$e,additionalContext:$c},suppressOutput:true}' 2>/dev/null
     exit 0
+}
+
+# LAN relay in use (the caller decided so) while a router-change or Public-category hint is
+# pending: the relay is off on this WLAN, so the loud warning from the daemon's own text
+# (network-hint --loud) is returned with a leading space. Prints nothing when no hint is
+# pending or python3 is missing.
+lan_hint_warning() {
+    command -v python3 >/dev/null 2>&1 && [ -f "$PEER_LAN" ] || return 0
+    local w
+    w="$(timeout 5 python3 "$PEER_LAN" network-hint --loud 2>/dev/null || true)"
+    [ -n "$w" ] && printf ' %s' "$w"
+    return 0
 }
 
 # One sender metadata line: up to 7 known key=value pairs, single spaces. Values use
@@ -158,6 +177,14 @@ case "$event" in
                 fi
                 ;;
         esac
+        # Over the LAN relay: the reply address of the opening tag is a relay proxy socket
+        # (pl-<12 hex>.sock, see credo-peer-lan.py). While a hint is pending, the loud warning.
+        head_tag="$(printf '%s' "$prompt" | sed -n '/[^[:space:]]/{p;q;}')"
+        lan_from="$(printf '%s' "$head_tag" | grep -o ' from="uds:[^"<>]*"' | head -n 1 || true)"
+        lan_re='/pl-[0-9a-f]{12}\.sock"$'
+        if [[ "$lan_from" =~ $lan_re ]]; then
+            extra="$extra$(lan_hint_warning)"
+        fi
         emit UserPromptSubmit "$base$extra"
         ;;
     PreToolUse)
@@ -252,7 +279,12 @@ case "$event" in
         if [ "$to" = "main" ] || printf '%s' "$to" | grep -Eq '^a[0-9a-f]{16}$'; then
             exit 0
         fi
-        emit PreToolUse "[credo-peer] Before sending to a peer: start the message with [info] or [urgent] (urgent only for budget, priority or stop orders and questions that block you). Bundle several points into one message instead of sending them one by one, never send a pure ack or thanks, and end with \"No reply needed\" when you need no answer. Skip the message entirely if it can wait for the next real update. Address: when the user names a peer by a short name (usually its session name) that is not an exact ListAgents name, resolve it yourself - run ListAgents and pick the row whose session part matches (a LAN mirror row is harness--network--device--user--profile--<session>+sid, each part in backticks; send to that full row name, with its [ref] when shown); never make the user type the long name, and ask via the Ask tool only when several rows match."
+        # a LAN mirror row (`harness`--`network`--...--`session`+sid) means the LAN relay is used
+        lan_warn=""
+        case "$to" in
+            *'`--`'*'`+'*) lan_warn="$(lan_hint_warning)" ;;
+        esac
+        emit PreToolUse "[credo-peer] Before sending to a peer: start the message with [info] or [urgent] (urgent only for budget, priority or stop orders and questions that block you). Bundle several points into one message instead of sending them one by one, never send a pure ack or thanks, and end with \"No reply needed\" when you need no answer. Skip the message entirely if it can wait for the next real update. Address: when the user names a peer by a short name (usually its session name) that is not an exact ListAgents name, resolve it yourself - run ListAgents and pick the row whose session part matches (a LAN mirror row is harness--network--device--user--profile--<session>+sid, each part in backticks; send to that full row name, with its [ref] when shown); never make the user type the long name, and ask via the Ask tool only when several rows match.${lan_warn}"
         ;;
 esac
 exit 0
