@@ -106,7 +106,9 @@ DIR="${DIR:-$PWD}"
 
 git -C "$DIR" rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository: $DIR" 2
 # The first porcelain block is always the main worktree (never locked): path and branch only.
-PORCELAIN="$(git -C "$DIR" worktree list --porcelain | awk 'NF==0{exit} {print}')"
+# awk reads to the end (no early exit): an early exit makes git die of SIGPIPE on a long
+# worktree list, and pipefail plus set -e would end the script silently with 141.
+PORCELAIN="$(git -C "$DIR" worktree list --porcelain | awk 'NF==0{done=1} !done{print}')"
 MAIN="$(printf '%s\n' "$PORCELAIN" | sed -n '1s/^worktree //p')"
 [ -n "$MAIN" ] && [ -d "$MAIN" ] || die "cannot determine the main worktree" 2
 MAIN_REAL="$(cd "$MAIN" && pwd -P)"

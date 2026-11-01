@@ -445,6 +445,36 @@ rebased_branch "$R7" "$W7" rb
 json="$("$SUT" --json "$R7")"
 check "json rebased: removed, branch kept, owner command" "removed|False|git branch -D wt/rb" "$(printf '%s' "$json" | python3 -c 'import json,sys; d=json.load(sys.stdin); e=[w for w in d["worktrees"] if w["branch"]=="wt/rb"][0]; print(e["status"]+"|"+str(e["branch_deleted"])+"|"+e.get("owner_command",""))' 2>&1)"
 
+# long worktree list: git keeps writing after the first porcelain block; reading only the main
+# block must not kill git with SIGPIPE (exit 141, silent, under pipefail). A git wrapper writes
+# the first block, pauses, then writes the rest, which reproduces the late write reliably.
+REAL_GIT="$(command -v git)"
+FG="$TMP/fakegit"
+mkdir -p "$FG"
+cat > "$FG/git" <<EOF
+#!/bin/bash
+case " \$* " in
+  *" worktree list --porcelain "*)
+    out="\$("$REAL_GIT" "\$@")" || exit \$?
+    printf '%s\n\n' "\${out%%\$'\n\n'*}"
+    sleep 0.3
+    printf '%s\n' "\${out#*\$'\n\n'}"
+    for i in \$(seq 1 2000); do printf 'worktree /none/pad-%s\nHEAD 0\nbranch refs/heads/pad\n\n' "\$i"; done
+    ;;
+  *) exec "$REAL_GIT" "\$@" ;;
+esac
+EOF
+chmod +x "$FG/git"
+R8="$TMP/repo8"
+mkdir -p "$R8"
+git -C "$R8" init -q -b main
+echo base > "$R8/f"; git -C "$R8" add f; git -C "$R8" commit -q -m init
+git -C "$R8" worktree add -q -b wt/long "$TMP/repo8-worktrees/long"
+PATH="$FG:$PATH" "$SUT" --dry-run "$R8" >/dev/null 2>&1
+rc=$?
+[ "$rc" -ne 141 ] && rc=ok
+check "long worktree list: no SIGPIPE exit 141" ok "$rc"
+
 # argument errors
 "$SUT" --bogus >/dev/null 2>&1; check "bad arg exit 1" 1 "$?"
 "$SUT" --keep >/dev/null 2>&1; check "--keep without value exit 1" 1 "$?"
