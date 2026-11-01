@@ -93,7 +93,7 @@ $ErrorActionPreference = "Stop"
 # Version of THIS script. Bump it by hand whenever the script changes: the WSL relay
 # compares it with the copy installed in %ProgramData%\credo and tells the user to
 # re-run -Install once (one UAC prompt) when the installed copy is older.
-$ScriptVersion = 3
+$ScriptVersion = 4
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 $InstallDir = Join-Path $env:ProgramData "credo"
@@ -486,7 +486,19 @@ if ($selected -gt 1) {
 }
 
 if ($Install) {
-    Invoke-Install -Port $Port -TaskName $TaskName
+    try {
+        Invoke-Install -Port $Port -TaskName $TaskName
+        if ($DryRun) {
+            Write-Host "-Install DRYRUN finished: nothing was changed."
+        }
+        else {
+            Write-Host ("-Install OK: script v{0} installed, task '{1}', firewall rule '{2}', port {3}." -f $ScriptVersion, $TaskName, $RuleName, $Port)
+        }
+    }
+    catch {
+        Write-Host ("-Install FAILED: {0}" -f $_.Exception.Message)
+        exit 1
+    }
 }
 elseif ($Uninstall) {
     Invoke-Uninstall -Port $Port -TaskName $TaskName

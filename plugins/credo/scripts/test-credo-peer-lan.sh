@@ -55,7 +55,12 @@
 #   - WLAN hop (HP): the advertised self address follows the active network, an older
 #     netinfo probe that finishes last never overwrites a newer one, the start-up address
 #     under WSL comes from the same netinfo as the recheck, and a hop between two bound
-#     networks keeps the LAN state and the advertised address on the active one.
+#     networks keeps the LAN state and the advertised address on the active one,
+#   - router MACs (MT/RT): a profile holds several router MACs, a new router on a bound
+#     WLAN name + subnet keeps the relay off and yields one hint, trust-router adds the
+#     MAC or records a refusal (never asked again), the Windows category has its own hint,
+#   - bind overrides (BO): bind --adapter / --subnet change the fingerprint and are checked,
+#   - installer output (WI): the elevated -Install prints a success or a failure line.
 #
 # Usage: bash test-credo-peer-lan.sh
 
@@ -7349,6 +7354,355 @@ while IFS= read -r line; do
 done < "$PH_RES"
 case "$(cat "$TMP/ph-err.txt")" in *Traceback*) FAIL=$((FAIL + 1)); printf 'FAIL PH: traceback\n%s\n' "$(cat "$TMP/ph-err.txt")" ;; esac
 check "PH: expected number of results" "32" "$(grep -cE '^(PASS|FAIL) ' "$PH_RES")"
+
+# --- MT: several router MACs per network, the router-change hint (#110) -------------
+# A bound profile holds a list of router MACs (gateway_macs; gateway_mac stays for older
+# readers). A bound WLAN name + subnet behind a new router MAC keeps the relay OFF
+# (fail-closed) and yields one hint for the agent; a refused MAC is not asked again for
+# that subnet; a Windows category outside windows_profiles has its own hint. The daemon
+# writes the hint file on its network recheck and removes it when the router is known.
+mkdir -p "$TMP/mt"
+cat > "$TMP/mt.py" <<'PYEOF'
+import importlib.util, json, os, sys
+daemon_path, tmp = sys.argv[1], sys.argv[2]
+os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(tmp, "profile")
+os.environ.pop("CREDO_PEER_LAN_NETINFO", None)
+spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+fails = []
+def expect(cond, msg):
+    if not cond:
+        fails.append(msg)
+MAC1 = "aa:bb:cc:dd:ee:01"
+MAC2 = "aa:bb:cc:dd:ee:02"
+MAC3 = "aa:bb:cc:dd:ee:03"
+SUB = "192.168.1.0/24"
+def net(mac, ip="192.168.1.42", ssid="Home-WiFi", cat=None):
+    d = {"iface": "wlan0", "ip": ip, "prefix": 24, "gateway_ip": "192.168.1.1",
+         "gateway_mac": mac, "ssid": ssid}
+    if cat:
+        d["windows_category"] = cat
+    return mod.normalize_netinfo(d)
+def prof(macs=None, label="Home-WiFi", **extra):
+    fp = {"gateway_mac": MAC1, "subnet": SUB}
+    if macs is not None:
+        fp["gateway_macs"] = macs
+    p = {"fingerprint": fp, "label": label, "group": "home", "allow": ["peers"]}
+    p.update(extra)
+    return p
+PEERS = mod.normalize_peers(["192.168.1.50"], 48610)
+
+# --- fingerprint list, legacy single MAC, matching
+expect(mod.fingerprint_macs({"gateway_mac": "AA-BB-CC-DD-EE-01"}) == [MAC1], "legacy single MAC read")
+expect(mod.fingerprint_macs({"gateway_mac": MAC1, "gateway_macs": [MAC2, "AA:BB:CC:DD:EE:02", MAC1]})
+       == [MAC1, MAC2], "list normalized and deduplicated %r" % mod.fingerprint_macs({"gateway_mac": MAC1, "gateway_macs": [MAC2]}))
+expect(mod.fingerprint_macs({}) == [], "no MAC at all")
+multi = {"home-wifi": prof([MAC1, MAC2])}
+expect(mod.match_network(multi, net(MAC2)) == "home-wifi", "second router MAC of the profile matches")
+expect(mod.match_network(multi, net(MAC3)) is None, "router MAC not in the list does not match")
+expect(mod.match_network({"w": prof()}, net(MAC1)) == "w", "profile without a list still matches its MAC")
+
+# --- trust (add) and refusal records keep label, group, allowlist
+up = mod.trust_router_mac(prof(), MAC2)
+expect(up["fingerprint"]["gateway_macs"] == [MAC1, MAC2] and up["fingerprint"]["gateway_mac"] == MAC1,
+       "trust adds the MAC and keeps gateway_mac %r" % up["fingerprint"])
+expect(up["label"] == "Home-WiFi" and up["group"] == "home" and up["allow"] == ["peers"]
+       and up["fingerprint"]["subnet"] == SUB, "trust keeps label, group, allow and subnet")
+expect(mod.trust_router_mac(up, MAC2) == up, "trust is idempotent")
+expect(prof()["fingerprint"].get("gateway_macs") is None, "trust does not mutate its input")
+refd = prof(refused_routers=[{"mac": MAC2, "subnet": SUB}])
+expect(mod.trust_router_mac(refd, MAC2).get("refused_routers", []) == [], "accepting clears the refusal")
+rf = mod.refuse_router_mac(prof(), MAC3, SUB)
+expect(rf.get("refused_routers") == [{"mac": MAC3, "subnet": SUB}], "refusal recorded %r" % rf.get("refused_routers"))
+expect(mod.refuse_router_mac(rf, MAC3, SUB) == rf, "refusal is idempotent")
+expect(rf["fingerprint"] == prof()["fingerprint"], "a refusal changes no fingerprint")
+
+# --- router change: same WLAN name (Windows counter suffix allowed) + subnet, new MAC
+expect(mod.same_wlan_name("Home-WiFi", "Home-WiFi 3"), "Windows counter suffix is the same WLAN")
+expect(mod.same_wlan_name("Home-WiFi", "home-wifi"), "WLAN name compared case-insensitively")
+expect(not mod.same_wlan_name("Home WLAN", "Home WLAN-2"), "a different name is not a counter")
+expect(not mod.same_wlan_name("Home", "Home Office 2"), "a longer name is not a counter")
+expect(not mod.same_wlan_name("", "Home-WiFi") and not mod.same_wlan_name("Home-WiFi", None),
+       "missing names never match")
+p_home = prof()
+expect(mod.router_change_for(p_home, net(MAC2, ssid="Home-WiFi 3")), "new router, same WLAN and subnet is a change")
+expect(not mod.router_change_for(p_home, net(MAC1, ssid="Home-WiFi 3")), "a trusted router is no change")
+expect(not mod.router_change_for(p_home, net(MAC2, ssid="Office")), "another WLAN name is no change")
+expect(not mod.router_change_for(p_home, net(MAC2, ip="192.168.9.4", ssid="Home-WiFi")), "IP outside the subnet is no change")
+expect(not mod.router_change_for(p_home, None), "no detection is no change")
+
+# --- candidate, refusal, fail-closed state
+cfg = {"networks": {"home-wifi": prof()}}
+expect(mod.router_candidate(cfg["networks"], net(MAC2, ssid="Home-WiFi 3")) == "home-wifi", "candidate found")
+rf2 = mod.refuse_router_mac(prof(), MAC2, SUB)
+refused_cfg = {"networks": {"home-wifi": rf2}}
+expect(mod.router_candidate(refused_cfg["networks"], net(MAC2, ssid="Home-WiFi 3")) is None,
+       "a refused MAC is not asked again")
+expect(mod.router_candidate(refused_cfg["networks"], net(MAC3, ssid="Home-WiFi 3")) == "home-wifi",
+       "a different new MAC is asked again")
+moved = {"networks": {"home-wifi": mod.refuse_router_mac(prof(), MAC2, "192.168.9.0/24")}}
+expect(mod.router_candidate(moved["networks"], net(MAC2, ssid="Home-WiFi 3")) == "home-wifi",
+       "a refusal for another subnet does not hold")
+st = mod.compute_lan_state(cfg, net(MAC2, ssid="Home-WiFi 3"), PEERS)
+expect(st["enabled"] is False and st.get("candidate") == "home-wifi", "new router stays fail-closed with a candidate")
+expect("home-wifi" in st["reason"] and "new" in st["reason"], "reason names the profile %r" % st["reason"])
+st_known = mod.compute_lan_state(cfg, net(MAC1, ssid="Home-WiFi 3"), PEERS)
+expect(st_known["enabled"] and st_known.get("candidate") is None, "known router is enabled, no candidate")
+st_ref = mod.compute_lan_state(refused_cfg, net(MAC2, ssid="Home-WiFi 3"), PEERS)
+expect(st_ref["enabled"] is False and st_ref.get("candidate") is None, "refused router: no candidate")
+
+# --- hints for the agent
+h = mod.network_hint(cfg, net(MAC2, ssid="Home-WiFi 3"), st)
+expect(h is not None and h["kind"] == "router-mac" and h["profile"] == "home-wifi" and h["mac"] == MAC2
+       and h["subnet"] == SUB and h["ssid"] == "Home-WiFi 3", "router-mac hint %r" % h)
+expect(mod.network_hint(cfg, net(MAC1, ssid="Home-WiFi 3"), st_known) is None, "enabled network: no hint")
+expect(mod.network_hint(refused_cfg, net(MAC2, ssid="Home-WiFi 3"), st_ref) is None, "refused router: no hint")
+rt = mod.network_hint_text(h)
+expect("trust-router --profile home-wifi" in rt and "Ask tool" in rt and "Home-WiFi 3" in rt,
+       "router-mac text names the command, the Ask tool and the WLAN")
+expect("do not add" in rt.lower() and "--refuse" in rt, "router-mac text names both options and the refusal command")
+pub_cfg = {"networks": {"home-wifi": prof()}}
+pub_net = net(MAC1, ssid="Home-WiFi", cat="Public")
+pst = mod.compute_lan_state(pub_cfg, pub_net, PEERS, wsl=True)
+expect(pst["enabled"] is False and pst["network"] == "home-wifi", "Public category keeps a matched profile off")
+ph = mod.network_hint(pub_cfg, pub_net, pst)
+expect(ph is not None and ph["kind"] == "windows-category" and ph["category"] == "Public"
+       and ph["profile"] == "home-wifi", "windows-category hint %r" % ph)
+wt = mod.network_hint_text(ph)
+expect("Private" in wt and "Network profile type" in wt and "home-wifi" in wt, "windows text says where to switch")
+expect("trust-router" not in wt, "windows text asks for no MAC decision")
+ok_cfg = dict(pub_cfg, windows_profiles=["Private", "Public"])
+ost = mod.compute_lan_state(ok_cfg, pub_net, PEERS, wsl=True)
+expect(ost["enabled"] and mod.network_hint(ok_cfg, pub_net, ost) is None, "Public allowed by windows_profiles: no hint")
+
+# --- hint file: written once, 0600, removed when there is no hint
+hp = os.path.join(tmp, "hint", "peer-lan-network-hint.json")
+expect(mod.write_network_hint(hp, h) is True, "hint written")
+expect(mod.write_network_hint(hp, h) is False, "same hint not rewritten")
+expect(json.load(open(hp))["kind"] == "router-mac", "hint file holds the hint")
+expect(oct(os.stat(hp).st_mode & 0o777) == "0o600", "hint file is 0600")
+expect(mod.write_network_hint(hp, None) is True and not os.path.exists(hp), "no hint removes the file")
+expect(mod.write_network_hint(hp, None) is False, "no hint and no file: nothing to do")
+
+# --- the daemon writes the hint on its network recheck, removes it once the router is known
+dcfg = os.path.join(tmp, "d", "credo", "peer-lan.json")
+os.makedirs(os.path.dirname(dcfg), exist_ok=True)
+with open(dcfg, "w") as fh:
+    json.dump({"this_machine": "MT", "listen_port": 48610, "peers": ["192.168.1.50"],
+               "networks": {"home-wifi": prof()}}, fh)
+os.environ["CREDO_PEER_LAN_CONFIG"] = dcfg
+mod.Daemon._refresh_advertise_host = lambda self, net_, ticket: None
+mod.Daemon._win_sync = lambda self, state: None
+def netinfo_env(mac):
+    os.environ["CREDO_PEER_LAN_NETINFO"] = json.dumps({"iface": "wlan0", "ip": "192.168.1.42", "prefix": 24,
+        "gateway_ip": "192.168.1.1", "gateway_mac": mac, "ssid": "Home-WiFi 3"})
+netinfo_env(MAC2)
+dm = mod.Daemon({"peers": ["192.168.1.50"], "listen_port": 48610})
+dm.recheck_network()
+dhint = mod.network_hint_path()
+expect(dhint == os.path.join(os.path.dirname(dcfg), "peer-lan-network-hint.json"), "hint lives next to the config %r" % dhint)
+expect(os.path.isfile(dhint) and json.load(open(dhint))["kind"] == "router-mac",
+       "daemon writes the router-mac hint on its recheck")
+netinfo_env(MAC1)
+dm.recheck_network()
+expect(not os.path.exists(dhint), "daemon removes the hint once the router is known again")
+if fails:
+    print("MT_FAIL " + " | ".join(fails))
+else:
+    print("MT_OK")
+PYEOF
+MT_OUT="$("$PY" "$TMP/mt.py" "$DAEMON" "$TMP/mt" 2>&1)"
+case "$MT_OUT" in *MT_OK*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL MT (multi-MAC, hints, daemon hint): %s\n' "$MT_OUT" ;; esac
+
+# --- BO: bind --adapter / --subnet overrides for the fingerprint (#108 A) -----------
+cat > "$TMP/bo.py" <<'PYEOF'
+import importlib.util, json, os, sys
+daemon_path, tmp = sys.argv[1], sys.argv[2]
+os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(tmp, "profile")
+os.environ.pop("CREDO_PEER_LAN_NETINFO", None)
+spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+fails = []
+def expect(cond, msg):
+    if not cond:
+        fails.append(msg)
+MAC1 = "aa:bb:cc:dd:ee:01"
+def fake_run(argv, timeout=5, cwd=None):
+    s = " ".join(argv[1:])
+    if s == "-o -4 route show default dev eth1":
+        return "default via 192.168.7.1 dev eth1 proto dhcp metric 100\n"
+    if s.startswith("-o -4 route show default dev "):
+        return ""
+    if s == "-o -4 route show default":
+        return "default via 192.168.1.1 dev wlan0 proto dhcp metric 600\n"
+    if s == "-o -4 addr show dev eth1":
+        return "3: eth1    inet 192.168.7.42/24 brd 192.168.7.255 scope global eth1\n"
+    if s == "-o -4 addr show dev wlan0":
+        return "2: wlan0    inet 192.168.1.42/24 brd 192.168.1.255 scope global wlan0\n"
+    return ""
+mod._run_out = fake_run
+mod._neigh_mac = lambda gw, dev: "aa:bb:cc:00:07:01" if dev == "eth1" else MAC1
+mod._ssid_linux = lambda: None
+mod.is_wsl = lambda: False
+# subnet override: canonical CIDR, private only, /8 or narrower
+expect(mod.subnet_override("192.168.0.0/16") == "192.168.0.0/16", "subnet override kept")
+expect(mod.subnet_override("192.168.1.7/24") == "192.168.1.0/24", "subnet override normalized to its network")
+for bad in ["8.8.8.0/24", "192.168.1.5", "10.0.0.0/7", "*", "192.168.1.0/33", ""]:
+    try:
+        mod.subnet_override(bad)
+        expect(False, "subnet must be rejected %r" % bad)
+    except ValueError:
+        pass
+# adapter name: a Windows alias may hold spaces; nothing that could break out of a command
+expect(mod.adapter_name("eth0") == "eth0", "adapter name")
+expect(mod.adapter_name("WLAN 2") == "WLAN 2", "adapter name with a space (Windows alias)")
+for bad in ["", "x'; calc", "a$b", "a\"b", "-x", "x" * 65, "a\nb"]:
+    expect(mod.adapter_name(bad) is None, "adapter must be rejected %r" % bad)
+# Linux: the adapter's own default route, neighbour and address decide the fingerprint
+e = mod.detect_network_linux("eth1")
+expect(e is not None and e["iface"] == "eth1" and e["gateway_mac"] == "aa:bb:cc:00:07:01"
+       and e["gateway_ip"] == "192.168.7.1" and e["ip"] == "192.168.7.42" and e["subnet"] == "192.168.7.0/24",
+       "adapter override detects that adapter %r" % e)
+w = mod.detect_network_linux()
+expect(w is not None and w["iface"] == "wlan0" and w["gateway_mac"] == MAC1, "default detection unchanged")
+expect(mod.detect_network("eth1")["iface"] == "eth1", "detect_network passes the adapter on")
+expect(mod.detect_network("x'; calc") is None, "invalid adapter name -> unknown network")
+# WSL: the PowerShell route query is limited to the adapter alias (name is validated above)
+ps_a = mod.wsl_netinfo_ps("WLAN 2")
+expect("$want = 'WLAN 2'" in ps_a and "$_.InterfaceAlias -eq $want" in ps_a, "WSL adapter filter in the PowerShell text")
+expect(mod.wsl_netinfo_ps(None) == mod.WSL_NETINFO_PS, "no adapter: the default PowerShell text")
+# runtime: a network bound to an adapter is found through that adapter
+pick = mod.detect_network_for({"eth-net": {"fingerprint": {"gateway_mac": "aa:bb:cc:00:07:01",
+        "subnet": "192.168.7.0/24", "adapter": "eth1"}, "label": "Wired", "group": "home", "allow": ["peers"]}})
+expect(pick is not None and pick["iface"] == "eth1", "adapter-bound network found via its adapter %r" % (pick,))
+expect(mod.detect_network_for(None)["iface"] == "wlan0", "no networks: default detection")
+expect(mod.detect_network_for({"w": {"fingerprint": {"gateway_mac": MAC1, "subnet": "192.168.1.0/24"}}})["iface"] == "wlan0",
+       "no adapter override: default detection only")
+if fails:
+    print("BO_FAIL " + " | ".join(fails))
+else:
+    print("BO_OK")
+PYEOF
+BO_OUT="$("$PY" "$TMP/bo.py" "$DAEMON" "$TMP/bo" 2>&1)"
+case "$BO_OUT" in *BO_OK*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL BO (adapter/subnet overrides): %s\n' "$BO_OUT" ;; esac
+
+# --- RT: the agent's trust-router add / refuse on a bound WLAN (#110) ---------------
+mkdir -p "$TMP/rt/credo" "$TMP/rt/wsl"
+RT_CFG="$TMP/rt/credo/peer-lan.json"
+RT_HINT="$TMP/rt/credo/peer-lan-network-hint.json"
+printf 'Linux version 6.6.0-microsoft-standard-WSL2 (test)\n' > "$TMP/rt/wsl/procversion"
+cat > "$RT_CFG" <<'EOF'
+{"this_machine":"RT","listen_host":"0.0.0.0","listen_port":48610,"peers":["192.168.1.50"],
+ "networks":{"home-wifi":{"fingerprint":{"gateway_mac":"aa:bb:cc:dd:ee:01","subnet":"192.168.1.0/24"},
+ "label":"Home-WiFi","group":"home","allow":["peers"]}}}
+EOF
+cat > "$TMP/rtq.py" <<'PYEOF'
+import json, sys
+c = json.load(open(sys.argv[1]))
+p = c["networks"]["home-wifi"]
+fp = p["fingerprint"]
+print(json.dumps({"allow": p.get("allow"), "gateway_mac": fp.get("gateway_mac"), "group": p.get("group"),
+                  "label": p.get("label"), "macs": fp.get("gateway_macs"), "nets": sorted(c["networks"]),
+                  "refused": p.get("refused_routers", []), "subnet": fp.get("subnet")}, sort_keys=True))
+PYEOF
+rt_run() { # netinfo-json cli-args... (RT_PROC overrides the proc-version file, e.g. WSL)
+    local ni="$1"; shift
+    PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION="${RT_PROC:-$TMP/wh/procversion-linux}" \
+        CREDO_PEER_LAN_CONFIG="$RT_CFG" CREDO_PEER_LAN_NETINFO="$ni" "$PY" "$DAEMON" "$@" 2>&1
+}
+rt_q() { "$PY" "$TMP/rtq.py" "$RT_CFG"; }
+RT_NEW='{"iface":"wlan0","ip":"192.168.1.42","prefix":24,"gateway_ip":"192.168.1.1","gateway_mac":"AA-BB-CC-DD-EE-02","ssid":"Home-WiFi 3"}'
+RT_NEW3='{"iface":"wlan0","ip":"192.168.1.42","prefix":24,"gateway_ip":"192.168.1.1","gateway_mac":"aa:bb:cc:dd:ee:03","ssid":"Home-WiFi 3"}'
+RT_OFFICE='{"iface":"wlan0","ip":"192.168.1.42","prefix":24,"gateway_ip":"192.168.1.1","gateway_mac":"aa:bb:cc:dd:ee:04","ssid":"Office"}'
+RT_PUBLIC='{"iface":"wlan0","ip":"192.168.1.42","prefix":24,"gateway_ip":"192.168.1.1","gateway_mac":"aa:bb:cc:dd:ee:05","ssid":"Home-WiFi 4","windows_category":"Public"}'
+RT1="$(rt_run "$RT_NEW" check)"
+case "$RT1" in *"LAN relay: DISABLED"*"trust-router --profile home-wifi"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL rt check shows the router hint: %s\n' "$RT1" ;; esac
+check "rt: no hint is printed by network-hint while nothing is pending" "" "$(rt_run "$RT_NEW" network-hint)"
+RT2="$(rt_run "$RT_NEW" trust-router --profile home-wifi)"; check "rt add: exit 0" "0" "$?"
+check "rt add: MAC added, label/group/allow/subnet kept, one profile" \
+    '{"allow": ["peers"], "gateway_mac": "aa:bb:cc:dd:ee:01", "group": "home", "label": "Home-WiFi", "macs": ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"], "nets": ["home-wifi"], "refused": [], "subnet": "192.168.1.0/24"}' \
+    "$(rt_q)"
+case "$RT2" in *"LAN relay ENABLED"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL rt add: relay not back: %s\n' "$RT2" ;; esac
+RT3="$(rt_run "$RT_NEW" check)"
+case "$RT3" in *"LAN relay: ENABLED"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL rt check after add: %s\n' "$RT3" ;; esac
+case "$RT3" in *"trust-router"*) FAIL=$((FAIL + 1)); printf 'FAIL rt check after add still hints\n' ;; *) PASS=$((PASS + 1)) ;; esac
+RT4="$(rt_run "$RT_NEW" trust-router --profile home-wifi)"; check "rt add again: exit 0" "0" "$?"
+case "$RT4" in *"already trusted"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL rt add again message: %s\n' "$RT4" ;; esac
+RT5="$(rt_run "$RT_NEW3" trust-router --profile home-wifi --refuse)"; check "rt refuse: exit 0" "0" "$?"
+check "rt refuse: the refusal is recorded, no MAC is added" \
+    '{"allow": ["peers"], "gateway_mac": "aa:bb:cc:dd:ee:01", "group": "home", "label": "Home-WiFi", "macs": ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"], "nets": ["home-wifi"], "refused": [{"mac": "aa:bb:cc:dd:ee:03", "subnet": "192.168.1.0/24"}], "subnet": "192.168.1.0/24"}' \
+    "$(rt_q)"
+RT6="$(rt_run "$RT_NEW3" check)"
+case "$RT6" in *"LAN relay: DISABLED"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL rt refused stays off: %s\n' "$RT6" ;; esac
+case "$RT6" in *"trust-router"*) FAIL=$((FAIL + 1)); printf 'FAIL rt refused MAC is asked again: %s\n' "$RT6" ;; *) PASS=$((PASS + 1)) ;; esac
+RT_Q_BEFORE="$(rt_q)"
+RT7="$(rt_run "$RT_OFFICE" trust-router --profile home-wifi)"; check "rt add on another WLAN: refused (exit 1)" "1" "$?"
+check "rt add on another WLAN: config unchanged" "$RT_Q_BEFORE" "$(rt_q)"
+RT8="$(rt_run "$RT_NEW" trust-router --profile nope)"; check "rt add with an unknown profile: exit 1" "1" "$?"
+RT9="$(RT_PROC="$TMP/rt/wsl/procversion" rt_run "$RT_PUBLIC" trust-router --profile home-wifi)"; check "rt add on a Public network: router accepted (exit 0)" "0" "$?"
+case "$RT9" in *"DISABLED"*"Private"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL rt Public: relay off and Private named: %s\n' "$RT9" ;; esac
+grep -q '"windows-category"' "$RT_HINT" 2>/dev/null; ok "rt Public: windows-category hint written" "$?"
+NH1="$(RT_PROC="$TMP/rt/wsl/procversion" rt_run "$RT_PUBLIC" network-hint)"
+case "$NH1" in *"Network profile type"*"Private"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL rt network-hint text: %s\n' "$NH1" ;; esac
+RT10="$(rt_run "$RT_NEW" trust-router --profile home-wifi)"; check "rt add again on the known router: exit 0" "0" "$?"
+ok "rt known router again: the stale hint is removed" "$([ ! -f "$RT_HINT" ] && echo 0 || echo 1)"
+
+# --- BO CLI: bind --adapter / --subnet end to end, with a fake ip (#108 A) ---------
+mkdir -p "$TMP/bo/bin" "$TMP/bo/credo"
+cat > "$TMP/bo/bin/ip" <<'EOF'
+#!/bin/bash
+# fake `ip` for the bind --adapter tests: wired adapter eth1 with its own router, plus wlan0
+case "$*" in
+  "-o -4 route show default dev eth1") echo "default via 192.168.7.1 dev eth1 proto dhcp metric 100" ;;
+  *"route show default dev "*) ;;
+  "-o -4 route show default") echo "default via 192.168.1.1 dev wlan0 proto dhcp metric 600" ;;
+  "neigh show 192.168.7.1 dev eth1") echo "192.168.7.1 dev eth1 lladdr aa:bb:cc:00:07:01 REACHABLE" ;;
+  "neigh show 192.168.1.1 dev wlan0") echo "192.168.1.1 dev wlan0 lladdr aa:bb:cc:dd:ee:01 REACHABLE" ;;
+  "-o -4 addr show dev eth1") echo "3: eth1    inet 192.168.7.42/24 brd 192.168.7.255 scope global eth1" ;;
+  "-o -4 addr show dev wlan0") echo "2: wlan0    inet 192.168.1.42/24 brd 192.168.1.255 scope global wlan0" ;;
+esac
+exit 0
+EOF
+chmod +x "$TMP/bo/bin/ip"
+BO_CFG="$TMP/bo/credo/peer-lan.json"
+printf '%s\n' '{"this_machine":"BO","listen_port":48610,"peers":["192.168.7.50"]}' > "$BO_CFG"
+bo_run() { env -u CREDO_PEER_LAN_NETINFO PATH="$TMP/bo/bin:$PATH" WSL_DISTRO_NAME= \
+    CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" CREDO_PEER_LAN_CONFIG="$BO_CFG" "$PY" "$DAEMON" "$@" 2>&1; }
+BO1="$(bo_run bind --name eth-net --allow peers --adapter eth1)"; check "bind --adapter: exit 0" "0" "$?"
+case "$BO1" in *"Effective allowlist (group home): 192.168.7.50"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL bind --adapter effective allowlist: %s\n' "$BO1" ;; esac
+check "bind --adapter: fingerprint records the adapter, its router and subnet" "eth1 aa:bb:cc:00:07:01 192.168.7.0/24" \
+    "$("$PY" -c 'import json,sys; fp=json.load(open(sys.argv[1]))["networks"]["eth-net"]["fingerprint"]; print(fp.get("adapter"), fp["gateway_mac"], fp["subnet"])' "$BO_CFG")"
+BO2="$(bo_run bind --name eth-wide --allow peers --adapter eth1 --subnet 192.168.0.0/16)"; check "bind --subnet: exit 0" "0" "$?"
+check "bind --subnet: the override subnet is stored" "192.168.0.0/16" \
+    "$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["networks"]["eth-wide"]["fingerprint"]["subnet"])' "$BO_CFG")"
+BO3="$(bo_run bind --name eth-bad --adapter eth1 --subnet 10.0.0.0/8)"; check "bind --subnet not holding the address: exit 2" "2" "$?"
+case "$BO3" in *"not inside"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL bind --subnet message: %s\n' "$BO3" ;; esac
+BO4="$(bo_run bind --name eth-pub --adapter eth1 --subnet 8.8.8.0/24)"; check "bind --subnet public: exit 2" "2" "$?"
+BO5="$(bo_run bind --name eth-x --adapter "x'y")"; check "bind --adapter with a bad name: exit 2" "2" "$?"
+BO6="$(bo_run bind --name eth-none --adapter nope)"; check "bind --adapter without a route: exit 1" "1" "$?"
+
+# --- WI: the elevated -Install prints a success or failure line, never a silent exit 0 (#108 B)
+cat > "$TMP/wi.py" <<'PYEOF'
+import re, sys
+ps = open(sys.argv[1], encoding="utf-8").read()
+doc = open(sys.argv[2], encoding="utf-8").read()
+fails = []
+def need(cond, msg):
+    if not cond:
+        fails.append(msg)
+need('$ScriptVersion = 4' in ps, "script version bumped (installed copies are told to re-run -Install)")
+branch = ps[ps.index("if ($Install) {"):ps.index("elseif ($Uninstall)")]
+need("-Install OK" in branch, "explicit success line in the -Install branch")
+need("-Install FAILED" in branch, "explicit failure line with the reason in the -Install branch")
+need("try {" in branch and "catch" in branch, "the install is wrapped in try/catch")
+need(re.search(r"catch\s*\{.*?exit 1", branch, re.S) is not None, "a failed install exits 1")
+need("exit 0" not in branch, "the -Install branch never exits 0 explicitly")
+need("-Install OK" in doc and "-Install FAILED" in doc, "docs describe the success and failure lines")
+need("-not $p" in doc or "$p -eq $null" in doc, "docs wrapper: no elevated process is an explicit failure")
+print("WI_OK" if not fails else "WI_FAIL " + " | ".join(fails))
+PYEOF
+WI_OUT="$("$PY" "$TMP/wi.py" "$SCRIPT_DIR/credo-peer-lan-winproxy.ps1" "$SCRIPT_DIR/../commands/peer-lan.md" 2>&1)"
+case "$WI_OUT" in *WI_OK*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL WI (installer output): %s\n' "$WI_OUT" ;; esac
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

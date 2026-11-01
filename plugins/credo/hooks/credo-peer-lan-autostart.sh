@@ -100,6 +100,17 @@ if [ -s "$pending" ] && grep -q '"slot"' "$pending" 2>/dev/null; then
   echo "[credo-peer-lan] A LAN peer pairing repair is pending: the relay saw an unexpected key or address change (a new id at the address of a paired peer, a paired peer at another address, or a relay without pairing support at a paired address) and refused it. Run \`\${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py pairs\` and tell the user; run the pair-reset command it prints only after the user confirmed (Ask tool) that this peer really was reinstalled, reset or moved (or that the older relay really lives at that address). In autonomous mode never run it, just mention it in the next report. Explain in the user's language (the language of the conversation); fall back to English if unknown or unsure."
 fi
 
+# A new router MAC on a bound WLAN, or a bound network whose Windows category is outside
+# windows_profiles: the daemon left a hint file next to the config (its network recheck
+# writes it, the CLI keeps it in step). The text is rendered by the daemon's network-hint
+# subcommand, which reads that one file and detects nothing. Nothing is changed here.
+hint="$mdir/peer-lan-network-hint.json"
+if [ -s "$hint" ] && grep -q '"kind"' "$hint" 2>/dev/null; then
+  # shellcheck disable=SC2086  # $to5 is an intentional optional command prefix
+  hint_text="$($to5 "$script" network-hint 2>/dev/null)"
+  [ -n "$hint_text" ] && echo "$hint_text"
+fi
+
 mkdir -p "$mdir" 2>/dev/null || true
 
 # Start detached via `ensure` so the hook returns at once and never blocks session

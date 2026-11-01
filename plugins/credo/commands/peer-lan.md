@@ -2,7 +2,7 @@
 description: credo - Start, stop, or check the LAN peer relay (cross-machine peer messaging, no cloud)
 arguments:
   - name: action
-    description: setup | init | bind | unbind | networks | netinfo | token | whoami | check | pairs | pair-reset | disconnect-all | start | restart | stop | trust | profiles | status (default status). init takes peer IPs, bind takes --name/--group/--label/--allow, pair-reset takes a peer (slot host:port, id or machine), disconnect-all takes --dry-run | --yes | --full, trust takes list | add <peer> <caption> | remove <peer> [<caption>], profiles takes list (default) | set <name>... | add <name> | all.
+    description: setup | init | bind | unbind | networks | netinfo | token | whoami | check | pairs | pair-reset | disconnect-all | start | restart | stop | trust | trust-router | network-hint | profiles | status (default status). init takes peer IPs, bind takes --name/--group/--label/--allow/--adapter/--subnet, trust-router takes --profile <name> [--refuse], pair-reset takes a peer (slot host:port, id or machine), disconnect-all takes --dry-run | --yes | --full, trust takes list | add <peer> <caption> | remove <peer> [<caption>], profiles takes list (default) | set <name>... | add <name> | all.
     required: false
 allowed-tools:
   - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py:*)
@@ -89,6 +89,8 @@ Steps (`P="${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py"`):
      makes IP allowlists unreliable, and with auto-accept any device on that list could
      drive your sessions, including bypass-mode ones. On WSL that opt-in also needs
      `"windows_profiles": ["Private", "Domain"]` (or `"Public"`) in the config.
+     A WLAN that Windows classifies as Public keeps the relay off on WSL (see Windows
+     network category below); switch that network to Private instead of opting in.
 4. Allow scope - propose with a one-line explanation each:
    - `peers` (default, narrowest): only the configured peer IPs.
    - the whole subnet, e.g. `192.168.1.0/24`: convenient with DHCP, moderate.
@@ -331,6 +333,32 @@ The machine name stays a display label.
   For a moved peer the command names its peer id (resetting the new address alone
   would leave the old binding in place).
 
+## Router change (a new router MAC on a bound WLAN)
+
+A bound network is matched by its router MAC AND its subnet. When the WLAN is still the same
+(same name, the IP still inside the bound subnet) but the router MAC is new - a new access
+point, or a replaced router or network adapter - the relay stays OFF (fail-closed) and the
+agent asks the user once:
+
+- The SessionStart hook injects the pending hint. The daemon writes it on its network check
+  (every 30 s); `check` shows it as `Hint:`. The agent asks with the Ask tool: which WLAN it
+  is, that the router or the adapter changed, and that accepting means this router is trusted
+  like the known one. Options: add this router, or do not add.
+- On "add" the agent runs `credo-peer-lan.py trust-router --profile <name>` itself: the MAC
+  joins the profile's `gateway_macs` list; label, group, allowlist and subnet stay unchanged.
+  The running relay enables itself on its next network check (about 30 s, no restart).
+- On "do not add" the agent runs `credo-peer-lan.py trust-router --profile <name> --refuse`.
+  The refusal is stored in the profile (`refused_routers`: MAC and subnet). That router is not
+  asked again for that subnet. A different new router is asked about, and so is the same
+  router on another subnet.
+- Both commands work only while the current network is that profile's WLAN; otherwise they
+  refuse and change nothing.
+- Autonomous sessions never ask; the hint stays pending and is mentioned in the report.
+
+The profile keeps the single `gateway_mac` of older versions as well (the first router), so
+older readers still see it. A Windows network category of Public is the other hint kind (see
+Windows network category above); it needs no decision, only the switch to Private.
+
 ## Auto-start and single instance
 
 Once the config file exists, the `credo-peer-lan-autostart.sh` SessionStart hook brings
@@ -421,6 +449,12 @@ to `windows_profiles` (default Private) - or DISABLES the rule when the relay is
 or no entry is valid (never an empty RemoteAddress, which would mean Any). `-DryRun`
 prints what would happen without changing anything. Remove everything with `-Uninstall`.
 
+`-Install` ends with one explicit line: `-Install OK: ...` (exit code 0) when the script,
+the firewall rule and the task are in place, or `-Install FAILED: <reason>` (exit code 1),
+for example when the PowerShell is not elevated. A window that closed without that line
+installed nothing. After a plugin update that bumps the script version, `check` asks for
+one re-run of `-Install` (one UAC prompt).
+
 Instances are per port: the firewall rule is `credo-peer-lan <port>`, and for any port
 other than the default 48610 the data file is `peer-lan-allow-<port>.json` and the applied
 state `peer-lan-applied-<port>.json` (48610 keeps the original names). A second relay on
@@ -432,6 +466,18 @@ task still runs it.
 This one-time elevated admin step is REQUIRED on EVERY machine, including remote ones; it
 cannot be performed remotely (it opens a port and registers a scheduled task on that
 host). Disable just the hook's proxy trigger with `CREDO_PEER_LAN_WINPROXY=0`.
+
+### Windows network category (WSL)
+
+Windows gives every network a category: Private, Domain or Public. On WSL the relay runs only
+on networks whose category is in `windows_profiles` (default `["Private"]`). A network
+classified as Public keeps the relay DISABLED, `check` names the category as the reason, and
+the SessionStart hook tells the agent to explain it (no decision is needed, nothing is asked).
+To switch it, in Windows: Settings, Network and internet, Wi-Fi, open the properties of the
+connected network, and set Network profile type to Private (the labels follow Windows 10 and
+11; they may differ slightly by version). The relay comes back by itself within about a
+minute, no command is needed. Opting in with `windows_profiles` instead is possible but not
+recommended for public networks.
 
 ### Native Linux
 
@@ -578,9 +624,11 @@ the user's own tasks.
   without `networks`, empty allowlist) no LAN connection is accepted, no roster is sent
   and nothing is forwarded - so session names never leak on a foreign network. Loopback
   (same-machine) use always works. Wildcards and public ranges are never accepted.
-- **Network binding.** A profile is bound to the router MAC (gateway) AND the subnet;
-  both must match. Profiles in the same `group` share their allowlists (two home WLANs
-  may talk to each other); other groups stay separate.
+- **Network binding.** A profile is bound to a router MAC (gateway) AND the subnet; both
+  must match. A profile can trust several router MACs (access points, a replaced router or
+  adapter of the same WLAN, see Router change below); a MAC that is not in the list keeps
+  the relay off. Profiles in the same `group` share their allowlists (two home WLANs may
+  talk to each other); other groups stay separate.
 - **What the daemon can do.** Only deliver text messages into running sessions and list
   session names. No shell, no file access. The relay never sets a `from-mode`, so every
   receiving session applies its own consent gate (unless the user opted into
@@ -675,9 +723,11 @@ allowlist-scoped firewall rule (the old rule allowed the whole LocalSubnet).
        the installer to the user's `%TEMP%` and runs that copy elevated - this is the only
        step that prompts for UAC:
        ```bash
-       powershell.exe -NoProfile -Command '$s = Join-Path $env:TEMP "credo-peer-lan-winproxy.ps1"; Copy-Item -LiteralPath "'"$winps"'" -Destination $s -Force; $p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File",("`"" + $s + "`""),"-Install","-Port","48610"; exit $p.ExitCode'
+       powershell.exe -NoProfile -Command '$s = Join-Path $env:TEMP "credo-peer-lan-winproxy.ps1"; Copy-Item -LiteralPath "'"$winps"'" -Destination $s -Force; $p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File",("`"" + $s + "`""),"-Install","-Port","48610"; if (-not $p) { Write-Host "-Install FAILED: no elevated PowerShell was started (UAC declined?)"; exit 1 }; if ($p.ExitCode -eq 0) { Write-Host "-Install OK: the elevated run exited with code 0" } else { Write-Host ("-Install FAILED: the elevated run exited with code {0}" -f $p.ExitCode) }; exit $p.ExitCode'
        ```
-       Tell the user to approve the one UAC prompt. The `-Port` MUST equal `listen_port`.
+       Tell the user to approve the one UAC prompt. The `-Port` MUST equal `listen_port`. The
+wrapper prints `-Install OK` or `-Install FAILED` with the reason: a declined UAC prompt is
+reported as FAILED, never as a silent exit 0.
      - **On native Linux:** skip the UAC step; after binding, follow Setup flow
        step 6 (Firewall): `check` prints the exact `ufw` commands when needed.
   4. Bind the network: `init` prints the exact `bind` suggestion when the current
@@ -707,12 +757,31 @@ allowlist-scoped firewall rule (the old rule allowed the whole LocalSubnet).
 - **netinfo** - print the detected network as JSON (router MAC, subnet, label, WSL:
   Windows network category): `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" netinfo`
 
-- **bind `[--name N] [--group G] [--label L] [--allow ENTRY ...]`** - bind the CURRENT
-  network (fails when detection is unknown). Defaults: group `home`, allow `peers`. Prints
-  the effective allowlist (and the WARNING for `home`). A running daemon applies it on its
-  next network check (every 30 s).
+- **bind `[--name N] [--group G] [--label L] [--allow ENTRY ...] [--adapter NAME] [--subnet CIDR]`** -
+  bind the CURRENT network (fails when detection is unknown). Defaults: group `home`, allow
+  `peers`. Prints the effective allowlist (and the WARNING for `home`). A running daemon
+  applies it on its next network check (every 30 s).
+  - `--adapter NAME` detects the network of that adapter instead of the one of the default
+    route: the Linux interface (`eth1`), or under WSL the Windows adapter alias (`WLAN 2`,
+    spaces allowed). The name is stored in the profile; the relay matches through that
+    adapter from then on.
+  - `--subnet CIDR` stores a private subnet (/8 or narrower, e.g. `192.168.0.0/16`) instead
+    of the detected one. The detected address must lie inside it, otherwise bind refuses
+    with exit 2, because the relay could never match that network. Public ranges are refused.
+  - Example with invented values:
+    `"$P" bind --name wired --adapter eth1 --subnet 192.168.0.0/16 --allow peers`
+  - Binding the same router and subnet again updates that profile and keeps its other router
+    MACs. A bind on another router creates a new profile; the agent path for a new router of
+    the same WLAN is `trust-router` (see Router change).
 
 - **unbind `<name>`** / **networks** - remove a bound network / list them.
+
+- **trust-router `--profile <name> [--refuse]`** - the answer to a router-change hint (see Router
+  change). Run it while connected to that WLAN. Without `--refuse` the current router MAC joins
+  the profile; with `--refuse` the refusal is recorded. Run it only after the user's answer.
+
+- **network-hint** - print the pending router-change hint for the agent. The SessionStart hook
+  uses it; it prints nothing when no hint is pending.
 
 - **token `--generate` | `--set` | `--clear`** - see Token above. Never print the value.
 

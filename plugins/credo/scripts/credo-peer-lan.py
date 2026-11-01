@@ -99,6 +99,7 @@ only.
 """
 
 import argparse
+import copy
 import errno
 import getpass
 import hashlib
@@ -742,6 +743,12 @@ DEFAULT_NETWORK_RECHECK = 30.0
 DEFAULT_WIN_TASK = "credo-peer-lan-proxy"
 NETWORK_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 MAC_RE = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
+# --bind --adapter names: Linux interface names, or a Windows alias such as "WLAN 2"
+ADAPTER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._()#-]{0,63}")
+# Windows appends " 2", " 3" ... to a WLAN profile name it treats as a new network
+WIN_COUNTER_RE = re.compile(r"\s+\d+")
+# the router-change hint the daemon leaves next to the config for the SessionStart hook
+NETWORK_HINT_FILE = "peer-lan-network-hint.json"
 
 
 class AllowEntryError(ValueError):
@@ -943,10 +950,14 @@ def _run_out(argv, timeout=5, cwd=None):
     return res.stdout or ""
 
 
-def linux_default_route():
-    """(gateway_ip, device) of the lowest-metric IPv4 default route, or (None, None)."""
+def linux_default_route(dev=None):
+    """(gateway_ip, device) of the lowest-metric IPv4 default route, or (None, None).
+    dev restricts the search to the default route of that one device (--adapter)."""
     best = None
-    for line in _run_out(["ip", "-o", "-4", "route", "show", "default"]).splitlines():
+    argv = ["ip", "-o", "-4", "route", "show", "default"]
+    if dev:
+        argv += ["dev", dev]
+    for line in _run_out(argv).splitlines():
         m = re.search(r"\bvia\s+(\d{1,3}(?:\.\d{1,3}){3})\s+dev\s+(\S+)", line)
         if not m:
             continue
@@ -989,8 +1000,8 @@ def _ssid_linux():
     return None
 
 
-def detect_network_linux():
-    gw, dev = linux_default_route()
+def detect_network_linux(adapter=None):
+    gw, dev = linux_default_route(adapter)
     if not gw:
         return None
     mac = _neigh_mac(gw, dev)
@@ -1053,9 +1064,34 @@ WSL_NETINFO_PS = (
     "prefix=[int]$a.PrefixLength; ssid=[string]$p.Name; "
     "windows_category=[string]$p.NetworkCategory} | ConvertTo-Json -Compress"
 )
+# the one statement --adapter changes: the default routes of that Windows adapter alias only
+WSL_ROUTES_ALL = '$all = @(Get-NetRoute -DestinationPrefix "0.0.0.0/0" -AddressFamily IPv4); '
+WSL_ROUTES_ON_ADAPTER = (
+    '$all = @(Get-NetRoute -DestinationPrefix "0.0.0.0/0" -AddressFamily IPv4 | '
+    'Where-Object { $_.InterfaceAlias -eq $want }); '
+)
 
 
-def detect_network_wsl():
+def wsl_netinfo_ps(adapter=None):
+    """The PowerShell text of detect_network_wsl. adapter (a validated name, see
+    adapter_name) restricts the route to that Windows adapter alias; it is put in
+    single quotes, which the name pattern cannot contain."""
+    if not adapter:
+        return WSL_NETINFO_PS
+    if adapter_name(adapter) != adapter:
+        raise ValueError("invalid adapter name %r" % (adapter,))
+    return ("$want = '%s'; " % adapter) + WSL_NETINFO_PS.replace(WSL_ROUTES_ALL, WSL_ROUTES_ON_ADAPTER)
+
+
+def adapter_name(text):
+    """The adapter name when it is well formed (letters, digits, space . _ ( ) # -), else
+    None. Keeps --adapter values out of the PowerShell text and out of any log."""
+    if isinstance(text, str) and ADAPTER_RE.fullmatch(text):
+        return text
+    return None
+
+
+def detect_network_wsl(adapter=None):
     """Under WSL the WSL NAT gateway is not the real router, so ask Windows. Also
     records the WSL-internal NAT gateway (the source IP the daemon sees for every LAN
     connection under NAT) as wsl_nat_gateway."""
@@ -1063,7 +1099,7 @@ def detect_network_wsl():
     if not ps_exe:
         return None
     out = _run_out(
-        [ps_exe, "-NoProfile", "-NonInteractive", "-Command", WSL_NETINFO_PS],
+        [ps_exe, "-NoProfile", "-NonInteractive", "-Command", wsl_netinfo_ps(adapter)],
         timeout=25,
         cwd=_win_cwd(),
     )
@@ -1110,10 +1146,12 @@ def normalize_netinfo(d):
     return out
 
 
-def detect_network():
-    """The current network as a normalized dict, or None when unknown. TEST-ONLY
-    override: CREDO_PEER_LAN_NETINFO holds a JSON object (or "@/path/file.json")
-    that replaces detection entirely; "null", unreadable or invalid -> unknown."""
+def detect_network(adapter=None):
+    """The current network as a normalized dict, or None when unknown. adapter (see
+    --adapter of bind) detects the network of that adapter instead of the default
+    route's; an invalid name is unknown. TEST-ONLY override: CREDO_PEER_LAN_NETINFO
+    holds a JSON object (or "@/path/file.json") that replaces detection entirely;
+    "null", unreadable or invalid -> unknown."""
     raw = os.environ.get("CREDO_PEER_LAN_NETINFO")
     if raw is not None:
         try:
@@ -1123,8 +1161,10 @@ def detect_network():
             return normalize_netinfo(json.loads(raw))
         except Exception:
             return None
+    if adapter is not None and adapter_name(adapter) is None:
+        return None
     try:
-        d = detect_network_wsl() if is_wsl() else detect_network_linux()
+        d = detect_network_wsl(adapter) if is_wsl() else detect_network_linux(adapter)
     except Exception as exc:
         log("network detection failed: %s" % exc)
         return None
@@ -1145,7 +1185,7 @@ def match_network(networks, net):
         if not isinstance(prof, dict):
             continue
         fp = prof.get("fingerprint") or {}
-        if not isinstance(fp, dict) or normalize_mac(fp.get("gateway_mac")) != mac:
+        if not isinstance(fp, dict) or mac not in fingerprint_macs(fp):
             continue
         try:
             if ipaddress.IPv4Address(ip) in ipaddress.IPv4Network(
@@ -1155,6 +1195,260 @@ def match_network(networks, net):
         except ValueError:
             continue
     return None
+
+
+def fingerprint_macs(fp):
+    """Every router MAC a network profile trusts: the legacy single gateway_mac plus the
+    gateway_macs list (several routers or access points of one network). Normalized,
+    deduplicated, in order; empty when none is valid."""
+    if not isinstance(fp, dict):
+        return []
+    raw = [fp.get("gateway_mac")]
+    if isinstance(fp.get("gateway_macs"), list):
+        raw.extend(fp["gateway_macs"])
+    out = []
+    for v in raw:
+        m = normalize_mac(v)
+        if m and m not in out:
+            out.append(m)
+    return out
+
+
+def fingerprint_adapter(prof):
+    """The adapter a profile was bound with (bind --adapter), or None."""
+    fp = prof.get("fingerprint") if isinstance(prof, dict) else None
+    return adapter_name(fp.get("adapter")) if isinstance(fp, dict) else None
+
+
+def subnet_override(text):
+    """The canonical CIDR of bind --subnet: the rules of an allow entry (private ranges
+    only, /8 or narrower); a single address is not a subnet. Raises ValueError."""
+    entry = parse_allow_entry(text)
+    if entry["kind"] != "addr" or "/" not in entry["text"]:
+        raise ValueError("--subnet takes a CIDR such as 192.168.1.0/24, not %r" % (text,))
+    return entry["text"]
+
+
+def ip_in_subnet(ip, subnet):
+    try:
+        return ipaddress.IPv4Address(ip) in ipaddress.IPv4Network(str(subnet), strict=False)
+    except (TypeError, ValueError):
+        return False
+
+
+def same_wlan_name(label, ssid):
+    """True when the detected WLAN name is the bound label: the same name (case ignored),
+    or that name with the " 2", " 3" suffix Windows adds to a network it treats as new.
+    Any other name, and a missing one, is a different WLAN."""
+    if not isinstance(label, str) or not isinstance(ssid, str):
+        return False
+    a, b = label.strip().casefold(), ssid.strip().casefold()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return b.startswith(a) and WIN_COUNTER_RE.fullmatch(b[len(a):]) is not None
+
+
+def _refused(prof, mac, subnet):
+    rr = prof.get("refused_routers")
+    if not isinstance(rr, list):
+        return False
+    for r in rr:
+        if isinstance(r, dict) and normalize_mac(r.get("mac")) == mac and r.get("subnet") == subnet:
+            return True
+    return False
+
+
+def router_change_for(prof, net):
+    """True when the detected network is this bound profile's WLAN (same name, IP inside
+    its subnet) behind a router MAC the profile does not trust yet."""
+    if not isinstance(prof, dict) or not isinstance(net, dict):
+        return False
+    fp = prof.get("fingerprint") if isinstance(prof.get("fingerprint"), dict) else {}
+    mac, ip = net.get("gateway_mac"), net.get("ip")
+    if not mac or not ip or mac in fingerprint_macs(fp):
+        return False
+    if not same_wlan_name(prof.get("label"), net.get("ssid")):
+        return False
+    return ip_in_subnet(ip, fp.get("subnet"))
+
+
+def router_candidate(networks, net):
+    """Name of the bound profile whose WLAN the detected network is, behind a router MAC
+    that was not refused for that subnet; else None. Fail-closed: a candidate never
+    enables the relay, it only makes the agent ask the user."""
+    if not net or not isinstance(networks, dict):
+        return None
+    for name in sorted(networks):
+        prof = networks[name]
+        if not router_change_for(prof, net):
+            continue
+        subnet = (prof.get("fingerprint") or {}).get("subnet")
+        if _refused(prof, net.get("gateway_mac"), subnet):
+            continue
+        return name
+    return None
+
+
+def trust_router_mac(prof, mac):
+    """A copy of profile prof that also trusts router MAC mac. Label, group, allow, subnet
+    and the legacy gateway_mac stay as they are; a refusal of that MAC is cleared."""
+    out = copy.deepcopy(prof)
+    fp = out.setdefault("fingerprint", {})
+    macs = fingerprint_macs(fp)
+    if mac not in macs:
+        macs.append(mac)
+    fp["gateway_macs"] = macs
+    kept = [r for r in out.get("refused_routers") or []
+            if not (isinstance(r, dict) and normalize_mac(r.get("mac")) == mac)]
+    if kept:
+        out["refused_routers"] = kept
+    else:
+        out.pop("refused_routers", None)
+    return out
+
+
+def refuse_router_mac(prof, mac, subnet):
+    """A copy of profile prof that records the refusal of router MAC mac for subnet. The
+    trusted MACs and everything else stay as they are."""
+    out = copy.deepcopy(prof)
+    lst = [r for r in out.get("refused_routers") or [] if isinstance(r, dict)]
+    entry = {"mac": mac, "subnet": subnet}
+    if entry not in lst:
+        lst.append(entry)
+    out["refused_routers"] = lst
+    return out
+
+
+def category_blocked(net, profiles):
+    """The Windows network category when it lies outside windows_profiles, else None."""
+    cat = net.get("windows_category") if isinstance(net, dict) else None
+    if not cat:
+        return None
+    return None if WIN_CATEGORY_TO_PROFILE.get(cat) in profiles else cat
+
+
+def network_hint(cfg, net, state):
+    """What the agent must hear about the current network, or None. Only while the relay is
+    off: a new router MAC on a bound WLAN ("router-mac": the agent asks the user), or a
+    matched network whose Windows category lies outside windows_profiles
+    ("windows-category": the user switches it to Private). Read from the state check uses."""
+    if not isinstance(state, dict) or state.get("enabled") or not isinstance(net, dict):
+        return None
+    ssid = net.get("ssid") or ""
+    cat = category_blocked(net, windows_profiles(cfg))
+    if state.get("network"):
+        if cat:
+            return {"kind": "windows-category", "profile": state["network"], "ssid": ssid, "category": cat}
+        return None
+    cand = state.get("candidate")
+    if cand and net.get("gateway_mac") and net.get("subnet"):
+        return {"kind": "router-mac", "profile": cand, "ssid": ssid, "subnet": net["subnet"],
+                "mac": net["gateway_mac"], "category": cat}
+    return None
+
+
+def network_hint_text(hint):
+    """The text the SessionStart hook injects for the agent (English; the agent talks to the
+    user in the user's language)."""
+    prof = hint.get("profile") or "?"
+    ssid = hint.get("ssid") or "(no WLAN name)"
+    if hint.get("kind") == "windows-category":
+        return (
+            "[credo-peer-lan] The LAN relay stays OFF on the WLAN %s (bound profile %s) because "
+            "Windows classifies this network as %s, and the relay only runs on networks in "
+            "windows_profiles (default Private). Nothing for you to decide: explain this to the "
+            "user in plain words and tell them exactly where to switch it: Windows Settings, "
+            "Network and internet, Wi-Fi, open the properties of the connected network %s, and set "
+            "Network profile type to Private. The relay comes back by itself within about a minute "
+            "after the switch; no command is needed. Explain in the user's language (the language "
+            "of the conversation); fall back to English if unknown or unsure."
+            % (ssid, prof, hint.get("category") or "Public", ssid)
+        )
+    cmd = "%s trust-router --profile %s" % (os.path.abspath(__file__), prof)
+    text = (
+        "[credo-peer-lan] The LAN relay stays OFF on the WLAN %s (bound profile %s): the router "
+        "with MAC %s is new for this network (same WLAN name, subnet %s, but its router MAC is not "
+        "trusted yet). Most likely a new access point or a new network adapter. In an interactive "
+        "session ask the user once with the Ask tool, in plain words: which WLAN it is (%s), that "
+        "the router or the adapter changed, and that accepting means this router is trusted like "
+        "the known one. Offer exactly two options: add this router, or do not add. On add run "
+        "`%s` yourself (the user never types a command); the relay comes back by itself within "
+        "about a minute. On do not add run `%s --refuse`; this network is not asked again until "
+        "its router or subnet changes."
+        % (ssid, prof, hint.get("mac") or "?", hint.get("subnet") or "?", ssid, cmd, cmd)
+    )
+    if hint.get("category"):
+        text += (" Windows also lists this network as %s: after accepting, switch it to Private too "
+                 "(Windows Settings, Network and internet, Wi-Fi, properties of %s, Network profile "
+                 "type)." % (hint["category"], ssid))
+    return text + (" In autonomous mode do not ask: mention it in the next report. Explain in the "
+                   "user's language (the language of the conversation); fall back to English if "
+                   "unknown or unsure.")
+
+
+def network_hint_summary(hint):
+    """One line for check and status (the user reads it there, the agent gets the text)."""
+    if hint.get("kind") == "windows-category":
+        return ("Windows classifies WLAN %s as %s: switch its network profile to Private "
+                "(Settings, Network and internet, Wi-Fi, properties of the network, "
+                "Network profile type)." % (hint.get("ssid") or "?", hint.get("category") or "?"))
+    cmd = "%s trust-router --profile %s" % (os.path.abspath(__file__), hint.get("profile") or "?")
+    return ("new router MAC %s on WLAN %s (profile %s): accept with '%s', refuse with '%s --refuse'"
+            % (hint.get("mac") or "?", hint.get("ssid") or "?", hint.get("profile") or "?", cmd, cmd))
+
+
+def network_hint_path():
+    """The hint file next to the machine config (the file the SessionStart hook reads)."""
+    return os.path.join(os.path.dirname(config_path()), NETWORK_HINT_FILE)
+
+
+def write_network_hint(path, hint):
+    """Write hint (a dict) to path, or remove the file when hint is None. Only a change is
+    written; the file is 0600 and replaced atomically. True when the file changed."""
+    if not hint:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            return False
+        return True
+    try:
+        with open(path) as fh:
+            if json.load(fh) == hint:
+                return False
+    except Exception:
+        pass
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        json.dump(hint, fh)
+        fh.write("\n")
+    os.replace(tmp, path)
+    return True
+
+
+def detect_network_for(networks):
+    """The detected network the bound profiles are matched against: the default route's
+    network, unless it is neither a bound network nor a new router on a bound WLAN and some
+    profile was bound with an adapter (bind --adapter); then that adapter's network when it
+    matches. Unknown detection stays the default route's answer."""
+    default = detect_network()
+    if not isinstance(networks, dict) or not networks:
+        return default
+    if match_network(networks, default) or router_candidate(networks, default):
+        return default
+    seen = set()
+    for name in sorted(networks):
+        adapter = fingerprint_adapter(networks[name])
+        if not adapter or adapter in seen:
+            continue
+        seen.add(adapter)
+        cand = detect_network(adapter)
+        if match_network(networks, cand) or router_candidate(networks, cand):
+            return cand
+    return default
 
 
 def network_group(prof):
@@ -1181,6 +1475,7 @@ def compute_lan_state(cfg, net, peers, wsl=False):
         "errors": [],
         "netinfo": net,
         "windows_profiles": windows_profiles(cfg),
+        "candidate": None,   # bound profile whose WLAN this is behind a new router MAC
     }
     networks = cfg.get("networks")
     if not isinstance(networks, dict) or not networks:
@@ -1197,6 +1492,14 @@ def compute_lan_state(cfg, net, peers, wsl=False):
         return st
     name = match_network(networks, net)
     if name is None:
+        cand = router_candidate(networks, net)
+        if cand:
+            st["candidate"] = cand
+            st["reason"] = (
+                "router %s is new for the bound network %s (same WLAN name and subnet) - "
+                "not trusted yet" % (net.get("gateway_mac") or "?", cand)
+            )
+            return st
         st["reason"] = "current network (router %s, subnet %s) is not bound" % (
             net.get("gateway_mac") or "?",
             net.get("subnet") or "?",
@@ -4043,6 +4346,7 @@ class Daemon(object):
         self.lan_state = compute_lan_state({}, None, self.peers, self.wsl)
         self.lan_state["reason"] = "network not detected yet"
         self._lan_key = None
+        self.lan_networks = None   # bound networks of the last recheck (adapter-aware detection)
         self.rejected_warned = set()  # inbound source IPs rejected (logged once each)
         self.outbound_skip_warned = set()  # peers skipped by the outbound gate
         self.roster_down = {}  # "host:port" -> last roster send error logged for it (down peers)
@@ -4171,7 +4475,7 @@ class Daemon(object):
             # one rule under WSL: the netinfo the netwatch recheck reads (a second probe
             # here could pick the other adapter and the two would disagree)
             ticket = self._next_adv_ticket()
-            self._refresh_advertise_host(detect_network(), ticket)
+            self._refresh_advertise_host(detect_network_for(self.lan_networks), ticket)
             return
         try:
             ip = detect_self_ip()
@@ -4230,7 +4534,7 @@ class Daemon(object):
         if not self.netwatch_running or self.advertise_pinned:
             return
         ticket = self._next_adv_ticket()
-        self._refresh_advertise_host(detect_network() if self.wsl else None, ticket)
+        self._refresh_advertise_host(detect_network_for(self.lan_networks) if self.wsl else None, ticket)
 
     # -- network watcher (allowlist state) ------------------------------------
     def _netwatch_loop(self):
@@ -4251,16 +4555,19 @@ class Daemon(object):
         every transition, prune remotes that are no longer allowed, and (WSL) sync
         the Windows firewall data file. Returns the new state."""
         ticket = self._next_adv_ticket()
-        net = detect_network()
+        fresh = load_config()
+        networks = fresh.get("networks") if isinstance(fresh, dict) else None
+        net = detect_network_for(networks)
+        self.lan_networks = networks
         if not self.advertise_pinned:
             self._refresh_advertise_host(net, ticket)
-        fresh = load_config()
         merged = dict(self.cfg)
         for key in ("networks", "windows_profiles"):
             merged.pop(key, None)
             if isinstance(fresh, dict) and key in fresh:
                 merged[key] = fresh[key]
         state = compute_lan_state(merged, net, self.peers, self.wsl)
+        self._sync_network_hint(merged, net, state)
         key = (
             state["enabled"],
             state["network"],
@@ -4323,6 +4630,16 @@ class Daemon(object):
                 log("invalid allow entry dropped: %s" % e)
         self._win_sync(state)
         return state
+
+    def _sync_network_hint(self, cfg, net, state):
+        """Leave the router-change hint for the SessionStart hook, or remove it. Never
+        raises: a hint that cannot be written must not stop the network watcher."""
+        hint = network_hint(cfg, net, state)
+        try:
+            if write_network_hint(network_hint_path(), hint) and hint:
+                log("network: %s" % network_hint_summary(hint))
+        except OSError as exc:
+            log("network hint not written: %s" % exc)
 
     def _win_sync(self, state):
         """WSL only: write the effective allowlist to the Windows data file (only on
@@ -6792,6 +7109,10 @@ def print_bind_suggestion(cfg, net, state):
         if hint:
             print("Cause: " + hint)
         return
+    if state.get("candidate"):
+        hint = network_hint(cfg, net, state)
+        print("LAN relay DISABLED: %s" % (network_hint_summary(hint) if hint else state["reason"]))
+        return
     if state.get("network"):
         print("LAN relay DISABLED on bound network %s: %s" % (state["network"], state["reason"]))
         return
@@ -6821,7 +7142,8 @@ def run_whoami(_args):
 def current_state(cfg):
     default_port = int(cfg.get("listen_port", DEFAULT_PORT))
     return compute_lan_state(
-        cfg, detect_network(), normalize_peers(cfg.get("peers", []), default_port), is_wsl()
+        cfg, detect_network_for(cfg.get("networks")),
+        normalize_peers(cfg.get("peers", []), default_port), is_wsl()
     )
 
 
@@ -6837,11 +7159,116 @@ def run_check(_args):
     print("")
     state = current_state(cfg)
     print_lan_status(cfg, state)
+    hint = network_hint(cfg, state.get("netinfo"), state)
+    if hint:
+        print("Hint:      %s" % network_hint_summary(hint))
     print("")
     down = probe_all_peers(cfg)
     check_firewall_hint(cfg, state)
     print("")
     print_pairs(cfg, down)
+    return 0
+
+
+def refresh_network_hint(cfg, state):
+    """Keep the router-change hint in step after a CLI change of the config. A failed write
+    is reported, never raised: the config change itself has already happened."""
+    try:
+        write_network_hint(network_hint_path(), network_hint(cfg, state.get("netinfo"), state))
+    except OSError as exc:
+        sys.stderr.write("network hint not written: %s\n" % exc)
+
+
+def _state_for(cfg, net):
+    default_port = int(cfg.get("listen_port", DEFAULT_PORT))
+    return compute_lan_state(cfg, net, normalize_peers(cfg.get("peers", []), default_port), is_wsl())
+
+
+def _print_relay_result(cfg, state):
+    if state["enabled"]:
+        print("LAN relay ENABLED - the running relay picks this up within about 30 seconds "
+              "(no restart needed).")
+        return
+    print("LAN relay still DISABLED: %s" % state["reason"])
+    hint = network_hint(cfg, state.get("netinfo"), state)
+    if hint:
+        print("Hint:      %s" % network_hint_summary(hint))
+
+
+def run_trust_router(args):
+    """The agent's answer to a new router MAC on a bound WLAN (the SessionStart hint): by
+    default the router is trusted for the profile, --refuse records that the user does not
+    want it. Both act only while the current network is that profile's WLAN."""
+    cfg = load_config()
+    networks = cfg.get("networks") if isinstance(cfg, dict) else None
+    prof = networks.get(args.profile) if isinstance(networks, dict) else None
+    if not isinstance(prof, dict):
+        sys.stderr.write("No bound network named %r.\n" % args.profile)
+        return 1
+    fp = prof.get("fingerprint") if isinstance(prof.get("fingerprint"), dict) else {}
+    net = detect_network(fingerprint_adapter(prof))
+    if net is None or not net.get("gateway_mac") or not net.get("ip"):
+        sys.stderr.write("Cannot tell the current network (detection failed). Nothing changed.\n")
+        return 1
+    mac = net["gateway_mac"]
+    if args.refuse:
+        if not router_change_for(prof, net):
+            sys.stderr.write(_not_that_wlan(args.profile, prof, net))
+            return 1
+        networks[args.profile] = refuse_router_mac(prof, mac, fp.get("subnet"))
+        try:
+            write_config(cfg)
+        except Exception as exc:
+            sys.stderr.write("Could not write %s: %s\n" % (config_path(), exc))
+            return 1
+        print("Recorded: router %s is not trusted for %s (subnet %s). It is not asked again for this "
+              "network until the router or the subnet changes." % (mac, args.profile, fp.get("subnet")))
+        state = _state_for(cfg, net)
+        refresh_network_hint(cfg, state)
+        _print_relay_result(cfg, state)
+        return 0
+    if mac in fingerprint_macs(fp) and ip_in_subnet(net["ip"], fp.get("subnet")) \
+            and same_wlan_name(prof.get("label"), net.get("ssid")):
+        print("Router %s is already trusted for %s." % (mac, args.profile))
+        state = _state_for(cfg, net)
+        refresh_network_hint(cfg, state)
+        _print_relay_result(cfg, state)
+        return 0
+    if not router_change_for(prof, net):
+        sys.stderr.write(_not_that_wlan(args.profile, prof, net))
+        return 1
+    networks[args.profile] = trust_router_mac(prof, mac)
+    try:
+        write_config(cfg)
+    except Exception as exc:
+        sys.stderr.write("Could not write %s: %s\n" % (config_path(), exc))
+        return 1
+    print("Trusted router %s for %s (WLAN %s, subnet %s). Label, group and allowlist are unchanged."
+          % (mac, args.profile, prof.get("label"), fp.get("subnet")))
+    state = _state_for(cfg, net)
+    refresh_network_hint(cfg, state)
+    _print_relay_result(cfg, state)
+    return 0
+
+
+def _not_that_wlan(name, prof, net):
+    fp = prof.get("fingerprint") if isinstance(prof.get("fingerprint"), dict) else {}
+    return ("The current network is not a new router of %s (WLAN %s, subnet %s): run this while "
+            "connected to that WLAN. Detected: WLAN %s, subnet %s, router %s. Nothing changed.\n"
+            % (name, prof.get("label"), fp.get("subnet"), net.get("ssid") or "?",
+               net.get("subnet") or "?", net.get("gateway_mac") or "?"))
+
+
+def run_network_hint(_args):
+    """Print the agent text of the pending router-change hint (the SessionStart hook calls
+    this). Reads one file and detects nothing; prints nothing when no hint is pending."""
+    try:
+        with open(network_hint_path()) as fh:
+            hint = json.load(fh)
+    except Exception:
+        return 0
+    if isinstance(hint, dict) and hint.get("kind") in ("router-mac", "windows-category"):
+        print(network_hint_text(hint))
     return 0
 
 
@@ -7411,13 +7838,35 @@ def run_bind(args):
     if cfg is None:
         sys.stderr.write("No config at %s - run 'credo-peer-lan.py init <peer-ip>' first.\n" % config_path())
         return 1
-    net = detect_network()
+    adapter = None
+    if args.adapter is not None:
+        adapter = adapter_name(args.adapter)
+        if adapter is None:
+            sys.stderr.write("Invalid adapter name %r (letters, digits, space . _ ( ) # -)\n" % args.adapter)
+            return 2
+    subnet = None
+    if args.subnet is not None:
+        try:
+            subnet = subnet_override(args.subnet)
+        except ValueError as exc:
+            sys.stderr.write("Rejected --subnet: %s\n" % exc)
+            return 2
+    net = detect_network(adapter)
     if net is None or not net.get("gateway_mac") or not net.get("subnet") or not net.get("ip"):
         sys.stderr.write(
             "Cannot bind: the current network could not be detected (need router MAC + "
-            "subnet). Run 'credo-peer-lan.py netinfo' to inspect.\n"
+            "subnet)%s. Run 'credo-peer-lan.py netinfo' to inspect.\n"
+            % (" on adapter %s" % adapter if adapter else "")
         )
         return 1
+    if subnet is not None:
+        if not ip_in_subnet(net["ip"], subnet):
+            sys.stderr.write(
+                "Rejected --subnet %s: the detected address %s is not inside it, so the relay "
+                "could never match this network.\n" % (subnet, net["ip"])
+            )
+            return 2
+        net = dict(net, subnet=subnet)
     allow = _flatten(args.allow) or ["peers"]
     parsed_ok = []
     for raw in allow:
@@ -7433,13 +7882,19 @@ def run_bind(args):
         sys.stderr.write("Invalid group name %r (letters, digits, . _ -)\n" % group)
         return 2
     networks = cfg.get("networks") if isinstance(cfg.get("networks"), dict) else {}
-    # a network already bound to this exact fingerprint is updated, never duplicated
+    # a network already bound to this router + subnet is updated, never duplicated; the
+    # router MACs it trusts are carried over
     same = [
         n for n, p in networks.items()
         if isinstance(p, dict)
-        and normalize_mac((p.get("fingerprint") or {}).get("gateway_mac")) == net["gateway_mac"]
+        and net["gateway_mac"] in fingerprint_macs(p.get("fingerprint"))
         and (p.get("fingerprint") or {}).get("subnet") == net["subnet"]
     ]
+    macs = [net["gateway_mac"]]
+    for n in same:
+        for m in fingerprint_macs(networks[n].get("fingerprint")):
+            if m not in macs:
+                macs.append(m)
     name = args.name or (same[0] if same else default_network_name(net, args.label))
     if not NETWORK_NAME_RE.match(name):
         sys.stderr.write("Invalid network name %r (letters, digits, . _ -)\n" % name)
@@ -7448,8 +7903,13 @@ def run_bind(args):
         if n != name:
             networks.pop(n, None)
             print("Replaced the previous binding %s (same router + subnet)." % n)
+    fp = {"gateway_mac": net["gateway_mac"], "subnet": net["subnet"]}
+    if len(macs) > 1:
+        fp["gateway_macs"] = macs
+    if adapter:
+        fp["adapter"] = adapter
     networks[name] = {
-        "fingerprint": {"gateway_mac": net["gateway_mac"], "subnet": net["subnet"]},
+        "fingerprint": fp,
         "label": args.label or net.get("ssid") or "",
         "group": group,
         "allow": parsed_ok,
@@ -7461,10 +7921,12 @@ def run_bind(args):
         sys.stderr.write("Could not write %s: %s\n" % (config_path(), exc))
         return 1
     print(
-        "Bound network %s: router %s, subnet %s, label %r, group %s, allow %s"
-        % (name, net["gateway_mac"], net["subnet"], networks[name]["label"], group, parsed_ok)
+        "Bound network %s: router %s, subnet %s%s, label %r, group %s, allow %s"
+        % (name, net["gateway_mac"], net["subnet"], (", adapter %s" % adapter) if adapter else "",
+           networks[name]["label"], group, parsed_ok)
     )
     state = current_state(cfg)
+    refresh_network_hint(cfg, state)
     for w in state["warnings"]:
         print(w)
     for e in state["errors"]:
@@ -7498,7 +7960,7 @@ def run_networks(_args):
     if not isinstance(networks, dict) or not networks:
         print("No networks bound - the LAN relay is DISABLED (fail-closed). Bind one with 'credo-peer-lan.py bind'.")
         return 0
-    current = match_network(networks, detect_network())
+    current = match_network(networks, detect_network_for(networks))
     for name in sorted(networks):
         p = networks[name] if isinstance(networks[name], dict) else {}
         fp = p.get("fingerprint") or {}
@@ -7509,8 +7971,9 @@ def run_networks(_args):
                 " (current)" if name == current else "",
                 p.get("label", ""),
                 network_group(p),
-                fp.get("gateway_mac"),
-                fp.get("subnet"),
+                ", ".join(fingerprint_macs(fp)) or "?",
+                "%s%s" % (fp.get("subnet"),
+                          (", adapter %s" % fingerprint_adapter(p)) if fingerprint_adapter(p) else ""),
                 p.get("allow", ["peers"]),
             )
         )
@@ -7792,7 +8255,33 @@ def main(argv=None):
         nargs="+",
         help="allow entries: peers | IP | CIDR | a-b range | home (default peers)",
     )
+    p_bind.add_argument(
+        "--adapter",
+        help="detect the network of this adapter (e.g. eth1, or the Windows alias 'WLAN 2') "
+        "instead of the default route's; stored in the profile, the relay matches through it",
+    )
+    p_bind.add_argument(
+        "--subnet",
+        help="store this private CIDR (/8 or narrower, e.g. 192.168.0.0/16) instead of the "
+        "detected subnet; the detected address must lie inside it",
+    )
     p_bind.set_defaults(func=run_bind)
+
+    p_trust = sub.add_parser(
+        "trust-router",
+        help="a new router MAC on a bound WLAN: trust it for the profile (default) or record a "
+        "refusal (--refuse); run while connected to that WLAN",
+    )
+    p_trust.add_argument("--profile", required=True, help="bound network name (see networks)")
+    p_trust.add_argument("--refuse", action="store_true",
+                         help="do not trust this router; it is not asked again for this network")
+    p_trust.set_defaults(func=run_trust_router)
+
+    p_nhint = sub.add_parser(
+        "network-hint",
+        help="print the pending router-change hint for the agent (the SessionStart hook uses it)",
+    )
+    p_nhint.set_defaults(func=run_network_hint)
 
     p_unbind = sub.add_parser("unbind", help="remove a bound network")
     p_unbind.add_argument("name")

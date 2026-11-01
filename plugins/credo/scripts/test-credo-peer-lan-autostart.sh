@@ -65,6 +65,7 @@ cat > "$FAKE_ROOT/scripts/credo-peer-lan.py" <<EOF
 #!/usr/bin/env bash
 # fake daemon: record the subcommand it was invoked with and exit at once (never
 # lingers, never binds a port). The hook must invoke it as "ensure".
+if [ "\$1" = network-hint ]; then exec "$PY_BIN" "$REAL_DAEMON" "\$@"; fi
 if [ "\$1" = onboarding ]; then
     if [ -z "\${FAKE_ONB_STATE:-}" ]; then exec "$PY_BIN" "$REAL_DAEMON" "\$@"; fi
     case " \$* " in *" --dir "*) echo "\$FAKE_ONB_STATE \${FAKE_ONB_DIR:-$TMP/cfg/credo}" ;; *) echo "\$FAKE_ONB_STATE" ;; esac
@@ -274,6 +275,24 @@ case "$OUT" in *"pairing repair is pending"*"credo-peer-lan.py pairs"*"only afte
 printf '[]\n' > "$CFGDIR/credo/peer-lan-keys/pending-repair.json"
 OUT="$(run_hook FAKE_ONB_STATE=bound)"
 check "pairing: no pending repair -> no injection" "" "$OUT"
+
+# --- router-change hint (#110): the daemon left a hint file next to the config -------
+# The hook injects the agent text rendered from that file (network-hint); nothing is
+# injected without the file, and the file is never read when the relay is off.
+HINTF="$CFGDIR/credo/peer-lan-network-hint.json"
+printf '%s\n' '{"kind":"router-mac","profile":"home-wifi","label":"Home-WiFi","ssid":"Home-WiFi 3","subnet":"192.168.1.0/24","mac":"aa:bb:cc:dd:ee:02"}' > "$HINTF"
+OUT="$(run_hook FAKE_ONB_STATE=bound)"
+ok "router-mac hint injected (prefix, command, Ask tool, do not add, --refuse)" "$(for t in '[credo-peer-lan]' 'trust-router --profile home-wifi' 'Ask tool' 'do not add' '--refuse'; do printf '%s' "$OUT" | grep -qF -- "$t" || { echo 1; exit 0; }; done; echo 0)"
+printf '%s\n' '{"kind":"windows-category","profile":"home-wifi","label":"Home-WiFi","ssid":"Home-WiFi 3","category":"Public"}' > "$HINTF"
+OUT="$(run_hook FAKE_ONB_STATE=bound)"
+case "$OUT" in *"[credo-peer-lan]"*"Public"*"Network profile type"*"Private"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL windows-category hint not injected: %s\n' "$OUT" ;; esac
+rm -f "$HINTF"
+OUT="$(run_hook FAKE_ONB_STATE=bound)"
+check "router hint: no file -> no injection" "" "$OUT"
+printf '%s\n' '{"kind":"router-mac","profile":"home-wifi","label":"Home-WiFi","ssid":"Home-WiFi 3","subnet":"192.168.1.0/24","mac":"aa:bb:cc:dd:ee:02"}' > "$HINTF"
+OUT="$(run_hook FAKE_ONB_STATE=unbound CREDO_PEER_LAN=off)"
+check "router hint: off toggle silences it" "" "$OUT"
+rm -f "$HINTF"
 
 # --- served sibling profiles (profiles list, real onboarding state) ------------------
 # One machine relay: its config lives in the machine profile (here .claude) and may name
