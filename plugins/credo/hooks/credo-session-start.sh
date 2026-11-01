@@ -44,6 +44,11 @@
 #      per-stage prompt itself when it spawns one (SubagentStart carries no role or
 #      prompt).
 #
+#   5. RESTART CHECK (startup and resume only, a new process). credo_runtime.py check
+#      reports background services that are not running, SSH panes to reconnect (tmux
+#      only) and, once, the scratchpad snapshot of the previous run. Silent when
+#      .credo/process/runtime/ holds nothing to report.
+#
 # State (keyed by session_id, mirrors session-mode-set.sh / credo-decision-set.sh):
 #   mode      : ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-modes/<id>      (active|passive|autonomous)
 #   decision  : ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-decisions/<id>  (accepted|declined)
@@ -179,6 +184,20 @@ fi
 backend="$(CREDO_SESSION_ID="$session_id" "${HOOK_DIR}/../scripts/credo-config.sh" backend 2>/dev/null || echo credo)"
 [[ -n "$backend" ]] || backend="credo"
 
+# --- post-restart check (mechanism 5, credo runtime) -------------------------
+# Only on a new process (startup|resume). credo_runtime.py check prints nothing unless
+# .credo/process/runtime/ has something to report, and a failure leaves the session
+# start untouched.
+RUNTIME_NOTE=""
+RUNTIME_PY="${_scripts_dir:-${CLAUDE_PLUGIN_ROOT:-}/scripts}/credo_runtime.py"
+case "$source" in
+    startup|resume)
+        if [[ -f "$RUNTIME_PY" ]]; then
+            RUNTIME_NOTE="$(python3 "$RUNTIME_PY" check --session "$session_id" 2>/dev/null)" || RUNTIME_NOTE=""
+        fi
+        ;;
+esac
+
 # --- model preset: main-agent prompt + per-spawn rule (every session) -------
 # The universal-prompt and mainagent-prompt of the active preset (credo-preset.sh)
 # reach the main agent here, at every SessionStart including the one after a
@@ -200,6 +219,9 @@ fi
 # gsd: no credo workflow text at all; the preset block and the shorthand legend still apply.
 if [[ "$backend" == "gsd" ]]; then
     OUT="$PRESET_BLOCK"
+    if [[ -n "$RUNTIME_NOTE" ]]; then
+        if [[ -n "$OUT" ]]; then OUT="$OUT"$'\n\n'"$RUNTIME_NOTE"; else OUT="$RUNTIME_NOTE"; fi
+    fi
     if [[ -n "$SHORTHANDS" ]]; then
         if [[ -n "$OUT" ]]; then
             OUT="$OUT"$'\n\n'"$SHORTHANDS"
@@ -356,6 +378,15 @@ if [[ -n "$REHYDRATE" ]]; then
         OUT="$OUT"$'\n\n'"$REHYDRATE"
     else
         OUT="$REHYDRATE"
+    fi
+fi
+
+# Append the post-restart check (mechanism 5) after the rehydrate ACTION, or emit it alone.
+if [[ -n "$RUNTIME_NOTE" ]]; then
+    if [[ -n "$OUT" ]]; then
+        OUT="$OUT"$'\n\n'"$RUNTIME_NOTE"
+    else
+        OUT="$RUNTIME_NOTE"
     fi
 fi
 

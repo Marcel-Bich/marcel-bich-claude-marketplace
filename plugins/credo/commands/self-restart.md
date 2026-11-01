@@ -20,9 +20,20 @@ Helper: `${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-restart.py`
 | Action | What it does |
 |--------|--------------|
 | `check` (default) | Dry run. Gathers and validates everything and prints the plan (target pid, config dir, cwd, session id, transcript, relaunch method, dialog guard, restored permission mode, relaunch command, update allowlist). Changes nothing. Exit 1 with a clear reason if any precondition fails. |
-| `run --no-background-work (--user-confirmed \| --announce S) [--update] [--reason TEXT] [--delay S]` | First the owner-rule guard (below), then the background guard (`--no-background-work` is required, see below): refused -> exit 3, nothing started. Then validates exactly like `check`. On any failure nothing is stopped, an ntfy push goes out (if configured) and it exits 1. Otherwise it spawns a fully detached worker and returns at once. With an announce period it prints the announcement and sends an ntfy push first. Refuses (exit 1) while another restart is still pending. |
+| `run --no-background-work (--user-confirmed \| --announce S) [--update] [--reason TEXT] [--delay S] [--scratchpad DIR]` | First the owner-rule guard (below), then the background guard (`--no-background-work` is required, see below): refused -> exit 3, nothing started. Then validates exactly like `check`. On any failure nothing is stopped, an ntfy push goes out (if configured) and it exits 1. Otherwise it spawns a fully detached worker and returns at once. With an announce period it prints the announcement and sends an ntfy push first. Refuses (exit 1) while another restart is still pending. Before the worker starts, the session scratchpad is snapshot into `<repo>/.credo/process/runtime/` (`--scratchpad DIR` overrides the default location; see Restart survival). |
 | `cancel` | Marks the pending restart as cancelled and terminates its waiting worker; the session keeps running. Exit 1 with "nothing to cancel" when nothing is pending (also once the worker has started stopping the session - then it is too late). |
 | `status` | Prints the state line (`pending` / `cancelled` / `stopping` / `relaunched` / `failed: ...`) with the scheduled stop time, the last marker (`<configdir>/credo/self-restart.json`) and the log tail. |
+
+## Restart survival
+
+A restart ends everything the session started. `run` copies the session scratchpad (helper
+scripts, collection files, pending lists) into `<repo>/.credo/process/runtime/<session>/`
+before the worker stops the session. Copies only, nothing is deleted. After the restart the
+SessionStart check (`credo_runtime.py check`) names that snapshot once, lists the background
+services that are not running (restart them with `credo_runtime.py service start --missing`)
+and, under tmux only, the SSH panes the user must reconnect. Handoff and brief rules (glob
+plugin paths, `session:window.pane (purpose, last %ID)`) are in the compact-plus skill,
+section "Handoff and brief references".
 
 ## Owner rule - when the agent may use it
 

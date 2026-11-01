@@ -21,6 +21,9 @@ Subcommands
          An unannounced restart outside autonomous mode could discard a prompt the
          user is typing. Then it validates exactly like check. On failure: nothing
          is stopped, an ntfy push is sent (when configured) and the exit code is 1.
+         Before the worker is spawned the session scratchpad is snapshot into
+         .credo/process/runtime/ (credo_runtime.py keep, copies only; --scratchpad DIR
+         overrides the default location).
          On success: a fully detached worker (own session, stdio to the log file) is
          spawned and this call returns at once. With an announce period it first
          prints the announcement and sends an ntfy push (reason + cancel command).
@@ -98,6 +101,7 @@ SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
 sys.path.insert(0, SCRIPT_DIR)
 import credo_pane_guard as pane_guard  # noqa: E402
 import credo_pane_wake as pane_wake  # noqa: E402
+import credo_runtime as runtime  # noqa: E402
 DEFAULT_MARKETPLACE = "marcel-bich-claude-marketplace"
 PROMPT_TAG = "[credo-self-restart]"
 # Owner rule: an autonomous self-restart is announced at least this long ahead.
@@ -1839,6 +1843,30 @@ def pending_worker(marker):
     return None
 
 
+def default_scratchpad(cwd, sid):
+    """Claude Code session scratchpad: /tmp/claude-<uid>/<slug(cwd)>/<session>/scratchpad.
+    CREDO_SCRATCHPAD_DIR overrides it (tests, unusual layouts)."""
+    env = os.environ.get("CREDO_SCRATCHPAD_DIR")
+    if env:
+        return env
+    return os.path.join("/tmp", "claude-%d" % os.getuid(), slug(cwd), sid, "scratchpad")
+
+
+def save_scratchpad(plan, scratchpad=None):
+    """Snapshot the session scratchpad into .credo/process/runtime/ before the restart
+    (credo_runtime keep; copies only, nothing is deleted). Returns a one-line note and
+    never raises, so a failed snapshot can never block the restart."""
+    sid, cwd = plan.get("session_id") or "", plan.get("cwd") or ""
+    if not sid or not cwd:
+        return "scratchpad not saved: session id or working directory unknown"
+    try:
+        root = runtime.find_root(cwd)
+        res = runtime.keep(root, sid, scratchpad or default_scratchpad(cwd, sid))
+    except Exception as exc:  # the snapshot must never block the restart
+        return "scratchpad not saved (%s)" % type(exc).__name__
+    return "scratchpad: " + res["note"]
+
+
 def cmd_run(args):
     plan, errors = gather(args)
     announce, gerr = owner_guard(plan, args.user_confirmed, args.announce)
@@ -1866,6 +1894,7 @@ def cmd_run(args):
         print("REFUSED: a self-restart is already pending (worker %d); cancel it first: %s"
               % (other, cancel_hint()))
         return 1
+    print(save_scratchpad(plan, args.scratchpad))
     t0 = time.time()
     plan["started"] = now_iso()
     plan["announce"] = announce
@@ -1986,6 +2015,9 @@ def main(argv=None):
     ap.add_argument("--reason", default="cc-up")
     ap.add_argument("--delay", type=float, default=5.0)
     ap.add_argument("--method", choices=("tmux", "wt", "x11"))
+    ap.add_argument("--scratchpad", default=None,
+                    help="session scratchpad to snapshot into .credo/process/runtime/ before "
+                         "the restart (default: the Claude Code scratchpad of this session)")
     args = ap.parse_args(argv)
     return {"check": cmd_check, "run": cmd_run, "cancel": cmd_cancel,
             "status": cmd_status}[args.action](args)

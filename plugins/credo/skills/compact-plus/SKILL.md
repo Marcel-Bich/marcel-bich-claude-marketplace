@@ -159,6 +159,16 @@ then go straight to the report (step 8) and skip steps 4-7.
    This also marks the session as credo-engaged if you had not formally opted in, so the
    credo workflow knowledge is re-fed after the compact. It never overrides an explicit
    earlier decision.
+   Then save the session scratchpad. Helper scripts, collection files and pending lists that
+   exist only there are lost on a Claude Code restart, so copy them into the repo (copies
+   only, nothing is deleted; a manifest records sha256 and anything skipped):
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/credo_runtime.py" keep --session "$CLAUDE_CODE_SESSION_ID" --scratchpad "<session scratchpad path from your environment>"
+   ```
+
+   The snapshot lands in `.credo/process/runtime/<session id>/scratchpad/`. After a restart
+   the SessionStart check names it once, so the next session can copy what it needs back.
 4. Run the audit gate before committing. The completed work must pass the credo `audit`
    skill, run by a dedicated subagent (not the builder). Hand the subagent the verbatim
    location of what to audit and let it read the source itself - do not paraphrase the
@@ -187,6 +197,30 @@ then go straight to the report (step 8) and skip steps 4-7.
 
 Only after that green report is a /compact safe. This skill never issues the /compact
 itself.
+
+## Handoff and brief references (restart-safe)
+
+Every handoff and every brief follows these rules, so a restart cannot leave it pointing at
+stale or missing things. `credo_runtime.py` below stands for the path resolved as follows:
+
+- Plugin scripts are never pinned to a plugin version (a fixed version number in the path
+  goes stale on the next update). Resolve the path by glob at use time:
+  `ls -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/*/credo/*/scripts/credo_runtime.py | sort -V | tail -1`
+- Background services (keep-alive loops, dev servers) belong to the restart list:
+  `credo_runtime.py service add <name> --cmd '<command>' --cwd <dir>`, started with
+  `credo_runtime.py service start <name>`. Under tmux each runs in its own detached session
+  `credo-svc-<name>`; without tmux it runs under `systemd-run --user` when systemd is booted,
+  else under nohup. After a restart the SessionStart check names the services that are not
+  running; restart them with `credo_runtime.py service start --missing`.
+- tmux panes are named `session:window.pane (purpose, last %ID)`, for example
+  `work:1.2 (stage ssh, last %14)`. Before use, resolve the name with
+  `credo_runtime.py pane resolve <session:window.pane>` and use the pane id it prints. The
+  stored %ID only shows whether the old id still names the same pane (`id_matches`); never
+  act on a bare pane id.
+- SSH panes can only be reconnected by the user after a restart. The post-restart check lists
+  the ones that need it; the agent never reconnects them itself.
+- The tmux rules apply only when tmux is used. Without tmux keep the service rules and skip
+  the pane lines.
 
 ## After a green report: the real /compact via /credo:self-compact
 
