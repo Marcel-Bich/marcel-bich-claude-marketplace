@@ -760,17 +760,29 @@ def _close_backtick(text, start):
     return -1
 
 
+def _arithmetic_stop(text, index):
+    """End (exclusive) of the "$((" at index when bash reads it as arithmetic, else -1; an unclosed one ends at
+    the end of text. Bash reads "$((cmd) ; x)" as the command substitution "$( (cmd) ; x )" instead. The first
+    ")" that closes "$((" is then not followed by a second one."""
+    if not text.startswith("$((", index):
+        return -1
+    end = _close_paren(text, index + 3, False)
+    if end < 0:
+        return len(text)
+    return end + 2 if text.startswith(")", end + 1) else -1
+
+
 def _expansions(text):
     """Command substitutions inside expanding text (unquoted heredoc bodies) as (start, stop, inner):
-    the span of "$(...)" or "`...`" in text (stop is the end of text when unclosed) and its inner text."""
+    the span of "$(...)" or "`...`" in text (stop is the end of text when unclosed) and its inner text.
+    The text of an arithmetic expansion is searched too; "$((cmd) ; x)" is read as "$(" instead."""
     found, index = [], 0
     while index < len(text):
         if text[index] == "\\":
             index += 2
             continue
-        if text.startswith("$((", index):
-            end = _close_paren(text, index + 3, False)
-            index = len(text) if end < 0 else end + 1
+        if _arithmetic_stop(text, index) >= 0:
+            index += 3
             continue
         if text.startswith("$(", index):
             end, inner = _close_paren(text, index + 2), index + 2
@@ -909,6 +921,17 @@ def scan(command):
         script.subs.append(inner)
         return "__DOGMA_SUB_%d__" % (len(script.subs) - 1)
 
+    def arithmetic(start, stop):
+        """Buffer text of the arithmetic expansion from start to stop. Its command substitutions become
+        placeholders and are recorded like top-level ones, so they are judged the same way."""
+        parts, last = [], start
+        for span_start, span_stop, inner in _expansions(text[start:stop]):
+            parts.append(text[last:start + span_start])
+            parts.append(substitution(inner))
+            last = start + span_stop
+        parts.append(text[last:stop])
+        return "".join(parts)
+
     def take_bodies(position):
         for item in pending:
             delimiter, strip_tabs, slot = item
@@ -960,11 +983,10 @@ def scan(command):
                 buffer.append(char)
                 index += 1
                 continue
-            if text.startswith("$((", index):
-                end = _close_paren(text, index + 3, False)
-                end = size - 1 if end < 0 else end
-                buffer.append(text[index:end + 1])
-                index = end + 1
+            stop = _arithmetic_stop(text, index)
+            if stop >= 0:
+                buffer.append(arithmetic(index, stop))
+                index = stop
                 continue
             if text.startswith("$(", index) or char == "`":
                 if char == "`":
@@ -1004,11 +1026,10 @@ def scan(command):
             end = text.find("\n", index)
             index = size if end < 0 else end
             continue
-        if text.startswith("$((", index):
-            end = _close_paren(text, index + 3, False)
-            end = size - 1 if end < 0 else end
-            buffer.append(text[index:end + 1])
-            index = end + 1
+        stop = _arithmetic_stop(text, index)
+        if stop >= 0:
+            buffer.append(arithmetic(index, stop))
+            index = stop
             continue
         if text.startswith("$(", index) or text.startswith("<(", index) or text.startswith(">(", index):
             if text.startswith(">(", index):
@@ -2048,7 +2069,7 @@ class Analysis:
         if CONT_RE.search(raw) and ("$" in raw or "`" in raw):
             return
         if "$(" in raw or "`" in raw:
-            return  # any substitution: _expansions misses some ($((...)), $'...' and # inside $(...))
+            return  # any substitution; _expansions misses some ($'...' and # inside $(...))
         self.text_bodies.add(slot)
 
     def shadowing(self):

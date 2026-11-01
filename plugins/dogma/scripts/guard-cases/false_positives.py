@@ -381,6 +381,18 @@ CASES = (
     ("deny", "N", "cat <<EOF\n$(( $(echo x > /home/myuser/.bashrc) ))\nEOF"),
     ("deny", "N", "cat <<EOF\n$(echo $'\\')' ; cat > /home/myuser/.bashrc)\nEOF"),
     ("deny", "N", "cat <<EOF\n$(echo a # )\ncat > /home/myuser/.bashrc)\nEOF"),
+    # a command substitution inside $(( )) is judged like a top-level one. Covered forms are plain,
+    # double-quoted, backtick, nested arithmetic, an unquoted heredoc body and the subshell reading
+    # "$((cmd) ; x)" as "$( (cmd) ; x )"
+    ("deny", "N", "echo $(( $(rm -rf ~) ))"),
+    ("deny", "N", "echo $(( $(rm -rf /home/myuser) ))"),
+    ("deny", "N", "echo \"$(( $(rm -rf ~) ))\""),
+    ("deny", "N", "echo $(( `rm -rf ~` ))"),
+    ("deny", "N", "echo $(( $(echo x > ~/.bashrc) ))"),
+    ("deny", "N", "echo $(( $(echo x > /home/myuser/.bashrc) ))"),
+    ("deny", "N", "echo $(( 1 + $(( $(rm -rf ~) )) ))"),
+    ("deny", "N", "echo $((rm -rf ~) ; echo b)"),
+    ("deny", "N", "cat <<EOF\n$(( $(rm -rf ~) ))\nEOF"),
     # a line continuation joins a substitution into the body: still judged
     ("deny", "N", "cat <<EOF\nsee <dogma>/x $\\\n(cat > /x)\nEOF"),
     # a line continuation without a substitution: the joined body is text
@@ -494,6 +506,13 @@ CASES = (
     ("allow", "X", "git commit -m \"$(cat " + HD + "\nbody with a ) paren and don't\nEOF\n)\""),
     ("allow", "N", "echo $((1 << 2))"),
     ("allow", "N", "x=$(( 1<<3 )); echo $x"),
+    # plain arithmetic, also with a substitution as an operand, stays allowed
+    ("allow", "N", "echo $((1+2))"),
+    ("allow", "N", "x=$((x+1)); echo $x"),
+    ("allow", "N", "echo $(( 2 * (3 + 4) ))"),
+    ("allow", "N", "echo $(( $(wc -l < notes.txt) + 1 ))"),
+    ("allow", "N", "echo $(( $(echo 3) + 1 ))"),
+    ("allow", "N", "echo $((echo a) ; echo b)"),
     ("deny", "X", "echo \"$(cat " + HD + "\nit's )\nEOF\n)\"; rm -rf ~"),
     ("deny", "X", "git commit -m \"$(cat " + HD + "\ndon't\n)\""),
     ("allow", "X", "git commit --amend -m \"$(cat " + HD + "\ndon't\nEOF\n)\""),
