@@ -124,6 +124,12 @@ the security block):
 - No background shells. The agent runs no command with `run_in_background`. This holds for
   every subagent brief, not only builders and auditors ("Monitoring without context
   flooding" below).
+- Every brief carries the repo's mandatory brief lines from `.credo/RULES.md` (for example a
+  path-safety note), copied verbatim. A repo's `.credo/RULES.md` overrides these defaults, and
+  the subagent reads that file first.
+- Blocker and owner-decision claims are proposals. The main agent reads the source the
+  subagent cites (file:line or command output) before it asks the owner or declares a blocker,
+  especially for a claim from a model below its own.
 
 ### Fix rounds after a failing audit (default)
 
@@ -133,11 +139,19 @@ the security block):
   security block as in every brief. Never resume the builder's context for a fix round:
   one item needed about 1.45M builder tokens over 3 resumed rounds.
 - **Stage ladder, no fixed fail count.** Fix rounds follow only the active preset stage
-  ladder. Each fix round is the next attempt of `credo-preset.sh stage <role> <attempt>`
-  ("Model presets" below). Each stage allows its configured attempts (`until-done` has no
-  attempt cap; the budget caps stop it), then `back-to-human`. The item goes back to the
-  owner earlier only for a genuine owner decision (the escalation list and the
-  Named-Decision-Test, credo `items`) or when the same finding returns unchanged twice.
+  ladder. The active preset (always one: the configured `preset:`, else the built-in
+  `balanced`) is the only source of the escalation stages for fix rounds: the model, the
+  effort, the attempts per stage and when back-to-human comes. Each fix round is the next
+  attempt of `credo-preset.sh stage <role> <attempt>` ("Model presets" below). Each stage
+  allows its configured attempts (`until-done` has no attempt cap; the budget caps stop it),
+  then `back-to-human`. Skill texts and audit agents keep no fail count and no brake of their
+  own. While the ladder has attempts left, whether another fix round runs is the main agent's
+  decision, never an owner question; an audit subagent never declares a brake itself, it
+  reports the attempt count. The item goes back to the owner only at back-to-human or for a
+  genuine owner decision (the escalation list and the Named-Decision-Test, credo `items`).
+  The until-done hand-back on the same failure twice without progress is part of the preset
+  semantics. By default the same finding returning unchanged twice is an early hand-back as
+  well; a repo's `.credo/RULES.md` can switch that default off.
   For the hand-back, `credo-item-move.sh <id> clarify` sets `clarify_owner: human` and logs
   it, with the audit reports named in the History (`--keep-owner` only for an
   agent-internal re-clarify); say so in the next reply or report.
@@ -461,6 +475,10 @@ Per spawn:
    prompt.
 3. `action: back-to-human` means the chain is used up: do not spawn; hand the item back (below).
 
+The credo `PreToolUse` hook on Agent and Task calls (`hooks/credo-agent-spawn-check.sh`) checks
+each spawn: a call without `model` or `effort`, or with a pair that matches no stage of the
+active preset, gets a warning with the active ladder per role. It warns and never blocks.
+
 A failed attempt is a red gate: tests red, the done-gate red, an audit FAIL, or the subagent
 reports itself stuck. The next attempt gets the findings (file:line, failing test, audit
 finding) in its brief. Then follow `next`:
@@ -470,8 +488,10 @@ finding) in its brief. Then follow `next`:
   (`next-model` and `next-effort` show them).
 - `back-to-human` - hand the item back.
 
-`until-done` stages have no attempt cap: the budget caps (credo `budget`) stop them, and the
-same failure twice without progress hands the item back.
+`until-done` stages have no attempt cap: the budget caps (credo `budget`) stop them. By default
+the same failure twice without progress is an early hand-back as well; a repo's
+`.credo/RULES.md` can switch that default off. Either way the next round is the main agent's
+decision, and the owner is asked only at back-to-human or for a genuine owner decision.
 
 Back-to-human: move the item to `1_clarify` (`credo-item-move.sh <id> clarify`), put a
 `> URGENT: <blocker>` note at the top of its History, and send an ntfy push:

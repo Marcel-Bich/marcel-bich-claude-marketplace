@@ -73,6 +73,50 @@ case "$explore_ctx" in
     *) check "Explore: fresh time line kept" yes no ;;
 esac
 
+# --- git: main checkout modifies files only, an own linked worktree may commit ------
+has "GIT: main checkout modifies files only" "in the main checkout modify files only" "$gp_ctx"
+has "GIT: own linked worktree exception" "OWN linked git worktree" "$gp_ctx"
+has "GIT: worktree commits when the brief asks" "commit on your worktree branch when your brief asks for it" "$gp_ctx"
+has "GIT: never push, merge or release" "Never push, merge or release" "$gp_ctx"
+has "GIT: gitignored files never committed" ".gitignore-d files" "$gp_ctx"
+
+# --- claims: blocker and owner-decision claims are proposals ------------------------
+has "CLAIMS: blocker claims are proposals" "your blocker and owner-decision claims are proposals" "$gp_ctx"
+has "CLAIMS: the main agent verifies the cited source" "the main agent verifies them (reads the cited source)" "$gp_ctx"
+has "CLAIMS: cite file:line or command output" "Cite the file:line or command output" "$gp_ctx"
+
+# --- RULES.md first: only where the project carries .credo/RULES.md ----------------
+RULES_LINE="PROJECT RULES: this repo has .credo/RULES.md. Read it first"
+RULES_OVERRIDE="Its rules override these credo defaults"
+case "$gp_ctx" in
+    *"$RULES_LINE"*) rules_absent=no ;;
+    *) rules_absent=yes ;;
+esac
+check "no .credo/RULES.md: no RULES-first line" yes "$rules_absent"
+mkdir -p "$CLAUDE_PROJECT_DIR/.credo"
+printf '# per-repo rules\n' > "$CLAUDE_PROJECT_DIR/.credo/RULES.md"
+rules_ctx="$(ctx_of general-purpose)"
+has "RULES.md in the project dir: RULES-first line" "$RULES_LINE" "$rules_ctx"
+has "RULES.md: overrides the credo defaults" "$RULES_OVERRIDE" "$rules_ctx"
+has "RULES.md: safety rules are never lowered" "never lower the safety rules above" "$rules_ctx"
+case "$rules_ctx" in
+    *"$RULES_LINE"*) rules_before_security=yes ;;
+    *) rules_before_security=no ;;
+esac
+check "RULES.md line sits before the SECURITY block" yes "$rules_before_security"
+case "$(ctx_of Explore)" in
+    *"$RULES_LINE"*) check "Explore: light block has no RULES-first line" no yes ;;
+    *) check "Explore: light block has no RULES-first line" no no ;;
+esac
+
+# a RULES.md in the hook input cwd counts too (the project dir has none here)
+mkdir -p "$TMP/cwdrepo/.credo" "$TMP/emptyproj"
+printf '# per-repo rules\n' > "$TMP/cwdrepo/.credo/RULES.md"
+cwd_ctx="$(jq -n --arg c "$TMP/cwdrepo" --arg s "$SID" \
+    '{session_id: $s, agent_type: "general-purpose", cwd: $c, hook_event_name: "SubagentStart"}' \
+    | CLAUDE_PROJECT_DIR="$TMP/emptyproj" bash "$HOOK" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null)"
+has "RULES.md in the hook input cwd: RULES-first line" "$RULES_LINE" "$cwd_ctx"
+
 # --- output shape: SubagentStart JSON, no chat output -------------------------------
 raw="$(jq -n --arg s "$SID" '{session_id: $s, agent_type: "general-purpose", hook_event_name: "SubagentStart"}' \
     | bash "$HOOK" 2>/dev/null)"

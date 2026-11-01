@@ -766,9 +766,12 @@ Fix rounds after a failing audit follow the credo `audit` skill: a FRESH fix age
 only the findings, the branch state and the test commands (never the builder's resumed
 context). There is no fixed fail count. Fix rounds follow only the active preset stage
 ladder (`credo-preset.sh stage <role> <attempt>`), each stage with its configured attempts
-(`until-done` has no attempt cap; the budget caps stop it), then back-to-human. The item goes
-back to the owner earlier only for a genuine owner decision (the escalation list and the
-Named-Decision-Test) or when the same finding returns unchanged twice.
+(`until-done` has no attempt cap; the budget caps stop it), then back-to-human. While the
+ladder has attempts left, whether another fix round runs is the main agent's decision, never
+an owner question; an audit subagent never declares a brake itself. The item goes back to the
+owner only at the ladder's back-to-human or for a genuine owner decision (the escalation list
+and the Named-Decision-Test). By default the same finding returning unchanged twice is an early
+hand-back as well; a repo's `.credo/RULES.md` can switch that default off.
 
 This is the DONE-work case. A different case is a critical open user-only decision that
 surfaces while building a `2_go` item (not yet done): that is governed by the

@@ -43,6 +43,7 @@ session_id=$(printf '%s' "$INPUT" | jq -r '.session_id // ""' 2>/dev/null) || se
 # --- the credo rule block injected into every subagent ---
 read -r -d '' rules <<'RULES'
 credo rules apply inside this subagent, independently of the main agent - follow them yourself, do not assume the main agent already handled them.
+__RULES_LINE__
 
 SECURITY (inherited, non-negotiable): install nothing (no pip, npm, apt, system or global packages) without explicit user approval; never read secrets or credentials (.env files, keys, tokens, credentials files, shell history); never delete /, /home, ~, $HOME, a parent of the working directory, or any mounted filesystem or device; no rm -rf upward traversal, no mkfs, dd, or wipefs; never delete local files without explicit user confirmation; when in doubt about a deletion target, STOP and ASK. Never run a delete (rm, rm -rf, find -delete, unlink) whose target path contains a shell variable ($X, ${X} or $(...)): an empty or unset variable can turn it into a delete of / or a parent dir. Write the literal path instead, or create a NEW literal scratch dir with a fresh unique name, under the session scratchpad or the system temp dir; in an unattended run such a command can raise a permission prompt that blocks the whole run. Load the safety skill before any delete or install.
 
@@ -52,7 +53,9 @@ HONESTY: admit uncertainty, never guess or fabricate; verify before claiming som
 
 DELEGATION: if you spawn your own helpers they inherit this same security and run at a model at least as capable as yours, never weaker (orchestration skill). If you hit a blocking decision you cannot resolve, return {status: needs_decision, question: ...} instead of guessing.
 
-GIT: modify files only - do NOT run git add / git commit / git push (the main / task-build agent is the single owner of the working-tree index, which avoids a .git/index.lock race); if you believe a commit is warranted, report that back instead of committing.
+CLAIMS: your blocker and owner-decision claims are proposals; the main agent verifies them (reads the cited source) before it asks the owner or declares a blocker. Cite the file:line or command output that proves each such claim.
+
+GIT: in the main checkout modify files only - do NOT run git add / git commit / git push there (the main / task-build agent is the single owner of the working-tree index, which avoids a .git/index.lock race); if you believe a commit is warranted, report that back instead of committing. Exception: in your OWN linked git worktree (hydra or native) you have your own index, so you may commit on your worktree branch when your brief asks for it (a linked worktree shows a different `git rev-parse --git-dir` than `git rev-parse --git-common-dir`). Never push, merge or release, and never add or commit .gitignore-d files.
 
 BACKGROUND SHELLS: forbidden for subagents - do not start a background shell, never set run_in_background; only the main agent may use them, and it keeps track of them.
 
@@ -90,6 +93,19 @@ if [[ "$light_block" -eq 0 ]]; then
         item_clause=" Record and gate work as a credo item; work counts as done only after the mandatory post-completion audit gate, with docs updated in the same change (items and audit skills)."
     fi
     rules="${rules/__ITEM_CLAUSE__/$item_clause}"
+
+    # --- project RULES.md first (fail-safe) ---
+    # A repo's .credo/RULES.md overrides the credo defaults, so the subagent reads it
+    # first. Checked in the hook input cwd and the project dir; no file -> no line.
+    rules_clause=""
+    cwd_in=$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null) || cwd_in=""
+    [[ "$cwd_in" == "null" ]] && cwd_in=""
+    for rules_dir in "$cwd_in" "${CLAUDE_PROJECT_DIR:-$PWD}"; do
+        [[ -n "$rules_dir" && -f "$rules_dir/.credo/RULES.md" ]] || continue
+        rules_clause=$'\n'"PROJECT RULES: this repo has .credo/RULES.md. Read it first, before any other work. Its rules override these credo defaults (fix-round limits, brief lines, path-safety notes), but never lower the safety rules above."$'\n'
+        break
+    done
+    rules="${rules/__RULES_LINE__$'\n'/"$rules_clause"}"
 
     # --- language fill-in (best-effort, fail-safe) ---
     # HONESTY CAVEAT: the `language` key in settings.json is currently UNDOCUMENTED. It

@@ -249,14 +249,24 @@ applies, in a lighter form:
   findings" below) goes to a FRESH fix agent whose brief holds only this report's findings,
   the branch state and the test commands - never a resumed builder context. The fix is
   re-audited by another fresh audit subagent.
-- **Fix rounds follow the stage ladder.** There is no fixed fail count. Each fix round is
-  one attempt on the active preset stage ladder (`credo-preset.sh stage <role> <attempt>`,
-  credo `orchestration`, "Model presets"). Each stage allows its configured attempts
-  (`until-done` has no attempt cap; the budget caps stop it), then `back-to-human`. The item
-  goes back to the owner earlier only for a genuine owner decision (the escalation list and
-  the Named-Decision-Test, credo `items`) or when the same finding returns unchanged twice
-  (the same failure twice without progress). Count the earlier FAIL reports under
-  `.credo/process/reports/` for the item and state the attempt in the verdict.
+- **Fix rounds follow the stage ladder.** There is no fixed fail count. The active preset
+  (always one: the configured `preset:`, else the built-in `balanced`) is the only source of
+  the escalation stages for fix rounds: the model, the effort, the attempts per stage and
+  when back-to-human comes (`credo-preset.sh stage <role> <attempt>`, credo `orchestration`,
+  "Model presets"). Each fix round is one attempt on that ladder. Each stage allows its
+  configured attempts (`until-done` has no attempt cap; the budget caps stop it), then
+  `back-to-human`. This audit skill and audit agents keep no fail count and no brake of
+  their own. While the ladder has attempts left, whether another fix round runs is the main
+  agent's decision, never an owner question. An audit subagent never declares a brake
+  itself: it counts the earlier FAIL reports under `.credo/process/reports/` for the item,
+  states the attempt number in the verdict, and the main agent decides the next step per
+  `.credo/RULES.md` and the ladder. The item goes back to the owner only at the ladder's
+  `back-to-human` or for a genuine owner decision (the escalation list and the
+  Named-Decision-Test, credo `items`). The until-done hand-back on the same failure twice
+  without progress is part of the preset semantics. By default the same finding returning
+  unchanged twice is an early hand-back too; a repo's `.credo/RULES.md` can switch that default off.
+- **A repo's `.credo/RULES.md` overrides these defaults.** Read it before the verdict
+  (credo `rules` skill).
 - The auditor never silently downgrades or repairs; it proposes, the move follows the
   verdict.
 

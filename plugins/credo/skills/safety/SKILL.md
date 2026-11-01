@@ -110,6 +110,15 @@ commands (one plain step over a long chained or nested one), so the target stays
 - Redact paths and personal data (names, user names, home paths, hostnames, addresses) in
   reports and in versioned text before a commit.
 
+### In-process key loading (repo-granted)
+
+Only when the repo's `.credo/RULES.md` grants it, a script may load provider keys from the repo's key file itself:
+
+- The script derives the key file location in its own code. Never name the key file in a shell command: a credential guard may block any command that names it, by design.
+- Values stay in memory only (for example a memfd, or an fd path handed to the product code). The script never prints, logs, copies or writes a value, and checks every output for key strings before it is saved.
+- The agent never reads the key file (no cat, grep or Read) and never sees a value.
+- Before claiming "no access" to a key or a service, read `.credo/RULES.md` and the requirements logs. A blocked command is not "no access".
+
 ## Licences
 
 A source without an explicit licence is not used - code, data, fonts and models alike.

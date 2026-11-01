@@ -12,8 +12,9 @@
 #                      chain (a list) of stages that may end with back-to-human
 #
 # attempts: a positive integer, or until-done (no attempt cap: budget caps stop
-# it, and the same failure twice without progress goes back to the human). A
-# stage without attempts counts as until-done and may only be the last stage.
+# it). By default the same failure twice without progress is an early hand-back
+# as well; a repo's .credo/RULES.md can switch that default off. A stage without
+# attempts counts as until-done and may only be the last stage.
 # A missing prompt key adds nothing; there is no hidden default text.
 presets:
   quality:

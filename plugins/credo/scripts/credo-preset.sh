@@ -309,8 +309,9 @@ def stage_values(eff, role, n):
                    "prompt": join_prompt(eff["universal"], stage["subagent"])})
     if stage["attempts"] == UNTIL:
         values["next"] = "retry"
-        values["note"] = ("until-done: no attempt cap; budget caps stop it, the same failure "
-                          "twice without progress goes back to the human")
+        values["note"] = ("until-done: no attempt cap; budget caps stop it. By default the same "
+                          "failure twice without progress is an early hand-back; a repo's "
+                          ".credo/RULES.md can switch that default off")
     elif k < stage["attempts"]:
         values["next"] = "retry"
     elif index + 1 < len(stages):

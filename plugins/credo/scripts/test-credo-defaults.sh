@@ -70,7 +70,29 @@ MIGRATE="$PLUGIN_DIR/skills/migrate/SKILL.md"
 GUIDE="$PLUGIN_DIR/docs/credo-guide.md"
 
 hasany "fix rounds follow the preset ladder" "stage ladder" "$AUDIT" "$ORCH" "$ITEMS"
-hasany "back to owner after unchanged finding" "returns unchanged twice" "$AUDIT" "$ORCH" "$ITEMS"
+# fix-round hand-back: the active preset is the only source of the escalation stages, the
+# main agent decides while attempts are left, the audit never brakes, the owner is asked only
+# at back-to-human or for a genuine owner decision, and the early hand-back on an unchanged
+# finding is a default that a repo's RULES.md can switch off
+has "audit: the active preset is the only source of the escalation stages" "$AUDIT" "escalation stages for fix rounds"
+has "orchestration: the active preset is the only source of the escalation stages" "$ORCH" "is the only source of the escalation stages"
+has "audit: no owner question while attempts are left" "$AUDIT" "never an owner question"
+has "orchestration: no owner question while attempts are left" "$ORCH" "never an owner question"
+has "items: next fix round is the main agent's decision" "$ITEMS" "main agent's decision"
+has "audit: an audit subagent never declares a brake" "$AUDIT" "declares a brake"
+has "orchestration: an audit subagent never declares a brake" "$ORCH" "declares a brake"
+has "audit: no fail count and no brake of its own" "$AUDIT" "keep no fail count and no brake"
+has "orchestration: no fail count and no brake of its own" "$ORCH" "keep no fail count and no brake"
+has "items: an audit subagent never declares a brake" "$ITEMS" "never declares a brake itself"
+has "audit: unchanged-finding hand-back is switchable by RULES.md" "$AUDIT" "can switch that default off"
+has "orchestration: unchanged-finding hand-back is switchable by RULES.md" "$ORCH" "can switch that default off"
+has "items: unchanged-finding hand-back is switchable by RULES.md" "$ITEMS" "can switch that default off"
+has "presets template: hand-back is switchable by RULES.md" "$PLUGIN_DIR/templates/presets.default.yaml" "can switch that default off"
+has "guide: hand-back is switchable by RULES.md" "$GUIDE" "can switch that default off"
+has "audit: RULES.md overrides the defaults" "$AUDIT" "overrides these defaults"
+has "orchestration: RULES.md overrides the defaults" "$ORCH" "overrides these defaults"
+has "orchestration: every brief carries the mandatory RULES.md brief lines" "$ORCH" "mandatory brief lines from"
+has "orchestration: blocker claims are proposals the main agent verifies" "$ORCH" "owner-decision claims are proposals"
 has "orchestration names the builder range" "$ORCH" "builders.min_per_area"
 has "orchestration names the builder max" "$ORCH" "builders.max_per_area"
 lacks "no fixed 3-4 builder default" '3-4 (single-item )?builders'
@@ -129,6 +151,8 @@ has "safety: licence rule" "$SAFETY" "explicit licence"
 has "safety: permissive licences for foreign code" "$SAFETY" "permissive"
 has "safety: GPL and AGPL only as inspiration or a separate service" "$SAFETY" "GPL"
 has "safety: redact personal data before commit" "$SAFETY" "redact"
+has "safety: in-process key loading only when the repo grants it" "$SAFETY" "In-process key loading (repo-granted)"
+has "safety: a blocked command is not no access" "$SAFETY" "A blocked command is not"
 has "safety: own disposable files may be deleted" "$SAFETY" "disposable"
 
 # --- 7. release and setup ---
