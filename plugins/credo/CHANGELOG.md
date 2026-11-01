@@ -6,6 +6,12 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.84
 
+#### v0.84.18
+
+##### Fixed
+
+- The periodic reminder is typed and submitted now. Claude Code turned the long reminder text into a paste placeholder, which was never submitted, so the text is typed in pieces of 200 characters, 0.1 s apart.
+
 #### v0.84.17
 
 ##### Changed
