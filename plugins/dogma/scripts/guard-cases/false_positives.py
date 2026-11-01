@@ -359,6 +359,32 @@ CASES = (
     ("allow", "N", "/bin/cat > {R}/x.sh " + HD + "\nrm -rf \"${VAR:?}\"\nEOF"),
     ("allow", "N", "cat > {R}/x.sh " + HD + "\ncleanup() {\n  rm -rf \"${D:?}\"\n}\nalias ll='ls -l'\nhash -r\nPATH=$PATH:/x\nEOF"),
     ("allow", "N", "cat > {R}/x.sh " + HD + "\nfunction wipe { rm -rf \"${D:?}\"; }\nEOF"),
+    # --- an unquoted heredoc body is text, except its $(...) and backticks (bash expands only those):
+    # redirect-like text in it is no redirect, and the substitutions in it are still judged
+    ("allow", "N", "cat <<EOF\nsee <dogma>/x\nEOF"),
+    ("allow", "N", "cat <<EOF\na>/x\nEOF"),
+    ("allow", "N", "cat <<EOF\n<tag>/path\nEOF"),
+    ("allow", "N", "cat <<EOF\nsee <dogma>/x `echo done` and a>/x\nEOF"),
+    ("allow", "N", "cat > /home/myuser/git/notes.md <<EOF\nsee <dogma>/x\nEOF"),
+    ("allow", "N", "tee {R}/x.txt <<EOF\nsee <dogma>/x\nEOF"),
+    ("allow", "N", "cat <<EOF\n\\$(cat > /x)\nEOF"),
+    ("allow", "N", "cat <<'EOF'\nsee <dogma>/x\nEOF"),
+    ("deny", "N", "cat <<EOF\nsee <dogma>/x\n$(rm -rf /home)\nEOF"),
+    ("deny", "N", "cat <<EOF\n<tag>/path `rm -rf /home`\nEOF"),
+    ("deny", "N", "cat <<EOF\na>/x $(cat > /home/myuser/.bashrc)\nEOF"),
+    ("deny", "N", "cat <<EOF\nsee <dogma>/x $(cat > /x)\nEOF"),
+    ("deny", "N", "cat > /x <<EOF\nsee <dogma>/x\nEOF"),
+    ("deny", "N", "cat > /home/myuser/.bashrc <<EOF\nsee <dogma>/x\nEOF"),
+    ("deny", "N", "cat > {R}/x.sh <<EOF\nrm -rf ~\nEOF\nsh < {R}/x.sh"),
+    ("deny", "N", "cat > {R}/x.sh <<EOF\nrm -rf ~\nEOF\nbash {R}/x.sh"),
+    # a line continuation joins a substitution into the body: still judged
+    ("deny", "N", "cat <<EOF\nsee <dogma>/x $\\\n(cat > /x)\nEOF"),
+    # a line continuation without a substitution: the joined body is text
+    ("allow", "N", "cat <<EOF\na\\\n>/x\nEOF"),
+    # the text after a data body keeps its quoting (the body leaves no dangling heredoc operator)
+    ("allow", "N", "cat <<EOF\nfoo\nEOF\necho \"a>/x\""),
+    # interpreter bodies are code (shell expansions may change it): redirect-like text stays checked
+    ("deny", "N", "python3 - <<EOF\nimport subprocess\nsubprocess.run('echo x >/home/myuser/.bashrc', shell=True)\nEOF"),
     # inline code with a heredoc: symlinks onto the home and critical paths
     ("deny", "N", "python3 <<'EOF'\nimport os\nos.symlink('{H}', 'link')\nEOF\nrm -rf link/*"),
     ("deny", "N", "python3 - <<'PY'\nfrom pathlib import Path\nPath('link').symlink_to('{H}')\nPY"),

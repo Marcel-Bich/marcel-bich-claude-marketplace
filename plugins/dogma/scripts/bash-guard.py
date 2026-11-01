@@ -761,7 +761,8 @@ def _close_backtick(text, start):
 
 
 def _expansions(text):
-    """Command substitutions inside expanding text (unquoted heredoc bodies)."""
+    """Command substitutions inside expanding text (unquoted heredoc bodies) as (start, stop, inner):
+    the span of "$(...)" or "`...`" in text (stop is the end of text when unclosed) and its inner text."""
     found, index = [], 0
     while index < len(text):
         if text[index] == "\\":
@@ -772,17 +773,31 @@ def _expansions(text):
             index = len(text) if end < 0 else end + 1
             continue
         if text.startswith("$(", index):
-            end = _close_paren(text, index + 2)
-            found.append(text[index + 2:] if end < 0 else text[index + 2:end])
-            index = len(text) if end < 0 else end + 1
+            end, inner = _close_paren(text, index + 2), index + 2
+        elif text[index] == "`":
+            end, inner = _close_backtick(text, index + 1), index + 1
+        else:
+            index += 1
             continue
-        if text[index] == "`":
-            end = _close_backtick(text, index + 1)
-            found.append(text[index + 1:] if end < 0 else text[index + 1:end])
-            index = len(text) if end < 0 else end + 1
-            continue
-        index += 1
+        stop = len(text) if end < 0 else end + 1
+        found.append((index, stop, text[inner:len(text) if end < 0 else end]))
+        index = stop
     return found
+
+
+TEXT_REDIRECTS = str.maketrans("<>", "  ")
+
+
+def _redirect_text(raw):
+    """The raw text of an unquoted data heredoc (body and delimiter line) with < and > taken out, the same
+    length: bash reads them as text in such a body. Command substitutions keep their text."""
+    parts, last = [], 0
+    for start, stop, _inner in _expansions(raw):
+        parts.append(raw[last:start].translate(TEXT_REDIRECTS))
+        parts.append(raw[start:stop])
+        last = stop
+    parts.append(raw[last:].translate(TEXT_REDIRECTS))
+    return "".join(parts)
 
 
 def _ansi_c(raw):
@@ -1094,7 +1109,7 @@ def scan(command):
     for body, quoted in script.heredocs:
         if body and not quoted:
             visible.append("\n" + body)
-            for inner in _expansions(body):
+            for _start, _stop, inner in _expansions(body):
                 script.subs.append(inner)
     script.visible.append("".join(visible))
     script.text = text
@@ -1507,6 +1522,7 @@ class Analysis:
         self.anchors = {self.event_cwd}
         self.top = None        # Script of the whole command (first walk)
         self.data_bodies = set()  # heredoc slots of self.top that are only data (see segment)
+        self.text_bodies = set()  # unquoted heredoc slots of self.top that are data text (see mark_data_bodies)
         self.shadowed = None   # cat, tee or an interpreter may be redefined by the command (see shadowing)
         self.proc_out = False  # some script of the command has an output process substitution ">(...)"
         self.private = private_roots()
@@ -2018,6 +2034,20 @@ class Analysis:
         for slot in slots:
             if heredocs[slot][1]:
                 self.data_bodies.add(slot)
+            elif verb in ("cat", "tee"):
+                self.mark_text_body(slot)
+
+    def mark_text_body(self, slot):
+        """An unquoted body of cat or tee is text for the shell except its $(...) and backticks, so its < and >
+        are no redirects (delete-guard.py gets them taken out, see without_data_bodies). A body with a line
+        continuation and a $ or backtick stays shell text: its joined form may hold a substitution."""
+        span = self.top.spans.get(slot)
+        if span is None:
+            return
+        raw = self.top.text[span[0]:span[1]]
+        if CONT_RE.search(raw) and ("$" in raw or "`" in raw):
+            return
+        self.text_bodies.add(slot)
 
     def shadowing(self):
         """True when the command text can redefine cat, tee or an interpreter (SHADOW_RE: a function,
@@ -2041,18 +2071,21 @@ class Analysis:
         return self.shadowed
 
     def without_data_bodies(self, command):
-        """The command for the text checks of delete-guard.py, without data heredoc bodies."""
-        if self.top is None or not self.data_bodies:
+        """The command for the text checks of delete-guard.py, without data heredoc bodies. The body of an
+        unquoted cat or tee stays in place (same lines, delimiter line kept) with its < and > taken out."""
+        if self.top is None or not (self.data_bodies or self.text_bodies):
             return command
         if self.proc_out or re.search(r"\b(?:mkfifo|mknod)\b", command):
             return command  # a body could reach a shell through a process or a named pipe
         text, cut = self.top.text, 0
         parts = []
-        for slot in sorted(self.data_bodies, key=lambda item: self.top.spans.get(item, (0, 0))[0]):
+        for slot in sorted(self.data_bodies | self.text_bodies, key=lambda item: self.top.spans.get(item, (0, 0))[0]):
             start, end = self.top.spans.get(slot, (cut, cut))
             if start < cut:
                 return command  # overlapping spans: keep the full text (fail safe)
             parts.append(text[cut:start])
+            if slot in self.text_bodies:
+                parts.append(_redirect_text(text[start:end]))
             cut = end
         parts.append(text[cut:])
         return "".join(parts)
