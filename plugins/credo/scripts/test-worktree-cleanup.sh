@@ -12,6 +12,12 @@
 # kept because `git branch -d` refuses, and the owner gets the `git branch -D` command. A
 # merged worktree with untracked files, a live process inside, or a lock is kept and marked
 # "(ask owner)"; ignored scratch does not count as a change.
+# Setup links (#141): an untracked symlink that resolves into the main checkout is no change.
+# Lossless (#141): a merged worktree whose only changes are .credo/ files whose lines are all
+# in the main checkout (a repeated line needs a second copy there) is removed when the owner
+# setting "clean up merged worktrees automatically" (DOGMA-PERMISSIONS, stable id 36ch) is [x];
+# with [?] or no setting it is listed as a candidate, with [ ] it is kept. --allow-lossless is
+# the one-off approval of an owner answer and does not override [ ].
 # Usage: bash test-worktree-cleanup.sh
 
 set -uo pipefail
@@ -23,6 +29,10 @@ trap 'rm -rf -- "$TMP"' EXIT
 
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
+# the owner setting is read through credo-dogma-mode.sh: isolate it from the real session and profile
+export DOGMA_CREDO_CONFIG=none DOGMA_SESSION_DIR="$TMP/session" CLAUDE_CONFIG_DIR="$TMP/cfg"
+unset CREDO_SESSION_ID CLAUDE_CODE_SESSION_ID
+mkdir -p "$DOGMA_SESSION_DIR" "$CLAUDE_CONFIG_DIR"
 
 PASS=0
 FAIL=0
@@ -474,6 +484,166 @@ PATH="$FG:$PATH" "$SUT" --dry-run "$R8" >/dev/null 2>&1
 rc=$?
 [ "$rc" -ne 141 ] && rc=ok
 check "long worktree list: no SIGPIPE exit 141" ok "$rc"
+
+# ---------- setup links (#141): an untracked symlink into the main checkout is no change ----------
+R10="$TMP/repo10"; W10="$TMP/repo10-worktrees"
+mkdir -p "$R10" "$TMP/elsewhere"
+git -C "$R10" init -q -b main
+echo base > "$R10/f"; git -C "$R10" add f; git -C "$R10" commit -q -m init
+printf 'node_modules/\n' >> "$R10/.git/info/exclude"   # main ignores its dependencies, the link does not match
+mkdir -p "$R10/node_modules/pkg"; echo dep > "$R10/node_modules/pkg/index.js"
+mk10() { # name: merged worktree with an own commit
+    git -C "$R10" worktree add -q -b "wt/$1" "$W10/$1"
+    commit_in "$W10/$1" "$1.txt" "$1"
+    git -C "$R10" merge -q --no-ff -m "merge $1" "wt/$1"
+}
+mk10 nm;     ln -s ../../repo10/node_modules "$W10/nm/node_modules"
+mk10 nmelse; ln -s "$TMP/elsewhere" "$W10/nmelse/node_modules"
+mk10 nmdang; ln -s ../../repo10/nope "$W10/nmdang/node_modules"
+mk10 nmreal; mkdir -p "$W10/nmreal/cache"; echo x > "$W10/nmreal/cache/x"
+out="$("$SUT" --dry-run "$R10")"
+contains "setup link into main: candidate" "candidate $W10/nm branch=wt/nm reason=merged into main, clean" "$out"
+contains "link elsewhere: owner asked" "kept $W10/nmelse branch=wt/nmelse reason=1 untracked file(s), not committed (ask owner)" "$out"
+contains "dangling link: owner asked" "kept $W10/nmdang branch=wt/nmdang reason=1 untracked file(s), not committed (ask owner)" "$out"
+contains "real untracked file: owner asked" "kept $W10/nmreal branch=wt/nmreal reason=1 untracked file(s), not committed (ask owner)" "$out"
+out="$("$SUT" "$R10")"
+contains "setup link: removed" "removed $W10/nm branch=wt/nm" "$out"
+check "setup link: target survives" dep "$(cat "$R10/node_modules/pkg/index.js")"
+check "setup link: the others survive" "yes yes yes" "$(exists "$W10/nmelse") $(exists "$W10/nmdang") $(exists "$W10/nmreal")"
+
+# ---------- lossless .credo changes (#141) ----------
+# Each worktree is merged and clean except for one kind of change under .credo/ (or a change
+# that must keep it).
+R9="$TMP/repo9"; W9="$TMP/repo9-worktrees"
+mkdir -p "$R9" "$TMP/elsewhere"
+git -C "$R9" init -q -b main
+echo base > "$R9/f"; git -C "$R9" add f; git -C "$R9" commit -q -m init
+echo DOGMA-PERMISSIONS.md >> "$R9/.git/info/exclude"
+mkdir -p "$R9/.credo"
+printf 'a\nb\nc\n' > "$R9/.credo/log.md"
+printf 'one\ntwo\n' > "$R9/.credo/items.txt"
+printf 'x\n' > "$R9/.credo/dup.md"
+git -C "$R9" add .credo; git -C "$R9" commit -q -m credo
+printf 'a\nb\n' > "$R9/.credo/late.md"          # untracked in main: its lines count for the worktrees
+echo file > "$TMP/elsewhere/file"
+mk9() { # name: merged worktree with an own commit
+    git -C "$R9" worktree add -q -b "wt/$1" "$W9/$1"
+    commit_in "$W9/$1" "$1.txt" "$1"
+    git -C "$R9" merge -q --no-ff -m "merge $1" "wt/$1"
+}
+for n in lossless lossnew missing dup deleted newdir outside extlink staged; do mk9 "$n"; done
+printf 'c\na\n' > "$W9/lossless/.credo/log.md"        # all lines in main, reordered
+printf 'a\n' > "$W9/lossnew/.credo/late.md"           # untracked, its line is in main
+printf 'a\nzz\n' > "$W9/missing/.credo/log.md"        # zz is not in main
+printf 'x\nx\n' > "$W9/dup/.credo/dup.md"             # main has one x: the second copy is missing
+git -C "$W9/deleted" rm -q .credo/items.txt           # deleted tracked .credo file
+mkdir -p "$W9/newdir/.credo/newdir"; printf 'n\n' > "$W9/newdir/.credo/newdir/f.md"
+printf 'changed\n' >> "$W9/outside/f"; printf 'a\n' > "$W9/outside/.credo/log.md"
+ln -s "$TMP/elsewhere/file" "$W9/extlink/.credo/ext.md"
+printf 'a\nzz\n' > "$W9/staged/.credo/log.md"; git -C "$W9/staged" add .credo/log.md
+printf 'a\n' > "$W9/staged/.credo/log.md"             # disk lossless, the index is not
+
+out="$("$SUT" --dry-run "$R9")"
+contains "lossless: candidate, named lossless" "candidate $W9/lossless branch=wt/lossless reason=merged into main, only .credo changes already in main (lossless)" "$out"
+contains "lossless untracked file: candidate" "candidate $W9/lossnew branch=wt/lossnew reason=merged into main, only .credo changes already in main (lossless)" "$out"
+contains "missing line: owner asked" "kept $W9/missing branch=wt/missing reason=uncommitted changes to tracked files (ask owner)" "$out"
+contains "repeated line needs a second copy: owner asked" "kept $W9/dup branch=wt/dup reason=uncommitted changes to tracked files (ask owner)" "$out"
+contains "deleted tracked .credo file: owner asked" "kept $W9/deleted branch=wt/deleted reason=uncommitted changes to tracked files (ask owner)" "$out"
+contains "new .credo dir without main counterpart: owner asked" "kept $W9/newdir branch=wt/newdir reason=1 untracked file(s), not committed (ask owner)" "$out"
+contains "non-.credo change blocks lossless: owner asked" "kept $W9/outside branch=wt/outside reason=uncommitted changes to tracked files (ask owner)" "$out"
+contains ".credo symlink to elsewhere: owner asked" "kept $W9/extlink branch=wt/extlink reason=1 untracked file(s), not committed (ask owner)" "$out"
+contains "staged index not in main: owner asked" "kept $W9/staged branch=wt/staged reason=uncommitted changes to tracked files (ask owner)" "$out"
+json="$("$SUT" --dry-run --json "$R9")"
+check "json: lossless candidate flagged" "candidate|True" "$(printf '%s' "$json" | python3 -c 'import json,sys; d=json.load(sys.stdin); e=[w for w in d["worktrees"] if w["branch"]=="wt/lossless"][0]; print(e["status"]+"|"+str(e.get("lossless")))' 2>&1)"
+json="$("$SUT" --dry-run --json "$R9")"
+check "json: owner question not flagged lossless" "kept|None" "$(printf '%s' "$json" | python3 -c 'import json,sys; d=json.load(sys.stdin); e=[w for w in d["worktrees"] if w["branch"]=="wt/missing"][0]; print(e["status"]+"|"+str(e.get("lossless")))' 2>&1)"
+out="$("$SUT" "$R9")"
+check "no owner setting: lossless kept" "yes yes" "$(exists "$W9/lossless") $(exists "$W9/lossnew")"
+check "no owner setting: main .credo intact" "a
+b
+c" "$(cat "$R9/.credo/log.md")"
+
+# ---------- owner setting (§36ch): [x] removes, [?] and no setting list, [ ] keeps ----------
+# --allow-lossless is the one-off approval of an owner answer; it never overrides [ ].
+R11="$TMP/repo11"; W11="$TMP/repo11-worktrees"
+mkdir -p "$R11"
+git -C "$R11" init -q -b main
+echo base > "$R11/f"; git -C "$R11" add f; git -C "$R11" commit -q -m init
+echo DOGMA-PERMISSIONS.md >> "$R11/.git/info/exclude"
+mkdir -p "$R11/.credo"; printf 'a\nb\n' > "$R11/.credo/log.md"
+git -C "$R11" add .credo; git -C "$R11" commit -q -m credo
+mk11() { # name: merged worktree whose .credo log is a subset of main's
+    git -C "$R11" worktree add -q -b "wt/$1" "$W11/$1"
+    commit_in "$W11/$1" "$1.txt" "$1"
+    git -C "$R11" merge -q --no-ff -m "merge $1" "wt/$1"
+    printf 'a\n' > "$W11/$1/.credo/log.md"
+}
+set11() { # checkbox state
+    printf '<permissions>\n## Workflow Permissions\n\n### Hydra\n- [%s] clean up merged worktrees automatically\n</permissions>\n' "$1" > "$R11/DOGMA-PERMISSIONS.md"
+}
+mk11 lo1; mk11 lo2
+set11 ' '
+out="$("$SUT" "$R11")"
+contains "[ ]: lossless kept with reason" "kept $W11/lo1 branch=wt/lo1 reason=only .credo changes already in main (lossless), not removed: the cleanup setting is off" "$out"
+check "[ ]: nothing removed" "yes yes" "$(exists "$W11/lo1") $(exists "$W11/lo2")"
+out="$("$SUT" --allow-lossless "$R11")"
+check "[ ] with --allow-lossless: still kept" "yes yes" "$(exists "$W11/lo1") $(exists "$W11/lo2")"
+set11 '?'
+out="$("$SUT" --dry-run "$R11")"
+contains "[?]: lossless listed as candidate" "candidate $W11/lo1 branch=wt/lo1 reason=merged into main, only .credo changes already in main (lossless)" "$out"
+out="$("$SUT" "$R11")"
+check "[?]: listed, not removed" "yes yes" "$(exists "$W11/lo1") $(exists "$W11/lo2")"
+contains "[?]: real run lists the candidate" "candidate $W11/lo1 branch=wt/lo1" "$out"
+out="$("$SUT" --allow-lossless "$R11")"
+contains "[?] with --allow-lossless: removed" "removed $W11/lo1 branch=wt/lo1 reason=merged into main, only .credo changes already in main (lossless)" "$out"
+contains "allow: branch deleted" "branch_deleted=wt/lo1" "$out"
+check "allow: both removed" "no no" "$(exists "$W11/lo1") $(exists "$W11/lo2")"
+check "allow: main .credo intact" "a
+b" "$(cat "$R11/.credo/log.md")"
+set11 x
+mk11 lo3
+out="$("$SUT" "$R11")"
+contains "[x]: lossless removed, named lossless" "removed $W11/lo3 branch=wt/lo3 reason=merged into main, only .credo changes already in main (lossless)" "$out"
+check "[x]: lossless gone" no "$(exists "$W11/lo3")"
+mk11 lo4
+json="$("$SUT" --json "$R11")"
+check "[x] json: removed, lossless" "removed|True" "$(printf '%s' "$json" | python3 -c 'import json,sys; d=json.load(sys.stdin); e=[w for w in d["worktrees"] if w["branch"]=="wt/lo4"][0]; print(e["status"]+"|"+str(e.get("lossless")))' 2>&1)"
+check "[x] json: lo4 gone" no "$(exists "$W11/lo4")"
+printf '<permissions>\n</permissions>\n' > "$R11/DOGMA-PERMISSIONS.md"      # no checkbox: missing
+mk11 lo5
+out="$("$SUT" "$R11")"
+contains "missing setting: listed as candidate" "candidate $W11/lo5 branch=wt/lo5" "$out"
+check "missing setting: not removed" yes "$(exists "$W11/lo5")"
+
+# ---------- item close wiring (#141): the hint names --allow-lossless, [x] removes ----------
+R12="$TMP/repo12"; W12="$TMP/repo12-worktrees"
+mkdir -p "$R12"
+git -C "$R12" init -q -b main
+echo base > "$R12/f"; git -C "$R12" add f; git -C "$R12" commit -q -m init
+echo DOGMA-PERMISSIONS.md >> "$R12/.git/info/exclude"
+mkdir -p "$R12/.credo/items/1_todo/2_go" "$R12/.credo/items/2_done"
+for i in 6 7; do printf -- '---\nid: %s\ntitle: t\n---\n' "$i" > "$R12/.credo/items/1_todo/2_go/$i-t.md"; done
+printf 'a\nb\n' > "$R12/.credo/log.md"
+git -C "$R12" add .credo; git -C "$R12" commit -q -m credo
+mk12() { # name: merged worktree whose .credo log is a subset of main's
+    git -C "$R12" worktree add -q -b "wt/$1" "$W12/$1"
+    commit_in "$W12/$1" "$1.txt" "$1"
+    git -C "$R12" merge -q --no-ff -m "merge $1" "wt/$1"
+    printf 'a\n' > "$W12/$1/.credo/log.md"
+}
+set12() {
+    printf '<permissions>\n## Workflow Permissions\n\n### Hydra\n- [%s] clean up merged worktrees automatically\n</permissions>\n' "$1" > "$R12/DOGMA-PERMISSIONS.md"
+}
+mk12 lw; mk12 lw2
+set12 '?'
+out="$(cd "$R12" && CREDO_DIR="$R12/.credo" "$MOVE" 6 done 2>&1)"
+contains "item close [?]: lossless candidate listed" "worktree cleanup: candidate $W12/lw branch=wt/lw reason=merged into main, only .credo changes already in main (lossless)" "$out"
+contains "item close [?]: hint names --allow-lossless" "credo-worktree-cleanup.sh\" --allow-lossless" "$out"
+check "item close [?]: lossless kept" yes "$(exists "$W12/lw")"
+set12 x
+out="$(cd "$R12" && CREDO_DIR="$R12/.credo" "$MOVE" 7 done 2>&1)"
+contains "item close [x]: lossless removed" "worktree cleanup: removed $W12/lw branch=wt/lw" "$out"
+check "item close [x]: both lossless gone" "no no" "$(exists "$W12/lw") $(exists "$W12/lw2")"
 
 # argument errors
 "$SUT" --bogus >/dev/null 2>&1; check "bad arg exit 1" 1 "$?"

@@ -59,7 +59,8 @@ Additional standing rules:
   the user has not confirmed a delete.
 
 Carve-out - merged+clean worktrees: removing linked git worktrees whose branch is fully
-merged into the main branch AND that have no changes to tracked files (plus deleting that
+merged into the main branch AND that have no changes to tracked files, or only `.credo/` changes
+whose lines all already exist in the main checkout (plus deleting that
 merged branch with `git branch -d`), done ONLY by `credo-worktree-cleanup.sh` at item close
 (credo `items`, "Worktree cleanup at item close"), is user-authorized by the setting
 `[x] clean up merged worktrees automatically` in DOGMA-PERMISSIONS.md. With `[?]` or no

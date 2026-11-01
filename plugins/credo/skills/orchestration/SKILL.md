@@ -281,6 +281,8 @@ this rule: when something important is missing in the worktree (neither checked 
 linked nor copied), look it up READ-ONLY in the main checkout - never write, commit or run
 state-changing git commands there - and mention in the report anything that should be
 added to the worktree files list.
+A worktree builder writes every `.credo/` change (items, requirements log, item history, metrics)
+into that main checkout path, never into the worktree copy (the first path of `git worktree list`).
 
 Merged and clean worktrees are removed at item close and after every release (credo `items` skill, "Worktree
 cleanup at item close"). A worktree the owner wants to keep is locked, never left to the
@@ -289,7 +291,9 @@ are kept and reported with their reason; `credo-worktree-cleanup.sh --list-locke
 them. Never unlock one on your own except in credo autonomous mode when the keep reason no
 longer applies; in every other mode ask the user first via the Ask tool (credo `items`,
 "Keeping a worktree"). A merged worktree that still holds changes, a live process or a lock is
-an owner question (its report line says `(ask owner)`); the agent never removes it itself.
+an owner question (its report line says `(ask owner)`); the agent never removes it itself. A
+worktree whose only changes are `.credo/` lines that already exist in the main checkout (lossless)
+is removed by the same cleanup with `[x]`; with `[?]` it waits for the owner's yes (`--allow-lossless`).
 Builders never unlock, and never touch a lock they did not set.
 
 ## Parallel safety

@@ -898,7 +898,8 @@ The helper reads the DOGMA-PERMISSIONS checkbox in the `### Hydra` subsection (v
 - `[?]` or no checkbox (older files predate the setting) - the move output lists the
   `candidate` worktrees and the owner questions (kept, marked `(ask owner)`) and says to ask
   the user; on a yes run
-  `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-worktree-cleanup.sh"` (in autonomous mode leave
+  `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-worktree-cleanup.sh"` (add `--allow-lossless` after
+  the owner's yes when a `(lossless)` candidate is listed; in autonomous mode leave
   them for the user and mention them in the run report).
 - `[ ]` - never.
 
@@ -906,9 +907,19 @@ The helper reads the DOGMA-PERMISSIONS checkbox in the `### Hydra` subsection (v
 merged into the main branch (the branch checked out in the main worktree). The branch tip is
 an ancestor of it, or every commit of the branch is patch-equivalent in it (a rebased branch,
 found with `git cherry`). The worktree must also be free of changes, meaning no uncommitted changes to
-tracked files, no untracked non-ignored files (`git status --porcelain` is empty), and no live
+tracked files, no untracked non-ignored files (`git status --porcelain` is empty, apart from the
+exceptions below), and no live
 process with its working directory inside it. Ignored files (caches, build output) go with it;
-the setup links are excluded and do not count.
+an untracked symlink whose real target lies in the main checkout (a setup link) does not count.
+
+**Lossless `.credo/` changes.** A merged worktree whose only changes are `.credo/` files is
+lossless when every line of each changed file (untracked files and staged content included) is
+already present in the same file of the main checkout; a repeated line needs a second copy there.
+A deleted or renamed `.credo/` file, a file without a counterpart in the main checkout, a symlink
+or any path outside `.credo/` is not lossless. A lossless worktree is removed like a clean one,
+but only with `[x]`. With `[?]` or no setting the report lists it as `candidate ... (lossless)`;
+after the owner's yes the agent runs the script with `--allow-lossless` (the one-off approval;
+it never overrides `[ ]`). With `[ ]` it is kept.
 It never touches the main worktree, the worktree it runs in, ones named by `--keep`, unmerged
 ones, and a worktree whose branch has no commit of its own (a fast-forward from main is not
 one) while it is younger than 24h (an agent may be starting in it).

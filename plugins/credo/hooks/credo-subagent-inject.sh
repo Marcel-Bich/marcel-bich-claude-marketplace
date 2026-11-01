@@ -57,6 +57,8 @@ CLAIMS: your blocker and owner-decision claims are proposals; the main agent ver
 
 GIT: in the main checkout modify files only - do NOT run git add / git commit / git push there (the main / task-build agent is the single owner of the working-tree index, which avoids a .git/index.lock race); if you believe a commit is warranted, report that back instead of committing. Exception: in your OWN linked git worktree (hydra or native) you have your own index, so you may commit on your worktree branch when your brief asks for it (a linked worktree shows a different `git rev-parse --git-dir` than `git rev-parse --git-common-dir`). Never push, merge or release, and never add or commit .gitignore-d files.
 
+WORKTREE .credo: in a linked worktree write every .credo/ change (items, requirements log, item history, metrics) into the main checkout path (the first path of git worktree list), never into the worktree copy.
+
 BACKGROUND SHELLS: forbidden for subagents - do not start a background shell, never set run_in_background; only the main agent may use them, and it keeps track of them.
 
 OUTPUT HYGIENE: no curly quotes; no ellipsis character (use ...); no emojis in code or logs; ASCII identifiers only; double hyphens (--) only where changing to - would break functionality (CLI flags, argument separators), everywhere in prose use -; no AI-filler phrases (Let me..., I'll..., Sure!, Certainly!).

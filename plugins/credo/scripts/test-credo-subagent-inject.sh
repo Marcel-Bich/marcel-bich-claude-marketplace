@@ -80,6 +80,11 @@ has "GIT: worktree commits when the brief asks" "commit on your worktree branch 
 has "GIT: never push, merge or release" "Never push, merge or release" "$gp_ctx"
 has "GIT: gitignored files never committed" ".gitignore-d files" "$gp_ctx"
 
+# --- worktrees: .credo/ changes go to the main checkout path (#141) ----------------------
+has "WORKTREE: .credo changes go to the main checkout path" "write every .credo/ change" "$gp_ctx"
+has "WORKTREE: first path of git worktree list" "the first path of git worktree list" "$gp_ctx"
+has "WORKTREE: never into the worktree copy" "never into the worktree copy" "$gp_ctx"
+
 # --- claims: blocker and owner-decision claims are proposals ------------------------
 has "CLAIMS: blocker claims are proposals" "your blocker and owner-decision claims are proposals" "$gp_ctx"
 has "CLAIMS: the main agent verifies the cited source" "the main agent verifies them (reads the cited source)" "$gp_ctx"

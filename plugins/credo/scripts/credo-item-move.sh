@@ -529,8 +529,10 @@ esac
 # Closing an item is the moment its parallel-track worktree is finished. The dogma
 # checkbox "clean up merged worktrees automatically" (### Hydra in DOGMA-PERMISSIONS.md,
 # read without dogma via credo-dogma-mode.sh) decides:
-#   [x]          -> remove merged+clean worktrees now (credo-worktree-cleanup.sh)
-#   [?]/missing  -> list the candidates and tell the agent to ask the user first
+#   [x]          -> remove merged+clean worktrees now (credo-worktree-cleanup.sh), also the
+#                   lossless ones (only .credo changes already in the main checkout, #141)
+#   [?]/missing  -> list the candidates and tell the agent to ask the user first; a lossless
+#                   candidate is removed only after a yes, with --allow-lossless
 #   [ ]          -> nothing
 # Every run covers all worktrees of the repository (the first one sweeps the backlog).
 # Like the unblock sweep, this never fails the move.
@@ -551,7 +553,10 @@ case "$TARGET" in
                     WT_CANDIDATES="$("$SCRIPT_DIR/credo-worktree-cleanup.sh" --dry-run "$WT_REPO" 2>/dev/null | grep -E '^candidate |\(ask owner\)$' || true)"
                     if [ -n "$WT_CANDIDATES" ]; then
                         printf '%s\n' "$WT_CANDIDATES" | sed 's/^/credo-item-move: worktree cleanup: /'
-                        echo "credo-item-move: worktree cleanup is set to ask (DOGMA-PERMISSIONS [?] or no checkbox): ask the user (the kept ones are owner questions), then run: \"$SCRIPT_DIR/credo-worktree-cleanup.sh\" \"$WT_REPO\""
+                        # a lossless candidate is removed only after the owner's yes: --allow-lossless
+                        WT_FLAG=""
+                        case "$WT_CANDIDATES" in *"(lossless)"*) WT_FLAG=" --allow-lossless" ;; esac
+                        echo "credo-item-move: worktree cleanup is set to ask (DOGMA-PERMISSIONS [?] or no checkbox): ask the user (the kept ones are owner questions; lossless candidates only after a yes), then run: \"$SCRIPT_DIR/credo-worktree-cleanup.sh\"$WT_FLAG \"$WT_REPO\""
                     fi
                     ;;
             esac
