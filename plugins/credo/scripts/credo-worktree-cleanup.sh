@@ -10,13 +10,23 @@
 #   - it is not the main worktree, not the worktree this command runs in, not locked,
 #     not named by --keep, not on a detached HEAD, its directory exists, and its branch
 #     is not the base
-#   - its branch is fully merged into the base branch (branch tip is an ancestor)
-#   - it has no changes to tracked files (staged or unstaged); untracked agent scratch
-#     (cache/, the setup symlinks, ...) goes with it
+#   - its branch is merged into the base branch. The branch tip is an ancestor of it, or
+#     every commit of the branch is patch-equivalent in it (`git cherry` lists no "+", the
+#     case of a rebased branch)
+#   - it has no changes: `git status --porcelain` is empty, so no uncommitted changes to
+#     tracked files and no untracked, non-ignored files. Ignored files (build caches, ...)
+#     go with it; the setup links are excluded and do not count as changes
+#   - no live process has its working directory inside it (read from /proc; unreadable
+#     entries are skipped, so without /proc this check finds nothing)
 #   - a branch without a commit of its own (its reflog has no commit, cherry-pick or revert
 #     entry; a fast-forward from the base does not count) may still be in use by an agent
-#     that just started: it is kept while younger than --fresh-hours (default 24) or while
-#     it has untracked, non-ignored files, and it is kept when its age cannot be determined
+#     that just started: it is kept while younger than --fresh-hours (default 24), and it is
+#     kept when its age cannot be determined
+#
+# Still needed. A merged worktree that is locked, has changes or has a live process inside
+# is NOT removed. Its report line ends with "(ask owner)": an owner question, which the agent
+# asks instead of removing the worktree itself. An unmerged worktree is kept without that
+# marker, its work is not finished.
 #
 # Opt-out: a worktree the owner wants to keep is locked (`git worktree lock --reason
 # "keep: owner" <path>`). A locked worktree is never removed and is reported with its lock
@@ -30,8 +40,10 @@
 #
 # Removal uses `git worktree remove --force <path>` (git unlinks symlinks, it never
 # follows them, so link targets in the main checkout survive), then `git branch -d`
-# (never -D). Afterwards `git worktree prune` drops admin entries of worktree
-# directories that no longer exist. Nothing else is ever deleted.
+# (never -D). A rebased branch is not an ancestor of the base, so `git branch -d` refuses
+# it. The branch is kept, and the report prints `owner_command=git branch -D <branch>` for
+# the owner to run; this script never force-deletes. Afterwards `git worktree prune` drops
+# admin entries of worktree directories that no longer exist. Nothing else is ever deleted.
 #
 # Usage:
 #   credo-worktree-cleanup.sh [--dry-run] [--json] [--base <branch>] [--fresh-hours N]
@@ -50,12 +62,15 @@
 #
 # Output (kv): base=<branch>, then per worktree
 #   candidate <path> branch=<b> reason=<why>       (--dry-run)
-#   removed <path> branch=<b> reason=<why>         (+ branch_deleted=<b> or branch_kept=<b>)
+#   removed <path> branch=<b> reason=<why>         (+ branch_deleted=<b>, or branch_kept=<b>
+#                                                   and owner_command=git branch -D <b>)
 #   failed <path> branch=<b> reason=<git error>
-#   kept <path> branch=<b> reason=<why>
+#   kept <path> branch=<b> reason=<why>            (reason ends with "(ask owner)" when the
+#                                                   merged worktree needs an owner decision)
 #     a locked worktree: kept <path> branch=<b> reason=locked: <lock reason>
 # --list-locked (kv): locked <path> branch=<b> reason=<lock reason>
-# JSON: kept entries of locked worktrees carry "lock_reason"; --list-locked prints
+# JSON: kept entries of locked worktrees carry "lock_reason"; a removed worktree whose branch
+#   was kept carries "owner_command"; --list-locked prints
 #   {"main": ..., "locked": [{"path", "branch", "reason"}]}.
 # Exit codes: 0 done (also with nothing to do), 1 bad arguments, 2 not a git repository
 # or no base branch (main worktree on a detached HEAD and no --base).
@@ -213,16 +228,59 @@ own_commit_entries() { # branch
     printf '%s\n' "$entries" | grep -c -E '^(commit|cherry-pick|revert)' || true
 }
 
+# Merged into the base means the branch tip is an ancestor of it, or every commit of the branch is
+# patch-equivalent in it (a rebased branch, `git cherry` marks those "-", a commit the base
+# lacks is "+"). Sets MERGED_HOW to ancestor or rebased.
+is_merged() { # branch -> 0 when merged
+    MERGED_HOW=""
+    if git -C "$MAIN" merge-base --is-ancestor "refs/heads/$1" "refs/heads/$BASE" 2>/dev/null; then
+        MERGED_HOW="ancestor"
+        return 0
+    fi
+    local cherry
+    cherry="$(git -C "$MAIN" cherry "refs/heads/$BASE" "refs/heads/$1" 2>/dev/null)" || return 1
+    if grep -q '^+' <<< "$cherry"; then return 1; fi
+    MERGED_HOW="rebased"
+    return 0
+}
+
+# Live processes whose working directory is inside a path. /proc/<pid>/cwd is read once per run
+# (readlink; an unreadable entry is skipped). Sets FOUND_PID when one matches.
+PROC_CWDS=""
+PROC_READ=0
+process_inside() { # real-path -> 0 and FOUND_PID when a live process has its cwd inside
+    local link pid cwd
+    if [ "$PROC_READ" -eq 0 ]; then
+        PROC_READ=1
+        for link in /proc/[0-9]*/cwd; do
+            [ -L "$link" ] || continue
+            cwd="$(readlink "$link" 2>/dev/null)" || continue
+            pid="${link#/proc/}"
+            PROC_CWDS+="${pid%/cwd}"$'\t'"$cwd"$'\n'
+        done
+    fi
+    while IFS=$'\t' read -r pid cwd; do
+        case "$cwd" in
+            "$1"|"$1"/*) FOUND_PID="$pid"; return 0 ;;
+        esac
+    done <<< "$PROC_CWDS"
+    return 1
+}
+
 evaluate() { # path branch locked prunable lock-reason
-    local path="$1" branch="$2" locked="$3" prunable="$4" lock_reason="${5:-}" real age untracked keepit=0
+    local path="$1" branch="$2" locked="$3" prunable="$4" lock_reason="${5:-}" real keepit=0
+    local merged=0 ask="" why="" tracked untracked st age
     real="$(norm_path "$path")"
     # Mark --keep usage first, whatever the worktree is kept for otherwise (lock, cwd, ...),
     # so a --keep naming such a worktree is not reported as matching nothing.
     if keep_matches "$real" "$branch"; then keepit=1; fi
+    # Merged is decided before the lock. Only a merged worktree is an owner question.
+    if [ -n "$branch" ] && [ "$branch" != "$BASE" ] && is_merged "$branch"; then merged=1; fi
+    if [ "$merged" -eq 1 ]; then ask=" (ask owner)"; fi
     # Locked first: the lock is the owner's opt-out and is reported with its reason (git does
     # not prune a locked worktree whose directory is gone either).
     if [ -n "$locked" ]; then
-        add kept "$path" "$branch" "locked: ${lock_reason:-no reason given}" "" "${lock_reason:-no reason given}"
+        add kept "$path" "$branch" "locked: ${lock_reason:-no reason given}$ask" "" "${lock_reason:-no reason given}"
         return
     fi
     if [ -n "$prunable" ] || [ ! -d "$path" ]; then
@@ -234,19 +292,33 @@ evaluate() { # path branch locked prunable lock-reason
     if [ "$keepit" -eq 1 ]; then add kept "$path" "$branch" "keep requested (--keep)"; return; fi
     if [ -z "$branch" ]; then add kept "$path" "" "detached HEAD"; return; fi
     if [ "$branch" = "$BASE" ]; then add kept "$path" "$branch" "is the base branch"; return; fi
-    if ! git -C "$MAIN" merge-base --is-ancestor "refs/heads/$branch" "refs/heads/$BASE" 2>/dev/null; then
-        add kept "$path" "$branch" "not merged into $BASE"
+    if [ "$merged" -eq 0 ]; then add kept "$path" "$branch" "not merged into $BASE"; return; fi
+    # From here on the worktree is merged. Whatever is still in it is the owner's call, never ours.
+    if ! st="$(git -C "$path" status --porcelain 2>/dev/null)"; then
+        add kept "$path" "$branch" "git status failed$ask"
         return
     fi
-    if [ -n "$(git -C "$path" status --porcelain --untracked-files=no 2>/dev/null)" ] \
-        || ! git -C "$path" status --porcelain >/dev/null 2>&1; then
-        add kept "$path" "$branch" "uncommitted changes to tracked files"
-        return
-    fi
-    untracked="$(git -C "$path" ls-files --others --exclude-standard 2>/dev/null | grep -c . || true)"
-    if [ "$(own_commit_entries "$branch")" -gt 0 ]; then
+    if [ -n "$st" ]; then
+        tracked="$(git -C "$path" status --porcelain --untracked-files=no 2>/dev/null | grep -c . || true)"
+        untracked="$(git -C "$path" ls-files --others --exclude-standard 2>/dev/null | grep -c . || true)"
+        if [ "$tracked" -gt 0 ]; then why="uncommitted changes to tracked files"; fi
         if [ "$untracked" -gt 0 ]; then
-            add candidate "$path" "$branch" "merged into $BASE, clean ($untracked untracked file(s) go with it)"
+            if [ -n "$why" ]; then
+                why="$why, $untracked untracked file(s)"
+            else
+                why="$untracked untracked file(s), not committed"
+            fi
+        fi
+        add kept "$path" "$branch" "${why:-uncommitted changes}$ask"
+        return
+    fi
+    if process_inside "$real"; then
+        add kept "$path" "$branch" "live process inside it (pid $FOUND_PID)$ask"
+        return
+    fi
+    if [ "$(own_commit_entries "$branch")" -gt 0 ]; then
+        if [ "$MERGED_HOW" = "rebased" ]; then
+            add candidate "$path" "$branch" "merged into $BASE (patch-equivalent after rebase), clean"
         else
             add candidate "$path" "$branch" "merged into $BASE, clean"
         fi
@@ -261,10 +333,6 @@ evaluate() { # path branch locked prunable lock-reason
     fi
     if [ "$age" -lt "$FRESH_HOURS" ]; then
         add kept "$path" "$branch" "no commits yet (fresh worktree), created ${age}h ago - may be in use"
-        return
-    fi
-    if [ "$untracked" -gt 0 ]; then
-        add kept "$path" "$branch" "never committed but has $untracked untracked file(s)"
         return
     fi
     add candidate "$path" "$branch" "never committed, unused for ${age}h"
@@ -308,7 +376,7 @@ fi
 # --- report ---------------------------------------------------------------------
 if [ "$MODE" = "json" ]; then
     printf '%s\n' "${RESULTS[@]+"${RESULTS[@]}"}" | BASE="$BASE" DRY="$DRY" MAIN="$MAIN" python3 -c '
-import json, os, sys
+import json, os, shlex, sys
 items = []
 for line in sys.stdin:
     line = line.rstrip("\n")
@@ -318,6 +386,8 @@ for line in sys.stdin:
     entry = {"status": status, "path": path, "branch": branch or None, "reason": reason}
     if extra:
         entry["branch_deleted"] = extra == "branch_deleted"
+    if extra == "branch_kept" and branch:
+        entry["owner_command"] = "git branch -D " + shlex.quote(branch)
     if lock_reason:
         entry["lock_reason"] = lock_reason
     items.append(entry)
@@ -330,7 +400,9 @@ else
         echo "$status $path branch=$branch reason=$reason"
         case "$extra" in
             branch_deleted) echo "branch_deleted=$branch" ;;
-            branch_kept) echo "branch_kept=$branch" ;;
+            branch_kept)
+                echo "branch_kept=$branch"
+                echo "owner_command=git branch -D $(printf '%q' "$branch")" ;;
         esac
     done
 fi

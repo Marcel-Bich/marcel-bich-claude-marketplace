@@ -155,7 +155,7 @@ flow on `[x] use Hydra for 2+ independent tasks` with hydra installed, else nati
 autonomous mode. Run the printed `setup=` script right after every `git worktree add`, and
 put the absolute main-checkout path (its `main=` line) plus the read-only lookup rule into
 every builder brief (credo `orchestration`, "Worktrees for every code track"). Closing
-an item cleans up merged+clean worktrees per the DOGMA-PERMISSIONS checkbox; with `[?]` or
+an item or a release cleans up merged worktrees per the DOGMA-PERMISSIONS checkbox; with `[?]` or
 no checkbox the removal waits for the user (credo `items`, "Worktree cleanup at item
 close"). Locked worktrees (`git worktree lock --reason "keep: owner"`) are kept; in
 autonomous mode you may unlock a `keep: owner` lock yourself once the keep instruction is
@@ -485,6 +485,11 @@ The release uses the project's own procedure (for example the changelog fragment
 dogma versioning); credo invents none. Without such a procedure, do not release and note it
 in the end-of-run report. Git rules still apply (no push or merge unless the repo
 rules allow it).
+
+After the release, run the worktree cleanup as at item close (credo `items` skill, "Worktree
+cleanup at item close"). Merged and clean worktrees go per the DOGMA-PERMISSIONS checkbox, and
+every owner question it reports (`(ask owner)`) goes into the end-of-run report. Never remove
+or unlock such a worktree yourself.
 
 ### Empty buildable queue = end-of-run (kills the idle loop)
 

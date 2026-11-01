@@ -1,14 +1,17 @@
 #!/bin/bash
-# Tests for credo-worktree-cleanup.sh. Builds a throwaway git repo with several linked
+# Tests for credo-worktree-cleanup.sh. Builds throwaway git repos with several linked
 # worktrees in a temp dir (removed on exit): merged+clean removed (branch deleted,
 # symlink targets in the main checkout survive), unmerged kept, dirty kept, fresh
 # (never committed) kept, a branch fast-forwarded from main without a commit of its own
 # kept while fresh, own commits removed even when fresh, locked kept, the worktree the
-# command runs in kept, the main
-# worktree never touched, --dry-run removes nothing, JSON output valid. Opt-out: a
-# locked worktree is kept and reported with its lock reason (normal, --dry-run, JSON),
-# --keep <path|branch> (repeatable) is a one-off exception, --list-locked lists locks,
-# and an unlocked worktree is cleaned up again.
+# command runs in kept, the main worktree never touched, --dry-run removes nothing, JSON
+# output valid. Opt-out: a locked worktree is kept and reported with its lock reason
+# (normal, --dry-run, JSON), --keep <path|branch> (repeatable) is a one-off exception,
+# --list-locked lists locks, and an unlocked worktree is cleaned up again.
+# Rebased branches (patch-equivalent in the base, not an ancestor) are removed, the branch is
+# kept because `git branch -d` refuses, and the owner gets the `git branch -D` command. A
+# merged worktree with untracked files, a live process inside, or a lock is kept and marked
+# "(ask owner)"; ignored scratch does not count as a change.
 # Usage: bash test-worktree-cleanup.sh
 
 set -uo pipefail
@@ -39,8 +42,10 @@ git -C "$R" init -q -b main
 echo base > "$R/file.txt"
 git -C "$R" add file.txt
 git -C "$R" commit -q -m init
-# excluded files in the main checkout that worktrees link to
-printf 'CLAUDE.md\n.credo/\n' >> "$R/.git/info/exclude"
+# excluded files in the main checkout that worktrees link to; the setup writes an anchored line
+# for a linked directory, because a "dir/" pattern does not match a symlink (the link would show
+# as untracked and count as a change)
+printf 'CLAUDE.md\n/.credo\n' >> "$R/.git/info/exclude"
 echo rules > "$R/CLAUDE.md"
 mkdir -p "$R/.credo/items"
 echo item > "$R/.credo/items/1-a.md"
@@ -51,12 +56,10 @@ commit_in() { # worktree file content
     git -C "$1" commit -q -m "$2"
 }
 
-# merged + clean, with untracked scratch and setup symlinks (file and dir)
+# merged + clean, with setup symlinks (file and dir; excluded, so they are no changes)
 git -C "$R" worktree add -q -b wt/merged "$W/merged"
 commit_in "$W/merged" merged.txt m
 git -C "$R" merge -q --no-ff -m "merge merged" wt/merged
-mkdir -p "$W/merged/cache"
-echo scratch > "$W/merged/cache/tmp.bin"
 ln -s ../../repo/CLAUDE.md "$W/merged/CLAUDE.md"
 ln -s ../../repo/.credo "$W/merged/.credo"
 
@@ -96,6 +99,9 @@ contains "dry-run unmerged kept" "kept $W/unmerged branch=wt/unmerged reason=not
 contains "dry-run dirty kept" "kept $W/dirty branch=wt/dirty reason=uncommitted changes to tracked files" "$out"
 contains "dry-run fresh kept" "kept $W/fresh branch=wt/fresh reason=no commits yet" "$out"
 contains "dry-run locked kept with reason" "kept $W/locked branch=wt/locked reason=locked: keep: owner" "$out"
+contains "dry-run merged dirty asks the owner" "kept $W/dirty branch=wt/dirty reason=uncommitted changes to tracked files (ask owner)" "$out"
+contains "dry-run merged locked asks the owner" "kept $W/locked branch=wt/locked reason=locked: keep: owner (ask owner)" "$out"
+check "dry-run unmerged asks nobody" "" "$(printf '%s\n' "$out" | grep "$W/unmerged" | grep "ask owner" || true)"
 check "dry-run main not listed" "" "$(printf '%s\n' "$out" | grep " $R branch=" || true)"
 check "dry-run removed nothing" "yes yes yes yes yes" "$(exists "$W/merged") $(exists "$W/unmerged") $(exists "$W/dirty") $(exists "$W/fresh") $(exists "$W/here")"
 check "dry-run branch kept" yes "$(branch_exists wt/merged)"
@@ -103,7 +109,7 @@ check "dry-run branch kept" yes "$(branch_exists wt/merged)"
 # fresh-hours 0: a never-committed, untouched worktree becomes a candidate
 out="$("$SUT" --dry-run --fresh-hours 0 "$R")"
 contains "fresh-hours 0: fresh candidate" "candidate $W/fresh branch=wt/fresh reason=never committed" "$out"
-contains "fresh-hours 0: untracked work kept" "kept $W/fresh-work branch=wt/fresh-work reason=never committed but has 1 untracked file(s)" "$out"
+contains "fresh-hours 0: untracked work kept" "kept $W/fresh-work branch=wt/fresh-work reason=1 untracked file(s), not committed (ask owner)" "$out"
 
 # JSON
 json="$("$SUT" --dry-run --json "$R")"
@@ -225,6 +231,17 @@ printf '<permissions>\n## Workflow Permissions\n\n### Hydra\n- [ ] clean up merg
 out="$(cd "$R2" && CREDO_DIR="$R2/.credo" "$MOVE" 4 done 2>&1)"
 contains "move id [x] reworded: removed" "worktree cleanup: removed $W2/y" "$out"
 check "move id [x] reworded: worktree gone" no "$(exists "$W2/y")"
+# [?] lists the owner questions too (kept with "(ask owner)"), not only the candidates
+git -C "$R2" worktree add -q -b wt/z "$W2/z"
+commit_in "$W2/z" z.txt z
+git -C "$R2" merge -q --no-ff -m "merge z" wt/z
+echo draft > "$W2/z/draft.txt"
+printf -- '---\nid: 5\ntitle: t\n---\n' > "$R2/.credo/items/1_todo/2_go/5-t.md"
+set_cleanup '?'
+out="$(cd "$R2" && CREDO_DIR="$R2/.credo" "$MOVE" 5 done 2>&1)"
+contains "move [?]: owner question listed" "worktree cleanup: kept $W2/z branch=wt/z reason=1 untracked file(s), not committed (ask owner)" "$out"
+contains "move [?]: ask hint names the question" "ask the user" "$out"
+check "move [?]: untracked worktree kept" yes "$(exists "$W2/z/draft.txt")"
 
 # ---------- opt-out: lock and --keep ----------
 R3="$TMP/repo3"
@@ -347,6 +364,86 @@ contains "multi-line lock: list-locked sanitized" "locked $W4/ml branch=wt/ml re
 check "multi-line lock: list-locked line count" 2 "$(printf '%s\n' "$out" | grep -c '^locked ' || true)"
 json="$("$SUT" --dry-run --json "$R4")"
 check "multi-line lock: json lock_reason" "wt/ml|first line branch refs/heads/evil second" "$(printf '%s' "$json" | python3 -c 'import json,sys; d=json.load(sys.stdin); e=[w for w in d["worktrees"] if w["path"].endswith("/ml")][0]; print(e["branch"]+"|"+e["lock_reason"])' 2>&1)"
+
+# ---------- rebased branches, owner questions, live processes ----------
+ref_in() { if git -C "$1" show-ref --verify --quiet "refs/heads/$2"; then echo yes; else echo no; fi; }
+# A rebased branch is simulated. Main gets the branch commit again as a new commit (same patch, other parent,
+# as a rebase-and-merge does), so the branch tip is no ancestor of main while every commit of the
+# branch is patch-equivalent in it. Main moves first: cherry-picking onto the same parent could
+# reproduce the identical commit, which would make the branch a real ancestor.
+rebased_branch() { # repo worktrees name
+    git -C "$1" worktree add -q -b "wt/$3" "$2/$3"
+    commit_in "$2/$3" "$3.txt" "$3"
+    echo advance > "$1/advance-$3.txt"
+    git -C "$1" add "advance-$3.txt"
+    git -C "$1" commit -q -m "advance main for $3"
+    git -C "$1" cherry-pick "$(git -C "$2/$3" rev-parse HEAD)" >/dev/null
+}
+
+R6="$TMP/repo6"
+W6="$TMP/repo6-worktrees"
+mkdir -p "$R6"
+git -C "$R6" init -q -b main
+echo base > "$R6/f"; git -C "$R6" add f; git -C "$R6" commit -q -m init
+printf 'cache/\n' >> "$R6/.git/info/exclude"
+rebased_branch "$R6" "$W6" rb
+rebased_branch "$R6" "$W6" rb2
+commit_in "$W6/rb2" rb2b.txt extra          # one commit main does not have: not merged
+git -C "$R6" worktree add -q -b wt/ignored "$W6/ignored"
+commit_in "$W6/ignored" ignored.txt ig
+git -C "$R6" merge -q --no-ff -m "merge ignored" wt/ignored
+mkdir -p "$W6/ignored/cache"; echo scratch > "$W6/ignored/cache/tmp.bin"   # ignored scratch
+git -C "$R6" worktree add -q -b wt/untracked "$W6/untracked"
+commit_in "$W6/untracked" untracked.txt ut
+git -C "$R6" merge -q --no-ff -m "merge untracked" wt/untracked
+echo draft > "$W6/untracked/draft.txt"
+git -C "$R6" worktree add -q -b wt/lockedm "$W6/lockedm"
+commit_in "$W6/lockedm" lockedm.txt lm
+git -C "$R6" merge -q --no-ff -m "merge lockedm" wt/lockedm
+git -C "$R6" worktree lock --reason "keep: owner" "$W6/lockedm"
+git -C "$R6" worktree add -q -b wt/lockedu "$W6/lockedu"
+commit_in "$W6/lockedu" lockedu.txt lu
+git -C "$R6" worktree lock --reason "keep: owner" "$W6/lockedu"
+git -C "$R6" worktree add -q -b wt/busy "$W6/busy"
+commit_in "$W6/busy" busy.txt bz
+git -C "$R6" merge -q --no-ff -m "merge busy" wt/busy
+out="$("$SUT" --dry-run "$R6")"
+contains "rebased is a candidate" "candidate $W6/rb branch=wt/rb reason=merged into main (patch-equivalent after rebase), clean" "$out"
+contains "rebased plus a new commit kept" "kept $W6/rb2 branch=wt/rb2 reason=not merged into main" "$out"
+contains "ignored scratch goes with it" "candidate $W6/ignored branch=wt/ignored reason=merged into main, clean" "$out"
+contains "untracked file kept, owner asked" "kept $W6/untracked branch=wt/untracked reason=1 untracked file(s), not committed (ask owner)" "$out"
+contains "merged locked kept, owner asked" "kept $W6/lockedm branch=wt/lockedm reason=locked: keep: owner (ask owner)" "$out"
+contains "unmerged locked kept with reason" "kept $W6/lockedu branch=wt/lockedu reason=locked: keep: owner" "$out"
+check "unmerged locked asks nobody" "" "$(printf '%s\n' "$out" | grep "$W6/lockedu" | grep "ask owner" || true)"
+# A live process has its working directory in the worktree. It is the cleanup itself, run from inside it
+out="$(cd "$W6/busy" && "$SUT" --dry-run "$R6")"
+check "live process kept, owner asked" 1 "$(printf '%s\n' "$out" | grep -c "^kept $W6/busy branch=wt/busy reason=live process inside it (pid [0-9]*) (ask owner)$" || true)"
+out="$("$SUT" --dry-run "$R6")"
+contains "process gone: busy is a candidate" "candidate $W6/busy branch=wt/busy reason=merged into main, clean" "$out"
+
+out="$("$SUT" "$R6")"; rc=$?
+check "rebased run exit" 0 "$rc"
+contains "rebased removed" "removed $W6/rb branch=wt/rb reason=merged into main (patch-equivalent after rebase), clean" "$out"
+contains "rebased branch kept (-d refuses)" "branch_kept=wt/rb" "$out"
+contains "rebased owner command" "owner_command=git branch -D wt/rb" "$out"
+check "rebased dir gone, branch kept" "no yes" "$(exists "$W6/rb") $(ref_in "$R6" wt/rb)"
+contains "ignored scratch removed" "removed $W6/ignored branch=wt/ignored" "$out"
+contains "busy removed after its process ended" "removed $W6/busy branch=wt/busy" "$out"
+check "owner questions survive" "yes yes yes yes" "$(exists "$W6/rb2") $(exists "$W6/untracked") $(exists "$W6/lockedm") $(exists "$W6/lockedu")"
+check "their branches survive" "yes yes" "$(ref_in "$R6" wt/rb2) $(ref_in "$R6" wt/untracked)"
+check "rb2 commit intact" extra "$(cat "$W6/rb2/rb2b.txt")"
+check "untracked draft intact" draft "$(cat "$W6/untracked/draft.txt")"
+check "main clean after rebased run" "" "$(git -C "$R6" status --porcelain)"
+
+# In JSON the rebased branch is removed, its branch is kept, and the owner command is in the output
+R7="$TMP/repo7"
+W7="$TMP/repo7-worktrees"
+mkdir -p "$R7"
+git -C "$R7" init -q -b main
+echo base > "$R7/f"; git -C "$R7" add f; git -C "$R7" commit -q -m init
+rebased_branch "$R7" "$W7" rb
+json="$("$SUT" --json "$R7")"
+check "json rebased: removed, branch kept, owner command" "removed|False|git branch -D wt/rb" "$(printf '%s' "$json" | python3 -c 'import json,sys; d=json.load(sys.stdin); e=[w for w in d["worktrees"] if w["branch"]=="wt/rb"][0]; print(e["status"]+"|"+str(e["branch_deleted"])+"|"+e.get("owner_command",""))' 2>&1)"
 
 # argument errors
 "$SUT" --bogus >/dev/null 2>&1; check "bad arg exit 1" 1 "$?"

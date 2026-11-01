@@ -881,6 +881,8 @@ A raw `mv` / `git mv` of an item file inside the status tree is blocked by the
 
 Every item close - a move to `done`, `verified` or `archived` via `credo-item-move.sh` -
 also cleans up finished parallel-track worktrees, automatically, without any prior command.
+The same cleanup runs after every release (credo `orchestration`, "Default batch workflow";
+credo `session-autonomous`, "Release when nothing is buildable").
 The helper reads the DOGMA-PERMISSIONS checkbox in the `### Hydra` subsection (via
 `credo-dogma-mode.sh`, works without dogma):
 
@@ -891,20 +893,35 @@ The helper reads the DOGMA-PERMISSIONS checkbox in the `### Hydra` subsection (v
 - `[x]` - remove now, without asking (the user authorized it with the setting). The move
   output lists `worktree cleanup: removed ...` and every kept worktree with its reason.
 - `[?]` or no checkbox (older files predate the setting) - the move output lists the
-  `candidate` worktrees and says to ask the user; on a yes run
+  `candidate` worktrees and the owner questions (kept, marked `(ask owner)`) and says to ask
+  the user; on a yes run
   `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-worktree-cleanup.sh"` (in autonomous mode leave
   them for the user and mention them in the run report).
 - `[ ]` - never.
 
 `credo-worktree-cleanup.sh [--dry-run] [--json]` removes ONLY worktrees whose branch is
-fully merged into the main branch (the branch checked out in the main worktree) AND that have
-no changes to tracked files; untracked scratch (cache/, the setup symlinks) goes with them.
-It never touches the main worktree, the worktree it runs in, locked ones, ones named by
-`--keep`, unmerged or dirty ones (those are reported as `kept` with the reason; a locked one
-as `kept <path> branch=<b> reason=locked: <lock reason>`, also on `--dry-run`), and keeps a worktree whose branch has no
-commit of its own (a fast-forward from main is not one) while it is younger than 24h or has untracked files (an agent may be starting in it). It
-removes via `git worktree remove --force` (git unlinks symlinks and never follows them) and
-deletes the merged branch with `git branch -d`. Every run covers all worktrees of the
+merged into the main branch (the branch checked out in the main worktree). The branch tip is
+an ancestor of it, or every commit of the branch is patch-equivalent in it (a rebased branch,
+found with `git cherry`). The worktree must also be free of changes, meaning no uncommitted changes to
+tracked files, no untracked non-ignored files (`git status --porcelain` is empty), and no live
+process with its working directory inside it. Ignored files (caches, build output) go with it;
+the setup links are excluded and do not count.
+It never touches the main worktree, the worktree it runs in, ones named by `--keep`, unmerged
+ones, and a worktree whose branch has no commit of its own (a fast-forward from main is not
+one) while it is younger than 24h (an agent may be starting in it).
+
+A merged worktree that is locked, has changes or has a live process in it is an owner question,
+not a removal. Its report line ends with `(ask owner)`, for example
+`kept <path> branch=<b> reason=uncommitted changes to tracked files (ask owner)`. Put it to the
+owner as a ❓ question; the agent never removes it or unlocks it to get it out of the way.
+Unmerged worktrees are kept without that marker. A locked one is reported as
+`kept <path> branch=<b> reason=locked: <lock reason>` (plus `(ask owner)` when merged), also on
+`--dry-run`.
+
+It removes via `git worktree remove --force` (git unlinks symlinks and never follows them) and
+deletes the merged branch with `git branch -d`. A rebased branch is not an ancestor, so `-d`
+refuses it. The branch is kept, and the output carries `owner_command=git branch -D <branch>`.
+Hand that command to the owner; the agent never runs `-D`. Every run covers all worktrees of the
 repository, so the first run also sweeps the backlog. A cleanup error never fails the move.
 
 **Keeping a worktree (opt-out = `git worktree lock`).** When the user says to keep a
@@ -915,7 +932,8 @@ git worktree lock --reason "keep: owner" <path>
 ```
 
 A locked worktree is never removed (cleanup script, `[x]` auto mode and `/hydra:cleanup`
-alike) and shows up as `kept <path> branch=<b> reason=locked: <lock reason>`. List the locks and their reasons with
+alike) and shows up as `kept <path> branch=<b> reason=locked: <lock reason>` (with `(ask owner)`
+when the branch is merged, so the owner can confirm the keep). List the locks and their reasons with
 `credo-worktree-cleanup.sh --list-locked` (or `git worktree list --porcelain`, the `locked`
 lines). Before closing an item, run `--list-locked` once and name the kept worktrees (and
 their reasons) in the close note or run report, so the owner sees what stays around. For a

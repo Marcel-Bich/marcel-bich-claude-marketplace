@@ -84,7 +84,8 @@ clearly calls for it, and say why.
    single item passed its first audit.
 4. **Merge as audits pass**, one branch at a time. **One release per batch when a release is due** (automatic only with `release.auto`), with ONE
    full test suite run before it: it caught 3 bugs that every changed-only test run had
-   missed.
+   missed. After the release, run the worktree cleanup once; the same checkbox rule as at item
+   close decides (credo `items` skill, "Worktree cleanup at item close").
 5. **Budget gate** before the batch and before each heavy step: credo `budget` skill,
    "Batch budget gate". Stop each agent right after its final report (TaskStop) - leftover
    agents and test servers keep burning budget (owner rule).
@@ -267,13 +268,15 @@ linked nor copied), look it up READ-ONLY in the main checkout - never write, com
 state-changing git commands there - and mention in the report anything that should be
 added to the worktree files list.
 
-Merged and clean worktrees are removed at item close (credo `items` skill, "Worktree
+Merged and clean worktrees are removed at item close and after every release (credo `items` skill, "Worktree
 cleanup at item close"). A worktree the owner wants to keep is locked, never left to the
 cleanup's judgement: `git worktree lock --reason "keep: owner" <path>`. Locked worktrees
 are kept and reported with their reason; `credo-worktree-cleanup.sh --list-locked` lists
 them. Never unlock one on your own except in credo autonomous mode when the keep reason no
 longer applies; in every other mode ask the user first via the Ask tool (credo `items`,
-"Keeping a worktree"). Builders never unlock, and never touch a lock they did not set.
+"Keeping a worktree"). A merged worktree that still holds changes, a live process or a lock is
+an owner question (its report line says `(ask owner)`); the agent never removes it itself.
+Builders never unlock, and never touch a lock they did not set.
 
 ## Parallel safety
 

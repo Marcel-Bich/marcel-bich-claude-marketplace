@@ -547,10 +547,11 @@ case "$TARGET" in
                     ;;
                 deny) : ;;
                 *)
-                    WT_CANDIDATES="$("$SCRIPT_DIR/credo-worktree-cleanup.sh" --dry-run "$WT_REPO" 2>/dev/null | grep '^candidate ' || true)"
+                    # candidates, and merged worktrees kept for the owner (reason ends with "(ask owner)")
+                    WT_CANDIDATES="$("$SCRIPT_DIR/credo-worktree-cleanup.sh" --dry-run "$WT_REPO" 2>/dev/null | grep -E '^candidate |\(ask owner\)$' || true)"
                     if [ -n "$WT_CANDIDATES" ]; then
                         printf '%s\n' "$WT_CANDIDATES" | sed 's/^/credo-item-move: worktree cleanup: /'
-                        echo "credo-item-move: worktree cleanup is set to ask (DOGMA-PERMISSIONS [?] or no checkbox): ask the user, then run: \"$SCRIPT_DIR/credo-worktree-cleanup.sh\" \"$WT_REPO\""
+                        echo "credo-item-move: worktree cleanup is set to ask (DOGMA-PERMISSIONS [?] or no checkbox): ask the user (the kept ones are owner questions), then run: \"$SCRIPT_DIR/credo-worktree-cleanup.sh\" \"$WT_REPO\""
                     fi
                     ;;
             esac
