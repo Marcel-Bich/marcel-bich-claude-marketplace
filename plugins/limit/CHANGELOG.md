@@ -1,5 +1,17 @@
 Changelog of the limit plugin. Newest first. Months group releases; no day dates. Releases up to v2.35 are summarized by minor version.
 
+# 2026-11
+
+## v2
+
+### v2.37
+
+#### v2.37.2
+
+##### Fixed
+
+- A plan without a 5h limit (five_hour.utilization null, weekly only) no longer shows `invalid_response`; the 5h line is left out and the weekly lines render
+
 # 2026-10
 
 ## v2
