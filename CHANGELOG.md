@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.14
+
+###### Changed
+
+- The periodic reminder also asks to keep credo's output format: typed codes with their emoji everywhere they ask something of the user, and the open-codes footer
+
 ##### v0.84.13
 
 ###### Added
