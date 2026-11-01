@@ -1260,6 +1260,18 @@ def _refused(prof, mac, subnet):
     return False
 
 
+def refused_profile(networks, mac, subnet):
+    """Name of the bound profile that refused router MAC mac for subnet, else None. A refused
+    router is not bound again through bind or suggested by init (see run_bind)."""
+    if not mac or not isinstance(networks, dict):
+        return None
+    for name in sorted(networks):
+        prof = networks[name]
+        if isinstance(prof, dict) and _refused(prof, mac, subnet):
+            return name
+    return None
+
+
 def router_change_for(prof, net):
     """True when the detected network is this bound profile's WLAN (same name, IP inside
     its subnet) behind a router MAC the profile does not trust yet."""
@@ -1349,11 +1361,31 @@ def network_hint(cfg, net, state):
     return None
 
 
+HINT_FIELD_MAX = 64
+
+
+def hint_field(value, limit=HINT_FIELD_MAX):
+    """A free-text value (WLAN name, category, a stored name) made safe for the agent context:
+    line breaks and tabs become spaces, control and format characters (bidi overrides,
+    zero-width) are dropped, quotes and backticks become apostrophes, runs of spaces collapse,
+    and the result is capped at limit characters. Nothing printable left -> "?"."""
+    out = []
+    for c in str(value if value is not None else ""):
+        if c in "\r\n\t":
+            out.append(" ")
+        elif c in "\"`":
+            out.append("'")
+        elif unicodedata.category(c)[0] != "C":
+            out.append(c)
+    return " ".join("".join(out).split())[:limit].rstrip() or "?"
+
+
 def network_hint_text(hint):
     """The text the SessionStart hook injects for the agent (English; the agent talks to the
-    user in the user's language)."""
-    prof = hint.get("profile") or "?"
-    ssid = hint.get("ssid") or "(no WLAN name)"
+    user in the user's language). Every free-text field goes through hint_field first."""
+    prof = hint_field(hint.get("profile"))
+    ssid = '"%s"' % hint_field(hint.get("ssid") or "(no WLAN name)")
+    category = hint_field(hint.get("category") or "Public")
     if hint.get("kind") == "windows-category":
         return (
             "[credo-peer-lan] The LAN relay stays OFF on the WLAN %s (bound profile %s) because "
@@ -1364,7 +1396,7 @@ def network_hint_text(hint):
             "Network profile type to Private. The relay comes back by itself within about a minute "
             "after the switch; no command is needed. Explain in the user's language (the language "
             "of the conversation); fall back to English if unknown or unsure."
-            % (ssid, prof, hint.get("category") or "Public", ssid)
+            % (ssid, prof, category, ssid)
         )
     cmd = "%s trust-router --profile %s" % (os.path.abspath(__file__), prof)
     text = (
@@ -1377,26 +1409,30 @@ def network_hint_text(hint):
         "`%s` yourself (the user never types a command); the relay comes back by itself within "
         "about a minute. On do not add run `%s --refuse`; this network is not asked again until "
         "its router or subnet changes."
-        % (ssid, prof, hint.get("mac") or "?", hint.get("subnet") or "?", ssid, cmd, cmd)
+        % (ssid, prof, hint_field(hint.get("mac") or "?"), hint_field(hint.get("subnet") or "?"),
+           ssid, cmd, cmd)
     )
     if hint.get("category"):
         text += (" Windows also lists this network as %s: after accepting, switch it to Private too "
                  "(Windows Settings, Network and internet, Wi-Fi, properties of %s, Network profile "
-                 "type)." % (hint["category"], ssid))
+                 "type)." % (category, ssid))
     return text + (" In autonomous mode do not ask: mention it in the next report. Explain in the "
                    "user's language (the language of the conversation); fall back to English if "
                    "unknown or unsure.")
 
 
 def network_hint_summary(hint):
-    """One line for check and status (the user reads it there, the agent gets the text)."""
+    """One line for check and status (the user reads it there, the agent gets the text).
+    Free-text fields go through hint_field, as in network_hint_text."""
+    prof = hint_field(hint.get("profile"))
+    ssid = hint_field(hint.get("ssid") or "?")
     if hint.get("kind") == "windows-category":
         return ("Windows classifies WLAN %s as %s: switch its network profile to Private "
                 "(Settings, Network and internet, Wi-Fi, properties of the network, "
-                "Network profile type)." % (hint.get("ssid") or "?", hint.get("category") or "?"))
-    cmd = "%s trust-router --profile %s" % (os.path.abspath(__file__), hint.get("profile") or "?")
+                "Network profile type)." % (ssid, hint_field(hint.get("category") or "?")))
+    cmd = "%s trust-router --profile %s" % (os.path.abspath(__file__), prof)
     return ("new router MAC %s on WLAN %s (profile %s): accept with '%s', refuse with '%s --refuse'"
-            % (hint.get("mac") or "?", hint.get("ssid") or "?", hint.get("profile") or "?", cmd, cmd))
+            % (hint_field(hint.get("mac") or "?"), ssid, prof, cmd, cmd))
 
 
 def network_hint_path():
@@ -7116,6 +7152,16 @@ def print_bind_suggestion(cfg, net, state):
     if state.get("network"):
         print("LAN relay DISABLED on bound network %s: %s" % (state["network"], state["reason"]))
         return
+    refused_by = refused_profile(cfg.get("networks"), net.get("gateway_mac"), net.get("subnet"))
+    if refused_by:
+        # no bind command for a refused router: it would only be refused again by bind
+        print(
+            "This router (%s, subnet %s) was refused for profile %s: it is not bound and is not "
+            "offered again. A refused router cannot be bound again; to accept it anyway, run "
+            "trust-router --profile %s while connected to that WLAN."
+            % (net.get("gateway_mac"), net.get("subnet"), refused_by, refused_by)
+        )
+        return
     label = net.get("ssid") or ""
     cmd = "credo-peer-lan.py bind"
     if label:
@@ -7867,6 +7913,16 @@ def run_bind(args):
             )
             return 2
         net = dict(net, subnet=subnet)
+    refused_by = refused_profile(cfg.get("networks"), net["gateway_mac"], net["subnet"])
+    if refused_by:
+        sys.stderr.write(
+            "Refused: router %s was refused for WLAN subnet %s (profile %s), so it is not bound. "
+            "A refused router cannot be bound again. To accept it anyway, run trust-router "
+            "--profile %s while connected to that WLAN. Nothing changed.\n"
+            % (net["gateway_mac"], net["subnet"], refused_by, refused_by))
+        return 2
+    # a wide --subnet (wider than /16) lets every device of that range match: flagged below
+    wide = subnet is not None and int(subnet.rsplit("/", 1)[1]) < 16
     allow = _flatten(args.allow) or ["peers"]
     parsed_ok = []
     for raw in allow:
@@ -7899,6 +7955,17 @@ def run_bind(args):
     if not NETWORK_NAME_RE.match(name):
         sys.stderr.write("Invalid network name %r (letters, digits, . _ -)\n" % name)
         return 2
+    taken = networks.get(name)
+    if taken is not None and name not in same:
+        # never overwrite another network's profile (its router, refusals, group, allow)
+        old = taken.get("fingerprint") if isinstance(taken, dict) else None
+        old = old if isinstance(old, dict) else {}
+        sys.stderr.write(
+            "Not bound: profile %s already exists for another router or subnet (router %s, subnet %s). "
+            "Nothing changed. Choose another name with --name, or run trust-router --profile %s "
+            "while connected to that WLAN to add this router to it.\n"
+            % (name, ", ".join(fingerprint_macs(old)) or "?", old.get("subnet") or "?", name))
+        return 2
     for n in same:
         if n != name:
             networks.pop(n, None)
@@ -7925,6 +7992,9 @@ def run_bind(args):
         % (name, net["gateway_mac"], net["subnet"], (", adapter %s" % adapter) if adapter else "",
            networks[name]["label"], group, parsed_ok)
     )
+    if wide:
+        print("WARNING: --subnet %s is wider than /16: every device in that range can match this "
+              "network, not only this router. Prefer the exact subnet." % subnet)
     state = current_state(cfg)
     refresh_network_hint(cfg, state)
     for w in state["warnings"]:

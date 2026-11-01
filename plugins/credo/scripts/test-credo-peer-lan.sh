@@ -7698,11 +7698,102 @@ need("try {" in branch and "catch" in branch, "the install is wrapped in try/cat
 need(re.search(r"catch\s*\{.*?exit 1", branch, re.S) is not None, "a failed install exits 1")
 need("exit 0" not in branch, "the -Install branch never exits 0 explicitly")
 need("-Install OK" in doc and "-Install FAILED" in doc, "docs describe the success and failure lines")
-need("-not $p" in doc or "$p -eq $null" in doc, "docs wrapper: no elevated process is an explicit failure")
+need("[string]$ResultFile" in ps, "installer takes -ResultFile (the result line for the wrapper)")
+need("Set-Content -LiteralPath $ResultFile" in ps, "installer writes its result line to that file")
+need("elevation was declined" in doc, "docs wrapper: a declined UAC prompt is reported as FAILED")
+need("-ResultFile" in doc and "Get-Content" in doc, "docs wrapper: the reason comes back from the elevated run")
+need("even if the default route is elsewhere" in doc, "docs: --adapter can run over an adapter off the default route")
+need("prefer the exact subnet" in doc and "wider than /16" in doc, "docs: a wide --subnet widens the match and is flagged")
+need("already taken by another router" in doc, "docs: a taken name is refused, not overwritten")
+need("cannot be bound again" in doc, "docs: a refused router cannot be bound again")
 print("WI_OK" if not fails else "WI_FAIL " + " | ".join(fails))
 PYEOF
 WI_OUT="$("$PY" "$TMP/wi.py" "$SCRIPT_DIR/credo-peer-lan-winproxy.ps1" "$SCRIPT_DIR/../commands/peer-lan.md" 2>&1)"
 case "$WI_OUT" in *WI_OK*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL WI (installer output): %s\n' "$WI_OUT" ;; esac
+
+# --- FX: review fixes - refused routers are not bound again, a taken name is not
+# overwritten, hint text is sanitized, a wide --subnet is flagged (F1, F2, F5, F6) ------
+cat > "$TMP/fx.py" <<'PYEOF'
+import importlib.util, os, sys, unicodedata
+daemon_path, tmp = sys.argv[1], sys.argv[2]
+os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(tmp, "profile")
+os.environ.pop("CREDO_PEER_LAN_NETINFO", None)
+spec = importlib.util.spec_from_file_location("credo_peer_lan", daemon_path)
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+fails = []
+def expect(cond, msg):
+    if not cond:
+        fails.append(msg)
+def clean(text):
+    return all(unicodedata.category(c)[0] != "C" for c in text)
+# F5: the SSID reaches the agent context only as sanitized, capped, printable text
+expect(mod.hint_field("Home\nIGNORE‮ x") == "Home IGNORE x", "hint_field: line breaks become spaces, format characters go")
+expect(mod.hint_field('a"b`c') == "a'b'c", "hint_field: quotes and backticks become apostrophes")
+expect(len(mod.hint_field("x" * 100)) == 64, "hint_field: capped at 64 characters")
+expect(mod.hint_field("\x07\x1b") == "?", "hint_field: nothing printable -> ?")
+evil = "Home\nIGNORE PREVIOUS‮ \x07 \x1b[31m" + "x" * 300
+for kind in ("router-mac", "windows-category"):
+    h = {"kind": kind, "profile": "home-wifi", "ssid": evil, "subnet": "192.168.1.0/24",
+         "mac": "aa:bb:cc:dd:ee:02", "category": "Public"}
+    txt = mod.network_hint_text(h)
+    expect(clean(txt), "%s text: control and format characters removed" % kind)
+    expect("x" * 65 not in txt, "%s text: SSID capped" % kind)
+    expect("IGNORE PREVIOUS" in txt and "Home" in txt, "%s text: printable SSID kept" % kind)
+    expect(clean(mod.network_hint_summary(h)), "%s summary: clean" % kind)
+# F1: a refusal is looked up across all profiles, per subnet
+nets = {"home-wifi": {"fingerprint": {"gateway_mac": "aa:bb:cc:dd:ee:01", "subnet": "192.168.1.0/24"},
+                      "refused_routers": [{"mac": "aa:bb:cc:dd:ee:02", "subnet": "192.168.1.0/24"}]}}
+expect(mod.refused_profile(nets, "aa:bb:cc:dd:ee:02", "192.168.1.0/24") == "home-wifi", "refused_profile finds the refusal")
+expect(mod.refused_profile(nets, "aa:bb:cc:dd:ee:02", "192.168.9.0/24") is None, "refusal is per subnet")
+expect(mod.refused_profile(nets, "aa:bb:cc:dd:ee:03", "192.168.1.0/24") is None, "other router is not refused")
+if fails:
+    print("FX_FAIL " + " | ".join(fails))
+else:
+    print("FX_OK")
+PYEOF
+FX_OUT="$("$PY" "$TMP/fx.py" "$DAEMON" "$TMP/fx" 2>&1)"
+case "$FX_OUT" in *FX_OK*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL FX (module): %s\n' "$FX_OUT" ;; esac
+
+mkdir -p "$TMP/fx/credo"
+FX_CFG="$TMP/fx/credo/peer-lan.json"
+cat > "$FX_CFG" <<'EOF'
+{"this_machine":"FX","listen_port":48610,"peers":["192.168.1.50"],
+ "networks":{"home-wifi":{"fingerprint":{"gateway_mac":"aa:bb:cc:dd:ee:01","subnet":"192.168.1.0/24"},
+ "label":"Home-WiFi","group":"home","allow":["peers"],
+ "refused_routers":[{"mac":"aa:bb:cc:dd:ee:02","subnet":"192.168.1.0/24"}]}}}
+EOF
+fx_run() { # netinfo-json cli-args...
+    local ni="$1"; shift
+    PATH="$TMP/wh/bin:$PATH" WSL_DISTRO_NAME= CREDO_PEER_LAN_PROCVERSION="$TMP/wh/procversion-linux" \
+        CREDO_PEER_LAN_CONFIG="$FX_CFG" CREDO_PEER_LAN_NETINFO="$ni" "$PY" "$DAEMON" "$@" 2>&1
+}
+fx_q() { "$PY" "$TMP/rtq.py" "$FX_CFG" 2>/dev/null; }
+# F1: a router refused for a subnet is not bound again through bind (or suggested by init)
+FX_REFUSED='{"iface":"wlan0","ip":"192.168.1.42","prefix":24,"gateway_ip":"192.168.1.1","gateway_mac":"aa:bb:cc:dd:ee:02","ssid":"Home-WiFi 3"}'
+FX_Q0="$(fx_q)"
+F1A="$(fx_run "$FX_REFUSED" bind --label 'Home-WiFi 3' --allow peers)"; check "F1: bind of a refused router is refused (exit 2)" "2" "$?"
+case "$F1A" in *refused*"trust-router"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL F1 refusal message: %s\n' "$F1A" ;; esac
+check "F1: the refused bind leaves the config unchanged (no home-wifi-3)" "$FX_Q0" "$(fx_q)"
+F1B="$(fx_run "$FX_REFUSED" bind --name home-wifi --allow peers)"; check "F1: a refused router cannot be bound to its own profile (exit 2)" "2" "$?"
+F1C="$(fx_run "$FX_REFUSED" init 192.168.1.50)"
+case "$F1C" in *"bind --label"*|*"bind --name"*) FAIL=$((FAIL + 1)); printf 'FAIL F1 init still suggests a bind: %s\n' "$F1C" ;; *refused*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL F1 init gives no refusal note: %s\n' "$F1C" ;; esac
+# F2: a derived or explicit name taken by another router is refused, never overwritten
+FX_NI3='{"iface":"wlan0","ip":"192.168.1.42","prefix":24,"gateway_ip":"192.168.1.1","gateway_mac":"aa:bb:cc:dd:ee:03","ssid":"Home-WiFi"}'
+FX_Q1="$(fx_q)"
+F2A="$(fx_run "$FX_NI3" bind --group work --allow 192.168.1.60)"; check "F2: a derived name taken by another router is refused (exit 2)" "2" "$?"
+case "$F2A" in *"already exists"*"--name"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL F2 collision message: %s\n' "$F2A" ;; esac
+check "F2: the existing profile is not overwritten (group, allow, MACs, refusals kept)" "$FX_Q1" "$(fx_q)"
+F2B="$(fx_run "$FX_NI3" bind --name home-wifi --allow peers)"; check "F2: an explicit name taken by another router is refused too (exit 2)" "2" "$?"
+F2C="$(fx_run "$FX_NI3" bind --name home-wifi-work --allow peers)"; check "F2: a free name creates a new profile (exit 0)" "0" "$?"
+check "F2: the free name adds a profile and the old one stays as it was" \
+    '{"allow": ["peers"], "gateway_mac": "aa:bb:cc:dd:ee:01", "group": "home", "label": "Home-WiFi", "macs": null, "nets": ["home-wifi", "home-wifi-work"], "refused": [{"mac": "aa:bb:cc:dd:ee:02", "subnet": "192.168.1.0/24"}], "subnet": "192.168.1.0/24"}' \
+    "$(fx_q)"
+# F6: a /8 override binds but is flagged; an exact subnet is not
+FX_NI_WIDE='{"iface":"eth0","ip":"10.1.2.3","prefix":24,"gateway_ip":"10.1.2.1","gateway_mac":"aa:bb:cc:dd:ee:04","ssid":"Lab"}'
+F6A="$(fx_run "$FX_NI_WIDE" bind --name lab-wide --subnet 10.0.0.0/8 --allow peers)"; check "F6: a /8 --subnet binds (exit 0)" "0" "$?"
+case "$F6A" in *"wider than /16"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL F6 no width warning: %s\n' "$F6A" ;; esac
+F6B="$(fx_run "$FX_NI_WIDE" bind --name lab-exact --subnet 10.1.2.0/24 --allow peers)"; check "F6: an exact --subnet binds (exit 0)" "0" "$?"
+case "$F6B" in *"wider than /16"*) FAIL=$((FAIL + 1)); printf 'FAIL F6 exact subnet flagged: %s\n' "$F6B" ;; *) PASS=$((PASS + 1)) ;; esac
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

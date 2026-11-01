@@ -85,7 +85,8 @@ param(
     [switch]$Refresh,
     [switch]$DryRun,
     [string]$AllowFile = "",
-    [string]$TaskName = "credo-peer-lan-proxy"
+    [string]$TaskName = "credo-peer-lan-proxy",
+    [string]$ResultFile = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -118,6 +119,15 @@ function Test-Admin {
 
 function Write-Plan([string]$Text) {
     Write-Host ("DRYRUN: would {0}" -f $Text)
+}
+
+function Write-InstallResult([string]$Line) {
+    # shown in this window; with -ResultFile also written to that file, so the wrapper that
+    # started this elevated run can print the reason (the window itself may close at once)
+    Write-Host $Line
+    if (-not [string]::IsNullOrWhiteSpace($ResultFile)) {
+        Set-Content -LiteralPath $ResultFile -Value $Line -Encoding UTF8
+    }
 }
 
 # -- allowlist validation (mirrors parse_allow_entry in credo-peer-lan.py) ---------
@@ -492,11 +502,11 @@ if ($Install) {
             Write-Host "-Install DRYRUN finished: nothing was changed."
         }
         else {
-            Write-Host ("-Install OK: script v{0} installed, task '{1}', firewall rule '{2}', port {3}." -f $ScriptVersion, $TaskName, $RuleName, $Port)
+            Write-InstallResult ("-Install OK: script v{0} installed, task '{1}', firewall rule '{2}', port {3}." -f $ScriptVersion, $TaskName, $RuleName, $Port)
         }
     }
     catch {
-        Write-Host ("-Install FAILED: {0}" -f $_.Exception.Message)
+        Write-InstallResult ("-Install FAILED: {0}" -f $_.Exception.Message)
         exit 1
     }
 }

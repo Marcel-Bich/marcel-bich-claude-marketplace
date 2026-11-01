@@ -723,7 +723,7 @@ allowlist-scoped firewall rule (the old rule allowed the whole LocalSubnet).
        the installer to the user's `%TEMP%` and runs that copy elevated - this is the only
        step that prompts for UAC:
        ```bash
-       powershell.exe -NoProfile -Command '$s = Join-Path $env:TEMP "credo-peer-lan-winproxy.ps1"; Copy-Item -LiteralPath "'"$winps"'" -Destination $s -Force; $p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File",("`"" + $s + "`""),"-Install","-Port","48610"; if (-not $p) { Write-Host "-Install FAILED: no elevated PowerShell was started (UAC declined?)"; exit 1 }; if ($p.ExitCode -eq 0) { Write-Host "-Install OK: the elevated run exited with code 0" } else { Write-Host ("-Install FAILED: the elevated run exited with code {0}" -f $p.ExitCode) }; exit $p.ExitCode'
+       powershell.exe -NoProfile -Command '$s = Join-Path $env:TEMP "credo-peer-lan-winproxy.ps1"; Copy-Item -LiteralPath "'"$winps"'" -Destination $s -Force; $r = Join-Path $env:TEMP "credo-peer-lan-install.txt"; Remove-Item -LiteralPath $r -Force -ErrorAction SilentlyContinue; try { $p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File",("`"" + $s + "`""),"-Install","-Port","48610","-ResultFile",("`"" + $r + "`"") } catch { Write-Host ("-Install FAILED: elevation was declined (no elevated PowerShell was started: {0})" -f $_.Exception.Message); exit 1 }; if (Test-Path -LiteralPath $r) { Get-Content -LiteralPath $r; exit $p.ExitCode } else { Write-Host ("-Install FAILED: the elevated run wrote no result line (exit code {0})" -f $p.ExitCode); exit 1 }'
        ```
        Tell the user to approve the one UAC prompt. The `-Port` MUST equal `listen_port`. The
 wrapper prints `-Install OK` or `-Install FAILED` with the reason: a declined UAC prompt is
@@ -764,15 +764,21 @@ reported as FAILED, never as a silent exit 0.
   - `--adapter NAME` detects the network of that adapter instead of the one of the default
     route: the Linux interface (`eth1`), or under WSL the Windows adapter alias (`WLAN 2`,
     spaces allowed). The name is stored in the profile; the relay matches through that
-    adapter from then on.
+    adapter from then on, even if the default route is elsewhere.
   - `--subnet CIDR` stores a private subnet (/8 or narrower, e.g. `192.168.0.0/16`) instead
     of the detected one. The detected address must lie inside it, otherwise bind refuses
     with exit 2, because the relay could never match that network. Public ranges are refused.
+    A wide `--subnet` (e.g. `/8`) widens what matches: every device in that range can
+    match, so prefer the exact subnet. bind prints a WARNING when `--subnet` is wider than /16.
   - Example with invented values:
     `"$P" bind --name wired --adapter eth1 --subnet 192.168.0.0/16 --allow peers`
   - Binding the same router and subnet again updates that profile and keeps its other router
-    MACs. A bind on another router creates a new profile; the agent path for a new router of
-    the same WLAN is `trust-router` (see Router change).
+    MACs. A bind on another router creates a new profile when its name is free. A name that is
+    already taken by another router is refused (pass `--name`), never overwritten. The agent
+    path for a new router of the same WLAN is `trust-router` (see Router change).
+  - A router that was refused for a subnet (see Router change) cannot be bound again: bind
+    refuses it and `init` offers no bind command for it. Accept it only with `trust-router`
+    while connected to that WLAN.
 
 - **unbind `<name>`** / **networks** - remove a bound network / list them.
 
