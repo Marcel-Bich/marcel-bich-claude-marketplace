@@ -70,16 +70,20 @@ rule"); in short:
 - **Agent-owned clarify items:** decided by the agent ONLY in an autonomous run (the plan agent,
   or with no known plan agent peer the executing agent in a temporary pseudo plan role; its real
   role does not change). Uncritical questions per the active mainagent-prompt, a feasible item
-  GO'd with `(GO: agent decision, <reason>)`, each decision logged in the item History and named
-  in the next reply so the user can veto. In an interactive mode they go to the user like any
-  clarify item: the agent recommends, the user decides.
+  GO'd with `(GO: agent decision, <reason>)`, each decision logged in the item History; a
+  decision with real consequences is also named in the next reply with a veto code (credo
+  `verify`, "Typed codes"), a trivial one keeps the History line only. In an interactive mode
+  they go to the user like any clarify item: the agent recommends, the user decides.
 - **Always the user's call, on every item:** the user's taste
-  or preference, deleting user data, installs beyond the item's `## Freigaben`, money, the hard safety rules, and any
-  question whose answer would change or narrow the verbatim requirement.
-- **Mode:** active and passive ask the user for every clarify decision via the Ask tool;
-  autonomous decides the uncritical questions of agent-owned clarify items and parks the rest,
-  owner-owned clarify items included, for the end-of-run report (credo `session-autonomous`).
-  Build-time details of a GO item are decided by the agent in every mode.
+  or preference, deleting user data, installs beyond the item's `## Freigaben`, money beyond an
+  approved budget (inside approved budgets the agent decides, credo `budget`), the hard safety
+  rules, and any question whose answer would change or narrow the verbatim requirement.
+- **Mode:** active and passive ask the user for every clarify decision via the Ask tool,
+  generously, unless the answer is completely clear; autonomous uses no Ask tool at all,
+  decides the uncritical questions of agent-owned clarify items and parks the rest,
+  owner-owned clarify items included, for the end-of-run report as text with Q codes (credo
+  `session-autonomous`). Build-time details of a GO item are decided by the agent in every
+  mode.
 
 The over-clarify standard below applies to what goes to the user. A build-time detail of a GO
 item is not a clarify question: the agent decides it and logs it.
@@ -104,8 +108,9 @@ For each item being brought toward GO, discharge these four LIGHT obligations - 
 brief, a sanity pass, NOT a deep dive:
 
 (a) **Ask generously.** Prefer more focused, well-aimed clarify questions over too few; do
-    not rush an item to GO by simply not asking. The Ask tool is the channel in presence
-    modes (autonomous defers its questions instead - credo `session-autonomous` skill).
+    not rush an item to GO by simply not asking. Skip a question only when the answer is
+    completely clear. The Ask tool is the channel in presence modes (autonomous uses no Ask
+    tool and defers its questions instead - credo `session-autonomous` skill).
 (b) **Brief pre-measure.** For performance-critical paths or comparisons, do a quick
     sanity-check measurement DURING clarify. This is deliberately light and is NOT the full
     post-GO measurement of the measure-then-user-decide split (credo `items` skill, Success
@@ -149,6 +154,10 @@ Text before an Ask call stays visible: when explanation text comes right before 
 the same turn, first write that text, then make one trivial tool call (a buffer, e.g. a read of a
 known file), then call the Ask tool. Without the buffer the TUI hides the text behind the Ask dialog.
 
+Opt-in setting `dont_ask_twice` (default false, `credo-config.sh get dont_ask_twice`). When
+it is true, before any question search the requirement logs, the items, the handoff and
+earlier Ask answers; an earlier approval counts as the user's answer and is not asked again.
+
 ## One item per Ask round (active and passive only)
 
 When clarifying or proposing a GO for credo items in a presence session, handle them one
@@ -169,11 +178,11 @@ points in one pass. Only batch questions that are independent of each other; nev
 question whose framing depends on another question's answer into the same round - split
 those into sequential rounds, or it gets confusing.
 
-This is orthogonal to passive mode's "less is more" (which limits which items reach the
-user at all): still bring only the genuinely ambiguous items and self-resolve the rest, but
-present each one you do bring in its own round. Trivial, self-evident fixes still need no
-question. This rule does not apply in autonomous mode, which runs unattended without
-interactive Ask rounds.
+This is orthogonal to passive mode's "less is more" (which limits noise, not questions).
+Bring every item that is not completely clear, self-resolve facts and research, and
+present each item you do bring in its own round. Trivial, self-evident fixes still need no
+question. This rule does not apply in autonomous mode, which runs unattended and uses no
+Ask tool at all.
 
 ## Manual tests for the user come as a numbered list
 
@@ -410,12 +419,23 @@ session-context threshold signal (defaults 80 / 92 percent, config `compact.thre
 Do NOT self-trigger compact-plus proactively - run it only when the injected ACTION line
 names it or when the user invokes it. See the `compact-plus` skill.
 
+## Ask for the GO as soon as an item is clear
+
+As soon as a clarify item has no open question left, ask for its GO right away in the next
+Ask round - do not wait for a separate prompt from the user to propose it.
+
 ## Pick up GO items alongside
 
 While collaborating, pick up buildable items (those in `1_todo/2_go`) alongside the live
 conversation. Only `2_go` is buildable; clarify-stage items are not (credo `items`
 go-gate). Move items through the Definition-of-Done gate properly - a dedicated-subagent
-audit before `2_done/`, visual verify for `ui: true` - never self-approve.
+audit before `2_done/`, visual verify for `ui: true` - never self-approve. Active mode has
+no idle-capacity rule (that rule is for passive and autonomous mode, credo `orchestration`).
+
+## No budget stops
+
+In active mode credo applies no budget stops; the user manages the budget (credo `budget`,
+"No budget stops in active mode").
 
 ## Clarify during subagent waits
 

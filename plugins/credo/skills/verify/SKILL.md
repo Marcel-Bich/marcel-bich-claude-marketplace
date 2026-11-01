@@ -65,7 +65,8 @@ project-specific tool or device:
      AskUserQuestion whether to adapt `verify.primary_test` to the project's actual primary
      test entry point or to clear it (empty -> rely on the fallback). Include a short
      explanation of what the setting is and what it is for. Never keep a stale value
-     silently.
+     silently. In autonomous mode there is no Ask tool, so this question goes into
+     the end-of-run report as text with a Q code.
    - If it is empty, the fallback chain applies with no question.
 
 2. **Else Playwright.** If no primary test level is configured, drive the real build in a
@@ -78,6 +79,15 @@ project-specific tool or device:
 Passing the applicable level in this chain is the condition for bringing an item to
 `done`. Do not skip up the chain: a configured `verify.primary_test` is not satisfied by
 running Playwright instead.
+
+## Flaky tests and speed
+
+- A flaky test is a defect. Find the cause and fix it. Flaky tests are always fixed,
+  never retried, skipped or deferred (no retry loop, no skip marker, no "fix it later").
+- Tests and deploys are optimised for speed, so the user never waits longer than really
+  needed. Run the relevant subset first, parallelise where safe, cut idle waits and
+  redundant steps. Large projects may legitimately take long; speed never replaces a
+  required test level.
 
 ## Handing a manual test to the user
 
@@ -115,7 +125,7 @@ Every manual test block, every question to the user and every veto-able decision
 - **Visible headings.** Each test block, question and veto starts with its own markdown `###` heading line, never inline text:
   - test: `### 🧪 T3) <topic>`
   - question: `### ❓ Q4) <topic>` (a question asked through the Ask tool carries the same `❓ Q4)` prefix in its question text)
-  - veto: `### ✋✋ V2) Veto possible: <what was decided or done> ✋✋` (in a German conversation the marker word is `Veto möglich`). Use it whenever an agent decides or does something on its own that the user may want to overrule, typically in autonomous runs, instead of a plain "veto possible" sentence.
+  - veto: `### ✋✋ V2) Veto possible: <what was decided or done> ✋✋` (in a German conversation the marker word is `Veto möglich`). Use it when an agent decides or does something on its own with real consequences that the user may want to overrule, typically in autonomous runs, instead of a plain "veto possible" sentence. A trivial point gets a History line only, no veto code. Each veto states the consequences for the user when they are not obvious.
 - **Answers.** `T3 vf` (test passed), `T3.2 vf` (step 2 passed), `Q4: <answer>` (question answered), `V12 <objection>` (veto objected to: the agent acts on the objection, and the veto is closed), `V12 ok` (veto accepted, closed).
 - **Vetos stay open.** A veto has no deadline. It can be raised or resolved at any time, also long after the fact. It stays open, in every footer, until one of these happens: the user resolves it by its code; the user resolves all open vetos at once ("drop all vetos", "alle vetos weg"); or the context shows that the user already accepted that point elsewhere. A closed veto leaves the footer and the band.
 - **Open-codes footer.** End every reply that has open tests, questions or vetos with one line listing ALL still-open codes in bold, in the language-neutral emoji form (the same in every conversation language, no translated labels): `**🧪: T3** · **❓: Q4, #177** · **✋: V2, V5**`. Repeat the still-open codes in every reply: the band reads only the footer of the last reply. Omit a part with no open codes, and omit the footer when nothing is open. The footer is a comma list of codes, never prose. An open question about an item still gets its own code (`### ❓ Q4) #177 <topic>`), and item refs may stand next to codes (`**❓: Q4, #177**`). credo's band reads this line; it still accepts the older English and German word labels for tests and questions (vetos have no word label).
@@ -216,7 +226,8 @@ exact naming rule:
 Example: `login-form-320-2026-07-04.png`. `<task-or-feature>` is a short slug (an item
 slug or feature name), `<viewport>` is the width in px, and the date is the day of the
 verification. The `.credo/` directory is git-excluded by design, so screenshots are
-local evidence, not committed artifacts.
+local evidence, not committed artifacts. They are kept as evidence; the disposable-files
+exception of the credo `safety` skill does not cover `.credo/screenshots/`.
 
 You do not need to resolve the path to `.credo/screenshots/` yourself: save with the bare
 filename above, and a credo PostToolUse hook relocates the screenshot into the pinned

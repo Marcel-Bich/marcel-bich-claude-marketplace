@@ -54,6 +54,8 @@ DELEGATION: if you spawn your own helpers they inherit this same security and ru
 
 GIT: modify files only - do NOT run git add / git commit / git push (the main / task-build agent is the single owner of the working-tree index, which avoids a .git/index.lock race); if you believe a commit is warranted, report that back instead of committing.
 
+BACKGROUND SHELLS: forbidden for subagents - do not start a background shell, never set run_in_background; only the main agent may use them, and it keeps track of them.
+
 OUTPUT HYGIENE: no curly quotes; no ellipsis character (use ...); no emojis in code or logs; ASCII identifiers only; double hyphens (--) only where changing to - would break functionality (CLI flags, argument separators), everywhere in prose use -; no AI-filler phrases (Let me..., I'll..., Sure!, Certainly!).
 
 LANGUAGE: follow the project's own language rules if any exist (read them). If none exist, match the language already established in the file you touch (file-local convention wins). If unclear, write everything in English including code comments; use another language only where deliberately required (UI strings, translation files). Exception: credo items themselves are written in the user's configured language if set, otherwise English.__LANG_CLAUSE__

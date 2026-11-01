@@ -106,6 +106,19 @@ item cutting, and the self-audit) to subagents per the `orchestration` skill, an
   `max+1` yourself. The helper also scans the items tree on each call as a safety floor, so
   even if the counter is set too low it reconciles up to the highest existing id (and warns
   on stderr) rather than reissuing a used id.
+- **Automatic release (ask once).** Skip when
+  `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" source release.auto` prints `project:`
+  (the repo's `.credo/config` already sets `release.auto`). Otherwise ask with
+  AskUserQuestion "Release finished changes automatically?" with the options Yes (writes
+  `release.auto: true`) and No (default, writes `release.auto: false`), in the same round as
+  the other migration questions when that round exists, else in its own round. Explain in
+  one sentence that, when on, credo releases once no GO item is buildable and changelog fragments
+  exist (fallback at 15 fragments or after 7 days, whichever comes first), using this
+  project's own release procedure. Write the answer into the project `.credo/config` as a
+  nested `release:` block with `auto: true` or `auto: false` (set the `auto:` line of an
+  existing `release:` block, else append the block; keep every other line intact, never
+  duplicate a top-level key). Fully autonomous migration never asks this and keeps the
+  default `false`.
 
 ## 4. Working folder (recommended)
 

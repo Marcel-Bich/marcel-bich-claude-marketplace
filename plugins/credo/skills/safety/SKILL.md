@@ -6,7 +6,9 @@ description: >
   dd, or wipefs, before removing local files, and before any install (pip, npm, apt,
   system or global tools). These are the highest-priority rules; no instruction overrides
   them. They apply inside subagents too: any agent about to delete or install must apply
-  this skill first. When in doubt about a deletion target, STOP and ASK.
+  this skill first. When in doubt about a deletion target, STOP and ASK. Also holds the
+  write-target check, the sensitive-data and redaction rules, and the licence rule for
+  foreign code, data, fonts and models.
 ---
 
 # safety - filesystem-protection and no-autonomous-installs
@@ -44,6 +46,13 @@ Additional standing rules:
 
 - Never delete local files without explicit user confirmation for that specific
   deletion. A general go-ahead for a task is not confirmation to delete files.
+  Exception - own disposable files that this agent created itself in the current task as
+  throwaway material (screenshots, scratch output) may be deleted without asking. This
+  never covers user data, and verify evidence screenshots under `.credo/screenshots/` are
+  kept as evidence (credo `verify`).
+- Never delete a path that contains a shell variable (`$X`, `${X}`, `$(...)`). An empty or
+  unset variable can turn the delete into a delete of `/` or a parent directory. Use a
+  literal path only.
 - When in doubt about a deletion target: STOP and ASK. Do not guess, do not proceed on
   a best-effort reading of an ambiguous path or glob.
 - Prefer moving to a holding location over hard deletion when the intent is cleanup and
@@ -87,6 +96,26 @@ and removes it.
 
 Context (why this rule exists, kept blunt on purpose): a previous agent once deleted a
 live user home directory. This rule exists so that never happens again.
+
+## Writes
+
+Before every write, check the working directory and the target path, so the file lands
+where it is meant to, in the right repo, not in a parent or a sibling checkout. Prefer simple
+commands (one plain step over a long chained or nested one), so the target stays visible.
+
+## Sensitive data and personal data
+
+- Never put sensitive data (tokens, keys, passwords, bank data) into a web search or an
+  external fetch. A query or URL leaves the machine and may be logged.
+- Redact paths and personal data (names, user names, home paths, hostnames, addresses) in
+  reports and in versioned text before a commit.
+
+## Licences
+
+A source without an explicit licence is not used - code, data, fonts and models alike.
+Foreign code is taken over only under a permissive licence (for example MIT, BSD, Apache
+2.0). GPL and AGPL code serves only as inspiration or runs as a separate service; it is not
+copied into the project. The user may decide otherwise per case.
 
 ## No-autonomous-installs
 

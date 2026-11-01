@@ -56,7 +56,7 @@ active mainagent-prompt (`credo-preset.sh mainagent`); a feasible item moves to 
 `(GO: agent decision, <reason>)` in its History. In an interactive mode the plan role does not
 decide them: it asks the user, one item per Ask round, recommended option first. Human-owned items
 still need the user's GO, and the fixed escalation list there (taste, deleting user data,
-installs beyond the item's `## Freigaben`, money, safety, anything changing the verbatim
+installs beyond the item's `## Freigaben`, money beyond an approved budget, safety, anything changing the verbatim
 requirement) always goes to the user.
 
 ## No batches handed out

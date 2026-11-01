@@ -79,7 +79,8 @@ mere user presence or a casual remark - only an explicit order.
 
 Autonomous mode uses the same **canonical common core** as every credo session skill. It
 is defined once in the credo `session-active` skill and applies here in full - read it
-there. It covers: CLARIFY-FIRST and the go-gate; clarify via Ask (G1); bug report is not
+there. It covers: CLARIFY-FIRST and the go-gate; clarify via Ask (G1 - in autonomous mode
+there is no Ask tool, questions become text with Q codes, see below); bug report is not
 an immediate fix (G2); read-back scaled to complexity (A4); the soft old-item reminder; no
 silent rename / restructure plus consistency sweep (G6) and independent evaluation of
 foreign handoffs (G7); the authority order (E5); the ntfy hybrid model (D); the git-push
@@ -117,10 +118,12 @@ agent decision rule (credo `items`, "Clarify owner and the agent decision rule")
 plan agent peer known, you take the pseudo plan role for the moment (your real role does
 not change): decide the uncritical questions per the active mainagent-prompt; GO a feasible
 item with `(GO: agent decision, <reason>)` and build it; log every decision in the item
-History and list it in the end-of-run report so the user can veto. Park the escalated
-questions (the user's taste or preference, deleting user data, installs beyond the item's `## Freigaben`, money, the hard
-safety rules, anything that would change or narrow the verbatim requirement, points the
-preset says to note and present) for the end-of-run report - never adopt a default for them.
+History, and list a decision with real consequences in the end-of-run report with a veto
+code (see "No Ask tool: questions and vetos as text" below). Park the escalated
+questions (the user's taste or preference, deleting user data, installs beyond the item's `## Freigaben`, money beyond an
+approved budget, the hard safety rules, anything that would change or narrow the verbatim
+requirement, points the preset says to note and present) for the end-of-run report - never
+adopt a default for them.
 
 go=go: a `2_go` item IS buildable by the folder - build it (best effort), never self-skip or
 self-demote it for size, UI, or "not sure it is verifiable". See the go=go build-side anchor
@@ -135,14 +138,16 @@ the fresh listing in "Empty buildable queue = end-of-run" below). Building every
 item IS the mandate of autonomous mode, not over-reach. "I built the thread I started with" is
 NOT a reason to stop while other buildable items remain.
 
-Build in parallel where it is safe: before spawning builders, run the overlap check
+Start builders for buildable GO items as soon as there is idle capacity. The idle capacity
+rule and the per-area limits `builders.min_per_area` / `builders.max_per_area` live in credo
+`orchestration`. Build in parallel where it is safe: before spawning builders, run the overlap check
 (`credo-touches-check.sh` over the candidate `2_go` items; overlapping items run
-sequentially) and, before each spawn, the resource gate (`credo-resource-check.sh
---running <N>`, plus `--heavy` for a `heavy: true` item). On `wait`, start nothing new and
+sequentially) and, before each spawn, the resource gate (`credo-resource-check.sh`; a `heavy: true` item still never runs next to another heavy item). On `wait`, start nothing new and
 re-check on the next completion notification. Full procedure: credo `orchestration` skill,
-"Parallel code tracks: touches and resource gate". The batch shape (plan once, 3-4
-builders plus 1 bundle, fresh audit per item, one release per batch) and its budget gate
-follow the measured default: credo `orchestration`, "Default batch workflow".
+"Parallel code tracks: touches and resource gate". The batch shape (plan once, builders
+within the per-area limits plus 1 bundle, fresh audit per item) and its budget gate follow
+the measured default: credo `orchestration`, "Default batch workflow". Releases follow
+`release.auto` (see "Release when nothing is buildable" below).
 
 Each parallel code track gets its own worktree, chosen by `credo-worktree-flow.sh` (hydra's
 flow on `[x] use Hydra for 2+ independent tasks` with hydra installed, else native
@@ -194,7 +199,7 @@ low-risk items. A bundle gets one audit; other lean items finished in the same s
 be batched into one audit subagent (one verdict per item); `full` items are audited singly.
 The auditor fixes small findings itself after recording them (credo `audit`, "Fixing small
 findings"). Run the dogma `relevant` test stage per item where defined; the full suite runs
-only where dogma places it, else once per batch release, not per item. Pending human-only
+only where dogma places it, else once per batch, not per item. Pending human-only
 tests do not hold an item in `2_go` (credo `items`, "Human-only checks do not block done").
 
 ### Bringing up a local surface to verify (autonomous)
@@ -239,6 +244,18 @@ only on an explicit user instruction. This is the exception to the common core's
 "Suggest a session mode when none is set" rule: that Ask-based suggestion logic applies
 only in presence or no-mode sessions, never in autonomous.
 
+### No Ask tool: questions and vetos as text
+
+No Ask tool in autonomous mode at all - not for a clarify point, not for the power-down, not
+for the budget. Nobody is there to answer, so an Ask would block the run. A question that
+needs the user goes into the end-of-run report as text with a Q code (credo `verify`,
+"Typed codes"); the deferred-question flow below covers the bounded wait before that.
+
+Veto codes only for decisions with real consequences (a GO the agent gave, a changed scope,
+money spent inside an approved budget, a lock removed, a default adopted for an open
+point). A trivial point gets a History line only, no veto code. Each veto states the
+consequences for the user when they are not obvious.
+
 ### Never build a skill autonomously (hard guarantee)
 
 The credo `skill-capture` skill is mode-gated, and autonomous mode takes its strictest
@@ -259,8 +276,10 @@ entry, and before any autonomous start, check budget-data availability via the r
 - Exit 0 (fresh data): percentage caps are measurable and MANDATORY - proceed as today.
 - Exit 3 or 4 (no cache / stale cache): percentage caps CANNOT be enforced (credo `budget`
   skill, B8 - the fail-safe caps are percentages too, so they are equally unenforceable).
-  Do NOT run blind and do NOT silently ignore budgets. Use AskUserQuestion with three
-  options:
+  Do NOT run blind, do NOT silently ignore budgets, and use no Ask tool. If the grant or an
+  earlier user statement already picks one of the options below, apply it. Otherwise do not
+  start building. Treat it as a showstopper (end-of-run per the rules below) and put the
+  three options into the end-of-run report as text with a Q code:
   a. Install the `limit` plugin for real budget safety, then re-check availability.
   b. Run with a wall-clock timebox (max X hours / until a clock time) - the only guardrail
      enforceable without the cache. Record the deadline and self-enforce it: end the run via
@@ -268,15 +287,16 @@ entry, and before any autonomous start, check budget-data availability via the r
   c. Proceed without budget guardrails - an explicit, user-accepted risk.
 
 This gate is what makes "autonomy never runs without budgets/limits" true. Send the
-come-to-PC ntfy before the AskUserQuestion (per the ntfy hybrid).
+come-to-PC ntfy for this question (per the ntfy hybrid).
 
 Budget enforcement is unconditional in autonomous mode. Apply the credo `budget` skill in
 full: the daily cap schedule, the critical 09:00 guard, the 5-hour guard (skill behavior,
 check frequently including while subagents run, stop subagents with TaskStop before the
 ceiling), the task-sizing recommendation, the absolute fail-safe caps, and the
 commit-identity gate before every commit. Before starting an autonomous run, the main agent
-first confirms with the user whether the default caps fit or need a temporary override, and
-until when (per the budget skill), and performs the mandatory budget-start read-back (see
+applies the schedule defaults plus any cap override the user already gave, with its end (per
+the budget skill; no Ask tool, an open budget question goes into the end-of-run report as
+text with a Q code), and performs the mandatory budget-start read-back (see
 "Budget-start read-back" below) - show the schedule row in force and reflect the
 understanding back before starting (full read-back on the first start, at least the short
 form on every start). Never exceed a cap to finish "just one more thing".
@@ -420,7 +440,8 @@ existing audit reports before raising it (read/build-gate, credo `items` skill) 
 that merely looks open in a stale head is often already clarified there, and must not be
 re-raised. Only if it is truly unanswered:
 
-1. Send an immediate ntfy `high` stating the question clearly (come to the PC).
+1. State the question in the reply as text with a Q code (credo `verify`, "Typed codes";
+   no Ask tool) and send an immediate ntfy `high` stating it clearly (come to the PC).
 2. Schedule a wake-up for the deferred-question window - `windows.deferred_question_minutes`
    (default 5) - to check for an answer:
 
@@ -434,16 +455,33 @@ re-raised. Only if it is truly unanswered:
    (credo `items`, per the active mainagent-prompt) as the documented default - record the decision
    and its rationale in the item History / handoff so it is auditable - and continue fully
    autonomously. A question on the escalation list (the
-   user's taste or preference, deleting user data, installs beyond the item's `## Freigaben`, money, the hard safety rules,
-   a change to the verbatim requirement) or the GO of a human-owned item is NEVER defaulted:
-   park it (the item stays where it is), continue with other work, and put it into the
-   end-of-run report. Do not block the run on an absent user.
+   user's taste or preference, deleting user data, installs beyond the item's `## Freigaben`, money beyond an
+   approved budget, the hard safety rules, a change to the verbatim requirement) or the GO of
+   a human-owned item is NEVER defaulted: park it (the item stays where it is), continue with
+   other work, and put it into the end-of-run report with its Q code. A defaulted decision
+   with real consequences gets a veto code there too. Do not block the run on an absent user.
 
 This replaces blocking on the user with a bounded wait plus a safe, documented fallback. If
 a subagent is the one that hit the question, use return-and-resume (credo `orchestration`):
 the subagent returns `{status: needs_decision, question}`, the main agent obtains the answer
 (user, verbatim log, or documented default) and passes it back via SendMessage so the
 subagent continues with full context.
+
+### Release when nothing is buildable
+
+`release.auto` (default false, `credo-config.sh get release.auto`) decides whether this
+session releases finished changes on its own:
+
+- false: no automatic release; finished changes wait for a release by the user.
+- true: when no GO item is buildable and changelog fragments exist, release them before the
+  end-of-run sequence below. As a fallback while GO items stay buildable, release anyway once
+  `release.fallback_fragments` fragments (default 15) exist or `release.fallback_days` days
+  (default 7) have passed since the last release, whichever comes first.
+
+The release uses the project's own procedure (for example the changelog fragment script or
+dogma versioning); credo invents none. Without such a procedure, do not release and note it
+in the end-of-run report. Git rules still apply (no push or merge unless the repo
+rules allow it).
 
 ### Empty buildable queue = end-of-run (kills the idle loop)
 
@@ -484,8 +522,9 @@ Judge the actual current contents:
   non-buildable WITH its reason, is the buildable queue empty and the end-of-run /
   power-down sequence allowed to proceed.
 
-When the buildable queue is empty (confirmed by the fresh listing above), run this
-end-of-run sequence. The ORDER matters: whether a suspend directive is set decides whether
+When the buildable queue is empty (confirmed by the fresh listing above), first run the
+release step when `release.auto` is true ("Release when nothing is buildable" above), then
+this end-of-run sequence. The ORDER matters: whether a suspend directive is set decides whether
 `credo-autonomy-off.sh` may flip the flag on its own or must ride the power-down first.
 
 **No suspend directive set (and `sleep.enabled` false):**
@@ -688,14 +727,16 @@ suspended even though it had announced it would).
 - **Attended (autonomy-off with the user reachable):** end-of-run reached because a real user
   prompt ended the run and the user is present and reachable (a real user message just paused
   autonomy via `credo-autonomy-clear.sh`, as opposed to a `[CREDO-AUTONOMY-WAKE]` self-wake).
-  Here, before powering down, you MUST FIRST ask via AskUserQuestion - e.g. "A suspend-on-idle
-  directive is set for this session. Power down the machine now?" - and power down ONLY on a
-  yes. On a yes, run the power-down procedure and end with `credo-autonomy-off.sh
-  --after-suspend` as its final step (the directive still stands, so a bare off would refuse).
-  A "no" is an explicit revocation -> run `credo-suspend-directive.sh clear`, after which a
-  plain `credo-autonomy-off.sh` (or `--override`) ends the run cleanly. This attended branch
-  lives HERE, in the skill; the fail-safe hook `credo-autonomy-off.sh` never runs this Ask and
-  never touches the directive.
+  No Ask tool here either, also not for the power-down. Announce the pending power-down in
+  the reply as a veto (`### ✋✋ V<n>) Veto possible: power down the machine ✋✋`, credo
+  `verify`, "Typed codes") that names the directive and the veto window, then run the same
+  path as unattended - the `high` ntfy, the `windows.veto_minutes` veto window, power down if
+  not vetoed, and `credo-autonomy-off.sh --after-suspend` as the final step (the directive
+  still stands, so a bare off would refuse). An objection to that veto, or any other explicit
+  revocation, clears the directive (`credo-suspend-directive.sh clear`), after which a plain
+  `credo-autonomy-off.sh` (or `--override`) ends the run cleanly. This attended branch lives
+  HERE, in the skill; the fail-safe hook `credo-autonomy-off.sh` never touches the
+  directive.
 
 ### Authority order when the user is away
 

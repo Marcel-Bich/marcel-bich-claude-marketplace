@@ -248,17 +248,41 @@ budget_failsafe:
   weekly_percent: 99
 
 # --- resource gate for parallel subagents (scripts/credo-resource-check.sh) ---
-# Below gate_from_agents running agents a new agent starts without a machine
-# check; from that count on (and always for a `heavy: true` item) the check
-# answers "wait" when free RAM or the 1-min load per CPU crosses a threshold.
-# Free disk is checked at every start: the item's disk_gb plus disk_reserve_gb
-# must fit on the target drive (an item without disk_gb needs only the reserve).
-# The rules live in the credo orchestration skill; only thresholds live here.
+# Before EVERY agent start (every mode) the check looks at CPU and RAM: the 1-min
+# load per CPU and the used RAM share. At max_busy_percent or more it answers "wait"
+# and no new agent starts. Free disk is checked at every start too: the item's
+# disk_gb plus disk_reserve_gb must fit on the target drive (an item without disk_gb
+# needs only the reserve). The rules live in the credo orchestration skill; only
+# thresholds live here.
 resources:
-  gate_from_agents: 6
-  min_free_ram_gb: 4
-  max_load_per_cpu: 1.0
+  max_busy_percent: 90
   disk_reserve_gb: 3
+
+# --- builders per independent area (credo orchestration skill) ----------------
+# Writing builders run in parallel per independent area: at least min_per_area and
+# at most max_per_area. Read-only agents (explore, research, audit, verify, tests,
+# deploy) have no fixed limit. Items that touch the same files never run in parallel.
+builders:
+  min_per_area: 2
+  max_per_area: 4
+
+# --- release (credo session-autonomous, /credo:setup and migrate) -------------
+# auto: false (default) -> no automatic release. auto: true -> when no GO item is
+# buildable and changelog fragments exist, the session releases them with the
+# project's own release procedure. Fallback: release anyway at fallback_fragments
+# fragments or after fallback_days days, whichever comes first. /credo:setup and the
+# migration ask once and write the answer here (project layer).
+release:
+  auto: false
+  fallback_fragments: 15
+  fallback_days: 7
+
+# --- ask behaviour (credo session-active, session-passive, requirements-verbatim) ---
+# false (default): questions are asked as the workflow needs them.
+# true (opt-in, costs search tokens): before every question the agent first searches
+# the requirement logs, the items, the handoff and earlier Ask answers; an earlier
+# approval counts as the owner's answer and is not asked again.
+dont_ask_twice: false
 
 # --- optimisation audit (/credo:optimize) -------------------------------------
 # The audit is opt-in per repo (asked at credo setup / onboarding) and is offered

@@ -68,7 +68,9 @@ Carry the bulk of the work yourself. Pick up buildable items (`1_todo/2_go`) and
 through the full Definition-of-Done gate - dedicated-subagent audit before `2_done/`,
 visual verify for `ui: true` - never self-approving (credo `items` and `verify`). Delegate
 substantive work to subagents per the credo `orchestration` skill so the main context
-stays lean.
+stays lean. As soon as there is idle capacity, start builders for buildable GO items (the
+idle capacity rule and the limits `builders.min_per_area` / `builders.max_per_area` live in
+credo `orchestration`).
 
 ### Proactively drive items toward a full GO
 
@@ -82,16 +84,22 @@ build rather than still half-specified.
 
 ### Less is more - only ambiguous items via Ask
 
-This is the defining passive-mode rule. Do NOT over-ask. Bring the clarify items to the user
+This is the defining passive-mode rule. "Less is more" limits noise, not questions. Ask
+generously, unless the answer is completely clear. Bring the clarify items to the user
 through the Ask tool, one item per round, once research has settled the facts. Every clarify
 decision is the user's, also on agent-owned items (common core, "Who decides"), even when it
 looks obvious; the escalated questions (taste, infeasible or really not good, deletion of user
-data, installs beyond the item's `## Freigaben`, money, safety, a change to the verbatim
-requirement) are the user's in every case. Anything you can resolve without deciding for the
-user (facts, research, build-time details of a GO item) you resolve; you do not narrate
-every step or ask for confirmation on the self-evident. Batch and minimize interruptions -
-the user's attention is the scarce resource. Each item you do bring still gets its own Ask
-round - see "One item per Ask round" in the common core (session-active skill).
+data, installs beyond the item's `## Freigaben`, money beyond an approved budget, safety, a
+change to the verbatim requirement) are the user's in every case. Anything you can resolve
+without deciding for the user (facts, research, build-time details of a GO item) you
+resolve; you do not narrate every step or ask for confirmation on what is completely clear.
+Batch and minimize interruptions - the user's attention is the scarce resource. Each item
+you do bring still gets its own Ask round - see "One item per Ask round" in the common core
+(session-active skill).
+
+With the opt-in setting `dont_ask_twice` (default false) set to true, search the requirement
+logs, the items, the handoff and earlier Ask answers before any question; an earlier
+approval counts as the user's answer and is not asked again.
 
 Text before an Ask call stays visible: when explanation text comes right before an Ask-tool call in
 the same turn, first write that text, then make one trivial tool call (a buffer, e.g. a read of a

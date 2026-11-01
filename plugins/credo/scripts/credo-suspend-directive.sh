@@ -16,7 +16,7 @@
 #     directive therefore OVERRIDES sleep.enabled:false (the server-safe default),
 #     but never a missing sleep.command (that stays the misconfig path).
 #   - The directive persists until an EXPLICIT revocation (natural-language "no
-#     suspend / leave it on", or the attended autonomy-off Ask answered "no").
+#     suspend / leave it on" in the chat).
 #     User presence alone does NOT clear it - see the session-autonomous skill.
 #
 # Subcommands:

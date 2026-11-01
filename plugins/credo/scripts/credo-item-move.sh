@@ -59,8 +59,8 @@
 #                     After the move a human-owned item becomes clarify_owner: agent and
 #                     its History gets "-> go <date> (origin: created by user; clarify_owner
 #                     human -> agent)", so the original owner stays visible.
-#   target clarify -> every move into 1_clarify (Named-Decision-Test send-back, emergency
-#                     brake, bug found after done) sets clarify_owner: human and logs
+#   target clarify -> every move into 1_clarify (Named-Decision-Test send-back,
+#                     back-to-human, bug found after done) sets clarify_owner: human and logs
 #                     "clarify_owner <old> -> human" in the History, because the open
 #                     question is the user's. --keep-owner skips that for an agent-internal
 #                     re-clarify (the unblock sweep uses it for unblock_to: clarify).
@@ -492,7 +492,7 @@ if [ "$OWNER_FLIP" -eq 1 ]; then
     fi
 fi
 # --- owner reset on entry into 1_clarify -------------------------------------
-# A move into 1_clarify (Named-Decision-Test send-back, emergency brake, bug after done)
+# A move into 1_clarify (Named-Decision-Test send-back, back-to-human, bug after done)
 # means an open question the user decides, so the item becomes human-owned again and the
 # reset is logged. --keep-owner skips it for an agent-internal re-clarify.
 if [ "$TARGET" = "clarify" ]; then

@@ -42,7 +42,9 @@
 #      (mechanisms 1 and 2), so the preset keeps working in a declined directory and
 #      under the gsd backend. Subagents do not get it here. The main agent appends the
 #      per-stage prompt itself when it spawns one (SubagentStart carries no role or
-#      prompt).
+#      prompt). When the config key dont_ask_twice is true (default false), one more
+#      line rides with this block: search the requirement logs, items, handoff and
+#      earlier Ask answers before every question.
 #
 #   5. RESTART CHECK (startup and resume only, a new process). credo_runtime.py check
 #      reports background services that are not running, SSH panes to reconnect (tmux
@@ -213,6 +215,18 @@ if [[ -x "$PRESET_SCRIPT" ]]; then
         _preset_name="$(CREDO_SESSION_ID="$session_id" "$PRESET_SCRIPT" active 2>/dev/null)" || _preset_name="balanced"
         _spawn_rule="Before each subagent spawn, run \"${PRESET_SCRIPT}\" stage <role> <attempt> (roles explore, build, review and hard; attempt 1 for the first try of that role on an item, plus one per failed try). Pass its alias as the Agent model, its effort as effort, and append its prompt block to the Agent prompt. action back-to-human means do not spawn."
         PRESET_BLOCK="[credo] Model preset '${_preset_name}' - instructions for the main agent (they apply to the whole session, also after a compaction):"$'\n'"${_preset_prompt}"$'\n\n'"${_spawn_rule}"
+    fi
+fi
+
+# --- dont_ask_twice (opt-in config key, default off): one line with the preset block.
+# One config read; only the value "true" turns it on, any read error counts as off.
+_dat="$(CREDO_SKIP_ENSURE=1 CREDO_SESSION_ID="$session_id" "${HOOK_DIR}/../scripts/credo-config.sh" get dont_ask_twice 2>/dev/null)" || _dat=""
+if [[ "$(printf '%s' "$_dat" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')" == "true" ]]; then
+    _dat_line="[credo] dont_ask_twice is on: before every question, search the requirement logs, the items, the handoff and earlier Ask answers; an earlier approval counts as the owner's answer."
+    if [[ -n "$PRESET_BLOCK" ]]; then
+        PRESET_BLOCK="$PRESET_BLOCK"$'\n\n'"$_dat_line"
+    else
+        PRESET_BLOCK="$_dat_line"
     fi
 fi
 

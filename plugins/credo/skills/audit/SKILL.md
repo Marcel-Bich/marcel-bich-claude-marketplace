@@ -122,6 +122,12 @@ For the item under review, gather the ground truth first (read, do not guess):
   records it in `## Verify` as `human-only: pending` with what to check. Flag it only when
   that record is missing, or when the agent could have run the check itself.
 - Ticks: a DoD point ticked with a caveat ("done, but ...") is not met - flag it.
+- DoD targets. Agents may extend a DoD target where sensible, but a target is never lowered
+  or moved to pass (credo `items`, "Scope of an item"). Judge against the target as it stood
+  at GO plus any extension; a point that was lowered or moved to pass counts as not met.
+- Owner facts. Facts the owner already stated (requirements log, recorded answers) must be
+  written into the item, so the owner never has to repeat them. A stated fact missing from
+  the item is a finding, ranked by its effect on the result.
 - Acceptance measurement (credo `items`, Success Criteria): an item whose result is an
   algorithm, a detection, or a quality or numeric outcome must name a data set and a target
   value in its DoD and record the measured value. Target missed: **BLOCKER**. Not measured,
@@ -191,6 +197,21 @@ Every finding MUST carry concrete, checkable evidence:
 
 No evidence -> not a finding. A verdict without evidence is not acceptable.
 
+## Beyond the DoD and best-effort goals
+
+- **The collection item.** Everything beyond the item's DoD - MINOR and NIT findings the DoD
+  does not order, and residual cases - goes into ONE collection item per project (credo
+  `items`, "Scope of an item"), with no own item and no new fix round for it. The auditor
+  still fixes small findings itself where it can ("Fixing small findings" below); only what
+  stays open goes into the collection item.
+- **Best effort for goals that can never be fully met.** For goals that can never be fully
+  met (filters, bypasses, detection) the bar is best effort instead of perfection. The DoD
+  target (the acceptance measurement) decides pass or fail, not every conceivable case. No
+  fix rounds for residual cases the DoD does not order; the residual risk becomes a
+  follow-up clarify item for the owner (an entry in the collection item). This is explicitly
+  not an instruction to economise. Everything the DoD orders is still built and checked in
+  full.
+
 ## Polish items (best-effort done)
 
 For an item with frontmatter `polish: true` (credo `items`, "Polish items") the gate still
@@ -201,12 +222,12 @@ applies, in a lighter form:
 - The auditor fixes the small findings ONCE, best effort, and records each as "Fixed now" with
   its commit. Anything it does not fix stays a finding; it is listed under the item's
   `## Verify` for the next verify round with the owner.
-- No second audit round and no two-FAIL loop. The emergency brake below does not apply to a
-  polish item.
+- No second audit round and no fix-round loop. The stage ladder of the fix rounds below does
+  not apply to a polish item.
 - Verdict: `pass (best effort)` with the leftover list. The item then moves to `2_done`.
 - Model and effort are unchanged: the user's setting applies.
 - Not polish: a broken function, data loss, or a security problem. Such a finding takes the
-  normal path (full tier, fix rounds, emergency brake).
+  normal path (full tier, fix rounds on the stage ladder).
 
 ## Findings handling (what happens on a failing audit)
 
@@ -215,8 +236,11 @@ applies, in a lighter form:
   the fix is clear and approved, or to `1_todo/1_clarify` if it needs a user decision (a
   question the agent decision rule cannot settle - credo `items`).
   Record in the item's `Historie` why it came back.
-- **New independent item:** create a separate item ONLY if a finding is genuinely
-  independent of the core of the audited item. If the finding is something the core
+- **Beyond the DoD.** A finding outside the item's DoD (MINOR, NIT, a residual case) goes
+  into the project's collection item ("Beyond the DoD and best-effort goals" above), not
+  into an own item and not into a fix round.
+- **New independent item.** Create a separate item ONLY for a large, genuinely independent
+  new requirement (credo `items`, "Scope of an item"). If the finding is something the core
   completion needs, it is part of this item, not a new one. An item created from an audit
   finding is agent-owned: `clarify_owner: agent`, `parent: <audited id>` and a
   `created by agent` first History line (credo `items`, "Clarify owner and the agent
@@ -225,12 +249,14 @@ applies, in a lighter form:
   findings" below) goes to a FRESH fix agent whose brief holds only this report's findings,
   the branch state and the test commands - never a resumed builder context. The fix is
   re-audited by another fresh audit subagent.
-- **Emergency brake.** After 2 FAIL audits of the same item, recommend no third fix round:
-  stop the item and re-cut it smaller or send it back to `1_clarify` (both audit reports
-  named in the History; the move into `1_clarify` sets `clarify_owner: human` and logs it,
-  so the user decides). Only an explicit per-item user decision raises this limit. Count
-  the earlier FAIL reports under `.credo/process/reports/` for the item and state the count
-  in the verdict.
+- **Fix rounds follow the stage ladder.** There is no fixed fail count. Each fix round is
+  one attempt on the active preset stage ladder (`credo-preset.sh stage <role> <attempt>`,
+  credo `orchestration`, "Model presets"). Each stage allows its configured attempts
+  (`until-done` has no attempt cap; the budget caps stop it), then `back-to-human`. The item
+  goes back to the owner earlier only for a genuine owner decision (the escalation list and
+  the Named-Decision-Test, credo `items`) or when the same finding returns unchanged twice
+  (the same failure twice without progress). Count the earlier FAIL reports under
+  `.credo/process/reports/` for the item and state the attempt in the verdict.
 - The auditor never silently downgrades or repairs; it proposes, the move follows the
   verdict.
 
@@ -241,8 +267,9 @@ DISPOSITIONED. Dropping a finding with no disposition is not allowed. The three 
 dispositions are:
 
 1. **Fixed now** - the finding is corrected at its root.
-2. **Deferred** - captured as a tracked item (see the credo items skill) with a recorded
-   reason for deferring.
+2. **Deferred** - captured in the project's collection item (a finding beyond the DoD) or,
+   for a large independent new requirement, in its own item (see the credo items skill),
+   with a recorded reason for deferring.
 3. **Wontfix** - a conscious decision by the USER not to act (in autonomous mode, a
    documented default stands in for the user's call).
 
@@ -272,8 +299,9 @@ proposal - that separation is the point of the gate.
   asking (asking would block an unattended run), and records what was fixed in the item
   and the digest. Where a clean fix is genuinely impossible or harmful (a real, stated
   reason), or the finding is genuinely independent of the audited item's core, it records
-  a documented wontfix (the documented default standing in for the user) or defers it as a
-  tracked item with the reason - never blocking the unattended run to ask.
+  a documented wontfix (the documented default standing in for the user) or defers it with
+  the reason (into the collection item, or an own item for a large independent new
+  requirement) - never blocking the unattended run to ask.
 
 ## Fixing small findings (post-audit step)
 
@@ -320,7 +348,7 @@ auditor: <subagent role, not the builder>
 - [MINOR] <what> - evidence: ...
 
 ## Recommendation
-<move item back to 1_todo/2_go | 1_clarify | allow into 2_done/; new independent items, if any>
+<move item back to 1_todo/2_go | 1_clarify | allow into 2_done/; collection item entries and new independent items, if any>
 ```
 
 Reference the item as `#<id>` and by date; do not rely on transcript line numbers.

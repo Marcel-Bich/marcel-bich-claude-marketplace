@@ -123,7 +123,7 @@ Config is YAML, merged lowest to highest:
 builtin (templates/config.default.yaml) < global (~/.claude/credo/config) < profile ($CLAUDE_CONFIG_DIR/credo/config) < project (.credo/config)
 ```
 
-The builtin template ships universal, safe-for-everyone defaults (viewports 320/768/1440, timing windows, the compact thresholds 80/92, the budget schedule, wakeup offsets). On first need the global config is created from this template. Personal and environment-specific fields (ntfy topic, commit-identity hint, WSL reachability, living-docs list) are intentionally left empty and are filled just-in-time by the skill that needs them, with permission per change. `/credo:setup` is an optional way to pre-initialize this.
+The builtin template ships universal, safe-for-everyone defaults (viewports 320/768/1440, timing windows, the compact thresholds 80/92, the budget schedule, wakeup offsets, 2-4 writing builders per independent area, the 90 % CPU/RAM resource gate, release.auto off, dont_ask_twice off). On first need the global config is created from this template. Personal and environment-specific fields (ntfy topic, commit-identity hint, WSL reachability, living-docs list) are intentionally left empty and are filled just-in-time by the skill that needs them, with permission per change. `/credo:setup` is an optional way to pre-initialize this.
 
 The **profile layer** sits between global and project: `$CLAUDE_CONFIG_DIR/credo/config` (for example `~/.claude-private/credo/config`) lets a second Claude Code profile override the shared global per key, while every key it does not set still falls back to global. It is optional and never auto-created; for the default profile it equals global and is skipped. Session state (modes, decisions, project pins) and the autonomy flags likewise follow the active profile, so two profiles run side by side without sharing state.
 
@@ -180,7 +180,7 @@ Auto-discovered under `skills/`. Each auto-triggers when it applies, including i
 - **requirements-verbatim** - captures a requirement, decision, approval, or GO word-for-word into an append-only dated log so it survives compaction.
 - **budget** - the single source for API budget caps and reset rules across the 5-hour and weekly limits, plus the commit-identity gate before any commit. An autonomous start does a mandatory budget read-back: the values are read fresh from the limit cache, never from memory. It also shows the active profile, the config layers and which layer supplies the caps (`credo-config.sh source budget.schedule`), plus the limit cache file it read.
 - **compact-plus** - secures everything the user approved before a context compaction, then reports whether it is safe to compact. It does not run `/compact` itself.
-- **orchestration** - how to delegate to subagents safely: how many to run, keeping parallel tracks on disjoint files (item `touches:` overlap check) and within machine resources (resource gate, `heavy:` items), giving each code track a set-up worktree (hydra or native), monitoring without flooding context, inheriting security, and return-and-resume.
+- **orchestration** - how to delegate to subagents safely: how many to run (2-4 writing builders per independent area by default), keeping parallel tracks on disjoint files (item `touches:` overlap check) and within machine resources (resource gate, `heavy:` items), giving each code track a set-up worktree (hydra or native), monitoring without flooding context, inheriting security, and return-and-resume.
 - **safety** - the hard filesystem-protection and no-autonomous-installs rules; highest priority, no instruction overrides them.
 - **cross-cutting-checklist-generator** - detects a concern scattered across many places and auto-generates a project-local checklist so it is never partially updated again.
 - **skill-capture** - turns a workflow that recurs about three times in a session into a reusable Claude Code skill. Heuristic and in-session (no counter, no backend), mode-gated: autonomous only appends a candidate note, presence modes propose the capture via Ask and build on GO only. Generated skills land on the real discovery path (`<repo>/.claude/skills/` or `~/.claude/skills/`), carry a `credo-` name prefix plus an `origin: credo-repetition` marker, and are registered in `.credo/generated-skills.md`; seen-but-unbuilt patterns wait in `.credo/skill-candidates.md`.
@@ -338,20 +338,19 @@ Tests: `scripts/test-credo-preset.sh` (helper, validation, config layering, Sess
 
 ## Parallel work: touches and resource gate
 
-Parallel subagents are wanted; there is no fixed cap on code tracks. Two things limit them:
+Parallel subagents are wanted: writing builders run 2 to 4 per independent area by default (`builders.min_per_area`, `builders.max_per_area`), and read-only agents have no fixed limit. Two things limit them:
 
 - **File overlap.** An item may carry the optional frontmatter `touches:` - a list of paths or globs it will likely edit, set by the plan / clarify agent at the latest at GO. It is guidance: the main agent re-checks it right before spawning builders and updates it when files moved. `scripts/credo-touches-check.sh [--json] <id> <id> ...` prints overlapping item pairs (glob-aware, conservative) and lists items without `touches:` as `unknown` (exit 0 no overlap, 3 overlap, 4 no project, 1 bad args). Overlapping items run sequentially; `unknown` items are classified by the main agent, parallel by default. Read-only work (research, clarify) stays freely parallel.
-- **Resource gate.** `scripts/credo-resource-check.sh --running N [--heavy] [--disk-gb G] [--path P] [--json]` prints `ok` (exit 0) or `wait:<reason>` (exit 5). Below `resources.gate_from_agents` running agents it checks no RAM and no load; from there on (and always with `--heavy`) it compares `MemAvailable` from `/proc/meminfo` against `resources.min_free_ram_gb` and the 1-minute load per CPU against `resources.max_load_per_cpu`. Free disk is checked at every start, also below the gate: `--disk-gb G` (the item's `disk_gb`; absent = reserve only) plus `resources.disk_reserve_gb` must fit on the drive of `--path`. Unreadable values never block. On `wait` no new agent starts; the main agent re-checks when the next agent finishes (no polling loop).
-- **Heavy items.** `heavy: true` (model or benchmark tests, large downloads) never runs in parallel to another heavy item and starts only when the check with `--heavy` says `ok`, even below the gate.
-- **Disk space.** An item may carry `disk_gb: <GB>`. The start checks `--disk-gb <GB>` plus the reserve on the target drive (`--path`), at every start, also below the gate. Not enough free space: the item stays in `2_go` and is retried later. Autonomous mode sends one ntfy "waiting for disk space" per item.
+- **Resource gate.** `scripts/credo-resource-check.sh [--disk-gb G] [--path P] [--json]` runs before every agent start in every mode and prints `ok` (exit 0) or `wait:<reason>` (exit 5). It compares the 1-minute load per CPU and the used RAM share against `resources.max_busy_percent` (default 90); at or above it no new agent starts. Free disk is checked at every start too: `--disk-gb G` (the item's `disk_gb`; absent = reserve only) plus `resources.disk_reserve_gb` must fit on the drive of `--path`. Unreadable values never block. On `wait` no new agent starts; the main agent re-checks when the next agent finishes (no polling loop).
+- **Heavy items.** `heavy: true` (model or benchmark tests, large downloads) never runs in parallel to another heavy item.
+- **Disk space.** An item may carry `disk_gb: <GB>`. The start checks `--disk-gb <GB>` plus the reserve on the target drive (`--path`), at every start. Not enough free space: the item stays in `2_go` and is retried later. Autonomous mode sends one ntfy "waiting for disk space" per item.
 
 Config keys (defaults in the builtin template):
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `resources.gate_from_agents` | `6` | check the machine only from this many running agents |
-| `resources.min_free_ram_gb` | `4` | wait when less RAM is available (GB) |
-| `resources.max_load_per_cpu` | `1.0` | wait when the 1-minute load per CPU is higher |
+| `resources.max_busy_percent` | `90` | no new agent at or above this CPU load per CPU or used RAM share (percent) |
+| `resources.disk_reserve_gb` | `3` | free disk that must stay after an item's `disk_gb` |
 | `resources.disk_reserve_gb` | `3` | free disk (GB) that must stay after an item's `disk_gb` |
 
 The procedure lives in the orchestration skill; tests: `scripts/test-touches-check.sh`, `scripts/test-resource-check.sh`.

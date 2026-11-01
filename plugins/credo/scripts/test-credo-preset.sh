@@ -434,6 +434,51 @@ contains "gsd: shorthand legend still appended" "USER SHORTHANDS" "$out"
 contains "gsd: preset block still before the legend" "Model preset 'balanced'" "$out"
 rm -rf "$TMP/hook/cfg"
 
+# dont_ask_twice (opt-in config key, default off): one extra line after the preset block,
+# in every state like the preset block; off, absent or invalid = no line
+DAT="[credo] dont_ask_twice is on: before every question, search the requirement logs, the items, the handoff and earlier Ask answers; an earlier approval counts as the owner's answer."
+reset_cfg
+out="$(hook_out hookM startup active)"
+lacks "dont_ask_twice default: no line" "dont_ask_twice" "$out"
+printf 'dont_ask_twice: true\n' | write_project
+out="$(hook_out hookN startup active)"
+contains "dont_ask_twice on (project): line injected" "$DAT" "$out"
+case "$out" in *"Model preset 'balanced'"*"$DAT"*) dat_order=after ;; *) dat_order=other ;; esac
+check "dont_ask_twice on: line follows the preset block" "after" "$dat_order"
+out="$(hook_out hookO startup "")"
+contains "dont_ask_twice on, open decision: line injected" "$DAT" "$out"
+out="$(hook_out hookP compact "" declined)"
+contains "dont_ask_twice on, declined session: line injected" "$DAT" "$out"
+out="$(hook_out hookQ startup "" "" gsd)"
+contains "dont_ask_twice on, gsd backend: line injected" "$DAT" "$out"
+reset_cfg
+printf 'dont_ask_twice: true\n' | write_global
+out="$(hook_out hookR resume active)"
+contains "dont_ask_twice on (global): line injected" "$DAT" "$out"
+printf 'dont_ask_twice: false\n' | write_project
+out="$(hook_out hookS startup active)"
+lacks "dont_ask_twice off in project beats global on" "dont_ask_twice" "$out"
+printf 'dont_ask_twice: maybe\n' | write_project
+out="$(hook_out hookT startup active)"
+lacks "dont_ask_twice invalid value: no line" "dont_ask_twice" "$out"
+reset_cfg
+write_global <<'EOF'
+dont_ask_twice: true
+preset: bare
+presets:
+  bare:
+    mainagent: {model: claude-haiku-5-5, effort: low}
+    explore: {model: claude-haiku-5-5, effort: low}
+    build: {model: claude-haiku-5-5, effort: low}
+    review: {model: claude-haiku-5-5, effort: low}
+    hard: {model: claude-haiku-5-5, effort: low}
+EOF
+out="$(hook_out hookU startup active)"
+lacks "dont_ask_twice on, bare preset: no preset block" "Model preset" "$out"
+contains "dont_ask_twice on, bare preset: line still injected" "$DAT" "$out"
+reset_cfg
+rm -rf "$TMP/hook/cfg"
+
 # /credo:disable in an already active session. The disable steps also record the session as
 # declined, so resume and compact do not bring the workflow back (an accepted session is active)
 out="$(hook_out hookL startup active accepted)"

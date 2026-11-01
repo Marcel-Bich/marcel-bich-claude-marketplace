@@ -56,6 +56,7 @@ has "general-purpose: literal path instead" "$LITERAL_PATH" "$gp_ctx"
 has "general-purpose: new scratch dir instead" "$NEW_DIR" "$gp_ctx"
 has "general-purpose: unattended prompt risk named" "$PROMPT_RISK" "$gp_ctx"
 has "general-purpose: security rule still present" "SECURITY (inherited, non-negotiable)" "$gp_ctx"
+has "general-purpose: background shells forbidden" "run_in_background" "$gp_ctx"
 
 # --- full block: unknown or empty agent_type gets the same rule ---------------------
 empty_ctx="$(ctx_of "")"

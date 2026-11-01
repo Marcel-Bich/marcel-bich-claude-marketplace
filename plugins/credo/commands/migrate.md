@@ -35,3 +35,7 @@ user) tidy the originals.
    ask whether this repo should carry any autonomy-widening grants (for example "restarting
    local services is always allowed") and, on a yes, write them verbatim into
    `.credo/RULES.md` via the `rules` skill.
+6. In the same AskUserQuestion round as step 5, ask once
+   "Release finished changes automatically?" (Yes writes `release.auto: true`, No writes the
+   default `false` into the project `.credo/config`), as the skill describes. Skip it when the project config already
+   sets `release.auto`; an autonomous migration never asks and keeps `false`.

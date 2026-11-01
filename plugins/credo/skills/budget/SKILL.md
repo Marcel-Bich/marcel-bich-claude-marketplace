@@ -18,6 +18,22 @@ as a limit fills up. It is config-driven: the cap schedule and thresholds live i
 credo config, this skill explains how to read and apply them. It also owns the
 commit-identity gate that must pass before any commit.
 
+## No budget stops in active mode
+
+In active mode credo applies no budget stops. The user is at the keyboard and manages the
+budget. The caps, the 09:00 guard, the 5-hour guard, the batch budget gate, the weekly
+pause and hibernate triggers and the fail-safe caps below are not enforced there. The
+commit-identity gate still applies, and budget numbers named in active mode still come from
+the fresh reads. Every stop rule below applies in passive and autonomous mode.
+
+## Money inside approved budgets
+
+Money inside approved budgets (a paid service, a fee or a purchase covered by a budget the
+user approved for an item or a run) is the agent's decision. It decides, records the
+decision (item History or run report), and presents it afterwards with a veto code (credo
+`verify`, "Typed codes"). It does not ask first. Money beyond an approved budget stays the
+user's call. API usage within the caps that apply is plain work and needs no veto code.
+
 ## Three axes - never confuse them (B11)
 
 There are three completely separate budget axes. Keep them strictly apart; a rule for one
@@ -47,8 +63,10 @@ timebox.
   unavailable - note that it cannot be read, do not error.
 - For AUTONOMOUS mode entry: never run blind and never silently ignore budgets. The
   guardrail-availability gate in the credo `session-autonomous` skill decides what to do -
-  it asks the user (install the limit plugin, run a wall-clock timebox, or proceed at an
-  explicitly accepted risk). See that skill; this skill only supplies the honesty rationale.
+  without the Ask tool. It applies an option the user already chose (install the limit
+  plugin, run a wall-clock timebox, or proceed at an explicitly accepted risk), else it
+  ends the run and puts the options into the end-of-run report as a Q-coded question. See
+  that skill; this skill only supplies the honesty rationale.
 
 Two ways to read the current numbers:
 
@@ -175,11 +193,13 @@ as a fact. The examples fix the day/window -> row mapping only, not the caps.
 ### Explicit user orders override the schedule (temporarily)
 
 An explicit budget order from the user (for example "stay under 25 percent weekly today")
-overrides the schedule, but ONLY until the user-named end. The main agent must actively
-ask for that end (date/time) and must, before every autonomous start, ask whether the
-default caps fit or need a temporary change and until when. When the named end passes, the
-schedule defaults resume automatically. Do not persist an override past its end and do not
-invent one the user did not state.
+overrides the schedule, but ONLY until the user-named end. In active and passive mode the
+main agent actively asks for that end (date/time) when the user named none. In autonomous
+mode there is no Ask tool, also not for the budget. The agent applies the schedule defaults
+plus any order the user already gave, treats an order without a named end as ending with
+the current run, and puts an open budget question into the end-of-run report as text with a
+Q code. When the named end passes, the schedule defaults resume automatically. Do not
+persist an override past its end and do not invent one the user did not state.
 
 ## The 09:00 guard (critical)
 
@@ -326,7 +346,8 @@ persisted "ignore budgets" flag. If a compact drops an explicit user order, the 
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get budget_failsafe.weekly_percent      # default 99
 ```
 
-Even with no other rule in effect, never exceed 5h 98 percent or weekly 99 percent.
+Even with no other rule in effect, never exceed 5h 98 percent or weekly 99 percent (passive
+and autonomous mode; active mode has no budget stops, see "No budget stops in active mode").
 
 ## Commit-identity gate (verify before every commit)
 

@@ -188,7 +188,7 @@ entry), so a question surfacing mid-build first goes through the agent decision 
 ("Clarify owner and the agent decision rule" below): the agent decides it itself per the active
 mainagent-prompt (`credo-preset.sh mainagent`) and builds on. Only a question on the fixed escalation list ("Clarify owner and
 the agent decision rule" below: user taste or preference, a change to the verbatim
-requirement, the hard safety rules, deletions of user data, installs beyond the item's approvals (`## Freigaben`), money) can pass
+requirement, the hard safety rules, deletions of user data, installs beyond the item's approvals (`## Freigaben`), money beyond an approved budget) can pass
 condition 1 here. An item sent back by this test gets
 `clarify_owner: human` again, because its open question is the user's by definition:
 `credo-item-move.sh <id> clarify` sets it and logs `clarify_owner <old> -> human` in the
@@ -249,7 +249,7 @@ Where another credo text states otherwise, this section wins.
   for the moment, without changing its real role, and decides per the active mainagent-prompt.
   In an interactive mode these questions go to the user (see "By mode"). The fixed escalation list is never a preset decision: user taste or
   preference, a change to the verbatim requirement, the hard safety rules, deleting user
-  data, installs beyond the item's `## Freigaben` and money go to the user. Feasible = GO (autonomous runs only): an agent-owned clarify item may
+  data, installs beyond the item's `## Freigaben` and money beyond an approved budget go to the user. Feasible = GO (autonomous runs only): an agent-owned clarify item may
   move to `2_go` with the History line `-> go <date> (GO: agent decision, <reason>)`. The
   older marker `(GO: agent per SOTA rule, <reason>)` stays valid (the move helper accepts both).
   **No slicing around the user:** an item with `parent: <id>` may only be agent-GO'd while
@@ -267,7 +267,7 @@ Where another credo text states otherwise, this section wins.
 
 - anything infeasible or really not good (step 3 above);
 - the user's taste or preference (look, wording, product direction);
-- deleting user data, installs beyond the item's `## Freigaben`, money, and the hard safety rules (credo `safety`);
+- deleting user data, installs beyond the item's `## Freigaben`, money beyond an approved budget, and the hard safety rules (credo `safety`);
 - **verbatim guard:** a question whose answer would change or narrow the user's verbatim
   requirement (the `Requirement (verbatim)` section of the item or of its `parent`) always
   goes to the user (credo `requirements-verbatim`).
@@ -339,8 +339,8 @@ fields above, add no second status source:
   then run sequentially. Absent = the main agent classifies the item itself (parallel by
   default).
 - `heavy` (optional): `heavy: true` marks model / benchmark tests or large downloads. A
-  heavy item never runs in parallel to another heavy item and starts only when
-  `credo-resource-check.sh --heavy` says `ok`.
+  heavy item never runs in parallel to another heavy item and, like every start, starts only
+  when `credo-resource-check.sh` says `ok`.
 - `disk_gb` (optional): `disk_gb: 12` is the free disk in GB the item needs on the target
   drive while it runs (model files, large downloads, big build outputs). The start checks
   `credo-resource-check.sh --disk-gb <disk_gb>`: the free space must cover `disk_gb` plus the
@@ -408,7 +408,9 @@ Use these English headings in this order. A blank template ships at
 1. **Requirement (verbatim)** - the requirement in the user's own words, quoted exactly,
    with its source. Never trim, soften, reinterpret, or invent constraints. Keep
    user-verbatim text strictly separate from any assistant proposal (label proposals as
-   such). This mirrors the credo `requirements-verbatim` rule.
+   such). This mirrors the credo `requirements-verbatim` rule. Facts the owner already stated
+   (in chat, in clarify answers, in the requirements log) are written into the item, so the
+   owner never has to repeat them; the audit checks it.
 2. **Success Criteria (= DoD)** - observable "the user can X" statements, each one
    checkable. These ARE the Definition of Done for this item. Vague criteria that cannot
    be observed are not acceptable; make each one exercisable.
@@ -430,6 +432,11 @@ Use these English headings in this order. A blank template ships at
      positives"). The builder measures against it before reporting done and records the
      measured value in `## Verify`. This is different from the measure-then-user-decide
      split above: here the target is fixed up front.
+   - **One state-of-the-art check per feature.** A `type: feature` item carries one DoD line for a state-of-the-art
+     check. The chosen approach is compared once against the best solution known today, and
+     the result is recorded in `## Implemented`. There is no recurring re-scan.
+   - DoD targets may be extended, never lowered; everything beyond the DoD goes into the
+     collection item ("Scope of an item" below).
 3. **Implemented** - what was actually built, with concrete `file:line` references. This
    is where the wiring is recorded (which caller reaches the new code).
 4. **Verify** - the honest 4-valued verification state, per layer. See below.
@@ -463,6 +470,27 @@ Rules:
   GO decision.
 - No `## Freigaben` section means nothing is approved. The no-autonomous-installs rule (credo
   `safety`) applies unchanged.
+
+### Scope of an item (DoD targets, collection item, own items, legacy)
+
+- **DoD targets are never lowered.** Agents may extend a DoD target where sensible (a useful
+  addition the owner would otherwise have to ask for), but a target is never lowered or moved
+  to pass. The audit judges against the target as it stood at GO plus any extension.
+- **Facts the owner already stated** go into the item (Requirement section above), so the
+  owner never repeats them.
+- **One collection item per project.** Everything beyond the DoD - MINOR and NIT findings the
+  DoD does not order, residual cases, and the residual risk of a best-effort goal (credo
+  `audit`, "Beyond the DoD and best-effort goals") - goes into ONE collection item per
+  project, with no own items and no new fix rounds for it. Reuse the open collection item;
+  create it only when none exists (in `1_todo/1_clarify`, without `parent:`, so it stays
+  human-owned and the owner decides what of it gets built). Each entry is one line with the
+  source item `#<id>`, the finding and its evidence.
+- **Large new requirements get their own items** instead of widening an existing one. A
+  large requirement that turns up during clarify or build and goes beyond the item's scope
+  becomes a new item; it is not folded into the current item's DoD.
+- **No legacy code.** No legacy or compatibility code (shims, fallbacks for old formats,
+  dual code paths) in the development state unless the owner explicitly marks it in the
+  item.
 
 ### Body-freshness invariant
 
@@ -620,17 +648,17 @@ for an item the owner accepted as polish. It is NOT derived from `type`.
 
 - **Flow:** one build, then one light audit (credo `audit`, "Polish items"). Findings are fixed
   once, best effort. Then the item goes to `2_done`. There is no second audit round and no
-  two-FAIL loop.
+  fix-round loop.
 - **Model and effort are not changed.** The user's own setting (preset or config) applies, with
   no special tier for polish.
 - **Leftovers** are listed under `## Verify` as a list for the next verify round with the owner
   ("best effort", not "perfect").
 - **Not polish:** a broken function, data loss, or a security problem is an error. Such an item
   takes the normal flow, without the polish shortcut.
-- **Slicing:** when a normal item keeps producing small findings that only loop (more than 5
-  fix rounds without completion), those small findings are sliced into their own polish item in
-  `1_todo/1_clarify` (`clarify_owner: agent`, `parent: <id>`, `polish: true`, and the History line
-  `created by agent (clarify)`). The original item goes on, or goes to `done` once its core is met.
+- **Small findings never loop.** On a normal item, MINOR and NIT findings the DoD does not
+  order start no fix round. The auditor fixes them once or they go into the project's collection
+  item ("Scope of an item" above). The original item goes on, or goes to `done` once its DoD is
+  met.
 
 ## Definition of Done (the gate into 2_done/)
 
@@ -736,8 +764,11 @@ governs whether it returns to `2_go`).
 
 Fix rounds after a failing audit follow the credo `audit` skill: a FRESH fix agent gets
 only the findings, the branch state and the test commands (never the builder's resumed
-context), and after 2 FAIL audits of the same item there is no third fix round by default -
-the item is stopped and re-cut smaller or sent back to `1_clarify` ("Emergency brake").
+context). There is no fixed fail count. Fix rounds follow only the active preset stage
+ladder (`credo-preset.sh stage <role> <attempt>`), each stage with its configured attempts
+(`until-done` has no attempt cap; the budget caps stop it), then back-to-human. The item goes
+back to the owner earlier only for a genuine owner decision (the escalation list and the
+Named-Decision-Test) or when the same finding returns unchanged twice.
 
 This is the DONE-work case. A different case is a critical open user-only decision that
 surfaces while building a `2_go` item (not yet done): that is governed by the

@@ -242,6 +242,42 @@ f) Your own preset with any model, e.g. sonnet for narrow fixes:
 Which preset do you want? [1-3, or describe your own]
 ```
 
+## Step 2e: Automatic Release (asked once per project)
+
+Asked once per project. Skip this step when
+`"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" source release.auto` prints `project:` (the
+project layer already holds an answer). Any other layer (`builtin:`, `global:`, `profile:`)
+means this project has not answered yet.
+
+Autonomous (unattended) setup never asks this. It skips the step and keeps the default `release.auto: false`.
+
+Otherwise ask with AskUserQuestion:
+
+```
+Release finished changes automatically?
+When on, credo releases once no GO item is buildable and changelog fragments exist
+(fallback at 15 fragments or after 7 days, whichever comes first), using this
+project's own release procedure.
+
+- Yes - writes release.auto: true
+- No (default) - writes release.auto: false
+```
+
+**Writing the answer.** Write it to the project layer: the `config` file in the `.credo/`
+directory that `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" resolve-project` prints
+(credo-init created it in Step 2). Read it. If a top-level `release:` block is present, set
+its `auto:` line to the answer (add the line inside the block if missing); otherwise append
+the block below. Use Read + Edit (or Write), keep every other line intact and never
+duplicate a top-level key:
+
+```yaml
+release:
+  auto: true    # or false
+```
+
+Verify that `credo-config.sh source release.auto` now prints `project:` and
+`credo-config.sh get release.auto` prints the chosen value.
+
 ## Step 3: Install Recommended and Optional Plugins
 
 **Skip if:** `plugins.dogma = true` (and, if the user wants GSD, `plugins.gsd = true`)
@@ -931,7 +967,9 @@ reading the config needs `python3`: without python3 the strict config is not rea
 Before the message below: if Step 2c was skipped because `project.state` was `ready` and
 the optimisation-audit answer is still open (`credo-optimize-state.sh optin` prints
 nothing, in a git repo), ask Step 2c now. If the user said Yes in Step 2c, run
-`/credo:optimize` now. Likewise, if Step 10 was skipped because `project.state` was
+`/credo:optimize` now. Likewise, if Step 2e was skipped because `project.state` was `ready`
+and `credo-config.sh source release.auto` does not print `project:`, ask Step 2e now (not in
+autonomous setup). Likewise, if Step 10 was skipped because `project.state` was
 `ready` and `todo_tools.state` is `off`, run Step 10 now. Likewise, if Step 11 was skipped
 because `project.state` was `ready` and `tmux.installed` or `tmux.inside` is `false`, run
 Step 11 now.
