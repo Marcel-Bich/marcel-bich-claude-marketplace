@@ -2,6 +2,22 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-11
 
+## dogma
+
+### v1
+
+#### v1.47
+
+##### v1.47.3
+
+###### Added
+
+- Session-start warning when `jq` is missing: dogma's protection hooks (delete guard, git permissions, dependency verification) are off without it, so the user is urged to install jq (`hooks/jq-missing-warn.sh`)
+
+###### Fixed
+
+- Redirect-like text in an unquoted heredoc body of `cat` or `tee` (`see <dogma>/x`, `a>/x`) is no longer denied as a redirect onto a critical path; command substitutions and backticks in the body are still checked
+
 ## credo
 
 ### v0
