@@ -6,6 +6,12 @@
         "hooks": [
           {
             "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/jq-missing-warn.sh\"",
+            "timeout": 5,
+            "description": "Warn loudly at every session start when jq is missing: dogma protection hooks (delete guard, git permissions, dependency verification) are OFF without it (silent when CLAUDE_MB_DOGMA_ENABLED=false)"
+          },
+          {
+            "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/notices-inject.sh\"",
             "timeout": 10,
             "description": "Tell Claude about pending dogma update notices and source broadcasts (NOTICES.md) for this repo once (ENV: CLAUDE_MB_DOGMA_NOTICES=true, CLAUDE_MB_DOGMA_SOURCE)"
