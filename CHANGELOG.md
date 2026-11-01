@@ -2,6 +2,34 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-11
 
+## credo
+
+### v0
+
+#### v0.84
+
+##### v0.84.10
+
+###### Added
+
+- Periodic quality reminder: a prompt that the session types into its own tmux pane, per credo session mode, configured under the `reminder` key of the credo config (every mode off by default). A mode triggers after N real user turns, after M minutes, or both; a session is armed after its 10th user turn and keeps the reminder across compact and resume. Needs tmux.
+
+###### Changed
+
+- The empty-input rule of the tmux self-tools (self-compact, self-reload) and of the reminder: fewer than 2 visible (non-whitespace) characters in the input field count as empty. Such a leftover is removed (End, BSpace) before anything is typed; if text remains, nothing is typed.
+
+##### v0.84.9
+
+###### Added
+
+- `bind --adapter <name>` and `bind --subnet <cidr>` override the auto-detected adapter and subnet for the network fingerprint; the relay matches through the adapter when one is stored.
+- The elevated Windows `-Install` prints an explicit `-Install OK` line or a `-Install FAILED` line with the reason, and exits 1 on failure. The installer script version is bumped to 4.
+- `bind --subnet` wider than /16 prints a warning; the installer result reaches the wrapper that started the elevated run, including a declined UAC prompt.
+- A bound network can hold several router MACs. A new router on a bound WLAN (same WLAN name and subnet) keeps the LAN relay off and the agent asks the user once, with the Ask tool, whether to add the router or not; the answer is recorded with `trust-router --profile <name>` (add) or `trust-router --profile <name> --refuse` (do not add). A refused router is not asked again for that subnet.
+- A bound network whose Windows network category is Public (outside `windows_profiles`) gets the same hint, telling the user where to switch the network to Private.
+- `check` prints a hint line for both cases, and the new `network-hint` subcommand prints the pending agent text for the SessionStart hook.
+- A router refused for a subnet cannot be bound again: `bind` refuses it and `init` offers no bind command for it. `bind` also refuses a profile name that another router already uses, instead of overwriting that profile.
+
 ## dogma
 
 ### v1
@@ -23,24 +51,6 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 ###### Fixed
 
 - Redirect-like text in an unquoted heredoc body of `cat` or `tee` (`see <dogma>/x`, `a>/x`) is no longer denied as a redirect onto a critical path; command substitutions and backticks in the body are still checked
-
-## credo
-
-### v0
-
-#### v0.84
-
-##### v0.84.9
-
-###### Added
-
-- `bind --adapter <name>` and `bind --subnet <cidr>` override the auto-detected adapter and subnet for the network fingerprint; the relay matches through the adapter when one is stored.
-- The elevated Windows `-Install` prints an explicit `-Install OK` line or a `-Install FAILED` line with the reason, and exits 1 on failure. The installer script version is bumped to 4.
-- `bind --subnet` wider than /16 prints a warning; the installer result reaches the wrapper that started the elevated run, including a declined UAC prompt.
-- A bound network can hold several router MACs. A new router on a bound WLAN (same WLAN name and subnet) keeps the LAN relay off and the agent asks the user once, with the Ask tool, whether to add the router or not; the answer is recorded with `trust-router --profile <name>` (add) or `trust-router --profile <name> --refuse` (do not add). A refused router is not asked again for that subnet.
-- A bound network whose Windows network category is Public (outside `windows_profiles`) gets the same hint, telling the user where to switch the network to Private.
-- `check` prints a hint line for both cases, and the new `network-hint` subcommand prints the pending agent text for the SessionStart hook.
-- A router refused for a subnet cannot be bound again: `bind` refuses it and `init` offers no bind command for it. `bind` also refuses a profile name that another router already uses, instead of overwriting that profile.
 
 ## limit
 
