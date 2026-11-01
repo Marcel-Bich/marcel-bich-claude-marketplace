@@ -34,9 +34,11 @@ is no longer running; a start on the same pane keeps the running worker. The wor
 re-reads the config every minute (CREDO_REMINDER_REFRESH, test override), checks the trigger
 of the current credo mode, and when it is due waits until the pane is idle, the input field
 is empty (fewer than 2 visible characters; such a leftover is removed first) and no dialog
-is open (credo_pane_guard, confirmed twice). Then it types the prompt, verifies it and presses Enter. The reference
-point (last reminder time and turn) moves to that injection. A reminder that could not be
-typed safely is skipped and counts as sent. It stops when no mode is configured any more and
+is open (credo_pane_guard, confirmed twice). Then it types the prompt in pieces of 200
+characters, 0.1 s apart (one burst of about 800 or more characters becomes a paste
+placeholder in Claude Code, which is never submitted), verifies it and presses Enter. The
+reference point (last reminder time and turn) moves to that injection. A reminder that could
+not be typed safely is skipped and counts as sent. It stops when no mode is configured any more and
 when the Claude process of its session is gone. Background work never blocks it.
 
 Subcommands
@@ -486,7 +488,7 @@ def attempt(pane, plan, text, mode, trig):
     except wk.StepFailed as exc:
         if exc.status == "failed: pane ownership":
             raise
-        log("reminder skipped, the own text was taken back: %s" % exc.detail)
+        log("reminder skipped: %s" % exc.detail)
         status, sent = "skipped: %s" % exc.detail, False
     now = time.time()
 

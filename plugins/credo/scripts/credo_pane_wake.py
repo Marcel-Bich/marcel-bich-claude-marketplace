@@ -39,6 +39,12 @@ import credo_pane_guard as guard
 
 WAKE_TEXT = "."
 PANE_RE = re.compile(r"%[0-9]+")
+# Claude Code collapses one burst of input (one send of about 800 to 1000 characters, measured
+# on Claude Code 2.1.316) into a "[Pasted text #N]" placeholder; the text is then not confirmed
+# and never submitted. Text is therefore typed in pieces of at most TYPE_CHUNK_CHARS characters,
+# TYPE_PAUSE seconds apart (the pieces are then read as typing, not as a paste).
+TYPE_CHUNK_CHARS = 200
+TYPE_PAUSE = 0.1
 
 
 class Cancelled(Exception):
@@ -72,7 +78,8 @@ def timing(prefix):
             "recheck": env_float(prefix + "_RECHECK", 1.5),
             "key_pause": env_float(prefix + "_KEY_PAUSE", 0.5),
             "confirm_wait": env_float(prefix + "_CONFIRM_WAIT", 10.0),
-            "blocked_notify": env_float(prefix + "_BLOCKED_NOTIFY", 120.0)}
+            "blocked_notify": env_float(prefix + "_BLOCKED_NOTIFY", 120.0),
+            "type_pause": env_float(prefix + "_TYPE_PAUSE", TYPE_PAUSE)}
 
 
 def wake_path(state, sid):
@@ -89,7 +96,11 @@ def send_keys(plan, keys, literal=False):
     if not PANE_RE.fullmatch(pane or ""):
         raise RuntimeError("refusing to send keys: no valid own pane")
     argv = guard.tmux_base(plan.get("socket")) + ["send-keys", "-t", pane]
-    argv += (["-l", keys] if literal else [keys])
+    if literal:
+        # end-of-options separator first, without it tmux reads a text starting with a dash as an option
+        argv += ["-l"] + (["--"] if keys.startswith("-") else []) + [keys]
+    else:
+        argv += [keys]
     r = subprocess.run(argv, capture_output=True, text=True, timeout=10)
     return r.returncode == 0
 
@@ -179,6 +190,7 @@ def take_back(pane, text):
     cap = guard.capture(plan["pane"], plan.get("socket"))
     content = guard.input_content(cap)
     if content is None or not guard.own_text_at_end(content, text):
+        pane.log("own text left as it is: the input field no longer ends with it")
         return False
     safe, why = guard.assess(cap, expect=content, block_on_background=False)
     if not safe and not why.startswith("busy"):
@@ -207,10 +219,33 @@ def clear_leftover(pane):
     return guard.assess(cap, block_on_background=False)[0]
 
 
+def type_chunks(text, size=TYPE_CHUNK_CHARS):
+    """Split `text` into runs of `size` characters, never splitting a character."""
+    return [text[i:i + size] for i in range(0, len(text), size)]
+
+
+def type_text(pane, text, done):
+    """Type `text` literally, piece by piece (type_chunks), TYPE_PAUSE apart. A piece is
+    appended to `done` BEFORE it is sent. An abort inside the send (SIGTERM while tmux runs)
+    may already have typed it, and take_back only removes what the field really ends with.
+    A send that tmux reports as failed is taken off again. Raises StepFailed when a piece
+    could not be sent, Cancelled when the worker is cancelled between two pieces."""
+    for i, piece in enumerate(type_chunks(text)):
+        if i:
+            time.sleep(pane.tim.get("type_pause", TYPE_PAUSE))
+        if pane.cancelled():
+            raise Cancelled()
+        done.append(piece)
+        if not send_keys(pane.plan, piece, literal=True):
+            done.pop()
+            raise StepFailed("failed: send-keys", "typing failed after %d piece(s)" % len(done))
+
+
 def type_and_enter(pane, text, before_enter=None):
-    """Type `text` literally, run the full check again expecting exactly it, then
-    Enter. A leftover in the field is removed first (clear_leftover); if text is still
-    there, StepFailed before anything is typed. before_enter() runs right before Enter.
+    """Type `text` literally in pieces (type_text), run the full check again expecting
+    exactly it, then Enter. A leftover in the field is removed first (clear_leftover);
+    if text is still there, StepFailed before anything is typed. before_enter() runs
+    right before Enter.
     Returns True when the input visibly changed after Enter within the confirm wait,
     False when unconfirmed. Raises StepFailed (no Enter sent), Cancelled or Woken; on any
     abort between typing and Enter the own text is taken back (take_back: only when the
@@ -221,11 +256,9 @@ def type_and_enter(pane, text, before_enter=None):
     if not clear_leftover(pane):
         raise StepFailed("failed: not idle", "the input field still holds text after "
                          "removing the leftover")
-    typed = False
+    done = []  # pieces sent so far (an abort may leave exactly these behind)
     try:
-        typed = True  # from here an abort may leave text behind; take_back checks it
-        if not send_keys(plan, text, literal=True):
-            raise StepFailed("failed: send-keys", "typing %s failed" % text)
+        type_text(pane, text, done)
         log("typed: %s" % text)
         time.sleep(pane.tim["key_pause"])
         safe, why = pane.probe(expect=text)
@@ -238,8 +271,8 @@ def type_and_enter(pane, text, before_enter=None):
             before_enter()
         entered = send_keys(plan, "Enter")
     except (StepFailed, Cancelled, Woken):
-        if typed:
-            take_back(pane, text)
+        if done:
+            take_back(pane, "".join(done))
         raise
     if not entered:
         take_back(pane, text)
