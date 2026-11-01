@@ -322,22 +322,31 @@ The model is hybrid - never spam single events, but never go fully silent either
   is progress in the interval - never skip it as "not important enough". When no topic is set,
   ntfy stays silently skipped as above (mandatory does not mean "send without a topic").
 - Priorities: `default` = status / digest, `high` = come to the PC, `max` = data loss
-  imminent (use rarely). A run completion is `high`.
+  imminent (use rarely). A run completion is `high`; its body lists the run's finished items
+  (the content standard below).
 
-### ntfy content standard (what / how / where / why)
+### ntfy content standard (one line per finished item)
 
-A notification must let a human know the state WITHOUT a follow-up question. A terse
-one-liner ("item done") is not acceptable. Every completed item in a digest carries:
+A notification must let the owner know WHAT was built WITHOUT a follow-up question. Bare
+item numbers and meta words ("done", the mode, the budget) are NOT acceptable. Every ntfy
+that reports finished work (the per-item completion carried in the next digest, the progress
+digest, the end-of-run report) lists each finished item as ONE line:
 
-- `#id` + title (WHAT)
-- what was actually built / changed (HOW), with the area or key files (WHERE)
-- why it matters / what it unblocks (WHY)
-- verify state (backend / ui exercised, or still `wired-but-behavior-unverified`)
-- anything that needs the user (a decision, a re-test, an URGENT clarify)
-- a short budget snapshot (5h / weekly)
+```
+#N <title>: <one sentence: what was done> (<plugin version, only once released>)
+```
 
-Prefer ONE bundled message. If it exceeds ntfy's size limit, split into `n/m` messages
-(e.g. "2/3") rather than dropping detail.
+- Several items: one such line each, as a list, in ONE bundled message. Split into `n/m`
+  messages (e.g. "2/3") only when it exceeds ntfy's size limit, never by dropping items.
+- The pushed text is written in the owner's configured language (the one credo items use;
+  German for this owner) with real umlauts (ä ö ü ß, never ae/oe/ue/ss). This skill text
+  stays English. Example of a pushed line:
+  `#125 ntfy-Zeilen: Digest und Abschlussbericht nennen jede fertige Änderung mit einem Satz.`
+- Meta information (mode, budget snapshot, session, verify state) only when it concerns the
+  owner: a decision, a blocker, a budget cap reached, the power-down, or a re-test the owner
+  must do (`wired-but-behavior-unverified`). Otherwise leave it out.
+- Anything the owner must act on (a decision, a re-test, an URGENT clarify) gets its own line
+  with the item id.
 
 Send every ntfy push through the helper - it is the single discoverable send path and
 resolves the topic/server from the config cascade (`credo-config.sh get personal.ntfy_topic`

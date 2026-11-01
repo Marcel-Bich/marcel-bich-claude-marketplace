@@ -437,7 +437,7 @@ When credo is active and a session starts outside tmux, the SessionStart hook ad
 
 ### `ntfy` - optional
 
-Push notifications use `ntfy`. The topic is a personal field in the credo config (`personal.ntfy_topic`). If it is unset, ntfy is silently skipped; nothing else changes. Progress is bundled into a digest on a fixed interval (`ntfy.digest_interval_minutes`); when a topic is set, sending it is mandatory whenever there is progress (with no topic it stays silently skipped), and each completed item carries a content standard (what / how / where / why, verify state, what needs the user, budget snapshot) so a terse one-liner is never enough. One message is preferred, split into `n/m` when it would exceed ntfy's size limit.
+Push notifications use `ntfy`. The topic is a personal field in the credo config (`personal.ntfy_topic`). If it is unset, ntfy is silently skipped; nothing else changes. Progress is bundled into a digest on a fixed interval (`ntfy.digest_interval_minutes`); when a topic is set, sending it is mandatory whenever there is progress (with no topic it stays silently skipped), and every finished item is one line naming it and one sentence of what was done (`#N <title>: <what was done> (<version>)`, the version once released). Meta information (mode, budget, session) appears only when it concerns the owner, such as a decision, a blocker or the power-down. Messages are written in the owner's configured language with umlauts. One message is preferred, split into `n/m` when it would exceed ntfy's size limit.
 
 ## Installation
 

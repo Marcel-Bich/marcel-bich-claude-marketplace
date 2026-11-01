@@ -425,11 +425,14 @@ Progress is bundled into one digest per `ntfy.digest_interval_minutes`, and - wh
 configured (a `personal.ntfy_topic` is set) - sending that digest is MANDATORY per interval
 whenever there is progress; it is NOT the agent's discretion to judge it "not important
 enough" and stay silent (this is what fixes digests arriving far too rarely). With no topic
-set, ntfy stays silently skipped (see the end of this paragraph). Every completed item in the digest carries the full content
-standard from the common core (what / how / where / why); a terse one-liner is not
-acceptable. Prefer one message; if it exceeds ntfy's size limit, split into `n/m` messages.
-If `personal.ntfy_topic` is empty, skip ntfy silently - but then note that autonomy is
-running blind on notifications. Run completion is `high`.
+set, ntfy stays silently skipped (see the end of this paragraph). Every completed item in the
+digest is one line in the common core's "ntfy content standard" format
+(`#N <title>: <one sentence what was done> (<version>)`, pushed in the owner's language with
+umlauts); a bare item number or "done" is never enough, and meta information appears only
+when it concerns the owner. Prefer one message; if it exceeds ntfy's size limit, split into
+`n/m` messages. If `personal.ntfy_topic` is empty, skip ntfy silently - but then note that
+autonomy is running blind on notifications. Run completion is `high`, with the run's item
+lines as its body (see "Empty buildable queue" for the end-of-run report).
 
 ### Deferred-question flow (core of autonomous mode)
 
@@ -530,7 +533,8 @@ this end-of-run sequence. The ORDER matters: whether a suspend directive is set 
 **No suspend directive set (and `sleep.enabled` false):**
 
 1. Send an immediate `default`-priority ntfy stating nothing was buildable - `default`, not
-   `high`, because it need not wake the user.
+   `high`, because it need not wake the user. Add one line per item finished in this run
+   (common core "ntfy content standard"), or say that none finished.
 2. End autonomous mode via `credo-autonomy-off.sh` (clears the flag, makes the Stop hook
    inert so the run can stop). The machine stays on.
 
@@ -539,6 +543,9 @@ this end-of-run sequence. The ORDER matters: whether a suspend directive is set 
 LAST step, not the first. Run the power-down sequence:
 
 1. Send an end-of-run ntfy (`default` for nothing-buildable, `high` for all-work-completed).
+   Its body is the end-of-run report: one line per item finished in this run (common core
+   "ntfy content standard"), then only the owner-relevant meta (open questions, decisions
+   with consequences, the power-down posture).
 2. Schedule a ~20 min wake (`windows.veto_minutes`) as a veto window.
 3. No veto within the window -> power down, gated by the combined end-of-run gate below:
    autonomous AND buildable-queue-empty AND (a suspend directive is set OR `sleep.enabled` is
@@ -598,8 +605,9 @@ revocation; user presence does NOT revoke it (see the presence carve-out below).
   machine. This is what keeps a SERVER running autonomous work from being powered down
   unexpectedly. On every end-of-run trigger (all done / showstopper / weekly cap reached) do
   NOT sleep - instead end the autonomous run CLEANLY via `credo-autonomy-off.sh` and send a
-  `high` ntfy stating why (run complete, showstopper, or weekly cap reached). The machine
-  stays on. BUT if a suspend directive IS set, the override applies: run the power-down
+  `high` ntfy stating why (run complete, showstopper, or weekly cap reached), with the
+  end-of-run report lines of the items finished in this run. The machine stays on.
+  BUT if a suspend directive IS set, the override applies: run the power-down
   procedure below (provided `sleep.command` is non-empty), exactly as if `sleep.enabled` were
   true.
 - `sleep.enabled` true (opt-in, personal machine only): run the power-down procedure below
@@ -910,9 +918,9 @@ it. The short form is a compact minimum that is ALWAYS present, in every case - 
   - the proof is present-vs-empty from the real output, not the plaintext topic). The value
   cascades (global < profile < project), so a topic set only in the global config still
   resolves under a non-default profile - do not conclude "not configured" without the read. When active,
-  what will be reported: normally a report on every item completion (a go -> done
-  transition), bundled per the digest interval, plus immediate come-to-PC pushes for
-  questions / blockers. If it reads as not configured, say so plainly (autonomy then runs
+  what will be reported: normally one line per finished item (`#N <title>: <what was done>`,
+  on each go -> done transition, bundled per the digest interval), plus immediate come-to-PC
+  pushes for questions / blockers. If it reads as not configured, say so plainly (autonomy then runs
   silent - no pushes). See "Per-task and per-question ntfy" above; do not restate the
   mechanism, just declare it.
 

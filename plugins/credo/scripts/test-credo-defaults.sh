@@ -100,6 +100,9 @@ has "passive: ask generously unless completely clear" "$PASSIVE" "completely cle
 has "active: GO question as soon as no open question is left" "$ACTIVE" "no open question left"
 has "autonomous: no Ask tool at all" "$AUTO" "No Ask tool"
 has "autonomous: veto codes only for real consequences" "$AUTO" "real consequences"
+has "active: ntfy lists one line per finished item" "$ACTIVE" "one line per finished item"
+has "active: ntfy text in the owner's language with umlauts" "$ACTIVE" "real umlauts"
+has "autonomous: end-of-run report lists finished items" "$AUTO" "end-of-run report: one line per item finished"
 has "budget: money inside approved budgets" "$BUDGET" "inside approved budgets"
 has "budget: active mode applies no budget stops" "$BUDGET" "In active mode credo applies no budget stops"
 

@@ -52,6 +52,6 @@ Use this ONLY when full autonomy plus AFK has been explicitly granted.
      suspend directive plus the sleep config - a set directive means you WILL power down at
      end-of-run provided `sleep.command` exists (overriding `sleep.enabled: false`); announced
      = committed.
-   - **ntfy:** whether it is active and what will be reported (normally every go -> done item
-     completion, plus come-to-PC pushes) - or that it runs silent if unconfigured.
+   - **ntfy:** whether it is active and what will be reported (normally one line per finished item
+     in the digest, plus come-to-PC pushes) - or that it runs silent if unconfigured.
 7. Read the approved GO order back verbatim before you start.

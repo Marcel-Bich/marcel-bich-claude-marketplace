@@ -37,7 +37,8 @@ It covers, all unchanged for passive mode:
   independently (G7).
 - Authority order (E5) and its scoping.
 - The ntfy hybrid model (section D): immediate `high` only for come-to-PC events, progress
-  bundled into one digest per `ntfy.digest_interval_minutes`; skip silently if
+  bundled into one digest per `ntfy.digest_interval_minutes`, each finished item one line
+  (`#N <title>: <what was done>`, section D content standard); skip silently if
   `personal.ntfy_topic` is empty. Send via the helper
   `${CLAUDE_PLUGIN_ROOT}/scripts/credo-ntfy-send.sh "message"` (add `-t "Title"`,
   `CREDO_NTFY_PRIORITY=high` as needed) - it resolves the topic/server through the cascade
