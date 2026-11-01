@@ -1,6 +1,6 @@
 ---
 name: explain
-description: Explain something on request, at three depths. Use when the user writes "???" (full: What, Why, Example, Consequences), "??" (medium: the same four parts, each short) or "?" (short: two or three bullets) - alone (the last discussed point) or at the end of any message ("the audit gate ??", "is xyz so bad?"). The longest ending wins ("???" before "??" before "?"), and a normal question ending with "?" gets the "?" depth and format. Also invoked by the /credo:explain command. Treat a pointed-at term or statement as the thing to explain, never as a literal question.
+description: Explain something on request, at three depths. Use when the user writes "???" (full: What, Why, Example, Consequences), "??" (medium: the same four parts, each short) or "?" (short: two or three bullets) - alone (the last discussed point) at the end of any message ("the audit gate ??", "is xyz so bad?") or inside it, where each marker applies to the part right before it ("what about xyz ?? and explain zxy ???"). The longest ending wins ("???" before "??" before "?"), and a normal question ending with "?" gets the "?" depth and format. Also invoked by the /credo:explain command. Treat a pointed-at term or statement as the thing to explain, never as a literal question.
 ---
 
 # Explain in Depth
@@ -28,6 +28,7 @@ thing properly.
 - `???`, `??` and `?` count alone or at the end of any message, with or without a space, and also
   when attached to a word (`why??`).
 - The longest ending wins: `???` before `??` before `?`.
+- Inside a message: each `?`, `??` or `???` applies to the part right before it (`what about xyz ?? and explain zxy ???` = xyz at medium depth, zxy in full). Several markers = several explanations, each at its own depth.
 - A normal question ending with `?` gets the depth and format of its mark (`?` short, `??` medium,
   `???` full).
 - A mark in the middle of a message is never the shorthand.
