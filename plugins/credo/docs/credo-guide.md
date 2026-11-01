@@ -234,6 +234,8 @@ The `SessionStart` hook injects a small legend so the agent understands the user
 - `cf` - start or continue a clarify round: structured questions until the open points are resolved (in credo: the `1_clarify` items, one per Ask round, or the named one, `#57 cf`).
 - `go` / `bk` / `pk` / `ar` - item moves, valid only right after an item ref (`#57 go`); bare they are ordinary words. `#N go` = the user's GO approval (a `(GO: <quote>)` History line, then `credo-item-move.sh N go` once the GO entry gate G1-G6 passes; a failing gate is reported, never bypassed), `#N bk` = block (ask for the concrete blocker if unnamed, `blocked_by` is mandatory), `#N pk` = park on hold, `#N pk future` = park for later, `#N ar` = archive.
 - `???` - explain the pointed-at thing in depth: What / Why / Example / Consequences (explain skill, same as `/credo:explain`).
+- `??` - the same at medium depth: the four parts, each short (about 66 percent of `???`). Alone, or a separate last word after a term (`the audit gate ??`). Same as `/credo:explain` with level `medium`.
+- `?` - the short version: two or three bullets (about 33 percent of `???`). Same placement as `??`; a question mark attached to a word (`Is it done?`) is an ordinary question. Same as `/credo:explain` with level `short`.
 - `cc-up` - the user fully updated Claude Code (plugins and marketplaces fetched and installed, `/reload-plugins`, full quit and restart, possibly resumed). The running state is current; taken at face value, never doubted, no request for steps or proof. Also valid in passing.
 - `cm` - commit, per the repo's commit rules, no push.
 - `ph` - commit and push, per the repo's rules (push only where they allow it).

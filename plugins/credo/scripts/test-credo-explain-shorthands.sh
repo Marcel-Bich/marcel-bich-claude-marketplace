@@ -1,0 +1,90 @@
+#!/bin/bash
+# Tests for the "??" (medium) and "?" (short) explain shorthands and for the rule that text
+# written right before an Ask call stays visible (credo item 127). Covers the SessionStart
+# legend, templates/shorthands.json, the explain skill and command, the active and passive
+# session skills, the band hint list, the docs and the changelog fragment. The model reads
+# the shorthands from the legend and the skill text (no script parses chat messages), so
+# these are text checks. Temp config dir only.
+# Usage: bash test-credo-explain-shorthands.sh
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_DIR="$(cd "$PLUGIN_DIR/../.." && pwd)"
+HOOK="$PLUGIN_DIR/hooks/credo-session-start.sh"
+command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not found"; exit 0; }
+
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/credo-explain-sh.XXXXXX")" || exit 1
+trap 'case "$TMP" in "${TMPDIR:-/tmp}"/credo-explain-sh.??????) rm -rf -- "$TMP" ;; esac' EXIT
+
+PASS=0
+FAIL=0
+has() { # name needle text
+    case "$3" in *"$2"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL %s\n  missing: %s\n' "$1" "$2" ;; esac
+}
+in_file() { # name needle file
+    if grep -qF -- "$2" "$3" 2>/dev/null; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); printf 'FAIL %s\n  missing: %s\n  in: %s\n' "$1" "$2" "${3#"$REPO_DIR"/}"; fi
+}
+
+# --- SessionStart legend (emitted in every state) ---------------------------
+export CLAUDE_CONFIG_DIR="$TMP/cfg" CREDO_GLOBAL="$TMP/global.yaml" CREDO_PROFILE="$TMP/none-profile" \
+    CREDO_PROJECT="$TMP/none-project" CREDO_SKIP_ENSURE=1 CREDO_TMUX_HINT=false
+mkdir -p "$CLAUDE_CONFIG_DIR"
+: > "$CREDO_GLOBAL"
+LEGEND="$(printf '{"session_id":"%s","source":"startup","cwd":"%s"}' "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0127" "$TMP" \
+    | (cd "$TMP" && bash "$HOOK" 2>/dev/null) | jq -r '.hookSpecificOutput.additionalContext // ""')"
+has "legend: emitted" "USER SHORTHANDS" "$LEGEND"
+has "legend: ??? kept" '"???" (alone or right after a term/statement)' "$LEGEND"
+has "legend: ?? defined" '"??" (alone, or a separate last word after a term/statement' "$LEGEND"
+has "legend: ?? is medium, about 66 percent" 'medium depth: the four labeled parts, each short, about 66 percent of the "???" length' "$LEGEND"
+has "legend: ? defined" '"?" (alone, or a separate last word after a term/statement) = the short explanation' "$LEGEND"
+has "legend: ? is two or three bullets, about 33 percent" 'two or three bullets, about 33 percent of the "???" length' "$LEGEND"
+has "legend: space rule and attached question mark" 'need a space before them' "$LEGEND"
+has "legend: attached question is an ordinary question" 'Is it done?' "$LEGEND"
+has "legend: clean structure at every level" 'never crammed into a single line' "$LEGEND"
+has "legend: text before Ask stays visible (buffer)" 'first write that text, then make one trivial tool call' "$LEGEND"
+has "legend: Ask buffer reason" 'hides the text behind the Ask dialog' "$LEGEND"
+
+# --- templates/shorthands.json (band cheatsheet) ----------------------------
+SH="$PLUGIN_DIR/templates/shorthands.json"
+for k in '???' '??' '?'; do
+    if jq -e --arg k "$k" 'any(.[]; .key == $k and (.meaning | length) > 0)' "$SH" >/dev/null 2>&1; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1)); printf 'FAIL shorthands.json: key %s missing\n' "$k"
+    fi
+done
+
+# --- explain skill and command ----------------------------------------------
+EXPLAIN="$PLUGIN_DIR/skills/explain/SKILL.md"
+in_file "explain skill: ?? level" '"??" (medium' "$EXPLAIN"
+in_file "explain skill: ? level" '"?" (short' "$EXPLAIN"
+in_file "explain skill: medium length" 'about 66 percent' "$EXPLAIN"
+in_file "explain skill: short length" 'about 33 percent' "$EXPLAIN"
+in_file "explain skill: short is bullets" 'two or three bullets' "$EXPLAIN"
+in_file "explain skill: attached mark is not the shorthand" 'attached to a word' "$EXPLAIN"
+in_file "explain skill: clean structure rule" 'never crammed' "$EXPLAIN"
+in_file "explain command: level argument" 'name: level' "$PLUGIN_DIR/commands/explain.md"
+in_file "explain command: medium and short levels" 'medium' "$PLUGIN_DIR/commands/explain.md"
+
+# --- session skills: text before an Ask call -------------------------------
+for s in session-active session-passive; do
+    in_file "$s: buffer rule" 'trivial tool call' "$PLUGIN_DIR/skills/$s/SKILL.md"
+    in_file "$s: buffer reason" 'hides the text behind the Ask dialog' "$PLUGIN_DIR/skills/$s/SKILL.md"
+done
+
+# --- band hint list, docs, changelog fragment -------------------------------
+in_file "band: hint lists ?? and ?" "GENERAL_SHORTHANDS = ['???', '??', '?', 'cm', 'ph']" "$PLUGIN_DIR/hooks/band.tsx"
+in_file "README: ?? row" '| `??` |' "$PLUGIN_DIR/README.md"
+in_file "README: ? row" '| `?` |' "$PLUGIN_DIR/README.md"
+in_file "credo guide: ?? bullet" '- `??` -' "$PLUGIN_DIR/docs/credo-guide.md"
+in_file "credo guide: ? bullet" '- `?` -' "$PLUGIN_DIR/docs/credo-guide.md"
+in_file "psalm: ?? topic line" '`??` - ' "$PLUGIN_DIR/commands/psalm.md"
+in_file "psalm: ? topic line" '`?` - ' "$PLUGIN_DIR/commands/psalm.md"
+FRAG="$PLUGIN_DIR/changelog.d/127-explain-shortcuts.md"
+in_file "changelog fragment: patch bump" 'bump: patch' "$FRAG"
+in_file "changelog fragment: Added section" '### Added' "$FRAG"
+
+echo "explain shorthands: $PASS passed, $FAIL failed"
+[ "$FAIL" -eq 0 ]

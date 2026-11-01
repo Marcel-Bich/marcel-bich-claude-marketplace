@@ -93,6 +93,10 @@ every step or ask for confirmation on the self-evident. Batch and minimize inter
 the user's attention is the scarce resource. Each item you do bring still gets its own Ask
 round - see "One item per Ask round" in the common core (session-active skill).
 
+Text before an Ask call stays visible: when explanation text comes right before an Ask-tool call in
+the same turn, first write that text, then make one trivial tool call (a buffer, e.g. a read of a
+known file), then call the Ask tool. Without the buffer the TUI hides the text behind the Ask dialog.
+
 ### Gently prefer older items first
 
 When choosing what to advance, gently prefer older open items over newer ones, so old

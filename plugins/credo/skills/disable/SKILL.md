@@ -20,7 +20,7 @@ plugin and it is fully reversible.
 
 Two things stay on here, because they are not part of the items workflow. They are the model presets (the
 main-agent prompt and the per-spawn rule for `credo-preset.sh stage`) and the chat-shorthand
-legend (`dd` / `vf` / `cf` / `???` / `cc-up` / `exclude`). Both are pure model-choice and
+legend (`dd` / `vf` / `cf` / `???` / `??` / `?` / `cc-up` / `exclude`). Both are pure model-choice and
 user-intent parsing, not workflow advertising. Someone who wants none of credo's features removes
 the plugin instead; this skill does not do that.
 

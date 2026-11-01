@@ -25,7 +25,7 @@
 #      autonomously.
 #
 #   3. SHORTHANDS (always). A compact legend of the user's chat shorthands
-#      (dd / vf / cf / ??? / cc-up / cm / ph / exclude) is appended to EVERY output of
+#      (dd / vf / cf / ??? / ?? / ? / cc-up / cm / ph / exclude) is appended to EVERY output of
 #      this hook, and emitted on its own where the hook would otherwise stay
 #      silent (declined dir, open decision on compact/resume/fork, gsd backend).
 #      It is pure user-intent parsing, not workflow, so it also applies in hub
@@ -162,7 +162,12 @@ read -r -d '' SHORTHANDS <<'SH'
 - "vf" = verified or verify. In a manual test round where the user was asked to check something: checked and passing - scope is exactly what it refers to: a single DoD point -> tick only that point (user-verified), the item stays where it is; only the whole item under test ("#123 vf") -> credo-item-move.sh 123 verified --user-authorized, main agent only. Otherwise: verify it for real with runtime proof, not code review (in credo: verify skill via subagents). Unclear which? Ask briefly.
 - "cf" = start or continue a clarify round: structured questions until the open points are resolved (in credo: the 1_clarify items one per Ask round, or the named one, "#57 cf").
 - "go" / "bk" / "pk" / "ar" = credo item moves, valid ONLY right after an item ref ("#57 go"); bare, they are ordinary words. "#N go" = the user's GO approval: add a "(GO: <user quote>)" line to the item History, check the GO entry gate (G1-G6), on pass credo-item-move.sh N go; if the gate fails, report instead (never a gate bypass). "#N bk" = block it: ask for the concrete blocker if unnamed (blocked_by is mandatory), then credo-item-move.sh N blocked. "#N pk" = park on hold (credo-item-move.sh N hold), "#N pk future" = park for later (N future). "#N ar" = archive (credo-item-move.sh N archived).
-- "???" (alone or right after a term/statement) = explain that thing in depth: What / Why / Example / Consequences (explain skill, same as /credo:explain).
+- "???" (alone or right after a term/statement) = explain that thing in depth: What / Why / Example / Consequences (explain skill, same as /credo:explain). Full length, the reference for the two shorter levels.
+- "??" (alone, or a separate last word after a term/statement: "the audit gate ??") = the same explanation at medium depth: the four labeled parts, each short, about 66 percent of the "???" length (explain skill).
+- "?" (alone, or a separate last word after a term/statement) = the short explanation: two or three bullets, about 33 percent of the "???" length (explain skill).
+- "??" and "?" need a space before them. A question mark attached to a word ("Is it done?", "why??") is an ordinary question mark, never the shorthand. "???" keeps its meaning right after a term, with or without a space.
+- All three explain levels use clean structure: bold labels or bullet points, one item per line, never crammed into a single line.
+- Explanation before an Ask call: when explanation text comes right before an Ask-tool call in the same turn, first write that text, then make one trivial tool call (a buffer, e.g. a read of a known file), then call the Ask tool. Without the buffer the TUI hides the text behind the Ask dialog.
 - "cc-up" = the user fully updated Claude Code (plugins + marketplaces fetched and installed, /reload-plugins, full quit and restart, maybe resumed): the running state is current. Take it at face value - never doubt it, never ask for steps or proof, just continue. Also valid in passing.
 - "cm" = commit (per the repo's commit rules, no push). "ph" = commit + push (same rules; push only where the repo rules allow it).
 - "exclude" / "excluded" = always the local .git/info/exclude, never .gitignore; only "ignore" / "ignored" / "gitignore" means .gitignore.

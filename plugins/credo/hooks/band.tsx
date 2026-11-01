@@ -94,7 +94,7 @@ const PANE_STATUSES = [
 const PER_STATUS = 15
 
 // shorthands the prompt hint always lists (the band never shows them)
-const GENERAL_SHORTHANDS = ['???', 'cm', 'ph']
+const GENERAL_SHORTHANDS = ['???', '??', '?', 'cm', 'ph']
 // without an item system: cf / dd / vf still work on their own (clarify round,
 // done, verified/verify); only the #N item moves (go bk pk ar) need items
 const ITEMLESS_SHORTHANDS = ['cf', 'dd', 'vf', ...GENERAL_SHORTHANDS]

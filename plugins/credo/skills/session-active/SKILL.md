@@ -145,6 +145,10 @@ raising an Ask about an existing item, apply the CLARIFY-FIRST precondition abov
 whole body plus the requirements log so a stale head does not make you re-ask what is
 already clarified (read/build-gate, credo `items` skill).
 
+Text before an Ask call stays visible: when explanation text comes right before an Ask-tool call in
+the same turn, first write that text, then make one trivial tool call (a buffer, e.g. a read of a
+known file), then call the Ask tool. Without the buffer the TUI hides the text behind the Ask dialog.
+
 ## One item per Ask round (active and passive only)
 
 When clarifying or proposing a GO for credo items in a presence session, handle them one
