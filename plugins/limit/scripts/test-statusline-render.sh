@@ -191,10 +191,18 @@ for pr in professional casual; do
 done
 has "7d line present" "7d all [" "$out"
 has "7d line keeps its reset" "reset: " "$(grep -F '7d all [' <<< "$out")"
-echo ">>> a missing five_hour.utilization is still an invalid response"
-jq -n --arg r "$(iso $((NOW + 7200)))" \
-    '{five_hour: {resets_at: $r}, seven_day: {utilization: 9.0, resets_at: $r}, limits: []}' > "$CACHE"
-has "missing five_hour.utilization gives invalid_response" "invalid_response" "$(render)"
+echo ">>> plan without a 5h limit: five_hour.utilization null, no session entry"
+# Invented fixture of the API shape for a plan that only has a weekly limit.
+jq -n --arg r "$(iso $((NOW + 3 * 86400)))" '{
+    five_hour: {utilization: null, resets_at: null},
+    seven_day: {utilization: 74.0, resets_at: $r},
+    limits: [{kind: "weekly_all", group: "weekly", percent: 74, resets_at: $r, scope: null, is_active: true}]}' > "$CACHE"
+for pr in enthusiast professional casual; do
+    out_p=$(CLAUDE_MB_LIMIT_PRESET=$pr render)
+    hasnt "no 5h limit in the $pr preset is not an invalid response" "invalid_response" "$out_p"
+    hasnt "no 5h limit in the $pr preset shows no 5h line" "5h all" "$out_p"
+    hasre "no 5h limit in the $pr preset keeps the 7d line" '^7d all \[[=-]{10}\] +74\.0%' "$(grep -E '^7d all \[' <<< "$out_p" | head -1)"
+done
 write_cache 50 "$(iso $((NOW + 7200)))" 30
 
 echo ">>> idle 7d window: utilization with resets_at null is valid while 5h is active"

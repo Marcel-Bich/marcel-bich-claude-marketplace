@@ -1322,9 +1322,10 @@ format_output() {
         extra_used=$(echo "$response" | jq -r '.extra_usage.used_credits // empty' 2>/dev/null)
 
         # Check if response has required data. A null five_hour.resets_at is a valid
-        # idle window (no usage in the current 5h window), not an invalid response.
-        if [[ -z "$five_hour_util" ]]; then
-            debug_log "Invalid API response: missing five_hour.utilization"
+        # idle window (no usage in the current 5h window). A null five_hour.utilization
+        # with a weekly value is a plan without a 5h limit: no 5h line, not an error.
+        if [[ -z "$five_hour_util" ]] && [[ -z "$seven_day_util" ]]; then
+            debug_log "Invalid API response: missing five_hour and seven_day utilization"
             api_available="false"
             if [[ -z "$API_ERROR" ]]; then
                 set_api_error "invalid_response"
@@ -2008,8 +2009,8 @@ format_output() {
             fi
         fi
 
-        # 5-hour limit (if enabled) - all models
-        if [[ "$SHOW_5H" == "true" ]]; then
+        # 5-hour limit (if enabled and the plan has one) - all models
+        if [[ "$SHOW_5H" == "true" ]] && [[ -n "$five_pct" ]]; then
             local global_5h_line global_5h_color="" global_5h_color_reset=""
             if [[ "$SHOW_COLORS" == "true" ]]; then
                 global_5h_color=$(get_color "$five_pct")
