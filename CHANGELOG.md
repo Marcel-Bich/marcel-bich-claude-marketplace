@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v1.47
 
+##### v1.47.4
+
+###### Fixed
+
+- Command substitutions inside arithmetic expansion are checked like top-level ones
+
 ##### v1.47.3
 
 ###### Added
