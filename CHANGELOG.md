@@ -8,6 +8,23 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.12
+
+###### Added
+
+- Owner actions (commands, installs, tests, clicks) go fully into the chat reply while the owner is present, with a copyable command, numbered steps and the expected result, never "see item / report / file" instead. Presence follows the last owner prompt (within one hour, any mode, autonomous included). While the owner is away the full write-up is skipped and the action is presented again at the first owner prompt after the absence. Rule in the session-active, session-passive and session-autonomous skills and the verify skill.
+
+###### Changed
+
+- ntfy messages about finished work name each item in one line (`#N <title>: <one sentence what was done>`) in the per-item completion, the progress digest and the end-of-run report; meta information (mode, budget, session) only when it concerns the owner
+- The `?`, `??` and `???` shorthands also work at the end of any message, alone or as a suffix; the longest ending wins, and a normal question ending with `?` gets the short format (this reverses the 0.84.11 rule that a question mark attached to a word is not the shorthand)
+- The shorthands also work inside a message: each `?`, `??` or `???` applies to the part right before it (`what about xyz ?? and explain zxy ???`)
+- The periodic reminder asks to drop every code from the open-codes footer that is answered, verified, superseded, moved into an item or moot
+
+###### Fixed
+
+- The band drops an open code as soon as the prompt answers it (`T3 vf`, `V5 ok`, `Q4: ...`, `drop all vetos`); the next footer still replaces the list
+
 ##### v0.84.11
 
 ###### Added
