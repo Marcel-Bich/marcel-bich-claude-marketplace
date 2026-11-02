@@ -8,6 +8,15 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.28
+
+###### Fixed
+
+- The pane guard finds an input box of up to 60 rows between its rules (was 20). Claude Code fills a 53-row pane with 21 rows of input for a long text, and the box was then not found, so the input was never recognised as empty or as the own text.
+- The periodic reminder is typed as one burst, settles for 0.5 s and is then submitted. It no longer types in pieces and compares the field with the exact text, so a reminder could stay in the input field when the field was scrolled or too tall for the box check. A paste placeholder ("[Pasted text #1]") counts as typed.
+- A field that holds text when the reminder is due is skipped at once and left as it is, instead of waiting for it to clear.
+- A dialog that covers the input box after the burst stops the reminder before Enter.
+
 ##### v0.84.27
 
 ###### Added
