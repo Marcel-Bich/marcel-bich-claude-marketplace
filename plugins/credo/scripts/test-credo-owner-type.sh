@@ -26,8 +26,20 @@
 #     still there), unconfirmed Enter (exit 4), chunked long text, --stdin, control
 #     characters, size limit
 #   - answer: digit, label, esc, free text (Type something row), multi-select with the
-#     exact checked set and the review page, digit refused on a multi-select box,
-#     permission digit and esc (label refused), review page digit 1 only, idle pane refused
+#     exact checked set and the review page, digit refused on a multi-select box, review
+#     page digit 1 only (and only with Submit answers first), idle pane refused
+#   - security fix round: show prints the open prompt and its digest; a permission prompt
+#     needs --expect with the digest that was read (a same-options prompt with another command
+#     is refused); an Ask box may carry --expect; --persist for "don't ask again" options;
+#     force mode never sends BSpace and reports an abort; a line break that submits early is
+#     partly sent (exit 4); a prompt replaced by another of the same kind is answered; ASCII
+#     digits only; options above 9 by navigation (never the text 10); dialogs count only as the
+#     last block and never above a drawn input box; trailing backslash, control, separator and
+#     bidi characters refused; leading ! and # sent as typed; the log is refused for a FIFO or
+#     a symlink without a hang
+#   - tabbed Ask box (several questions, measured live): one answer per question, Right moves
+#     on in a tabbed multi select, the review page of all questions is submitted with 1, labels
+#     compared as sets
 #   - delivery log: one line per attempt, no message content unless
 #     CREDO_OWNER_TYPE_LOG_TEXT=1, owner-only file mode, --json output
 #
@@ -250,8 +262,11 @@ ask_ide = g.ask_box(ASK_IDE)
 t("real footer with a VS Code hint: Ask box found", ask_ide is not None)
 t("real footer: highlight on the Type something row", ask_ide is not None and ask_ide["cursor"] == 3
   and ask_ide["type_n"] == 3)
-t("real two-option permission prompt", g.permission_prompt(PERM_YES_NO) == {
-    "options": ["Yes", "No"], "cursor": 1})
+t("real two-option permission prompt", (g.permission_prompt(PERM_YES_NO) or {}).get("options")
+  == ["Yes", "No"] and g.permission_prompt(PERM_YES_NO)["cursor"] == 1)
+t("real permission prompt: the title and the command are kept",
+  g.permission_prompt(PERM_YES_NO)["title"] == "Bash command"
+  and "python3 -c 'print(1)'" in g.permission_prompt(PERM_YES_NO)["body"])
 t("real two-option permission prompt is classified", g.classify_pane("\n".join(PERM_YES_NO))["kind"]
   == "permission")
 t("queued placeholder (dimmed) is an empty input", g.input_content(QUEUED) == "")
@@ -315,13 +330,132 @@ t("multi toggles are the symmetric difference", o.multi_toggle_keys(
 t("multi toggles to unselect cherry", o.multi_toggle_keys(ask_m, {3}) == ["1"])
 t("multi: an empty selection is refused", refused(lambda: o.multi_toggle_keys(ask_m, set())))
 t("multi: the type row is not an option", refused(lambda: o.multi_toggle_keys(ask_m, {4})))
-t("permission digit in range", o.permission_keys(perm, ("digit", 2)) == ["2"])
+t("permission digit in range", o.permission_keys(perm, ("digit", 1)) == ["1"])
 t("permission digit out of range refused", refused(lambda: o.permission_keys(perm, ("digit", 4))))
 t("permission label refused", refused(lambda: o.permission_keys(perm, ("label", "Yes"))))
 t("permission esc", o.permission_keys(perm, ("esc", None)) == ["Escape"])
 t("review digit 1 submits", o.review_keys(rv, ("digit", 1)) == ["1"])
 t("review digit 2 refused", refused(lambda: o.review_keys(rv, ("digit", 2))))
 t("review esc refused", refused(lambda: o.review_keys(rv, ("esc", None))))
+# --- fix round (security review): red tests, written before the code ----------------
+DASHES = "╌" * 60
+
+
+def perm_lines(cmd):
+    return [RULE, " Bash command", "", DASHES, " Run the listing", " " + cmd, DASHES, "",
+            " Do you want to proceed?", " " + P + " 1. Yes",
+            "   2. Yes, and don't ask again for: ls",
+            "   3. No, and tell Claude what to do differently (esc)", "",
+            "Esc to cancel · Tab to amend"]
+
+
+TEN_NAMES = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
+
+
+def ten_lines(multi=False, cursor_row=1, checked=()):
+    lines = [RULE, " ☐ Ten", "", "Pick one?", ""]
+    for i, name in enumerate(TEN_NAMES, 1):
+        mark = P + " " if i == cursor_row else "  "
+        if multi:
+            box = "[✔]" if i in checked else "[ ]"
+            lines.append("%s%d. %s %s" % (mark, i, box, name))
+        else:
+            lines.append("%s%d. %s" % (mark, i, name))
+        lines.append("     The %s option." % name)
+    k = len(TEN_NAMES) + 1
+    lines += ["%s%d. Type something." % ("  ", k) if not multi else "%s%d. [ ] Type something" % ("  ", k),
+              RULE, "  %d. Chat about this" % (k + 1), "", FOOT]
+    return lines
+
+
+def digest_of(lines):
+    return o.prompt_digest(g.classify_pane("\n".join(lines)))
+
+
+# 3. digits: ASCII only
+t("digit: fullwidth two is a label, not a digit", o.parse_answer("２") == ("label", "２"))
+t("digit: superscript two is a label, not a digit", o.parse_answer("²") == ("label", "²"))
+# 6. trailing backslash, control and bidi characters, allowed prefixes
+t("validate: trailing backslash refused", o.validate_text("abc\\") is not None)
+t("validate: backslash at the end of a line refused", o.validate_text("abc\\\ndef") is not None)
+t("validate: backslash inside a line allowed", o.validate_text("a\\b") is None)
+t("validate: C1 control refused", o.validate_text("a\u0085b") is not None)
+t("validate: U+2028 refused", o.validate_text("a b") is not None)
+t("validate: U+2029 refused", o.validate_text("a b") is not None)
+t("validate: bidi override refused", o.validate_text("a‮b") is not None)
+t("validate: bidi isolate refused", o.validate_text("a⁦b") is not None)
+t("validate: leading exclamation mark allowed (sent as typed)", o.validate_text("! ls -la") is None)
+t("validate: leading hash allowed", o.validate_text("# a note") is None)
+# 5. a dialog counts only as the last block, and never above an input box
+t("transcript dialog text above an input box is an input",
+  g.classify_pane("\n".join(ASK_EN + INPUT_IDLE))["kind"] == "input")
+t("permission text above an input box is an input",
+  g.classify_pane("\n".join(PERM + INPUT_IDLE))["kind"] == "input")
+t("ask footer followed by transcript text is not an Ask box",
+  g.classify_pane("\n".join(ASK_EN + ["● more transcript"]))["kind"] != "ask")
+t("permission footer followed by text is not a prompt",
+  g.permission_prompt(PERM + ["● text"]) is None)
+# 1. command text in the permission prompt, digest over the normalized prompt
+PA = perm_lines("ls /tmp/fixture-dir")
+PB = perm_lines("rm -rf /tmp/fixture-dir")
+pa = g.permission_prompt(PA)
+t("permission: the command text is captured", pa is not None and "ls /tmp/fixture-dir" in pa["body"])
+t("permission: the title is captured", pa is not None and pa["title"] == "Bash command")
+t("permission: same options, other command, other digest", digest_of(PA) != digest_of(PB))
+t("permission: the same prompt has the same digest", digest_of(PA) == digest_of(PA))
+t("digest is a sha256 hex string", len(digest_of(PA) or "") == 64
+  and all(c in "0123456789abcdef" for c in digest_of(PA)))
+t("ask: option description captured", ask is not None and ask["options"][0]["desc"] == "A warm, strong color.")
+ASK_EN_MOVED = [x.replace(P + " 1. Red", "  1. Red").replace("  2. Green", P + " 2. Green") for x in ASK_EN]
+t("ask digest ignores the cursor", digest_of(ASK_EN) == digest_of(ASK_EN_MOVED))
+t("ask digest changes with the question", digest_of(ASK_EN) != digest_of(ASK_DE))
+t("ask digest changes with an option description",
+  digest_of(ASK_EN) != digest_of([x.replace("A warm, strong color.", "A warm, other color.") for x in ASK_EN]))
+t("input has no digest", o.prompt_digest(g.classify_pane("\n".join(INPUT_IDLE))) is None)
+# 7. persist options
+t("persist: don't ask again detected", o.is_persist("Yes, and don't ask again for: ls"))
+t("persist: curly apostrophe detected", o.is_persist("Yes, and don’t ask again for: ls"))
+t("persist: plain Yes is not persist", not o.is_persist("Yes"))
+t("persist: the No option is not persist", not o.is_persist("No, and tell Claude what to do differently (esc)"))
+perm_ok = g.permission_prompt(PA)
+t("persist option refused without the flag", refused(lambda: o.permission_keys(perm_ok, ("digit", 2))))
+t("persist option allowed with the flag", o.permission_keys(perm_ok, ("digit", 2), persist=True) == ["2"])
+t("plain permission option needs no flag", o.permission_keys(perm_ok, ("digit", 1)) == ["1"])
+# 4. option numbers above 9
+ask10 = g.ask_box(ten_lines())
+t("ten options: the box is read", ask10 is not None and len(ask10["options"]) == 10)
+t("ten options: label route navigates to option 10 and enters",
+  o.answer_keys(ask10, ("label", "ten")) == ["Down"] * 9 + ["Enter"])
+t("ten options: digit route for 10 navigates too", o.answer_keys(ask10, ("digit", 10)) == ["Down"] * 9 + ["Enter"])
+t("ten options: option 9 keeps its digit", o.answer_keys(ask10, ("label", "nine")) == ["9"])
+t("ten options: the text 10 is never sent",
+  all(k != "10" for k in o.answer_keys(ask10, ("label", "ten"))))
+ask10m = g.ask_box(ten_lines(multi=True, checked=()))
+t("ten options multi: toggles 1 and 10 with a digit and Space",
+  o.multi_toggle_keys(ask10m, {1, 10}) == ["1"] + ["Down"] * 9 + ["Space"])
+t("navigation keys down", o.nav_keys(1, 4) == ["Down"] * 3)
+t("navigation keys up", o.nav_keys(4, 1) == ["Up"] * 3)
+t("navigation keys: already there", o.nav_keys(2, 2) == [])
+# 8. review page: the first option must be Submit answers
+t("review: the Submit answers label is required",
+  refused(lambda: o.review_keys(dict(rv, options=["Send it", "Cancel"]), ("digit", 1))))
+t("review: a review page without options refused", refused(lambda: o.review_keys(None, ("digit", 1))))
+# live finding (Claude Code 2.1.316): a tabbed box with the footer "Tab/Arrow keys to navigate",
+# a multi-select question with a "Next" row, and labels in selection order on the review page
+ASK_TABS = [RULE, "←  ☐ Color  ☐ Fruit  ☐ Size  ✔ Submit  →", "",
+            "Which fruits?", "", P + " 1. [ ] Apple", "         A crisp, sweet fruit with a firm skin",
+            "  2. [ ] Banana", "         A soft, sweet fruit in a yellow peel", "  3. [ ] Cherry",
+            "         A small, round stone fruit", "  4. [ ] Type something", "     Next", RULE,
+            "  5. Chat about this", "",
+            "Enter to select · Tab/Arrow keys to navigate · Esc to cancel"]
+tabs_ask = g.ask_box(ASK_TABS)
+t("tabbed box: the Tab/Arrow footer is an Ask box", tabs_ask is not None)
+t("tabbed box: multi select with its question", tabs_ask is not None and tabs_ask["multi"] is True
+  and tabs_ask["question"] == "Which fruits?")
+t("tabbed box: the Next row is not an option", tabs_ask is not None and len(tabs_ask["options"]) == 3)
+t("tabbed box classified as an Ask box", g.classify_pane("\n".join(ASK_TABS))["kind"] == "ask")
+t("labels match as sets, in any order", o.labels_match(["Cherry", "Apple"], ["Apple", "Cherry"]))
+t("labels differ when a label is missing", not o.labels_match(["Cherry"], ["Apple", "Cherry"]))
 print("\n".join(res))
 PYEOF
 unit_out="$("$PY" "$TMP/unit.py" "$GUARD" "$MODULE" 2>&1)"; unit_rc=$?
@@ -393,11 +527,24 @@ def render_input(st):
     return lines, (cx, cy)
 
 
+TABS_FOOTER = "Enter to select · Tab/Arrow keys to navigate · Esc to cancel"
+
+
+def tab_bar(st):
+    done = {c["header"] for c in st["collected"]}
+    parts = ["%s %s" % ("☒" if q["header"] in done else "☐", q["header"]) for q in st["questions"]]
+    return "←  " + "  ".join(parts) + "  ✔ Submit  →"
+
+
 def render_ask(st):
     a = st["ask"]
     n = len(a["options"])
+    tabbed = bool(st.get("questions"))
     lines = ["● Working on it.", "", RULE]
-    lines += [" %s %s " % ("☒" if a["multi"] else "☐", a["header"]), "", a["question"], ""]
+    if tabbed:
+        lines += [tab_bar(st), "", a["question"], ""]
+    else:
+        lines += [" %s %s " % ("☒" if a["multi"] else "☐", a["header"]), "", a["question"], ""]
     for i, opt in enumerate(a["options"]):
         mark = PROMPT + " " if a["cursor"] == i else "  "
         if a["multi"]:
@@ -411,27 +558,38 @@ def render_ask(st):
     if a["multi"]:
         box = "[✔]" if a["checked"][n] else "[ ]"
         lines.append("%s%d. %s %s" % (mark, n + 1, box, "Type something" if typed is None else typed))
-        lines.append("     Submit")
+        lines.append("     Next" if tabbed else "     Submit")
     else:
         lines.append("%s%d. %s" % (mark, n + 1, "Type something." if typed is None else typed))
-    lines += [RULE, "  %d. Chat about this" % (n + 2), "", FOOTER]
+    lines += [RULE, "  %d. Chat about this" % (n + 2), "", TABS_FOOTER if tabbed else FOOTER]
     return lines, (0, 0)
 
 
 def render_review(st):
+    if st.get("tab_review") is not None:
+        lines = [RULE, tab_bar(st), "", "Review your answers", ""]
+        for c in st["tab_review"]:
+            value = ", ".join(c["labels"]) if "labels" in c else c["label"]
+            lines += [" ● %s" % c["question"], "   → %s" % value, ""]
+        lines += ["Ready to submit your answers?", "", PROMPT + " 1. Submit answers", "  2. Cancel"]
+        return lines, (0, 0)
     r = st["review"]
+    first = r.get("options", ["Submit answers", "Cancel"])
     lines = [RULE, "←  ☒ %s  ✔ Submit  →" % st["ask"]["header"], "",
              "Review your answers", "", " ● %s" % r["question"],
              "   → %s" % ", ".join(r["labels"]), "",
              "Ready to submit your answers?", "",
-             PROMPT + " 1. Submit answers" if r["cursor"] == 0 else "  1. Submit answers",
-             "  2. Cancel"]
+             PROMPT + " 1. %s" % first[0] if r["cursor"] == 0 else "  1. %s" % first[0],
+             "  2. %s" % first[1]]
     return lines, (0, 0)
 
 
 def render_perm(st):
     p = st["perm"]
-    lines = [RULE, " Bash command", "", "   ls /tmp/fixture-dir", "", " Do you want to proceed?"]
+    dashes = "╌" * 60
+    lines = [RULE, " " + p.get("title", "Bash command"), "", dashes]
+    lines += [" " + row for row in p.get("body", ["ls /tmp/fixture-dir"])]
+    lines += [dashes, "", " Do you want to proceed?"]
     for i, label in enumerate(p["options"]):
         lines.append((" " + PROMPT + " " if p["cursor"] == i else "   ") + "%d. %s" % (i + 1, label))
     lines += ["", "Esc to cancel · Tab to amend"]
@@ -489,7 +647,11 @@ def input_key(st, key):
         text = st["input"]
         if st.get("enter_noop"):
             return
-        if text.endswith("\\"):
+        if text.endswith("\\") and st.get("break_submits"):
+            # a terminal whose backslash + Enter submits instead of making a line break
+            st.setdefault("submitted", []).append(text)
+            st["input"] = ""
+        elif text.endswith("\\"):
             st["input"] = text[:-1] + "\n"
         elif text:
             st.setdefault("submitted", []).append(text)
@@ -509,17 +671,43 @@ def input_key(st, key):
         st["cursor"] = None
 
 
+def tab_next(st, entry):
+    """A tabbed box: record the answer of the current question and move on (or review)."""
+    st["collected"].append(dict(entry, header=st["ask"]["header"]))
+    st["qi"] += 1
+    if st["qi"] < len(st["questions"]):
+        st["ask"] = json.loads(json.dumps(st["questions"][st["qi"]]))
+    else:
+        st["kind"] = "review"
+        st["tab_review"] = [{k: v for k, v in c.items() if k != "header"} for c in st["collected"]]
+
+
+def checked_order(a):
+    """The checked options in the order they were checked (the review lists them that way)."""
+    n = len(a["options"])
+    return a.setdefault("order", [i for i, c in enumerate(a["checked"][:n]) if c])
+
+
 def ask_key(st, key):
     a = st["ask"]
     n = len(a["options"])
+    tabbed = bool(st.get("questions"))
     if len(key) == 1 and key in "123456789":
         d = int(key)
         if a["multi"]:
             if d <= n:
+                order = checked_order(a)
                 a["checked"][d - 1] = not a["checked"][d - 1]
+                if a["checked"][d - 1] and d - 1 not in order:
+                    order.append(d - 1)
+                elif not a["checked"][d - 1] and d - 1 in order:
+                    order.remove(d - 1)
             return
         if d <= n:
             label = a["options"][d - 1]["label"]
+            if tabbed:
+                tab_next(st, {"question": a["question"], "label": label})
+                return
             st.setdefault("answers", []).append({"question": a["question"], "label": label})
             st["kind"] = "input"
             a["free"] = None
@@ -531,6 +719,11 @@ def ask_key(st, key):
     elif key == "Space" and a["multi"] and a["cursor"] < n:
         a["checked"][a["cursor"]] = not a["checked"][a["cursor"]]
     elif key == "Right" and a["multi"]:
+        if tabbed:
+            order = checked_order(a)
+            labels = [a["options"][i]["label"] for i in order if a["checked"][i]]
+            tab_next(st, {"question": a["question"], "labels": labels})
+            return
         labels = [a["options"][i]["label"] for i in range(n) if a["checked"][i]]
         st["review"] = {"question": a["question"], "labels": labels, "cursor": 0}
         st["kind"] = "review"
@@ -549,7 +742,11 @@ def ask_key(st, key):
 
 
 def review_key(st, key):
-    if key in ("1", "Enter"):
+    if key in ("1", "Enter") and st.get("tab_review") is not None:
+        st.setdefault("answers", []).append({"answers": st["tab_review"]})
+        st["tab_review"] = None
+        st["kind"] = "input"
+    elif key in ("1", "Enter"):
         r = st["review"]
         st.setdefault("answers", []).append({"question": r["question"], "labels": r["labels"]})
         st["kind"] = "input"
@@ -563,7 +760,11 @@ def perm_key(st, key):
         d = int(key)
         if 1 <= d <= len(p["options"]):
             st.setdefault("answers", []).append({"permission": p["options"][d - 1]})
-            st["kind"] = "input"
+            if p.get("replace_after_key"):
+                # another prompt of the same kind takes the place of the answered one
+                st["perm"] = p["replace_after_key"]
+            else:
+                st["kind"] = "input"
     elif key == "Escape":
         st.setdefault("answers", []).append({"permission": "declined"})
         st["kind"] = "input"
@@ -658,8 +859,10 @@ FRUIT = {"header": "Fruit", "question": "Which fruits?", "multi": True, "cursor"
          "options": [{"label": "Apple", "desc": "A crisp fruit."},
                      {"label": "Banana", "desc": "A soft, sweet fruit."},
                      {"label": "Cherry", "desc": "A small round stone fruit."}]}
-PERM = {"options": ["Yes", "Yes, and don't ask again for: ls",
+PERM = {"title": "Bash command", "body": ["Run the listing", "ls /tmp/fixture-dir"],
+        "options": ["Yes", "Yes, and don't ask again for: ls",
                     "No, and tell Claude what to do differently (esc)"], "cursor": 0}
+TEN = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
 
 
 def base(**kw):
@@ -668,6 +871,24 @@ def base(**kw):
           "typed": [], "keys": [], "answers": []}
     st.update(kw)
     return st
+
+
+def tabs_state(preset=False, last_multi=False):
+    color = {"header": "Color", "question": "Pick a color?", "multi": False, "cursor": 0,
+             "checked": [False] * 4, "free": None,
+             "options": [{"label": "Red", "desc": "A warm color."},
+                         {"label": "Green", "desc": "A calm color."},
+                         {"label": "Blue", "desc": "A cool color."}]}
+    fruit_q = fruit([False, False, preset] if preset else None)
+    size = {"header": "Size", "question": "Pick a size?", "multi": False, "cursor": 0,
+            "checked": [False] * 3, "free": None,
+            "options": [{"label": "Small", "desc": "The compact one."},
+                        {"label": "Large", "desc": "The spacious one."}]}
+    questions = [color, fruit_q, size]
+    if last_multi:
+        questions = [color, fruit_q]
+    return {"kind": "ask", "ask": json.loads(json.dumps(questions[0])),
+            "questions": questions, "qi": 0, "collected": []}
 
 
 def fruit(checked=None):
@@ -697,6 +918,27 @@ SCEN = {
     "inject_ask": base(inject_after_text=1, inject_kind="ask", ask=json.loads(json.dumps(ASK))),
     "inject_append": base(inject_after_text=1, inject_kind="append", inject_text="Z"),
     "enter_noop": base(enter_noop=True),
+    "break_submits": base(input="", break_submits=True),
+    "inject_ask_force": base(input="half written", inject_after_text=1, inject_kind="ask",
+                             ask=json.loads(json.dumps(ASK))),
+    "permission_cmd_b": base(kind="permission", perm=dict(json.loads(json.dumps(PERM)),
+                             body=["Run the listing", "rm -rf /tmp/fixture-dir"])),
+    "permission_replaced": base(kind="permission", perm=dict(json.loads(json.dumps(PERM)),
+                                replace_after_key=dict(json.loads(json.dumps(PERM)),
+                                                       body=["Run the listing",
+                                                             "rm -rf /tmp/fixture-dir"]))),
+    "ask10": base(kind="ask", ask=dict(json.loads(json.dumps(ASK)), cursor=0,
+                  options=[{"label": n, "desc": "The %s option." % n} for n in TEN])),
+    "ask10_multi": base(kind="ask", ask=dict(json.loads(json.dumps(FRUIT)), cursor=0,
+                        checked=[False] * 11,
+                        options=[{"label": n, "desc": "The %s option." % n} for n in TEN])),
+    "ask_free_held": base(kind="ask", ask=dict(json.loads(json.dumps(ASK)), free="old")),
+    "tabs": base(**tabs_state()),
+    "tabs_preset": base(**tabs_state(preset=True)),
+    "tabs_last_multi": base(**tabs_state(last_multi=True)),
+    "review_labels": base(kind="review", ask=fruit(),
+                          review={"question": "Which fruits?", "labels": ["Apple", "Cherry"],
+                                  "cursor": 0, "options": ["Send it", "Cancel"]}),
     "ask_changed": base(kind="ask", ask=json.loads(json.dumps(ASK)), change_at_capture=2,
                         change_question="A different question?"),
 }
@@ -951,15 +1193,15 @@ run_cli answer --session "$SID" --ask "multi:1,3"
 check "multi select: exit 0" "0" "$RC"
 check "multi select: review and submit" \
     "[{'question': 'Which fruits?', 'labels': ['Apple', 'Cherry']}]" "$(st 's.get("answers")')"
-check "multi select: toggles, Right, then Enter" \
-    "['1', '3', 'Right', 'Enter']" "$(st 's.get("keys")')"
+check "multi select: toggles, Right, then the review is submitted with 1" \
+    "['1', '3', 'Right', '1']" "$(st 's.get("keys")')"
 
 scenario ask_multi_preset
 run_cli answer --session "$SID" --ask "multi:1,3"
 check "multi select with Banana checked: exit 0" "0" "$RC"
 check "multi select with Banana checked: toggled to exactly 1 and 3" \
     "[{'question': 'Which fruits?', 'labels': ['Apple', 'Cherry']}]" "$(st 's.get("answers")')"
-check "multi select with Banana checked: toggles 1, 2 and 3" "['1', '2', '3', 'Right', 'Enter']" "$(st 's.get("keys")')"
+check "multi select with Banana checked: toggles 1, 2 and 3" "['1', '2', '3', 'Right', '1']" "$(st 's.get("keys")')"
 
 scenario ask
 run_cli answer --session "$SID" --ask 2 --dry-run
@@ -972,25 +1214,6 @@ check "answer on an idle input: exit 1" "1" "$RC"
 check "answer on an idle input: no Ask box named" "1" "$(printf '%s' "$OUT" | grep -c 'no Ask box or permission prompt')"
 
 # --- B8. answer: permission prompt and review page ---------------------------------------
-scenario permission
-run_cli answer --session "$SID" --ask 2
-check "permission digit: exit 0" "0" "$RC"
-check "permission digit: answered with option 2" "[{'permission': \"Yes, and don't ask again for: ls\"}]" "$(st 's.get("answers")')"
-
-scenario permission
-run_cli answer --session "$SID" --ask esc
-check "permission esc: exit 0" "0" "$RC"
-check "permission esc: declined" "[{'permission': 'declined'}]" "$(st 's.get("answers")')"
-
-scenario permission
-run_cli answer --session "$SID" --ask Yes
-check "permission label: refused" "1" "$RC"
-check "permission label: nothing sent" "[]" "$(st 's.get("keys")')"
-
-scenario permission
-run_cli answer --session "$SID" --ask 9
-check "permission digit out of range: refused" "1" "$RC"
-
 scenario review
 run_cli answer --session "$SID" --ask 1
 check "review page digit 1 submits: exit 0" "0" "$RC"
@@ -1032,6 +1255,209 @@ scenario idle
 run_cli send --session "$SID" --text "json owner" --dry-run --json
 check "json: exit 0" "0" "$RC"
 check "json: status field" "1" "$(printf '%s' "$OUT" | "$PY" -c 'import json,sys; d=json.load(sys.stdin); print(1 if d["status"]=="dry-run" else 0)')"
+
+# --- B12. security fix round: prompt binding, persist, force mode, digits, log -----------
+# red tests written before the code: show and --expect, --persist, no BSpace in force mode,
+# partly sent, same-kind replacement, ASCII digits, options above 9, review label, FIFO log
+show_digest() { # digest of the open prompt, read with show --json
+    env PATH="$FT:$BASE" CLAUDE_CONFIG_DIR="$CFG" FAKE_PANE_STATE="$STATE" \
+        "$PY" "$CLI" show --session "$SID" --json 2>/dev/null \
+        | "$PY" -c 'import json,sys; print(json.load(sys.stdin).get("digest") or "")'
+}
+EXP_KEYS_10="['1'$(printf ", 'Down'%.0s" $(seq 1 9)), 'Space', 'Right', '1']"
+EXP_KEYS_DOWN9="[$(printf "'Down', %.0s" $(seq 1 9))'Enter']"
+
+scenario permission
+run_cli show --session "$SID"
+check "show: exit 0" "0" "$RC"
+check "show: names the permission prompt" "1" "$(printf '%s' "$OUT" | grep -q 'kind: permission' && echo 1 || echo 0)"
+check "show: shows the command line" "1" "$(printf '%s' "$OUT" | grep -c 'ls /tmp/fixture-dir')"
+check "show: shows the options" "1" "$(printf '%s' "$OUT" | grep -c "don't ask again")"
+check "show: prints a sha256 digest" "1" "$(printf '%s' "$OUT" | grep -cE '[0-9a-f]{64}')"
+run_cli show --session "$SID" --json
+check "show --json: exit 0" "0" "$RC"
+check "show --json: digest is 64 hex" "1" "$(printf '%s' "$OUT" | "$PY" -c 'import json,re,sys; d=json.load(sys.stdin)["digest"]; print(1 if re.fullmatch(r"[0-9a-f]{64}", d or "") else 0)')"
+check "show --json: kind permission" "'permission'" "$(printf '%s' "$OUT" | "$PY" -c 'import json,sys; print(repr(json.load(sys.stdin)["kind"]))')"
+check "show --json: the command line is in body" "1" "$(printf '%s' "$OUT" | "$PY" -c 'import json,sys; print(1 if any("ls /tmp/fixture-dir" in x for x in json.load(sys.stdin)["body"]) else 0)')"
+scenario idle
+run_cli show --session "$SID" --json
+check "show on an idle input: exit 0" "0" "$RC"
+check "show on an idle input: kind input, no digest" "1" "$(printf '%s' "$OUT" | "$PY" -c 'import json,sys; d=json.load(sys.stdin); print(1 if d["kind"]=="input" and d["digest"] is None else 0)')"
+
+# prompt binding: a permission prompt needs the digest of the prompt that was read
+scenario permission
+D_A="$(show_digest)"
+check "digest of the permission prompt is read" "1" "$([ ${#D_A} -eq 64 ] && echo 1 || echo 0)"
+scenario permission
+run_cli answer --session "$SID" --ask 1
+check "permission without --expect: refused" "1" "$RC"
+check "permission without --expect: nothing sent" "[]" "$(st 's.get("keys")')"
+check "permission without --expect: --expect named" "1" "$(printf '%s' "$OUT" | grep -c -- '--expect')"
+scenario permission
+run_cli answer --session "$SID" --ask 1 --expect "$D_A"
+check "permission with the digest that was read: exit 0" "0" "$RC"
+check "permission with the digest: answered with Yes" "[{'permission': 'Yes'}]" "$(st 's.get("answers")')"
+scenario permission_cmd_b
+run_cli answer --session "$SID" --ask 1 --expect "$D_A"
+check "same options, other command, old digest: refused" "1" "$RC"
+check "same options, other command: nothing sent" "[]" "$(st 's.get("keys")')"
+check "same options, other command: nothing answered" "[]" "$(st 's.get("answers")')"
+scenario ask
+D_ASK="$(show_digest)"
+scenario ask
+run_cli answer --session "$SID" --ask 2 --expect "$D_ASK"
+check "ask with the matching digest: exit 0" "0" "$RC"
+check "ask with the matching digest: answered" "[{'question': 'Pick a color?', 'label': 'Green'}]" "$(st 's.get("answers")')"
+scenario ask
+run_cli answer --session "$SID" --ask 2 --expect "$(printf '0%.0s' $(seq 1 64))"
+check "ask with a wrong digest: refused" "1" "$RC"
+check "ask with a wrong digest: nothing sent" "[]" "$(st 's.get("keys")')"
+scenario ask
+run_cli answer --session "$SID" --ask 2
+check "ask without --expect is still honoured: exit 0" "0" "$RC"
+
+# persist options need --persist; the result and the log name the label
+scenario permission
+D_P="$(show_digest)"
+run_cli answer --session "$SID" --ask 2 --expect "$D_P"
+check "persist option without --persist: refused" "1" "$RC"
+check "persist option without --persist: nothing sent" "[]" "$(st 's.get("keys")')"
+check "persist option without --persist: says --persist" "1" "$(printf '%s' "$OUT" | grep -c -- '--persist')"
+scenario permission
+D_P="$(show_digest)"
+run_cli answer --session "$SID" --ask 2 --expect "$D_P" --persist
+check "persist option with --persist: exit 0" "0" "$RC"
+check "persist option with --persist: answer recorded" \
+    "[{'permission': \"Yes, and don't ask again for: ls\"}]" "$(st 's.get("answers")')"
+check "persist option: the result names the label" "1" "$(printf '%s' "$OUT" | grep -c "ask again for: ls")"
+check "persist option: the log names the label" "1" "$(grep -c "option=.*ask again for: ls" "$LOGF")"
+
+# force mode never removes text: an abort leaves the draft and the appended text, reported
+scenario inject_ask_force
+run_cli send --session "$SID" --text "abcdef" --force-append
+check "force-append abort: exit 1" "1" "$RC"
+check "force-append abort: no BSpace sent" "0" "$(st 'sum(1 for k in s.get("keys") if k == "BSpace")')"
+check "force-append abort: the draft and the appended text stay" "'half written abcdef'" "$(st 's["input"]')"
+check "force-append abort: reported as left in the input field" "1" "$(printf '%s' "$OUT" | grep -c 'left in the input field')"
+check "force-append abort: nothing submitted" "[]" "$(st 's.get("submitted")')"
+
+# a line break that submits early: partly sent, exit 4, no further key
+scenario break_submits
+run_cli send --session "$SID" --text "$(printf 'line one\nline two')"
+check "line break submitted the first part: exit 4" "4" "$RC"
+check "line break submitted the first part: reported partly sent" "1" "$(printf '%s' "$OUT" | grep -c 'partly sent')"
+check "line break submitted the first part: only the first part went out" "['line one\\\\']" "$(st 's.get("submitted")')"
+check "line break submitted the first part: no further key" "['Enter']" "$(st 's.get("keys")')"
+
+# a prompt answered and replaced by another of the same kind is answered, not unconfirmed
+scenario permission_replaced
+D_R="$(show_digest)"
+run_cli answer --session "$SID" --ask 1 --expect "$D_R"
+check "replaced by another prompt of the same kind: exit 0" "0" "$RC"
+check "replaced by another prompt of the same kind: reported answered" "1" "$(printf '%s' "$OUT" | grep -c '^answered')"
+
+# review page: the first option must be Submit answers
+scenario review_labels
+run_cli answer --session "$SID" --ask 1
+check "review page without Submit answers first: refused" "1" "$RC"
+check "review page without Submit answers first: nothing sent" "[]" "$(st 's.get("keys")')"
+
+# free text: the Type something row must be empty before typing
+scenario ask_free_held
+run_cli answer --session "$SID" --ask "free:new text"
+check "Type something row already holds text: refused" "1" "$RC"
+check "Type something row already holds text: nothing sent" "[]" "$(st 's.get("keys")')"
+
+# digits: ASCII only, options above 9 are navigated, the text 10 is never sent
+scenario ask
+run_cli answer --session "$SID" --ask "$(printf '\302\262')"
+check "superscript two is not a digit: refused" "1" "$RC"
+check "superscript two: nothing sent" "[]" "$(st 's.get("keys")')"
+run_cli answer --session "$SID" --ask 10
+check "answer 10 as a digit is a usage error: exit 2" "2" "$RC"
+scenario ask10
+run_cli answer --session "$SID" --ask ten
+check "option 10 by label: exit 0" "0" "$RC"
+check "option 10 by label: navigated down nine times and entered" "$EXP_KEYS_DOWN9" "$(st 's.get("keys")')"
+check "option 10 by label: answer recorded" "[{'question': 'Pick a color?', 'label': 'ten'}]" "$(st 's.get("answers")')"
+scenario ask10_multi
+run_cli answer --session "$SID" --ask "multi:1,10"
+check "multi with option 10: exit 0" "0" "$RC"
+check "multi with option 10: digit, navigation, Space, Right, review 1" "$EXP_KEYS_10" "$(st 's.get("keys")')"
+check "multi with option 10: answered one and ten" \
+    "[{'question': 'Which fruits?', 'labels': ['one', 'ten']}]" "$(st 's.get("answers")')"
+
+# commands: a trailing backslash and a leading exclamation mark
+scenario idle
+run_cli send --session "$SID" --text 'trailing\'
+check "trailing backslash: exit 2" "2" "$RC"
+check "trailing backslash: nothing typed" "[]" "$(st 's.get("typed")')"
+scenario idle
+run_cli send --session "$SID" --text "! echo owner"
+check "leading exclamation mark is sent as typed: exit 0" "0" "$RC"
+check "leading exclamation mark: submitted as typed" "['! echo owner']" "$(st 's.get("submitted")')"
+
+# the log: a FIFO or a symlink is refused without a hang (ensure_log checks like write)
+mv "$LOGF" "$LOGF.saved"
+mkfifo "$LOGF"
+scenario idle
+OUT="$(timeout 20 env PATH="$FT:$BASE" CLAUDE_CONFIG_DIR="$CFG" FAKE_PANE_STATE="$STATE" \
+    CREDO_OWNER_TYPE_CONFIRM_WAIT=0.6 "$PY" "$CLI" send --session "$SID" --text "fifo owner" 2>&1)"
+RC=$?
+check "log is a FIFO: refused without a hang (exit 1)" "1" "$RC"
+check "log is a FIFO: nothing typed" "[]" "$(st 's.get("typed")')"
+mv -f "$LOGF.saved" "$LOGF"
+mv "$LOGF" "$LOGF.saved"
+ln -s "$TMP/elsewhere.log" "$LOGF"
+scenario idle
+run_cli send --session "$SID" --text "link owner"
+check "log is a symlink: refused (exit 1)" "1" "$RC"
+check "log is a symlink: nothing typed" "[]" "$(st 's.get("typed")')"
+check "log is a symlink: the target was not created" "0" "$([ -e "$TMP/elsewhere.log" ] && echo 1 || echo 0)"
+mv -f "$LOGF.saved" "$LOGF"
+
+# --- B13. live finding: tabbed multi-question Ask box (Right = next question) -----------
+# the review page lists a multi answer in selection order; the labels match as sets
+scenario tabs
+run_cli answer --session "$SID" --ask 2
+check "tabs: question 1 answered by digit: exit 0" "0" "$RC"
+check "tabs: the next question is open" "'Which fruits?'" "$(st 's["ask"]["question"]')"
+run_cli answer --session "$SID" --ask "multi:1,3"
+check "tabs: multi question answered with Right to the next question: exit 0" "0" "$RC"
+check "tabs: multi keys are toggles then Right" "['2', '1', '3', 'Right']" "$(st 's.get("keys")')"
+check "tabs: the size question is open" "'Pick a size?'" "$(st 's["ask"]["question"]')"
+run_cli answer --session "$SID" --ask 1
+check "tabs: the last question by digit leads to the review page: exit 0" "0" "$RC"
+check "tabs: the review page is open" "'review'" "$(st 's["kind"]')"
+run_cli answer --session "$SID" --ask 1
+check "tabs: the review is submitted with 1: exit 0" "0" "$RC"
+check "tabs: all three answers submitted" \
+    "[{'answers': [{'question': 'Pick a color?', 'label': 'Green'}, {'question': 'Which fruits?', 'labels': ['Apple', 'Cherry']}, {'question': 'Pick a size?', 'label': 'Small'}]}]" \
+    "$(st 's.get("answers")')"
+
+# preset selection and the review in selection order (Cherry was checked first)
+scenario tabs_preset
+run_cli answer --session "$SID" --ask 2
+run_cli answer --session "$SID" --ask "multi:1,3"
+check "tabs preset: only option 1 is toggled (3 was already checked), then Right" \
+    "['2', '1', 'Right']" "$(st 's.get("keys")')"
+run_cli answer --session "$SID" --ask 1
+run_cli answer --session "$SID" --ask 1
+check "tabs preset: the review lists Cherry, Apple and is submitted" \
+    "[{'answers': [{'question': 'Pick a color?', 'label': 'Green'}, {'question': 'Which fruits?', 'labels': ['Cherry', 'Apple']}, {'question': 'Pick a size?', 'label': 'Small'}]}]" \
+    "$(st 's.get("answers")')"
+
+# the last question is the multi select: Right leads to the review page, which then submits
+scenario tabs_last_multi
+run_cli answer --session "$SID" --ask 2
+run_cli answer --session "$SID" --ask "multi:1,3"
+check "tabs, multi last: Right leads to the review: exit 0" "0" "$RC"
+check "tabs, multi last: the review page is open" "'review'" "$(st 's["kind"]')"
+run_cli answer --session "$SID" --ask 1
+check "tabs, multi last: review submitted: exit 0" "0" "$RC"
+check "tabs, multi last: answers submitted" \
+    "[{'answers': [{'question': 'Pick a color?', 'label': 'Green'}, {'question': 'Which fruits?', 'labels': ['Apple', 'Cherry']}]}]" \
+    "$(st 's.get("answers")')"
 
 # --- B11. the target goes away: stale, nothing typed -------------------------------------
 kill -TERM "$TARGET_PID" 2>/dev/null
