@@ -1,0 +1,392 @@
+#!/usr/bin/env bash
+# test-credo-remote-mirror.sh - tests for hooks/credo-remote-mirror.sh (credo item #146).
+#
+# The mirror hooks only observe. Every event type is driven with a fixture hook
+# payload, and every "nothing sent" case too. Each hook call must stay silent on
+# stdout and exit 0. The sink is a fixture command that appends the event to a file.
+# Config, profile, transcripts and dedup state live in a temp dir; nothing real is
+# sent and the real credo profile is never touched.
+set -u
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGIN="$HERE/.."
+HOOK="$PLUGIN/hooks/credo-remote-mirror.sh"
+HOOKS_JSON="$PLUGIN/hooks/hooks.json"
+TEMPLATE="$PLUGIN/templates/config.default.yaml"
+CONFIG_SH="$PLUGIN/scripts/credo-config.sh"
+
+SID="11111111-2222-3333-4444-555555555555"
+CWD="/work/acme-task"
+
+# Emoji as UTF-8 bytes, so this test source stays ASCII.
+Q=$'\xe2\x9d\x93'     # U+2753 question mark ornament
+T=$'\xf0\x9f\xa7\xaa' # U+1F9EA test tube
+V=$'\xe2\x9c\x8b'     # U+270B raised hand
+
+pass=0
+fail=0
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/credo-remote-mirror.XXXXXX")"
+CFG_ROOT="$TMP/cfg"
+
+unset CREDO_SESSION_ID CLAUDE_CODE_SESSION_ID CREDO_PROJECT CREDO_DIR CREDO_PROFILE
+unset CLAUDE_PLUGIN_ROOT CREDO_REMOTE_MIRROR_TIMEOUT CREDO_REMOTE_MIRROR_PERM_WINDOW
+unset CREDO_MIRROR_DIR
+export CLAUDE_CONFIG_DIR="$CFG_ROOT"
+export CREDO_GLOBAL="$CFG_ROOT/credo/config"
+export CREDO_SKIP_ENSURE=1
+export CREDO_REMOTE_MIRROR_SYNC=1
+
+check() { # name, want, got
+    if [ "$2" = "$3" ]; then
+        pass=$((pass + 1))
+    else
+        fail=$((fail + 1))
+        echo "FAIL: $1 (want $2, got $3)"
+    fi
+}
+
+# set_global <sink command>: the global layer with the sink (YAML single-quoted)
+set_global() {
+    mkdir -p "$CFG_ROOT/credo"
+    printf "remote:\n  mirror_command: '%s'\n" "$1" > "$CREDO_GLOBAL"
+}
+
+# new_case: fresh sink log, transcript, dedup state, and the sink configured
+case_n=0
+new_case() {
+    case_n=$((case_n + 1))
+    OUTF="$TMP/sink-$case_n.jsonl"
+    TR="$TMP/transcript-$case_n.jsonl"
+    STATE="$TMP/state-$case_n/$SID/sent"
+    : > "$TR"
+    export CREDO_MIRROR_TEST_OUT="$OUTF"
+    export CREDO_MIRROR_DIR="$TMP/state-$case_n"
+    set_global 'cat >> "$CREDO_MIRROR_TEST_OUT"'
+}
+
+count() { # events sent in this case
+    if [ -f "$OUTF" ]; then wc -l < "$OUTF" | tr -d ' '; else echo 0; fi
+}
+
+jqf() { # jq filter applied to the last sent event of this case
+    jq -r "$1" "$OUTF" 2>/dev/null | tail -n 1
+}
+
+# run <name> <mode> <payload>: the hook must stay silent (empty stdout, exit 0)
+run() {
+    local out rc
+    out="$(printf '%s' "$3" | bash "$HOOK" "$2" 2>/dev/null)"
+    rc=$?
+    check "$1: exit 0" 0 "$rc"
+    check "$1: stdout empty" "" "$out"
+}
+
+# --- fixture payloads ----------------------------------------------------------
+ask_payload() { # tool_use_id ("" = absent), question text
+    jq -n --arg s "$SID" --arg c "$CWD" --arg id "$1" --arg q "$2" '{
+        session_id: $s, cwd: $c, hook_event_name: "PreToolUse",
+        tool_name: "AskUserQuestion", tool_use_id: $id,
+        tool_input: {questions: [{question: $q, header: "Branch", multiSelect: false,
+            options: [{label: "main", description: "the default branch"},
+                      {label: "stage", description: "staging"}]}]}
+    }'
+}
+
+perm_payload() { # tool_name, tool_input (JSON object)
+    jq -n --arg s "$SID" --arg c "$CWD" --arg t "$1" --argjson i "$2" '{
+        session_id: $s, cwd: $c, hook_event_name: "PermissionRequest",
+        tool_name: $t, tool_input: $i, permission_mode: "default"}'
+}
+
+stop_payload() { # last_assistant_message ("" = absent), transcript path ("" = absent)
+    jq -n --arg s "$SID" --arg c "$CWD" --arg m "$1" --arg tp "$2" '
+        {session_id: $s, cwd: $c, hook_event_name: "Stop", stop_hook_active: false}
+        + (if $m == "" then {} else {last_assistant_message: $m} end)
+        + (if $tp == "" then {} else {transcript_path: $tp} end)'
+}
+
+# transcript entries (JSONL, appended to $TR)
+tr_prompt() { jq -cn --arg u "$1" --arg t "$2" '{type: "user", uuid: $u, message: {role: "user", content: $t}}' >> "$TR"; }
+tr_result() { jq -cn --arg u "$1" '{type: "user", uuid: $u, message: {role: "user", content: [{type: "tool_result", tool_use_id: "toolu_1", content: "ok"}]}}' >> "$TR"; }
+tr_tool() { jq -cn --arg u "$1" '{type: "assistant", uuid: $u, message: {role: "assistant", content: [{type: "tool_use", id: "toolu_1", name: "Bash", input: {command: "ls"}}]}}' >> "$TR"; }
+tr_text() { jq -cn --arg u "$1" --arg t "$2" '{type: "assistant", uuid: $u, message: {role: "assistant", content: [{type: "text", text: $t}]}}' >> "$TR"; }
+
+# --- config and wiring ---------------------------------------------------------
+echo "== config and wiring"
+got="$(CREDO_GLOBAL="$TMP/absent/config" CLAUDE_CONFIG_DIR="$TMP/absent-cfg" \
+    CREDO_PROJECT=/dev/null bash "$CONFIG_SH" get remote.mirror_command 2>/dev/null)"
+rc=$?
+check "builtin default: get exits 0" 0 "$rc"
+check "builtin default: mirror_command is empty (off)" "" "$got"
+check "template carries the remote.mirror_command key" 1 \
+    "$(grep -c '^  mirror_command: ""' "$TEMPLATE")"
+check "hooks.json parses" 0 "$(jq -e . "$HOOKS_JSON" >/dev/null 2>&1; echo $?)"
+check "PreToolUse AskUserQuestion wired to ask" \
+    '${CLAUDE_PLUGIN_ROOT}/hooks/credo-remote-mirror.sh ask' \
+    "$(jq -r '.hooks.PreToolUse[] | select(.matcher == "AskUserQuestion") | .hooks[0].command' "$HOOKS_JSON")"
+check "PermissionRequest wired to permission" \
+    '${CLAUDE_PLUGIN_ROOT}/hooks/credo-remote-mirror.sh permission' \
+    "$(jq -r '.hooks.PermissionRequest[0].hooks[0].command' "$HOOKS_JSON")"
+check "Stop wired to stop (exactly one mirror entry)" \
+    '${CLAUDE_PLUGIN_ROOT}/hooks/credo-remote-mirror.sh stop' \
+    "$(jq -r '[.hooks.Stop[].hooks[].command | select(test("credo-remote-mirror"))] | join(" ")' "$HOOKS_JSON")"
+check "hook is executable" 0 "$([ -x "$HOOK" ] && echo 0 || echo 1)"
+LC_ALL=C grep -q -e "$Q" -e "$T" -e "$V" "$HOOK"
+check "hook source has no emoji bytes (codes are escaped)" 1 "$?"
+
+# --- off by default -----------------------------------------------------------
+echo "== off by default"
+new_case
+set_global ""
+run "empty mirror_command: silent" ask "$(ask_payload toolu_O1 'Which branch?')"
+check "empty mirror_command: nothing sent" 0 "$(count)"
+
+new_case
+export CREDO_GLOBAL="$TMP/no-such-dir/config"
+export CLAUDE_CONFIG_DIR="$TMP/empty-prof"
+run "no config file: silent" ask "$(ask_payload toolu_O2 'Which branch?')"
+export CREDO_GLOBAL="$CFG_ROOT/credo/config"
+export CLAUDE_CONFIG_DIR="$CFG_ROOT"
+check "no config file: nothing sent" 0 "$(count)"
+
+new_case
+set_global ""
+mkdir -p "$TMP/proj-x/.credo"
+printf "remote:\n  mirror_command: 'cat >> \"\$CREDO_MIRROR_TEST_OUT\"'\n" > "$TMP/proj-x/.credo/config"
+export CREDO_PROJECT="$TMP/proj-x/.credo/config"
+run "project layer set: silent" ask "$(ask_payload toolu_O3 'Which branch?')"
+unset CREDO_PROJECT
+check "project layer value is ignored (repo cannot set the sink)" 0 "$(count)"
+
+new_case
+export CREDO_GLOBAL="$TMP/no-such-dir/config"
+export CLAUDE_CONFIG_DIR="$TMP/prof"
+mkdir -p "$TMP/prof/credo"
+printf "remote:\n  mirror_command: 'cat >> \"\$CREDO_MIRROR_TEST_OUT\"'\n" > "$TMP/prof/credo/config"
+run "profile layer only: ask silent" ask "$(ask_payload toolu_O4 'Which branch?')"
+export CREDO_GLOBAL="$CFG_ROOT/credo/config"
+export CLAUDE_CONFIG_DIR="$CFG_ROOT"
+check "profile layer sets the sink" 1 "$(count)"
+
+# --- ask box (PreToolUse AskUserQuestion) --------------------------------------
+echo "== ask box"
+new_case
+run "ask: silent" ask "$(ask_payload toolu_A1 'Which branch should the change go to?')"
+check "ask: one event" 1 "$(count)"
+check "ask: type" ask "$(jqf '.type')"
+check "ask: tool_use_id" toolu_A1 "$(jqf '.tool_use_id')"
+check "ask: first option label" main "$(jqf '.questions[0].options[0].label')"
+check "ask: option description" "the default branch" "$(jqf '.questions[0].options[0].description')"
+check "ask: multiSelect" false "$(jqf '.questions[0].multiSelect')"
+check "ask: session_id" "$SID" "$(jqf '.session_id')"
+check "ask: cwd" "$CWD" "$(jqf '.cwd')"
+check "ask: ts is UTC ISO-8601" 1 \
+    "$(jqf '.ts' | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')"
+check "ask: no tool_input leaked" false "$(jqf 'has("tool_input")')"
+check "ask: main agent" false "$(jqf '.subagent')"
+
+run "ask: same tool_use_id again" ask "$(ask_payload toolu_A1 'Which branch should the change go to?')"
+check "ask: same tool_use_id sent once" 1 "$(count)"
+run "ask: new tool_use_id" ask "$(ask_payload toolu_A2 'Pick a second thing?')"
+check "ask: new tool_use_id sent" 2 "$(count)"
+
+new_case
+run "ask: Q code in the question" ask "$(ask_payload toolu_B1 "$Q Q4) Which rank: A or B?")"
+check "ask: question with a code sent" 1 "$(count)"
+run "ask: reply heading with the same code" stop "$(stop_payload "Summary
+### $Q Q4) Which rank: A or B?
+A or B?" "")"
+check "ask: the same Q code in the reply is not sent again" 1 "$(count)"
+
+new_case
+run "ask: subagent origin" ask "$(ask_payload toolu_C1 'Pick one' | jq -c '. + {agent_id: "agent-7", agent_type: "general-purpose"}')"
+check "ask: subagent flag" true "$(jqf '.subagent')"
+check "ask: subagent type" general-purpose "$(jqf '.agent_type')"
+
+new_case
+run "ask: no tool_use_id, first" ask "$(ask_payload "" 'Keep or drop?')"
+run "ask: no tool_use_id, repeat" ask "$(ask_payload "" 'Keep or drop?')"
+check "ask: without tool_use_id deduped by content" 1 "$(count)"
+
+# --- permission prompts (PermissionRequest) ------------------------------------
+echo "== permission prompts"
+new_case
+run "perm: Bash silent" permission "$(perm_payload Bash '{"command":"git push origin feature-x"}')"
+check "perm: one event" 1 "$(count)"
+check "perm: type" permission "$(jqf '.type')"
+check "perm: tool_name" Bash "$(jqf '.tool_name')"
+check "perm: summary is the command" "git push origin feature-x" "$(jqf '.summary')"
+check "perm: no raw tool_input" false "$(jqf 'has("tool_input")')"
+check "perm: main agent" false "$(jqf '.subagent')"
+
+run "perm: same request in the window" permission "$(perm_payload Bash '{"command":"git push origin feature-x"}')"
+check "perm: same request inside the window sent once" 1 "$(count)"
+
+run "perm: Write with content" permission "$(perm_payload Write '{"file_path":"/work/acme-task/notes.txt","content":"SECRET-BODY-TEXT"}')"
+check "perm: Write sent" 2 "$(count)"
+check "perm: Write summary is the path" "/work/acme-task/notes.txt" "$(jqf '.summary')"
+check "perm: file content never leaves the hook" 0 "$(grep -c 'SECRET-BODY-TEXT' "$OUTF")"
+
+run "perm: subagent origin" permission "$(perm_payload Bash '{"command":"make test"}' | jq -c '. + {agent_id: "agent-9", agent_type: "Explore"}')"
+check "perm: subagent flag" true "$(jqf '.subagent')"
+check "perm: subagent type" Explore "$(jqf '.agent_type')"
+
+new_case
+perm1="$(perm_payload Bash '{"command":"npm publish"}')"
+run "perm: first" permission "$perm1"
+awk -F'\t' 'BEGIN { OFS = "\t" } { $2 = "1" } 1' "$STATE" > "$STATE.aged"
+cat "$STATE.aged" > "$STATE"
+run "perm: after the window" permission "$perm1"
+check "perm: request after the window is sent again" 2 "$(count)"
+
+# --- stop: question codes, test blocks, blockers (last assistant message) -------
+echo "== stop: questions, tests and blockers"
+new_case
+run "stop: normal reply" stop "$(stop_payload "All green. Nothing to decide." "")"
+check "stop: normal reply sends nothing" 0 "$(count)"
+
+run "stop: status text" stop "$(stop_payload "Status: 3 items done, waiting for nothing." "")"
+check "stop: status text sends nothing" 0 "$(count)"
+
+run "stop: veto codes only" stop "$(stop_payload "### $V$V V2) Veto possible: rename the file $V$V" "")"
+check "stop: veto codes only send nothing" 0 "$(count)"
+
+run "stop: question heading" stop "$(stop_payload "Summary
+### $Q Q4) Which rank: A or B?
+A or B?" "")"
+check "stop: question heading sent" 1 "$(count)"
+check "stop: type question_codes" question_codes "$(jqf '.type')"
+check "stop: question code" Q4 "$(jqf '.code')"
+check "stop: question heading text" "Which rank: A or B?" "$(jqf '.heading')"
+
+run "stop: same question again" stop "$(stop_payload "### $Q Q4) Which rank: A or B?" "")"
+check "stop: same question sent once" 1 "$(count)"
+
+run "stop: second question" stop "$(stop_payload "### $Q Q5) Ship today?" "")"
+check "stop: second question sent" 2 "$(count)"
+check "stop: second question code" Q5 "$(jqf '.code')"
+
+run "stop: footer only" stop "$(stop_payload "Still open: **$Q: Q9**" "")"
+check "stop: footer without heading sends nothing" 2 "$(count)"
+
+run "stop: test without marker" stop "$(stop_payload "### $T T3) Login check" "")"
+check "stop: unmarked test sends nothing" 2 "$(count)"
+
+run "stop: blocking test" stop "$(stop_payload "### $T T4) Login check [blocking]" "")"
+check "stop: blocking test sent" 3 "$(count)"
+check "stop: test_blocking type" test_blocking "$(jqf '.type')"
+check "stop: test code" T4 "$(jqf '.code')"
+check "stop: test heading" "Login check [blocking]" "$(jqf '.heading')"
+
+run "stop: blocker" stop "$(stop_payload "**Blocker:** the deploy key is missing on the server" "")"
+check "stop: blocker sent" 4 "$(count)"
+check "stop: blocker type" blocker "$(jqf '.type')"
+check "stop: blocker text" "the deploy key is missing on the server" "$(jqf '.text')"
+
+run "stop: same blocker again" stop "$(stop_payload "**Blocker:** the deploy key is missing on the server" "")"
+check "stop: same blocker sent once" 4 "$(count)"
+
+run "stop: blocker none" stop "$(stop_payload "Blocker: none" "")"
+run "stop: blocker dash" stop "$(stop_payload "Blocker: -" "")"
+run "stop: blocker keine" stop "$(stop_payload "Blocker: keine" "")"
+run "stop: blocker without text" stop "$(stop_payload "Blocker:" "")"
+check "stop: empty blockers send nothing" 4 "$(count)"
+
+new_case
+run "stop: question and blocker together" stop "$(stop_payload "### $Q Q7) Ship now?
+
+Blocker: the owner has to pick the release date" "")"
+check "stop: two events from one reply" 2 "$(count)"
+
+# --- stop: remote chat replies --------------------------------------------------
+echo "== stop: remote chat replies"
+new_case
+tr_prompt u-1 "[remote chat c-42] status?"
+tr_tool a-1
+tr_result u-2
+tr_text a-2 "All green."
+run "remote: reply to the remote prompt" stop "$(stop_payload "All green." "$TR")"
+check "remote: one reply sent" 1 "$(count)"
+check "remote: type" remote_reply "$(jqf '.type')"
+check "remote: chat id" c-42 "$(jqf '.chat_id')"
+check "remote: text is the reply only" "All green." "$(jqf '.text')"
+check "remote: event keys" "chat_id,cwd,session_id,text,ts,type" "$(jqf 'keys | join(",")')"
+
+run "remote: same turn stopped again" stop "$(stop_payload "All green." "$TR")"
+check "remote: same prompt answered once" 1 "$(count)"
+
+tr_prompt u-3 "[remote chat c-42] again?"
+tr_text a-3 "Still green."
+run "remote: reply without last_assistant_message" stop "$(stop_payload "" "$TR")"
+check "remote: fallback reads the reply from the transcript" 2 "$(count)"
+check "remote: fallback text" "Still green." "$(jqf '.text')"
+
+tr_prompt u-4 "fix the typo please"
+tr_text a-4 "Done."
+run "remote: normal prompt after the remote one" stop "$(stop_payload "Done." "$TR")"
+check "remote: a normal prompt is not mirrored" 2 "$(count)"
+
+tr_prompt u-5 "[remote chat a/b] hi"
+tr_text a-5 "Hi."
+run "remote: invalid chat id" stop "$(stop_payload "Hi." "$TR")"
+check "remote: invalid chat id sends nothing" 2 "$(count)"
+
+tr_prompt u-6 "[remote chat c-50] ping"
+run "remote: no reply written yet" stop "$(stop_payload "Old text" "$TR")"
+check "remote: prompt without a reply sends nothing" 2 "$(count)"
+
+run "remote: unreadable transcript" stop "$(stop_payload "All green." "$TMP/missing.jsonl")"
+check "remote: unreadable transcript sends nothing extra" 2 "$(count)"
+
+# --- robustness: never break the session ---------------------------------------
+echo "== robustness"
+new_case
+bad_sid="$(ask_payload toolu_R1 'Which branch?' | jq -c '.session_id = "../evil"')"
+run "invalid session id: silent" ask "$bad_sid"
+check "invalid session id: nothing sent" 0 "$(count)"
+check "invalid session id: no path traversal" 0 "$([ -e "$TMP/evil" ] && echo 1 || echo 0)"
+
+run "empty stdin: silent" ask ""
+check "empty stdin: nothing sent" 0 "$(count)"
+run "malformed stdin: silent" ask "{not json"
+check "malformed stdin: nothing sent" 0 "$(count)"
+
+NOJQ="$TMP/nojq"
+mkdir -p "$NOJQ"
+for t in bash cat dirname tr date awk tail mkdir wc; do
+    p="$(command -v "$t" 2>/dev/null)" && ln -sf "$p" "$NOJQ/$t"
+done
+out="$(printf '%s' "$(ask_payload toolu_R2 'Which branch?')" | PATH="$NOJQ" bash "$HOOK" ask 2>/dev/null)"
+rc=$?
+check "no jq on PATH: exit 0" 0 "$rc"
+check "no jq on PATH: stdout empty" "" "$out"
+check "no jq on PATH: nothing sent" 0 "$(count)"
+
+new_case
+set_global "false"
+run "sink exits 1: silent" ask "$(ask_payload toolu_R3 'Which branch?')"
+set_global "/nonexistent/credo-mirror-sink"
+run "sink missing: silent" ask "$(ask_payload toolu_R4 'Which branch?')"
+
+new_case
+set_global 'sleep 5; cat >> "$CREDO_MIRROR_TEST_OUT"'
+start="$(date +%s)"
+export CREDO_REMOTE_MIRROR_TIMEOUT=1
+run "sink hangs (sync, 1 s timeout): silent" ask "$(ask_payload toolu_R5 'Which branch?')"
+unset CREDO_REMOTE_MIRROR_TIMEOUT
+elapsed=$(( $(date +%s) - start ))
+check "sink hangs: the hook gives up after the timeout" 1 "$([ "$elapsed" -le 4 ] && echo 1 || echo 0)"
+check "sink hangs: no event written" 0 "$(count)"
+
+new_case
+set_global 'sleep 2; cat >> "$CREDO_MIRROR_TEST_OUT"'
+start="$(date +%s%N)"
+out="$(printf '%s' "$(ask_payload toolu_R6 'Which branch?')" | CREDO_REMOTE_MIRROR_SYNC= bash "$HOOK" ask 2>/dev/null)"
+rc=$?
+ms=$(( ( $(date +%s%N) - start ) / 1000000 ))
+check "async: exit 0" 0 "$rc"
+check "async: stdout empty" "" "$out"
+check "async: the hook returns before the sink finishes" 1 "$([ "$ms" -lt 1500 ] && echo 1 || echo 0)"
+
+echo "passed: $pass failed: $fail"
+[ "$fail" -eq 0 ]

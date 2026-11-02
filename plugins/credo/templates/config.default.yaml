@@ -343,6 +343,19 @@ peer:
   trust_guard:
     quiet: true
 
+# --- remote mirror (hooks/credo-remote-mirror.sh) ---------------------------------
+# Off by default (empty). When set, credo's hooks forward ONLY the events that need the
+# owner to an external sink: an Ask-box question (PreToolUse AskUserQuestion), a permission
+# dialog (PermissionRequest), a question code "Q<n>" of a finished reply, a test block
+# marked "[blocking]", a "Blocker: <text>" line, and the reply to a message that started
+# with "[remote chat <id>]". The hooks never block, answer or change a tool call. The
+# command runs through bash with ONE JSON event on stdin, in the background, with a 5 s
+# timeout and its output discarded. A failing sink never breaks the session.
+# Read from the builtin, global and profile layers only: a project .credo/config is ignored
+# (a repository must not point session events at a command of its own).
+remote:
+  mirror_command: ""
+
 # --- self-restart plugin update allowlist (/credo:self-restart run --update) --
 # Which plugins `run --update` may update before the session restarts. A mapping
 # marketplace name -> "*" (all installed plugins of that marketplace) or a list of

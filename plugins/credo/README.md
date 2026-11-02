@@ -415,6 +415,19 @@ When credo runs inside Claude Code with mods support, `hooks/band.tsx` (listed u
 - **Prompt hint** - `Shortcuts: ...` lists the shorthands the band does not show (long form `key(word)` follows `l`).
 - `/credo-items` opens the items pane too. It refreshes on session start, after Bash calls, at turn end and every 10 s.
 
+## Remote mirror (optional, off by default)
+
+Set `remote.mirror_command` in the global or profile config (never in a repo's `.credo/config`, which is ignored for this key) to a shell command. credo then sends one JSON event per owner blocker to that command on stdin, in the background, with a 5 s timeout and no output read back:
+
+- `ask` - an Ask-box question (`PreToolUse` on `AskUserQuestion`): the questions, options and `multiSelect`.
+- `permission` - a permission dialog (`PermissionRequest`): tool name and a short summary (the command, or the file path; file content is never sent). A subagent origin is marked.
+- `question_codes` - a question heading `### ❓ Q<n>) <topic>` in the final reply of a turn (the footer is not a source).
+- `test_blocking` - a test heading `### 🧪 T<n>) <topic> [blocking]`. A test without the marker is not sent.
+- `blocker` - a line `Blocker: <what only the owner can solve>` (or `**Blocker:**`). `Blocker: none`, `-` or empty is not sent.
+- `remote_reply` - the final reply to a message that started with `[remote chat <id>]` (`<id>`: letters, digits, `.`, `_`, `-`).
+
+Every event carries `type`, `session_id`, `cwd`, `ts` (UTC) and its own fields (ask and permission events add `subagent`, and `agent_type` when set); no status, digests or vetos are ever sent. The same open question is sent once per session (Ask by `tool_use_id`, codes by code, a permission prompt once per 10 minutes). The hooks never print a decision, never block and always exit 0; a failing sink is ignored. Test: `scripts/test-credo-remote-mirror.sh`.
+
 ## Dependencies
 
 credo works on its own. Three touchpoints are external:

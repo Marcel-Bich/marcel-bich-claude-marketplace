@@ -143,6 +143,7 @@ Every manual test block, every question to the user and every product-visible de
 - **Legacy codes.** Open codes from before this convention (single letters such as `B` or `DX`) stay as they are until closed and may still appear in footers. All new codes use T, Q or V.
 - **Survives a compact.** The next free number per type and all open codes are part of the handoff state (the credo `compact-plus` skill records them in HANDOFF.md), so the numbering continues after a `/compact` instead of restarting at 1.
 - **Separate from other numbering.** Typed codes are neither item numbers (`#N`) nor harness task numbers (`§cct_N`); never mix them.
+- **Remote mirror markers (optional sink, `remote.mirror_command`).** Only two markers in a reply reach the owner's remote sink, and only when the owner has set that sink: a test block whose heading carries `[blocking]` (`### 🧪 T4) <topic> [blocking]`, for a test that must pass before the work can go on) and a blocker line `Blocker: <what only the owner can solve>` (or `**Blocker:** ...`). `Blocker: none` is not a blocker. An ordinary test without the marker is never mirrored, and the marker is for real owner blockers only, not for status. A question heading (`### ❓ Q4) ...`) is mirrored by the hook as well; the rest of this section is unchanged.
 
 ## Bringing up a down surface (local only, autonomous-capable)
 
