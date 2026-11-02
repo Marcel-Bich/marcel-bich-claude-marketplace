@@ -1,5 +1,17 @@
 Changelog of the hydra plugin. Newest first. Months group releases; no day dates. Releases up to v0.2 are summarized by minor version.
 
+# 2026-11
+
+## v0
+
+### v0.3
+
+#### v0.3.1
+
+##### Changed
+
+- `/hydra:cleanup` names the lossless case: a merged worktree whose only leftovers are setup symlinks into the main checkout or `.credo/` changes already present in the main checkout is removed too, under credo's owner setting
+
 # 2026-10
 
 ## v0
