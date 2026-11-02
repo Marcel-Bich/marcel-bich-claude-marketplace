@@ -12,11 +12,18 @@ work. Every key goes through the same checks, in this order:
      registry.restart.session_owner_check). Copy or view mode is refused.
   3. Pane state (credo_pane_guard.classify_pane): an open Ask box, review page, permission
      prompt, slash menu, picker or unknown dialog is refused - nothing is typed into it. A
-     dialog counts only as the last block of the pane, and never above a drawn input box.
-  4. Prompt binding: show prints the open prompt and its digest (sha256 of the normalized
-     prompt: kind, question, command text, options and descriptions, not the cursor). An
-     answer to a permission prompt needs --expect <digest>; an answer to an Ask box may carry
-     one. The prompt is read again right before each key and refused if it changed.
+     dialog counts only as the last block of the pane. Dialog-shaped rows drawn above a visible
+     input box (a dialog footer, "Esc to cancel" with its "·" hints) makes the pane unknown
+     (fail closed): nothing is typed into it and nothing is answered there. A box is read only when exactly one rule-shaped row lies above its question
+     (its top rule); a second one (a rule inside the command, or in the transcript) refuses it.
+  4. Prompt binding: show prints the whole dialog block verbatim (every non-blank row from the
+     box top rule to the footer) and its digest: sha256 over those rows, whitespace normalized.
+     The cursor, the checkbox and tab states, the typed text of the Type something row and the
+     footer are not part of the digest (the answer itself changes the first three, the footer's
+     key hints follow the highlight). Every answer needs --expect
+     <digest> (dry runs included), and the prompt is read again before every key: a key is not
+     sent unless the prompt still has that digest (after the first key the bound prompt is the
+     one read before it, so the answer's own toggles do not count as a change).
 
 Send (credo-owner-type.py send): the input field must be empty, or with --force-append it
 may hold text: then " " + text is appended at the end. The existing text is sent together
@@ -34,14 +41,19 @@ reported. A line break that submits the text early is reported as partly sent (e
 
 Answer (credo-owner-type.py answer): only when an Ask box or a permission prompt is open.
 Ask box: a digit selects and sends; a label is mapped to its option (unique, case-insensitive;
-options above 9 are reached with Down/Up and Enter, a digit is never sent as text); "esc"
-declines; "free:<text>" moves to the Type something row (Up/Down), types the text and sends it
-(the row must be empty before); "multi:<d,d>" toggles exactly the boxes that differ from the
-wanted set (digits toggle, options above 9 by navigation and Space), checks the checked set,
-presses Right (review page), checks that the review page's first option is "Submit answers"
-and submits with Enter. Permission prompt: a digit within the options, or esc; an option that
-keeps approval for later prompts ("don't ask again" and similar) needs --persist. Review page:
-digit 1 (Submit answers). Anything else is refused.
+options above 9 are reached with Down/Up, the highlight is read again and must be on the target,
+and only then Enter is sent; a digit is never sent as text); "esc" declines; "free:<text>" moves
+to the Type something row (Up/Down), types the text and sends it (the row must be empty before);
+"multi:<d,d>" toggles exactly the boxes that differ from the wanted set (digits toggle, options
+above 9 by navigation, a highlight check and Space), checks the checked set, presses Right (review
+page), checks that the review page's first option is "Submit answers" and submits with Enter.
+Permission prompt: a digit within the options, or esc. Only an option whose full label (the label
+plus the rows under it) is exactly Yes or No (case-insensitive, trimmed) runs without --persist;
+every other option needs --persist. Review page: digit 1 (Submit answers), only when every answer
+row parsed and at least one answer was parsed. Anything else is refused.
+A prompt that is answered and replaced by another prompt of the same kind is reported "answered"
+(the digest changed), so a retry is not sent blindly; an identical prompt that comes back is
+indistinguishable and reported "unconfirmed" (exit 4).
 
 Every attempt is logged (one line each, see write_log): time, session id, mode, character
 count, result, the chosen option label. The text is logged only with CREDO_OWNER_TYPE_LOG_TEXT=1.
@@ -81,9 +93,10 @@ MAX_TEXT_CHARS = 4000
 DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 EXIT = {"delivered": 0, "answered": 0, "dry-run": 0, "shown": 0, "refused": 1, "failed": 1,
         "unconfirmed": 4, "partly-sent": 4, "unknown": 3, "ambiguous": 3, "usage": 2}
-# options that keep an approval for later prompts: they need --persist
-PERSIST_WORDS = ("don't ask again", "do not ask again", "always", "for this session",
-                 "allow all", "don't ask")
+# A permission option runs without --persist only when its full label (the label plus the rows
+# under it) is exactly one of these (case-insensitive, trimmed). Every other option, including
+# "don't ask again" and any wording not listed, keeps approval for later prompts: --persist.
+PLAIN_ANSWERS = ("yes", "no")
 SUBMIT_LABEL = "Submit answers"
 
 
@@ -129,10 +142,10 @@ def norm_label(text):
     return re.sub(r"\s*\(recommended\)$", "", s)
 
 
-def is_persist(label):
-    """True for an option that keeps the approval for later prompts (needs --persist)."""
-    s = (label or "").replace("’", "'").lower()
-    return any(word in s for word in PERSIST_WORDS)
+def needs_persist(full_label):
+    """True for a permission option that needs --persist: anything whose full label (label plus
+    the rows under it) is not exactly Yes or No (allow-list, see PLAIN_ANSWERS)."""
+    return " ".join((full_label or "").split()).lower() not in PLAIN_ANSWERS
 
 
 def _env_float(name, default):
@@ -241,22 +254,28 @@ def _option_by_label(ask, value):
     return hits[0]
 
 
-def _select_keys(ask, n):
-    """Keys that select option n of a single-select Ask box and send it: its digit, or for
-    option 10 and above Down/Up to it and Enter."""
+def flat_keys(steps):
+    """The key names of a step list (the highlight checks are not keys)."""
+    return [key for kind, value in steps if kind == "keys" for key in value]
+
+
+def select_steps(ask, n):
+    """Steps that select option n of a single-select Ask box and send it: its digit; for option
+    10 and above Down/Up to it, a check that the highlight is on n (the row is read again, Enter
+    is not sent otherwise), then Enter."""
     if n <= 9:
-        return [str(n)]
-    return nav_keys(ask["cursor"], n) + ["Enter"]
+        return [("keys", [str(n)])]
+    return [("keys", nav_keys(ask["cursor"], n)), ("cursor", n), ("keys", ["Enter"])]
 
 
-def answer_keys(ask, parsed):
-    """Key names for a single-select Ask box: a digit (or navigation and Enter above 9)
-    selects and sends, a label is mapped to its option, esc declines. Refused for a multi
-    select, the Type something row, unknown or ambiguous labels, and for free text and multi
-    (they have their own routes)."""
+def answer_steps(ask, parsed):
+    """Steps for a single-select Ask box: a digit (or navigation and Enter above 9) selects and
+    sends, a label is mapped to its option, esc declines. Refused for a multi select, the Type
+    something row, unknown or ambiguous labels, and for free text and multi (they have their own
+    routes)."""
     form, value = parsed
     if form == "esc":
-        return ["Escape"]
+        return [("keys", ["Escape"])]
     if ask["multi"]:
         raise Refused("multi-select", "this is a multi select: answer with multi:<d,d> "
                       "(digits toggle the boxes, nothing is sent by a digit)")
@@ -267,11 +286,16 @@ def answer_keys(ask, parsed):
         if not 1 <= value < ask["type_n"]:
             raise Refused("bad-answer", "there is no option %d (1 to %d)"
                           % (value, ask["type_n"] - 1))
-        return _select_keys(ask, value)
+        return select_steps(ask, value)
     if form == "label":
-        return _select_keys(ask, _option_by_label(ask, value))
+        return select_steps(ask, _option_by_label(ask, value))
     raise Refused("bad-answer", "this question takes a digit, a label or esc; use free:<text> "
                   "for free text and multi:<d,d> for a multi select")
+
+
+def answer_keys(ask, parsed):
+    """The key names of answer_steps (see there)."""
+    return flat_keys(answer_steps(ask, parsed))
 
 
 def free_nav_keys(ask):
@@ -279,10 +303,10 @@ def free_nav_keys(ask):
     return nav_keys(ask["cursor"], ask["type_n"])
 
 
-def multi_toggle_keys(ask, targets):
-    """Keys that toggle exactly the boxes that differ from the wanted set. A digit toggles
-    without moving the highlight; an option above 9 is reached by Down/Up and toggled with
-    Space."""
+def multi_toggle_steps(ask, targets):
+    """Steps that toggle exactly the boxes that differ from the wanted set. A digit toggles
+    without moving the highlight; an option above 9 is reached by Down/Up, checked to be the
+    highlighted row, and toggled with Space."""
     if not ask["multi"]:
         raise Refused("single-select", "this is not a multi select")
     wanted = set(targets)
@@ -290,28 +314,34 @@ def multi_toggle_keys(ask, targets):
         raise Refused("bad-answer", "multi needs option numbers 1 to %d, at least one"
                       % (ask["type_n"] - 1))
     current = {o["n"] for o in ask["options"] if o["checked"]}
-    keys = []
+    steps = []
     cur = ask["cursor"]
     for n in sorted(current ^ wanted):
         if n <= 9:
-            keys.append(str(n))
+            steps.append(("keys", [str(n)]))
         else:
-            keys += nav_keys(cur, n) + ["Space"]
+            steps += [("keys", nav_keys(cur, n)), ("cursor", n), ("keys", ["Space"])]
             cur = n
-    return keys
+    return steps
+
+
+def multi_toggle_keys(ask, targets):
+    """The key names of multi_toggle_steps (see there)."""
+    return flat_keys(multi_toggle_steps(ask, targets))
 
 
 def permission_keys(perm, parsed, persist=False):
-    """Keys for a permission prompt: a digit within the options (an option that keeps approval
-    for later prompts only with persist), or esc."""
+    """Keys for a permission prompt: a digit within the options, or esc. An option whose full
+    label is not exactly Yes or No (the rows under it included) needs persist, since it keeps
+    the approval for later prompts or says more than a plain answer."""
     form, value = parsed
     if form == "esc":
         return ["Escape"]
     if form == "digit" and 1 <= value <= len(perm["options"]):
-        label = perm["options"][value - 1]
-        if is_persist(label) and not persist:
-            raise Refused("persist-needed", "option %d ('%s') keeps the approval for later prompts; "
-                          "repeat with --persist to confirm" % (value, label))
+        full = perm["full"][value - 1]
+        if needs_persist(full) and not persist:
+            raise Refused("persist-needed", "option %d ('%s') is not a plain Yes or No; repeat "
+                          "with --persist to confirm it" % (value, full))
         return [str(value)]
     raise Refused("bad-answer", "a permission prompt takes a digit 1 to %d or esc"
                   % len(perm["options"]))
@@ -335,7 +365,7 @@ def choice_label(state, parsed):
     if form == "free":
         return "free text"
     if kind == "permission":
-        return state["perm"]["options"][value - 1] if form == "digit" else "permission"
+        return state["perm"]["full"][value - 1] if form == "digit" else "permission"
     if kind == "review":
         return SUBMIT_LABEL
     ask = state["ask"]
@@ -348,28 +378,21 @@ def choice_label(state, parsed):
 
 # --------------------------------------------------------------------------- prompt identity
 
+PROMPT_KEYS = {"ask": "ask", "permission": "perm", "review": "review"}
+
+
 def prompt_digest(state):
-    """sha256 (hex) of the normalized identity of the open prompt, or None when no prompt is
-    open. The cursor and the checkboxes are left out (they change while answering); the kind,
-    question, command text, option labels and descriptions are in."""
+    """sha256 (hex) over the whole dialog block of the open prompt (every non-blank row from the
+    box top rule to the footer, whitespace normalized), or None when no prompt is open. The
+    cursor, the checkboxes, the tab states, the typed text of the Type something row and the
+    footer are left out: the answer itself changes them, or the footer follows the highlight (see
+    _digest_rows in credo_pane_guard)."""
     kind = state.get("kind")
-    if kind == "ask":
-        a = state["ask"]
-        form = {"kind": "ask", "header": canon(a["header"]), "question": canon(a["question"]),
-                "multi": bool(a["multi"]), "type_n": a["type_n"],
-                "options": [[canon(o["label"]), canon(o.get("desc", ""))] for o in a["options"]]}
-    elif kind == "permission":
-        p = state["perm"]
-        form = {"kind": "permission", "title": canon(p["title"]),
-                "body": [canon(x) for x in p["body"]], "question": canon(p["question"]),
-                "options": [canon(x) for x in p["options"]]}
-    elif kind == "review":
-        r = state["review"]
-        form = {"kind": "review", "answers": [[canon(q), [canon(x) for x in ls]] for q, ls in r["answers"]],
-                "options": [canon(x) for x in r["options"]]}
-    else:
+    key = PROMPT_KEYS.get(kind)
+    if key is None:
         return None
-    blob = json.dumps(form, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    rows = [canon(x) for x in state[key]["digest_rows"]]
+    blob = json.dumps({"kind": kind, "rows": rows}, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()
 
 
@@ -402,23 +425,25 @@ def describe(state):
 
 
 def details(state):
-    """The prompt as the owner sees it, for show (JSON-able)."""
+    """The prompt as the owner sees it, for show (JSON-able). block is the whole dialog block,
+    verbatim (every non-blank row from the box top rule to the footer); the other fields are
+    the parsed view of the same rows."""
     kind = state["kind"]
     if kind == "ask":
         a = state["ask"]
-        return {"header": a["header"], "question": a["question"], "multi": a["multi"],
-                "cursor": a["cursor"], "type_n": a["type_n"],
+        return {"block": a["block"], "header": a["header"], "question": a["question"],
+                "multi": a["multi"], "cursor": a["cursor"], "type_n": a["type_n"],
                 "options": [{"n": o["n"], "label": o["label"], "desc": o["desc"],
                              "checked": o["checked"]} for o in a["options"]]}
     if kind == "permission":
         p = state["perm"]
-        return {"title": p["title"], "body": p["body"], "question": p["question"],
-                "cursor": p["cursor"],
-                "options": [{"n": i + 1, "label": x, "persist": is_persist(x)}
-                            for i, x in enumerate(p["options"])]}
+        return {"block": p["block"], "title": p["title"], "body": p["body"],
+                "question": p["question"], "cursor": p["cursor"],
+                "options": [{"n": i + 1, "label": x, "full": full, "persist": needs_persist(full)}
+                            for i, (x, full) in enumerate(zip(p["options"], p["full"]))]}
     if kind == "review":
         r = state["review"]
-        return {"answers": [{"question": q, "labels": ls} for q, ls in r["answers"]],
+        return {"block": r["block"], "answers": [{"question": q, "labels": ls} for q, ls in r["answers"]],
                 "cursor": r["cursor"], "options": r["options"]}
     return {}
 
@@ -572,6 +597,9 @@ def plan_send(t, text, force):
     if kind == "dialog":
         raise Refused("dialog-open", "a dialog or menu is open in the session (%s); nothing typed"
                       % state["reason"])
+    if kind == "unknown" and guard.find_input_box(cap.split("\n")) is not None:
+        raise Refused("dialog-above-input", "dialog-shaped rows are drawn above the input box, so "
+                      "the pane is not clear; nothing typed")
     if kind != "input":
         raise Refused("no-input-box", "no input box visible and no known dialog (%s); nothing typed"
                       % state["reason"])
@@ -649,8 +677,13 @@ def type_and_enter(t, before, appended, tm, typed):
 
 
 def _cleared(text, state):
-    """True when the input field is empty again (a placeholder counts as empty)."""
-    return state["kind"] == "input" and not norm(guard.input_content(text))
+    """True when an input box is drawn and its field is empty again (a placeholder counts as
+    empty). A dialog-shaped row above the box does not count against it: the box is drawn, so no
+    dialog is open, and the field is what the delivery is confirmed by."""
+    if state["kind"] not in ("input", "unknown"):
+        return False
+    content = guard.input_content(text)
+    return content is not None and not norm(content)
 
 
 def wait_cleared(t, tm):
@@ -794,39 +827,47 @@ def route(state, parsed):
                   % describe(state))
 
 
-def keys_of(state, parsed, persist):
+def steps_of(state, parsed, persist):
+    """The steps of a plain key answer: an Ask box (see answer_steps), a permission prompt or a
+    review page."""
     if state["kind"] == "ask":
-        return answer_keys(state["ask"], parsed)
+        return answer_steps(state["ask"], parsed)
     if state["kind"] == "permission":
-        return permission_keys(state["perm"], parsed, persist)
-    return review_keys(state["review"], parsed)
+        return [("keys", permission_keys(state["perm"], parsed, persist))]
+    return [("keys", review_keys(state["review"], parsed))]
 
 
 def _answer_plan(how, state, parsed, persist):
-    """The keys of a plain answer, the toggle keys of a multi select, or None (free text).
+    """The steps of a plain answer, the toggle steps of a multi select, or None (free text).
     Validation happens here, before anything is sent."""
     if how == "keys":
-        return keys_of(state, parsed, persist)
+        return steps_of(state, parsed, persist)
     if how == "multi":
-        return multi_toggle_keys(state["ask"], parsed[1])
+        return multi_toggle_steps(state["ask"], parsed[1])
     return None
 
 
 def _describe(how, plan, parsed):
     if how == "keys":
-        return "with key(s) %s" % " ".join(plan)
+        return "with key(s) %s" % " ".join(flat_keys(plan))
     if how == "multi":
-        return "a multi select (keys %s)" % " ".join(plan)
+        return "a multi select (keys %s)" % " ".join(flat_keys(plan))
     return "by typing the free text"
 
 
 def answer(query, spec, dry_run=False, all_profiles=False, expect=None, persist=False):
+    """Answers the open Ask box, review page or permission prompt. --expect (the digest that
+    show printed) is required for every answer, dry runs included."""
     try:
         parsed = parse_answer(spec)
         if expect is not None and not DIGEST_RE.fullmatch(expect or ""):
             raise UsageError("--expect takes the 64-character digest that show prints")
     except UsageError as exc:
         return finish(None, "answer", 0, "usage", "usage", str(exc), log=False)
+    if expect is None:
+        return finish(None, "answer", 0, "refused", "expect-required",
+                      "--expect <digest> is required for every answer: read the digest with show "
+                      "and repeat; nothing sent", log=False)
     t, err = resolve(query, all_profiles)
     if err:
         status, code, reason = err
@@ -842,12 +883,9 @@ def answer(query, spec, dry_run=False, all_profiles=False, expect=None, persist=
             raise Refused(problem[0], problem[1])
         state = guard.classify_pane(cap)
         how = route(state, parsed)
-        if state["kind"] == "permission" and expect is None:
-            raise Refused("expect-required", "a permission prompt needs --expect <digest>; read the "
-                          "digest with show and repeat; nothing sent")
-        if expect is not None and prompt_digest(state) != expect:
+        if prompt_digest(state) != expect:
             raise Refused("prompt-mismatch", "the open prompt is not the one with digest --expect "
-                          "(it changed, or it was never read); nothing sent")
+                          "(it changed since show, or the digest is wrong); nothing sent")
         plan = _answer_plan(how, state, parsed, persist)
         label = choice_label(state, parsed)
     except OSError as exc:
@@ -862,7 +900,7 @@ def answer(query, spec, dry_run=False, all_profiles=False, expect=None, persist=
     tm = timing()
     try:
         if how == "keys":
-            return _answer_keys(ctx, state, plan, tm)
+            return _answer_steps(ctx, state, plan, tm)
         if how == "free":
             return _answer_free(ctx, state, tm)
         return _answer_multi(ctx, state, plan, parsed[1], tm)
@@ -880,26 +918,64 @@ def _answered(ctx):
     return _done(ctx, "answered", "answered", "answer sent: %s" % ctx["label"])
 
 
-def _press(t, keys, tm):
-    for key in keys:
-        if not send_one(t, key):
-            return False
-        time.sleep(tm["key_pause"])
-    return True
-
-
 def reread_same(t, state, expect=None):
-    """None when the open prompt is still the one that was read (and is the one with the digest
-    given with --expect), else the Refused. Called right before a key is sent."""
+    """None when the open prompt is still the bound one (same digest, the digest given with
+    --expect for the first prompt), else the Refused. Called right before every key."""
     text, problem = read_pane(t)
     if problem:
         return Refused(problem[0], problem[1])
     now = guard.classify_pane(text)
     if not same_prompt(state, now):
-        return Refused("prompt-changed", "the open prompt changed since it was read; nothing sent")
+        return Refused("prompt-changed", "the open prompt changed since it was read")
     if expect is not None and prompt_digest(now) != expect:
-        return Refused("prompt-mismatch", "the open prompt is not the one with digest --expect; "
-                       "nothing sent")
+        return Refused("prompt-mismatch", "the open prompt is not the one with digest --expect")
+    return None
+
+
+def _same_question(a, b):
+    """True when two Ask box states show the same question and option labels (checkboxes and
+    the highlight may differ: a multi select changes them while it is answered)."""
+    return (a["question"] == b["question"]
+            and [o["label"] for o in a["options"]] == [o["label"] for o in b["options"]])
+
+
+def highlight_problem(t, bound, n):
+    """None when the highlight of the bound Ask box is on option n, else the reason. Read again
+    after the navigation, before the key that selects or toggles option n."""
+    text, problem = read_pane(t)
+    if problem:
+        return "%s; nothing more sent, check the pane" % problem[1]
+    now = guard.classify_pane(text)
+    if (now["kind"] != "ask" or now["ask"]["cursor"] != n
+            or not _same_question(bound["ask"], now["ask"])):
+        return "the highlight is not on option %d; the key for it was not sent, check the pane" % n
+    return None
+
+
+def run_steps(ctx, bound, steps, tm, expect=None):
+    """Presses the steps in order. Before EVERY key the open prompt is read again and must still
+    be the bound one (and the digest given with --expect, for the first prompt); a highlight
+    check reads the pane and must show the target row. Returns None when every step went out,
+    else the finished result: refused before the first key, failed after it."""
+    t = ctx["t"]
+    sent = 0
+    for kind, value in steps:
+        if kind == "cursor":
+            problem = highlight_problem(t, bound, value)
+            if problem:
+                return _done(ctx, "failed", "highlight-mismatch", problem)
+            continue
+        for key in value:
+            stale = reread_same(t, bound, expect)
+            if stale:
+                if sent:
+                    return _done(ctx, "failed", stale.code, "%s after %d key(s); nothing more sent, "
+                                 "check the pane" % (stale, sent))
+                return _done(ctx, "refused", stale.code, "%s; nothing sent" % stale)
+            if not send_one(t, key):
+                return _done(ctx, "failed", "key-failed", "a key could not be sent")
+            sent += 1
+            time.sleep(tm["key_pause"])
     return None
 
 
@@ -914,12 +990,10 @@ def wait_changed(t, before, tm):
         time.sleep(0.2)
 
 
-def _answer_keys(ctx, state, keys, tm):
-    stale = reread_same(ctx["t"], state, ctx["expect"])
-    if stale:
-        return _done(ctx, "refused", stale.code, str(stale))
-    if not _press(ctx["t"], keys, tm):
-        return _done(ctx, "failed", "key-failed", "a key could not be sent")
+def _answer_steps(ctx, state, steps, tm):
+    stopped = run_steps(ctx, state, steps, tm, ctx["expect"])
+    if stopped:
+        return stopped
     if wait_changed(ctx["t"], state, tm) == "answered":
         return _answered(ctx)
     return _done(ctx, "unconfirmed", "unconfirmed",
@@ -934,14 +1008,18 @@ def _free_now(state, text):
     return "" if norm_label(label) in ("type something", "type something.") else label
 
 
-def still_free(t, typed):
-    """Raises Abort unless the Ask box is still open with the Type something row holding exactly
-    what was typed so far (checked before every piece, as still_typing does for the input)."""
+def still_free(t, bound, typed):
+    """Raises Abort unless the bound Ask box is still open and its Type something row holds exactly
+    what was typed so far. Checked before every piece and before the Enter, as still_typing does
+    for the input field; the digest ignores the Type something text, so typing does not count as a
+    change of the prompt."""
     text, problem = read_pane(t)
     if problem:
         raise Abort(problem[1], typed)
     state = guard.classify_pane(text)
-    if state["kind"] != "ask" or norm(_free_now(state, text)) != norm("".join(typed)):
+    if not same_prompt(bound, state):
+        raise Abort("the Ask box changed while typing", typed)
+    if norm(_free_now(state, text)) != norm("".join(typed)):
         raise Abort("the Ask box changed while typing", typed)
 
 
@@ -950,12 +1028,13 @@ def _answer_free(ctx, state, tm):
     ask = state["ask"]
     stale = reread_same(t, state, ctx["expect"])
     if stale:
-        return _done(ctx, "refused", stale.code, str(stale))
+        return _done(ctx, "refused", stale.code, "%s; nothing sent" % stale)
     if _free_now(state, None):
         return _done(ctx, "refused", "type-row-held",
                      "the Type something row already holds text; nothing typed")
-    if not _press(t, free_nav_keys(ask), tm):
-        return _done(ctx, "failed", "key-failed", "navigation key failed")
+    stopped = run_steps(ctx, state, [("keys", free_nav_keys(ask))], tm, ctx["expect"])
+    if stopped:
+        return stopped
     cap, problem = read_pane(t)
     moved = guard.classify_pane(cap) if problem is None else {"kind": "unknown"}
     if moved["kind"] != "ask" or moved["ask"]["cursor"] != ask["type_n"]:
@@ -964,14 +1043,14 @@ def _answer_free(ctx, state, tm):
     typed = []
     try:
         for piece in wake.type_chunks(text):
-            still_free(t, typed)
+            still_free(t, state, typed)
             typed.append(piece)
             if not wake.send_keys(plan_of(t), piece, literal=True):
                 typed.pop()
                 raise Abort("typing failed", typed)
             time.sleep(tm["type_pause"])
         time.sleep(tm["settle"])
-        still_free(t, typed)
+        still_free(t, state, typed)
         if not send_one(t, ENTER):
             raise Abort("Enter could not be sent", typed)
     except Abort as exc:
@@ -1005,13 +1084,11 @@ def wait_state(t, before, tm):
         time.sleep(0.2)
 
 
-def _answer_multi(ctx, state, toggles, targets, tm):
+def _answer_multi(ctx, state, steps, targets, tm):
     t, ask = ctx["t"], state["ask"]
-    stale = reread_same(t, state, ctx["expect"])
-    if stale:
-        return _done(ctx, "refused", stale.code, str(stale))
-    if not _press(t, toggles, tm):
-        return _done(ctx, "failed", "key-failed", "a toggle key could not be sent")
+    stopped = run_steps(ctx, state, steps, tm, ctx["expect"])
+    if stopped:
+        return stopped
     cap, problem = read_pane(t)
     now = guard.classify_pane(cap) if problem is None else {"kind": "unknown"}
     checked = ({o["n"] for o in now["ask"]["options"] if o["checked"]}
@@ -1021,8 +1098,9 @@ def _answer_multi(ctx, state, toggles, targets, tm):
                      "the checked boxes are not the wanted set; nothing submitted, box left open")
     # Right: in a single-question box it opens the review page; in a tabbed box (several
     # questions) it moves to the next question, which records this answer (measured).
-    if not _press(t, ["Right"], tm):
-        return _done(ctx, "failed", "key-failed", "Right could not be sent")
+    stopped = run_steps(ctx, state, [("keys", ["Right"])], tm, ctx["expect"])
+    if stopped:
+        return stopped
     nxt = wait_state(t, now, tm)
     if nxt is None:
         return _done(ctx, "failed", "right-no-move",
@@ -1043,8 +1121,9 @@ def _answer_multi(ctx, state, toggles, targets, tm):
     if ask.get("tabs", 1) > 1:
         # a tabbed box: the review page of all questions is submitted with its own call
         return _answered(ctx)
-    if not _press(t, ["1"], tm):
-        return _done(ctx, "failed", "key-failed", "1 could not be sent")
+    stopped = run_steps(ctx, nxt, [("keys", ["1"])], tm, None)
+    if stopped:
+        return stopped
     if wait_changed(t, nxt, tm) == "answered":
         return _answered(ctx)
     return _done(ctx, "unconfirmed", "unconfirmed",

@@ -3,9 +3,10 @@
 prompt, into one of the owner's own Claude Code sessions (logic: credo_owner_type.py).
 
   credo-owner-type.py show --session <session-id|name> [--json] [--all-profiles]
-      Prints the prompt that is open in the session (kind, question, the command text of a
-      permission prompt, options, cursor) and its digest (sha256 of the normalized prompt).
-      Read only; nothing is typed.
+      Prints the prompt that is open in the session: the whole dialog block verbatim (every
+      row from the box top rule to the footer: the command, description rows, every question
+      row, review answer rows), the cursor, and the digest (sha256 over those rows, whitespace
+      normalized; the cursor is not part of it). Read only; nothing is typed.
 
   credo-owner-type.py send --session <session-id|name> (--text T | --stdin)
                            [--force-append] [--dry-run] [--json] [--all-profiles]
@@ -23,10 +24,10 @@ prompt, into one of the owner's own Claude Code sessions (logic: credo_owner_typ
         esc            decline (Escape)
         free:<text>    free text through the Type something row, then send
         multi:<d,d>    multi select: the boxes of exactly these options, then review and submit
-      --expect DIGEST is required for a permission prompt and honoured for an Ask box: the
-      prompt must still have this digest (read it with show) right before the key is sent.
-      --persist confirms an option that keeps the approval for later prompts ("don't ask
-      again" and similar); without it such an option is refused.
+      --expect DIGEST is required for every answer (permission prompt, Ask box, review page,
+      dry runs included): the open prompt must have this digest (read it with show), and it is
+      read again before every key. --persist confirms a permission option whose label is not
+      exactly Yes or No (for example "don't ask again"); without it such an option is refused.
       Refused when no Ask box or permission prompt is open, or the open dialog is unknown.
 
 Exit codes: 0 delivered, answered, shown or dry-run; 1 refused or failed (nothing submitted,
@@ -78,9 +79,9 @@ def build_parser():
     answer.add_argument("--ask", required=True, help="the answer, see the header")
     answer.add_argument("--expect", metavar="DIGEST",
                         help="the digest of the prompt that was read with show (required for "
-                             "permission prompts)")
+                             "every answer)")
     answer.add_argument("--persist", action="store_true",
-                        help="confirm an option that keeps the approval for later prompts")
+                        help="confirm a permission option whose label is not exactly Yes or No")
     return parser
 
 
@@ -107,32 +108,21 @@ def run(args):
 
 
 def format_show(result):
-    """The text form of a show result: the prompt as the owner reads it, then the digest."""
+    """The text form of a show result: the status, the digest, the dialog block verbatim (every
+    row the owner is asked about), then the highlight and the --persist notes."""
     lines = ["%s: %s" % (result["status"], result["reason"]),
              "session: %s" % result.get("session"), "kind: %s" % result.get("kind")]
     if result.get("digest"):
         lines.append("digest: %s" % result["digest"])
-    if result.get("kind") == "permission":
-        lines.append("title: %s" % result.get("title", ""))
-        if result.get("body"):
-            lines.append("body:")
-            lines += ["  %s" % row for row in result["body"]]
-        lines.append("question: %s" % result.get("question", ""))
-        for opt in result.get("options", []):
-            note = "  (keeps approval: needs --persist)" if opt.get("persist") else ""
-            lines.append("  %d. %s%s" % (opt["n"], opt["label"], note))
-    elif result.get("kind") == "ask":
-        lines.append("question: %s" % result.get("question", ""))
-        for opt in result.get("options", []):
-            box = "" if opt.get("checked") is None else ("[x] " if opt["checked"] else "[ ] ")
-            lines.append("  %d. %s%s - %s" % (opt["n"], box, opt["label"], opt.get("desc", "")))
-        lines.append("  %d. Type something" % (result.get("type_n") or 0))
-    elif result.get("kind") == "review":
-        for ans in result.get("answers", []):
-            lines.append("answer: %s -> %s" % (ans["question"], ", ".join(ans["labels"])))
-        lines += ["  %d. %s" % (i + 1, label) for i, label in enumerate(result.get("options", []))]
+    if result.get("block"):
+        lines.append("--- prompt, as the box shows it (top rule to footer) ---")
+        lines += result["block"]
+        lines.append("--- end of prompt ---")
     if result.get("cursor") is not None:
         lines.append("cursor: %s" % result["cursor"])
+    for opt in (result.get("options", []) if result.get("kind") == "permission" else []):
+        if opt.get("persist"):
+            lines.append("note: option %d needs --persist (only Yes or No run without it)" % opt["n"])
     return "\n".join(lines)
 
 
