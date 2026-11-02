@@ -24,10 +24,13 @@
 #     bare ".", automated prompts and blank prompts do not count
 #   - outside tmux a session never arms
 #   - SessionStart start: a worker for an armed session, one worker per session
-#   - injection when a trigger is due: idle + empty input -> the prompt is typed and
-#     submitted; typed user text, a busy turn or a dialog -> nothing typed; one visible
-#     character counts as empty, the reminder is then never submitted with it and the own
-#     text is taken back again
+#   - injection when a trigger is due: idle + empty input -> the prompt is typed in one
+#     burst, settled and submitted; typed user text, a busy turn or a dialog -> nothing
+#     typed; one visible character counts as empty and is removed first
+#   - one burst: the whole reminder in one send, Enter after the settle; both paste
+#     placeholder forms are accepted as they are; a dialog after the burst -> no Enter; a
+#     field that holds text -> skipped at once and left as it is; a failed send -> nothing
+#     typed
 #   - turns trigger: after the mode's turns since the last reminder, once idle; the
 #     reminder itself is no user turn
 #   - minutes trigger (shortened to 1.2 s): every interval, counted from the last reminder
@@ -193,11 +196,13 @@ printf '%s\n' "$*" >> "$FAKE_TMUX_LOG"
 R="────────────────────────────────────────────────────────────"
 PASTE_LIMIT=800
 show() { # the input box as Claude Code shows it
-    local buf n
+    local buf n ph="[Pasted text #1]"
     buf="$(cat "$FAKE_BUF" 2>/dev/null)"
     n="$(cat "$FAKE_PASTE" 2>/dev/null)"
+    # the second placeholder form (a burst with newlines), as measured on the real pane
+    [ "$FAKE_PASTE_FORM" = lines ] && ph="[Pasted text #1 +${FAKE_PASTE_LINES:-11} lines]"
     if [ -n "$n" ] && [ -n "$buf" ]; then
-        printf '[Pasted text #1]%s' "${buf:$n}"
+        printf '%s%s' "$ph" "${buf:$n}"
     else
         printf '%s' "$buf"
     fi
@@ -219,6 +224,8 @@ literal_send() { # send-keys -t <pane> -l [--] <text>
     else
         printf '%s' "$txt" >> "$FAKE_BUF"
     fi
+    # FAKE_NOBOX_ON_TYPE: a dialog covers the input box right after this send (the box is gone)
+    if [ -n "$FAKE_NOBOX_ON_TYPE" ]; then : > "$FAKE_NOBOX_FLAG"; fi
 }
 bspace_one() { # a placeholder goes as a whole, else one character
     local buf n
@@ -236,6 +243,9 @@ case "$1" in
         [ "$4" = "$FAKE_PANE_ID" ] || exit 1
         printf '%s\t%s\t0\t0\n' "$4" "$(cat "$FAKE_PANE_PIDFILE")" ;;
     capture-pane)
+        if [ -n "$FAKE_NOBOX_FLAG" ] && [ -f "$FAKE_NOBOX_FLAG" ]; then
+            cat "$FAKE_NOBOX_VIEW"; exit 0
+        fi
         cat "$FAKE_ABOVE"
         printf '%s\n' "$R" "❯ $(show)" "$R" "  ? for shortcuts" ;;
     send-keys)
@@ -243,6 +253,7 @@ case "$1" in
             -l) literal_send "$@" || exit 1 ;;
             End) ;;
             Enter)
+                printf '%s\n' "$(date +%s%N)" >> "$FAKE_ENTER_LOG"
                 buf="$(cat "$FAKE_BUF" 2>/dev/null)"
                 [ -n "$buf" ] && printf '%s\n' "$buf" >> "$FAKE_SUBMITS"
                 : > "$FAKE_BUF"; rm -f "$FAKE_PASTE" ;;
@@ -276,9 +287,12 @@ printf '%s\n' "● Working on the fixture." "" "✻ Brewing... (3s · ↓ 10 tok
 printf '%s\n' "● Done." "" "Do you want to proceed?" "❯ 1. Yes" "  2. No" "" > "$TMP/above_dialog.txt"
 export FAKE_TMUX_LOG="$TMP/tmux.log" FAKE_ABOVE="$TMP/above.txt" FAKE_BUF="$TMP/buf.txt" \
     FAKE_SUBMITS="$TMP/submits.txt" FAKE_BUFLOG="$TMP/buflog.txt" FAKE_PANE_ID=%5 \
-    FAKE_TYPE_LOG="$TMP/type.log" FAKE_PASTE="$TMP/paste.txt"
+    FAKE_TYPE_LOG="$TMP/type.log" FAKE_PASTE="$TMP/paste.txt" FAKE_ENTER_LOG="$TMP/enter.log" \
+    FAKE_NOBOX_FLAG="$TMP/nobox.flag" FAKE_NOBOX_VIEW="$TMP/nobox_view.txt"
+printf '%s\n' "● Done." "" "Do you want to proceed?" "❯ 1. Yes" "  2. No" "" > "$FAKE_NOBOX_VIEW"
 cp "$TMP/above_idle.txt" "$FAKE_ABOVE"
 : > "$FAKE_SUBMITS"; : > "$FAKE_BUF"; : > "$FAKE_TMUX_LOG"; : > "$FAKE_BUFLOG"; : > "$FAKE_TYPE_LOG"
+: > "$FAKE_ENTER_LOG"; rm -f "$FAKE_NOBOX_FLAG"
 rm -f "$FAKE_PASTE"
 unset CREDO_SESSION_MODES_DIR CREDO_CONFIG_SCRIPT
 export CREDO_GLOBAL="$TMP/global.yaml" CREDO_PROFILE="$TMP/none-profile" CREDO_PROJECT="$TMP/none-project" \
@@ -583,34 +597,77 @@ hook start "$SID_H" startup
 wait_for 40 submits_contain "[credo-reminder] Check the rules now"; ok "custom text submitted after the marker" "$?"
 stop_worker "$SID_H"
 
-# --- long text - one burst over ~800 characters becomes a paste placeholder in Claude Code, so
-# the reminder is typed in pieces (the input box then shows the text, not a placeholder) ---
+# --- one burst: the whole reminder (over ~800 characters) is typed by ONE send, it settles,
+# then Enter. Claude Code shows the burst as a paste placeholder, which is accepted as it is ---
 SID_L="aaaaaaaa-1111-2222-3333-llllllllllll"
 cfg "reminder:\n  autonomous: {minutes: 0.02}\n"
 set_state "$SID_L"; mode_of "$SID_L" autonomous
-S0="$(n_submits)"; TL0="$(grep -c '' "$FAKE_TYPE_LOG")"
+S0="$(n_submits)"; TL0="$(grep -c '' "$FAKE_TYPE_LOG")"; EN0="$(grep -c '' "$FAKE_ENTER_LOG")"
+: > "$FAKE_BUFLOG"
 hook start "$SID_L" startup
-wait_for 60 subs_gt "$S0"; ok "long text: the reminder is submitted" "$?"
+wait_for 60 subs_gt "$S0"; ok "one burst: the reminder is submitted" "$?"
 stop_worker "$SID_L"
-ok "long text: the submitted line is the reminder plus the notice" "$([ "$(sed -n "$((S0 + 1))p" "$FAKE_SUBMITS")" = "$DEF $NOTICE" ] && echo 0 || echo 1)"
+ok "one burst: the submitted line is the reminder plus the notice" "$([ "$(sed -n "$((S0 + 1))p" "$FAKE_SUBMITS")" = "$DEF $NOTICE" ] && echo 0 || echo 1)"
 PIECES="$TMP/pieces.txt"; tail -n +"$((TL0 + 1))" "$FAKE_TYPE_LOG" > "$PIECES"
-ok "long text: typed in more than one piece" "$([ "$(grep -c '' "$PIECES")" -gt 1 ] && echo 0 || echo 1)"
-ok "long text: no piece over TYPE_CHUNK_CHARS (200) characters" "$([ "$(awk '{ if ($2 > m) m = $2 } END { print m + 0 }' "$PIECES")" -le 200 ] && echo 0 || echo 1)"
-check "long text: the pieces add up to the reminder" "$((${#DEF} + 1 + ${#NOTICE}))" "$(awk '{ s += $2 } END { print s + 0 }' "$PIECES")"
-awk 'NR > 1 { d = $1 - p; if (min == "" || d < min) min = d } { p = $1 } END { exit !(min >= 50000000) }' "$PIECES"
-ok "long text: pieces are typed at least 50 ms apart" "$?"
+check "one burst: one send for the whole reminder" "1" "$(grep -c '' "$PIECES")"
+check "one burst: the send holds the whole line" "$((${#DEF} + 1 + ${#NOTICE}))" "$(awk '{ print $2 }' "$PIECES")"
+ok "one burst: the box showed the paste placeholder (form 1)" "$(grep -qxF '[Pasted text #1]' "$FAKE_BUFLOG" && echo 0 || echo 1)"
+ok "one burst: one Enter, after the settle" "$([ "$(( $(grep -c '' "$FAKE_ENTER_LOG") - EN0 ))" = 1 ] && [ $(( ($(sed -n "$((EN0 + 1))p" "$FAKE_ENTER_LOG") - $(awk 'NR == 1 { print $1 }' "$PIECES")) / 1000000 )) -ge 90 ] && echo 0 || echo 1)"
 
-# a piece that starts with a dash is typed after the end-of-options separator (tmux reads it
-# as an option otherwise)
+# the second placeholder form Claude Code shows (measured on the real pane): one burst, then
+# "[Pasted text #1 +11 lines]" in the box; the reminder is submitted as before
+SID_P2="aaaaaaaa-1111-2222-3333-pppppppppp2"
+set_state "$SID_P2"; mode_of "$SID_P2" autonomous
+S0="$(n_submits)"; : > "$FAKE_BUFLOG"
+export FAKE_PASTE_FORM=lines
+hook start "$SID_P2" startup
+wait_for 60 subs_gt "$S0"; ok "placeholder form 2: the reminder is submitted" "$?"
+stop_worker "$SID_P2"
+unset FAKE_PASTE_FORM
+ok "placeholder form 2: the box showed [Pasted text #1 +11 lines]" "$(grep -qxF '[Pasted text #1 +11 lines]' "$FAKE_BUFLOG" && echo 0 || echo 1)"
+ok "placeholder form 2: the submitted line is the reminder plus the notice" "$([ "$(sed -n "$((S0 + 1))p" "$FAKE_SUBMITS")" = "$DEF $NOTICE" ] && echo 0 || echo 1)"
+
+# a dialog covers the input box right after the burst: no Enter, nothing submitted, the typed
+# burst is left as it is (never deleted or submitted later by this worker)
+SID_D2="aaaaaaaa-1111-2222-3333-dddddddddd22"
+cfg "reminder:\n  autonomous: {minutes: 0.02}\n"
+set_state "$SID_D2"; mode_of "$SID_D2" autonomous
+S0="$(n_submits)"; EN0="$(grep -c '' "$FAKE_ENTER_LOG")"; rm -f "$FAKE_NOBOX_FLAG"
+export FAKE_NOBOX_ON_TYPE=1
+hook start "$SID_D2" startup
+wait_for 60 grep -q "no input box after the burst" "$CFG/credo/reminder-$SID_D2.log"; ok "dialog after the burst: the reminder is skipped" "$?"
+stop_worker "$SID_D2"
+unset FAKE_NOBOX_ON_TYPE; rm -f "$FAKE_NOBOX_FLAG"
+check "dialog after the burst: no Enter sent" "$EN0" "$(grep -c '' "$FAKE_ENTER_LOG")"
+check "dialog after the burst: nothing submitted" "$S0" "$(n_submits)"
+ok "dialog after the burst: the burst is left in the field" "$([ -s "$FAKE_BUF" ] && echo 0 || echo 1)"
+: > "$FAKE_BUF"; rm -f "$FAKE_PASTE"
+
+# a field that holds text when the reminder is due: skipped at once (logged), the text is left
+SID_K2="aaaaaaaa-1111-2222-3333-kkkkkkkkkk22"
+cfg "reminder:\n  autonomous: {minutes: 0.02}\n"
+printf '%s' "please check the handoff" > "$FAKE_BUF"
+set_state "$SID_K2"; mode_of "$SID_K2" autonomous
+T0="$(n_typed)"; S0="$(n_submits)"
+hook start "$SID_K2" startup
+wait_for 40 grep -q "the input field holds text, left as it is" "$CFG/credo/reminder-$SID_K2.log"; ok "field with text: the reminder is skipped at once" "$?"
+stop_worker "$SID_K2"
+check "field with text: nothing typed" "$T0" "$(n_typed)"
+check "field with text: nothing submitted" "$S0" "$(n_submits)"
+check "field with text: left as it was" "please check the handoff" "$(cat "$FAKE_BUF")"
+: > "$FAKE_BUF"
+
+# a dash inside the burst: the burst is sent after the end-of-options separator (a literal
+# argument that starts with a dash would be read as an option by tmux)
 DASH_BODY="$(printf 'x%.0s' $(seq 1 183))-$(printf 'y%.0s' $(seq 1 80))"
 SID_G="aaaaaaaa-1111-2222-3333-gggggggggggg"
 cfg "reminder:\n  autonomous: {minutes: 0.02}\n  text: \"$DASH_BODY\"\n"
 set_state "$SID_G"; mode_of "$SID_G" autonomous
 S0="$(n_submits)"
 hook start "$SID_G" startup
-wait_for 60 subs_gt "$S0"; ok "dash piece: the reminder is submitted" "$?"
+wait_for 60 subs_gt "$S0"; ok "dash in the burst: the reminder is submitted" "$?"
 stop_worker "$SID_G"
-ok "dash piece: the submitted line is the text plus the notice" "$([ "$(sed -n "$((S0 + 1))p" "$FAKE_SUBMITS")" = "[credo-reminder] $DASH_BODY $NOTICE" ] && echo 0 || echo 1)"
+ok "dash in the burst: the submitted line is the text plus the notice" "$([ "$(sed -n "$((S0 + 1))p" "$FAKE_SUBMITS")" = "[credo-reminder] $DASH_BODY $NOTICE" ] && echo 0 || echo 1)"
 
 # a paste placeholder the worker did not make (the user pasted) is never typed over, submitted
 # or removed
@@ -629,18 +686,19 @@ check "user paste in the box: left as it was" "900" "${#U_TEXT}"
 stop_worker "$SID_U"
 : > "$FAKE_BUF"; rm -f "$FAKE_PASTE"
 
-# a send that fails after some pieces: the pieces already typed are taken back, no Enter
+# a send that fails: nothing is typed, no Enter, the field stays empty
 SID_F="aaaaaaaa-1111-2222-3333-ffffffffffff"
 cfg "reminder:\n  autonomous: {minutes: 0.02}\n"
 set_state "$SID_F"; mode_of "$SID_F" autonomous
-TL0="$(grep -c '' "$FAKE_TYPE_LOG")"; S0="$(n_submits)"
-export FAKE_FAIL_AT=$((TL0 + 2))
+TL0="$(grep -c '' "$FAKE_TYPE_LOG")"; S0="$(n_submits)"; EN0="$(grep -c '' "$FAKE_ENTER_LOG")"
+export FAKE_FAIL_AT="$TL0"
 hook start "$SID_F" startup
-wait_for 40 grep -q "took the own text back" "$CFG/credo/reminder-$SID_F.log"; ok "failed piece: the typed pieces are taken back" "$?"
+wait_for 40 grep -q "typing the reminder failed" "$CFG/credo/reminder-$SID_F.log"; ok "failed send: the reminder is skipped" "$?"
 stop_worker "$SID_F"
 unset FAKE_FAIL_AT
-ok "failed piece: the input box is empty again" "$([ ! -s "$FAKE_BUF" ] && echo 0 || echo 1)"
-check "failed piece: nothing submitted" "$S0" "$(n_submits)"
+ok "failed send: the input box is empty" "$([ ! -s "$FAKE_BUF" ] && echo 0 || echo 1)"
+check "failed send: no Enter" "$EN0" "$(grep -c '' "$FAKE_ENTER_LOG")"
+check "failed send: nothing submitted" "$S0" "$(n_submits)"
 rm -f "$FAKE_PASTE"
 
 # --- enabled false: the running worker stops after the config is read -----------------

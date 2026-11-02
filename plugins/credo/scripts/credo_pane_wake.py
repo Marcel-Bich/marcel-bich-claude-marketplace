@@ -40,9 +40,10 @@ import credo_pane_guard as guard
 WAKE_TEXT = "."
 PANE_RE = re.compile(r"%[0-9]+")
 # Claude Code collapses one burst of input (one send of about 800 to 1000 characters, measured
-# on Claude Code 2.1.316) into a "[Pasted text #N]" placeholder; the text is then not confirmed
-# and never submitted. Text is therefore typed in pieces of at most TYPE_CHUNK_CHARS characters,
-# TYPE_PAUSE seconds apart (the pieces are then read as typing, not as a paste).
+# on Claude Code 2.1.316) into a "[Pasted text #N]" placeholder, which type_and_enter cannot
+# confirm against its text. Text for type_and_enter is therefore typed in pieces of at most
+# TYPE_CHUNK_CHARS characters, TYPE_PAUSE seconds apart (read as typing, not as a paste). The
+# periodic reminder uses send_whole instead: one burst, the placeholder is accepted.
 TYPE_CHUNK_CHARS = 200
 TYPE_PAUSE = 0.1
 
@@ -286,6 +287,48 @@ def type_and_enter(pane, text, before_enter=None):
         time.sleep(0.2)
     log("input did not visibly change after Enter (%s)" % text)
     return False
+
+
+def send_whole(pane, text):
+    """Periodic reminder delivery: `text` in ONE burst (one literal send-keys), then the
+    pane settles for the key pause, then Enter. Claude Code shows a fast burst as a paste
+    placeholder ("[Pasted text #1]" or "[Pasted text #1 +11 lines]") or as text; either
+    rendering is accepted, the text itself is not compared. The caller has waited for an idle
+    pane. The field must be empty (clear_leftover, as in type_and_enter). Before Enter the
+    pane must still show an input box without dialog, busy turn or background prompt, so
+    Enter never answers a dialog.
+    Failures: before the burst nothing is typed; after it the text stays in the field and is
+    neither removed nor submitted (the next attempt skips a field that holds text). A stop
+    during the settle still sends Enter, so the line is not left behind by a stop alone.
+    Raises StepFailed (Enter not sent) or Cancelled (raised after Enter, if at all)."""
+    plan, log = pane.plan, pane.log
+    if pane.cancelled():
+        raise Cancelled()
+    if not clear_leftover(pane):
+        raise StepFailed("failed: not idle", "the input field still holds text")
+    if not send_keys(plan, text, literal=True):
+        raise StepFailed("failed: send-keys", "typing the reminder failed, nothing typed")
+    log("typed %d characters in one burst" % len(text))
+    stopped = None
+    try:
+        time.sleep(pane.tim["key_pause"])
+    except Cancelled as exc:
+        stopped = exc
+    cap = guard.capture(plan["pane"], plan.get("socket"))
+    content = guard.input_content(cap) if cap is not None else None
+    if content is None:
+        raise StepFailed("failed: input not visible", "no input box after the burst")
+    if not content:
+        raise StepFailed("failed: nothing typed", "the input field is still empty")
+    safe, why = guard.assess(cap, expect=content, block_on_background=False)
+    if not safe:
+        raise StepFailed("failed: pre-Enter check", why)
+    if not send_keys(plan, "Enter"):
+        raise StepFailed("failed: send-keys Enter", "Enter after the reminder failed")
+    log("Enter sent after the reminder burst")
+    if stopped:
+        raise stopped
+    return True
 
 
 def write_json(path, data):

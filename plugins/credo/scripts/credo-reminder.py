@@ -32,14 +32,16 @@ Worker - one detached worker per armed session, its pid in the state file. It is
 by SessionStart (hooks/credo-reminder.sh start), at arming, and at a later user turn when it
 is no longer running; a start on the same pane keeps the running worker. The worker
 re-reads the config every minute (CREDO_REMINDER_REFRESH, test override), checks the trigger
-of the current credo mode, and when it is due waits until the pane is idle, the input field
-is empty (fewer than 2 visible characters; such a leftover is removed first) and no dialog
-is open (credo_pane_guard, confirmed twice). Then it types the prompt in pieces of 200
-characters, 0.1 s apart (one burst of about 800 or more characters becomes a paste
-placeholder in Claude Code, which is never submitted), verifies it and presses Enter. The
-reference point (last reminder time and turn) moves to that injection. A reminder that could
-not be typed safely is skipped and counts as sent. It stops when no mode is configured any more and
-when the Claude process of its session is gone. Background work never blocks it.
+of the current credo mode, and when it is due waits until the pane is idle and no dialog is
+open (credo_pane_guard, confirmed twice). A field that holds text (two or more visible
+characters, or a paste placeholder) is skipped at once and left as it is; a leftover of one
+character is removed first. Otherwise the prompt is typed in one burst (one send-keys), the
+pane settles for 0.5 s, the pane is checked once more for an input box without dialog or busy
+turn (the text is not compared), and Enter is pressed. Claude Code shows the burst as a paste
+placeholder or as text; both are accepted. The reference point (last reminder time and turn)
+moves to every attempt. A reminder that could not be sent safely is skipped and counts as
+sent. It stops when no mode is configured any more and when the Claude process of its session
+is gone. Background work never blocks it.
 
 Subcommands
 -----------
@@ -53,7 +55,7 @@ CLAUDE_CONFIG_DIR, default ~/.claude.
 
 Env (tests only, no settings): CREDO_REMINDER_TARGET_PID, CREDO_REMINDER_NTFY_URL ("off" or
 a URL), CREDO_REMINDER_REFRESH, CREDO_REMINDER_POLL, CREDO_REMINDER_RECHECK,
-CREDO_REMINDER_KEY_PAUSE, CREDO_REMINDER_CONFIRM_WAIT, CREDO_REMINDER_BLOCKED_NOTIFY,
+CREDO_REMINDER_KEY_PAUSE (the settle before Enter), CREDO_REMINDER_BLOCKED_NOTIFY,
 CREDO_CONFIG_SCRIPT (path of credo-config.sh, default the one next to this file).
 
 Python 3 stdlib only.
@@ -472,20 +474,32 @@ def due_now(plan, trig):
                        time.time(), st.get("last_reminder"))
 
 
+def field_holds_text(pane):
+    """True when the input field visibly holds text: two or more visible characters, or a
+    paste placeholder. An unreadable field is not text, so the wait goes on as before."""
+    plan = pane.plan
+    cap = guard.capture(plan["pane"], plan.get("socket"))
+    content = guard.input_content(cap) if cap is not None else None
+    return content is not None and len("".join(content.split())) >= guard.EMPTY_BELOW
+
+
 def attempt(pane, plan, text, mode, trig):
-    """One reminder, when the trigger is still due after the pane is idle and the credo mode
-    is unchanged. Afterwards the reference point (time and turn) moves to now, also for a
-    skipped try."""
-    pane.wait_safe(float("inf"))
-    if current_mode(plan) != mode or not due_now(plan, trig):
-        return
-    # the first reminder that is actually sent in a session also names the switch
-    notice = not read_state(plan["state"]).get("notice_sent")
-    line = "%s %s" % (text, NOTICE) if notice else text
-    status, sent = "waiting", True
+    """One reminder, when the trigger is still due and the credo mode is unchanged. The pane
+    must be idle with no dialog open (a busy turn or a dialog is waited for). A field that
+    holds text is skipped at once: it is neither waited for nor touched. Afterwards the
+    reference point (time and turn) moves to now, also for a skipped try."""
+    status, sent, notice = "waiting", True, False
     try:
-        wk.type_and_enter(pane, line)
+        pane.wait_safe(float("inf"), stop=lambda: field_holds_text(pane))
+        if current_mode(plan) != mode or not due_now(plan, trig):
+            return
+        # the first reminder that is actually sent in a session also names the switch
+        notice = not read_state(plan["state"]).get("notice_sent")
+        wk.send_whole(pane, "%s %s" % (text, NOTICE) if notice else text)
         log("reminder sent")
+    except wk.Woken:
+        log("reminder skipped: the input field holds text, left as it is")
+        status, sent = "skipped: the input field holds text", False
     except wk.StepFailed as exc:
         if exc.status == "failed: pane ownership":
             raise
