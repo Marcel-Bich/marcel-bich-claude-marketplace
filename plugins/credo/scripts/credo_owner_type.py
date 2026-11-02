@@ -98,6 +98,10 @@ EXIT = {"delivered": 0, "answered": 0, "dry-run": 0, "shown": 0, "refused": 1, "
 # "don't ask again" and any wording not listed, keeps approval for later prompts: --persist.
 PLAIN_ANSWERS = ("yes", "no")
 SUBMIT_LABEL = "Submit answers"
+# A dialog whose block cannot be read whole from the visible pane (its top rule may have scrolled
+# out of view) is refused by show and answer; it is answered at the PC.
+NOT_FITTING = "dialog-does-not-fit"
+NOT_FITTING_TEXT = "dialog does not fit the pane, answer at the PC"
 
 
 class UsageError(ValueError):
@@ -381,6 +385,11 @@ def choice_label(state, parsed):
 PROMPT_KEYS = {"ask": "ask", "permission": "perm", "review": "review"}
 
 
+def fits_dialog(text, state):
+    """True when the open dialog can be read whole from the visible pane (see guard.fits_pane)."""
+    return guard.fits_pane(text, state)
+
+
 def prompt_digest(state):
     """sha256 (hex) over the whole dialog block of the open prompt (every non-blank row from the
     box top rule to the footer, whitespace normalized), or None when no prompt is open. The
@@ -584,6 +593,8 @@ def plan_send(t, text, force):
     if problem:
         raise Refused(problem[0], problem[1])
     state = guard.classify_pane(cap)
+    if not fits_dialog(cap, state):
+        raise Refused(NOT_FITTING, NOT_FITTING_TEXT + "; nothing typed")
     kind = state["kind"]
     if kind == "ask":
         raise Refused("ask-box", "an Ask box is open in this session; answer it with answer "
@@ -799,6 +810,8 @@ def show(query, all_profiles=False):
     if problem:
         return finish(None, "show", 0, "refused", problem[0], problem[1], log=False)
     state = guard.classify_pane(cap)
+    if not fits_dialog(cap, state):
+        return finish(t, "show", 0, "refused", NOT_FITTING, NOT_FITTING_TEXT, log=False)
     result = finish(None, "show", 0, "shown", "shown", describe(state), log=False)
     result.update(session=t["session_id"], kind=state["kind"], digest=prompt_digest(state))
     result.update(details(state))
@@ -883,6 +896,8 @@ def answer(query, spec, dry_run=False, all_profiles=False, expect=None, persist=
             raise Refused(problem[0], problem[1])
         state = guard.classify_pane(cap)
         how = route(state, parsed)
+        if not fits_dialog(cap, state):
+            raise Refused(NOT_FITTING, NOT_FITTING_TEXT + "; nothing sent")
         if prompt_digest(state) != expect:
             raise Refused("prompt-mismatch", "the open prompt is not the one with digest --expect "
                           "(it changed since show, or the digest is wrong); nothing sent")
@@ -925,6 +940,8 @@ def reread_same(t, state, expect=None):
     if problem:
         return Refused(problem[0], problem[1])
     now = guard.classify_pane(text)
+    if not fits_dialog(text, now):
+        return Refused(NOT_FITTING, NOT_FITTING_TEXT)
     if not same_prompt(state, now):
         return Refused("prompt-changed", "the open prompt changed since it was read")
     if expect is not None and prompt_digest(now) != expect:
@@ -1017,6 +1034,8 @@ def still_free(t, bound, typed):
     if problem:
         raise Abort(problem[1], typed)
     state = guard.classify_pane(text)
+    if not fits_dialog(text, state):
+        raise Abort(NOT_FITTING_TEXT, typed)
     if not same_prompt(bound, state):
         raise Abort("the Ask box changed while typing", typed)
     if norm(_free_now(state, text)) != norm("".join(typed)):

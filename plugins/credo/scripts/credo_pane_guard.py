@@ -466,7 +466,7 @@ def ask_box(lines):
         "type_n": k, "type_label": type_row["label"], "type_checked": type_row["checked"],
         "chat_n": chat_n, "cursor": cursor,
         "tabs": len(re.findall(r"[☐☒]", body[0])),
-        "block": block, "digest_rows": _digest_rows(block, type_n=k),
+        "block": block, "digest_rows": _digest_rows(block, type_n=k), "span": (top, foot),
     }
 
 
@@ -518,8 +518,9 @@ def review_page(lines):
     if cursor is None:
         return None
     block = _block(rows, top, len(rows) - 1)
+    end = max(i for i in range(top, len(rows)) if rows[i].strip())
     return {"answers": answers, "options": [o["label"] for o in opts], "cursor": cursor,
-            "block": block, "digest_rows": _digest_rows(block)}
+            "block": block, "digest_rows": _digest_rows(block), "span": (top, end)}
 
 
 def permission_prompt(lines):
@@ -556,7 +557,8 @@ def permission_prompt(lines):
     return {"title": lines_above[0], "body": lines_above[1:], "question": rows[p].strip(),
             "options": [o["label"] for o in opts],
             "full": [" ".join((o["label"] + " " + o["desc"]).split()) for o in opts],
-            "cursor": cursor, "block": block, "digest_rows": _digest_rows(block)}
+            "cursor": cursor, "block": block, "digest_rows": _digest_rows(block),
+            "span": (top, foot)}
 
 
 def _text_after_cell(row, x):
@@ -589,6 +591,24 @@ def cursor_at_end(text, cursor):
 # ("Enter to confirm · Esc to cancel", "Esc to cancel · Tab to amend", the Ask footer). The "·"
 # separators are required, so a prose line that happens to contain the words is no footer.
 DIALOG_FOOT_RE = re.compile(r"^\s*(?:[^·]+·\s*)*Esc to cancel(?:\s*·\s*[^·]+?)*\s*$")
+
+
+DIALOG_KEYS = {"ask": "ask", "permission": "perm", "review": "review"}
+
+
+def fits_pane(text, state):
+    """False when the dialog block of an Ask box, review page or permission prompt cannot be read
+    whole from the visible pane. A block whose top rule is the first captured row may have scrolled
+    out of view (the rows above it are not shown, and the real top rule is not visible); a block
+    that spans the whole captured height is refused as well. Such a dialog is answered at the PC
+    (the owner module refuses show and answer with dialog-does-not-fit). Other states always fit."""
+    key = DIALOG_KEYS.get(state.get("kind"))
+    if key is None:
+        return True
+    top, end = state[key]["span"]
+    raw = (text or "").split("\n")
+    height = len(raw) - 1 if raw and raw[-1] == "" else len(raw)
+    return top > 0 and end - top + 1 < height
 
 
 def _dialog_above(rows, top):
