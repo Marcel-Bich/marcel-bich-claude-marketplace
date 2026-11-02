@@ -741,6 +741,10 @@ PYEOF
 for _ in $(seq 1 50); do [ -s "$PIDFILE" ] && break; sleep 0.1; done
 TARGET_PID="$(cat "$PIDFILE" 2>/dev/null || echo 0)"
 PIDS="$TARGET_PID"
+cleanup() {
+    for p in $PIDS; do kill -TERM "$p" 2>/dev/null || true; done
+}
+trap cleanup EXIT
 
 scenario() { "$PY" "$TMP/scenario.py" "$1" "$TARGET_PID" "$STATE" "${2:-$$}"; }
 # the fake target records its pane only once the pane state names it: wait for that entry
