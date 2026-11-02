@@ -580,6 +580,9 @@ the human-only tests it still needs are recorded in the done item.
 
 - An item moves to `2_done` once everything is built and every check the agent CAN run is
   `exercised`. Pending human-only tests never hold an item in `2_go`.
+- Done means completely finished for the agent: merged into the main branch, pushed,
+  released or deployed where the project does that, and its worktree and branch cleaned up.
+  Nothing waits in a branch for the owner's test.
 - Write each one into the done item's `## Verify` as `human-only: pending` with the
   `why_human` note and what to check (a numbered step list per the credo `verify` skill).
   The user runs them in the verify phase (`2_done -> 3_verified`); a failure there sends the
@@ -792,9 +795,12 @@ file is untracked or byte-identical to that other copy, and it is a regular file
 
 ## Bug found during verify -> back to 1_todo/1_clarify
 
-If verification (or audit) surfaces a bug in work that was claimed done, the item goes
-back to **`1_todo/1_clarify`** - not to `2_go` - with a `History` note describing what was
-missed. It needs clarification before it is buildable again. **Agents never self-degrade
+If verification (or audit) surfaces a bug in work that was claimed done, the SAME item goes
+back with a `History` note describing what was missed and its DoD extended or corrected: to
+**`1_todo/1_clarify`** when an owner decision is open, otherwise straight to **`2_go`** when
+the fix is clear (for example the owner names the defect during his verify). The rework gets
+a new branch and worktree. Follow-up or duplicate items only as a last resort, they scatter
+one piece of work over several items. **Agents never self-degrade
 `2_done/`**: an agent does not silently move a done item down; it records the finding and
 moves it back to clarify per this rule (or, for a clear and approved fix, the audit skill
 governs whether it returns to `2_go`).
