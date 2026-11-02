@@ -53,6 +53,8 @@ The `SubagentStart` hook injects a compact rule block into every subagent before
 
 All credo state is per project under `.credo/` (see section 3) or per user under `~/.claude/credo/`. State files are written atomically. `.credo/**` is excluded from git on purpose; persistence across a compact is the files on disk plus your normal backups, not commits.
 
+The session registry keeps one file per session under `~/.claude/credo/session-registry/` (the active profile): session id, name, host, pid and start time, credo mode, and the tmux pane when the process tree confirms it. The SessionStart and UserPromptSubmit hooks write it, only on change. Readers go through `credo-session-registry.py`, which verifies every entry before it reports it live (see the README section "Session registry").
+
 ### 2.5 Claude Code band (optional)
 
 In Claude Code builds with mods support, `hooks/band.tsx` draws a band above the prompt. It is strictly a renderer: it holds no business logic and no second source of truth, it only runs the read-only core scripts (`credo-item-counts.sh`, `credo-session-status.sh`, `credo-item-list.sh`, `credo-budget-read.sh`, `credo-config.sh get budget.autonomous_5h.main_ladder`) with this session's id (`CREDO_SESSION_ID`) and reads `templates/shorthands.json`. Everything else in credo works the same without it, and in other harnesses.

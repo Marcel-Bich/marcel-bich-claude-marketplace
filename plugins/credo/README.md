@@ -269,6 +269,12 @@ A SessionStart hook (`credo-peer-split-hint.sh`) adds one hint line when this se
 - *lan*: `SendMessage` to the mirror name; it travels over the relay. If it fails, run `credo-peer-lan.py check` (reachability, LAN enabled / disabled with reason).
 - *tmux-only*: No message channel. Look at the pane (`tmux capture-pane -p -t <session>` without scroll-back) to see whether it is alive.
 
+## Session registry (which pane belongs to which session)
+
+Each Claude session has one entry in `credo/session-registry/<session_id>.json` under the active profile (`CLAUDE_CONFIG_DIR`, else `~/.claude`), one file per session id, mode 0600. It holds the session id, name, host, pid and start time, the credo mode, the tmux socket and pane (only when the process tree confirms the pane), and an `updated` time. The `credo-session-registry.sh` hook (SessionStart and UserPromptSubmit) writes it and rewrites only on change; SessionStart drops entries of gone processes older than a day. Disable with `CREDO_SESSION_REGISTRY=0`.
+
+`credo-session-registry.py resolve <session-id|name> [--json]` re-checks the entry against the live process: the pid and start time, the session descriptor, and the pane (exists, not dead, still owned by the session). It prints `live` or `stale` with the reason and exits 0 for live, 1 for stale, 3 when nothing or more than one session matches. `credo-session-registry.py list [--json]` shows every entry with its verified status; `--all-profiles` reads every profile under `~/.claude*`. Entries hold no environment values or secrets, and nothing is routed by a stale entry.
+
 ## Self-restart (resume the same session)
 
 `/credo:self-restart` (`scripts/credo-self-restart.py`) lets a session restart itself - typically to load plugin updates - and come back as exactly the same session in the same profile, continuing on its own with a wake prompt.
