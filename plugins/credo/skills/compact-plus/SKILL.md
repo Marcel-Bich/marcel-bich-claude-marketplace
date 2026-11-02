@@ -143,7 +143,7 @@ then go straight to the report (step 8) and skip steps 4-7.
    secured by being on disk, not by a commit.
 3. Update the rolling handoff at `.credo/process/handoffs/HANDOFF.md` so the current
    plan and the done/pending state survive: what is done, what is open, what comes next.
-   Include the typed-code state: the next free number for each counter (T, Q, V) and every
+   Include the typed-code state: the next free number for each counter (T, Q, V; informational only, the real numbers always come from `credo-code-next.sh`) and every
    still-open test, question and veto code (credo `verify` skill, "Typed codes: tests,
    questions, vetos"), so the numbering continues after the compact instead of restarting at 1.
    Move the prior handoff into `.credo/process/handoffs/archive/` before overwriting.

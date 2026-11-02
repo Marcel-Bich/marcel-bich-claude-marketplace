@@ -26,6 +26,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=credo-counter-lib.sh
+. "$SCRIPT_DIR/credo-counter-lib.sh"
 
 # --- locate the target .credo directory (shared resolver) -------------------
 # Precedence (see credo-config.sh resolve-project): explicit CREDO_DIR > session
@@ -84,17 +86,10 @@ recover_max_id() {
 }
 
 # --- atomic issuance under flock --------------------------------------------
-exec 9>"$LOCK_FILE"
-flock 9
+credo_counter_lock "$LOCK_FILE"
 
 # Read the counter (missing, empty, or non-numeric all count as 0).
-counter=0
-if [ -f "$COUNTER_FILE" ]; then
-    counter="$(tr -d '[:space:]' < "$COUNTER_FILE")"
-    case "$counter" in
-        ''|*[!0-9]*) counter=0 ;;
-    esac
-fi
+counter="$(credo_counter_read "$COUNTER_FILE")"
 
 # Always scan the items tree so a stale/rolled-back counter cannot reissue an id.
 scan="$(recover_max_id)"
@@ -110,11 +105,9 @@ fi
 
 next=$((base + 1))
 
-# Atomic write: tmp + mv -f.
-tmp="$CREDO_DIR/.id-counter.tmp.$$"
-printf '%s\n' "$next" > "$tmp"
-mv -f "$tmp" "$COUNTER_FILE"
+# Atomic write: tmp + mv -f (credo-counter-lib.sh).
+printf '%s\n' "$next" | credo_counter_write "$COUNTER_FILE"
 
-flock -u 9
+credo_counter_unlock
 
 printf '%s\n' "$next"

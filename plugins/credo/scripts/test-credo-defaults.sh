@@ -134,6 +134,10 @@ has "session-start legend: product-visible veto threshold" "$HOOK" "the owner no
 has "session-start legend: the agent closes vetos itself" "$HOOK" "you close a veto yourself"
 has "active: veto only for decisions the owner notices in the product" "$ACTIVE" "the owner notices in the product"
 has "items: veto only for decisions the owner notices in the product" "$ITEMS" "notices in the product"
+has "session-start legend: every new number from credo-code-next.sh" "$HOOK" "Get every new T/Q/V number from credo-code-next.sh <type>"
+has "session-start legend: the handoff's next free number is informational" "$HOOK" "the handoff's next free number is informational only"
+has "verify: every new number from credo-code-next.sh" "$VERIFY" "Get every new T/Q/V number from credo-code-next.sh <type>"
+has "verify: the counters are per project, not per session" "$VERIFY" "Three separate counters per project"
 has "item-move: internal process decisions stay in the History" "$MOVE" "Internal process decisions stay in the History"
 lacks "no veto demand for every agent decision (old wording)" 'name it in the next (reply|report)[^.]*so the user can veto'
 has "active: ntfy lists one line per finished item" "$ACTIVE" "one line per finished item"
@@ -189,6 +193,7 @@ has "items: duplicate removal only with the owner yes" "$ITEMS" "--remove-duplic
 has "autonomous: classify stalled GO items before an idle report" "$AUTO" "Classify stalled GO items"
 has "autonomous: the stall helper is named" "$AUTO" "credo-go-stall.sh"
 has "compact-plus: handoff labels checked against open DoD" "$COMPACT" "waits on T38"
+has "compact-plus: next free number is informational" "$COMPACT" "informational only, the real numbers always come from"
 has "verify: shortened repeats keep the copyable command" "$VERIFY" "Shortened repeats keep the command"
 has "rules: owner question checked against grants first" "$RULES_SKILL" "Before an owner question or an approval park"
 has "safety: grant check before an install park" "$SAFETY_SKILL" "waits on approval"
