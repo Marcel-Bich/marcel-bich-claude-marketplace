@@ -15,6 +15,9 @@
 # discarded; the event arrives on its stdin. Dedup state per session (sent Ask ids, Q and
 # T codes, blocker texts, remote replies); a permission prompt is sent once per window.
 #
+# Every string of an event is masked by credo-remote-mirror-redact.jq before it is sent
+# (tokens, passwords, Authorization headers, long hashes); a failing masking sends nothing.
+#
 # Emoji are written as jq escapes, so this source stays ASCII.
 #
 # Config: remote.mirror_command (default empty = off), read via scripts/credo-config.sh
@@ -126,7 +129,9 @@ dispatch() {
     window="$(printf '%s' "$line" | jq -r '.window // 0' 2>/dev/null)"
     mirror_seen "$key" "$window" && return 0
     mirror_mark "$key"
-    ev="$(printf '%s' "$line" | jq -c '.event // empty' 2>/dev/null)"
+    # every string of the event is masked first (credo-remote-mirror-redact.jq); a failing
+    # redaction prints nothing, so nothing is sent (fail-closed)
+    ev="$(printf '%s' "$line" | jq -c -f "$HOOK_DIR/credo-remote-mirror-redact.jq" 2>/dev/null)"
     [ -n "$ev" ] && mirror_send "$CMD" "$ev"
     return 0
 }

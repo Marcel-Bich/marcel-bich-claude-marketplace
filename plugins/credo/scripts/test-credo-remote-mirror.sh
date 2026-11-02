@@ -11,6 +11,8 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN="$HERE/.."
 HOOK="$PLUGIN/hooks/credo-remote-mirror.sh"
+REDACT="$PLUGIN/hooks/credo-remote-mirror-redact.jq"
+SESSION_START="$PLUGIN/hooks/credo-session-start.sh"
 HOOKS_JSON="$PLUGIN/hooks/hooks.json"
 TEMPLATE="$PLUGIN/templates/config.default.yaml"
 CONFIG_SH="$PLUGIN/scripts/credo-config.sh"
@@ -339,6 +341,45 @@ run "remote: unreadable transcript" stop "$(stop_payload "All green." "$TMP/miss
 check "remote: unreadable transcript sends nothing extra" 2 "$(count)"
 
 # --- robustness: never break the session ---------------------------------------
+echo "== redaction (secret-looking text never leaves the hook)"
+check "redaction program present" 0 "$([ -f "$REDACT" ] && echo 0 || echo 1)"
+new_case
+redact_case() { # name, command, expected summary
+    run "redact: $1" permission "$(perm_payload Bash "$(jq -n --arg c "$2" '{command: $c}')")"
+    check "redact: $1" "$3" "$(jqf '.summary')"
+}
+redact_case "KEY=value" "TOKEN=abc123 make deploy" "TOKEN=*** make deploy"
+redact_case "prefixed env secret" "GITHUB_TOKEN=ghp_0123456789abcdefghij git push" "GITHUB_TOKEN=*** git push"
+redact_case "Authorization Bearer header" 'curl -H "Authorization: Bearer eyJhbGci.payload.sig" https://api.example.test/v1' 'curl -H "Authorization: Bearer ***" https://api.example.test/v1'
+redact_case "mysql -p attached" "mysql -u root -pS3cretPass db" "mysql -u root -p*** db"
+redact_case "sshpass -p" "sshpass -p hunter2 ssh host" "sshpass -p *** ssh host"
+redact_case "--password flag" "curl --password hunter2 https://x.test" "curl --password *** https://x.test"
+redact_case "--token=value" "tool --token=hunter2 run" "tool --token=*** run"
+redact_case "password: value form" "echo password: hunter2" "echo password: ***"
+redact_case "URL credentials" "git push https://deploy:s3cretvalue@git.example.test/repo.git" "git push https://deploy:***@git.example.test/repo.git"
+redact_case "long hex run" "git show 0123456789abcdef0123456789abcdef" "git show ***"
+redact_case "long base64 run" "echo Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MGFiY2RlZmdoaWo=" "echo ***"
+redact_case "provider token prefix" "git push origin ghp_abcdefghijklmnop12" "git push origin ***"
+redact_case "normal: branch push" "git push origin feature-x" "git push origin feature-x"
+redact_case "normal: make" "make test" "make test"
+redact_case "normal: mkdir -p" "mkdir -p build/out" "mkdir -p build/out"
+redact_case "normal: path" "ls -la /work/acme-task/src" "ls -la /work/acme-task/src"
+redact_case "normal: short commit" "git show f237bbd" "git show f237bbd"
+redact_case "normal: long word without digits" "echo supercalifragilisticexpialidociousxyz" "echo supercalifragilisticexpialidociousxyz"
+run "redact: ask question" ask "$(ask_payload toolu_X1 'Use TOKEN=abc123 for the run?')"
+check "redact: ask question masked" "Use TOKEN=*** for the run?" "$(jqf '.questions[0].question')"
+new_case
+run "redact: blocker" stop "$(stop_payload "Blocker: the key TOKEN=abc123 is missing" "")"
+check "redact: blocker text masked" "the key TOKEN=*** is missing" "$(jqf '.text')"
+tr_prompt u-r1 "[remote chat c-77] deploy?"
+tr_text a-r1 "Done. Authorization: Bearer abcdef.123 is set."
+run "redact: remote reply" stop "$(stop_payload "Done. Authorization: Bearer abcdef.123 is set." "$TR")"
+check "redact: remote reply masked" "Done. Authorization: Bearer *** is set." "$(jqf '.text')"
+
+echo "== session legend names the markers"
+check "legend: Blocker marker named" 1 "$(grep -c -F 'starts its line with "Blocker:"' "$SESSION_START")"
+check "legend: [blocking] marker named" 1 "$(grep -c -F '"[blocking]" in its heading' "$SESSION_START")"
+
 echo "== robustness"
 new_case
 bad_sid="$(ask_payload toolu_R1 'Which branch?' | jq -c '.session_id = "../evil"')"
@@ -367,6 +408,16 @@ set_global "false"
 run "sink exits 1: silent" ask "$(ask_payload toolu_R3 'Which branch?')"
 set_global "/nonexistent/credo-mirror-sink"
 run "sink missing: silent" ask "$(ask_payload toolu_R4 'Which branch?')"
+
+# redaction program missing: the copy of the hook cannot mask, so it sends nothing
+new_case
+mkdir -p "$TMP/failclosed/hooks"
+ln -sf "$PLUGIN/scripts" "$TMP/failclosed/scripts"
+cp "$HOOK" "$TMP/failclosed/hooks/credo-remote-mirror.sh"
+out="$(perm_payload Bash '{"command":"make test"}' | bash "$TMP/failclosed/hooks/credo-remote-mirror.sh" permission 2>/dev/null)"
+check "redaction missing: exit 0" 0 "$?"
+check "redaction missing: stdout empty" "" "$out"
+check "redaction missing: nothing sent" 0 "$(count)"
 
 new_case
 set_global 'sleep 5; cat >> "$CREDO_MIRROR_TEST_OUT"'
