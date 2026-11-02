@@ -344,6 +344,12 @@ def is_worker(pid):
     return "_worker" in argv and any(a.endswith("credo-reminder.py") for a in argv)
 
 
+def same_code(pid):
+    """True when the worker `pid` runs this very script file (same credo version)."""
+    scripts = [a for a in csr.read_cmdline(pid) if a.endswith("credo-reminder.py")]
+    return any(os.path.realpath(a) == os.path.realpath(SCRIPT_PATH) for a in scripts)
+
+
 def worker_running(state_path):
     pid = read_state(state_path).get("worker_pid")
     return isinstance(pid, int) and csr.alive(pid) and is_worker(pid)
@@ -389,8 +395,10 @@ def ensure_worker(sid, cwd):
     state_path, log_path, plan_path = paths(plan["config_dir"], sid)
     pid = read_state(state_path).get("worker_pid")
     if isinstance(pid, int) and csr.alive(pid) and is_worker(pid):
-        if read_state(state_path).get("pane") == plan["pane"]:
+        if read_state(state_path).get("pane") == plan["pane"] and same_code(pid):
             return 0
+        # another pane, or a worker of an older credo version (a plugin reload does not
+        # restart the detached worker, so it would keep running the old code)
         stop_pid(pid)
     plan.update(cwd=cwd, state=state_path, log=log_path)
     csr.write_json(plan_path, plan)
