@@ -82,7 +82,11 @@ ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\
 
 BUSY_SCAN_ABOVE = 25
 DIALOG_SCAN_ABOVE = 6
-MAX_BOX_LINES = 20
+# Most rows of text the box may hold between its rules. Claude Code shows the input field up
+# to about half the pane height minus 5 rows and scrolls a longer text (measured on Claude Code
+# 2.1.316 under tmux: 10 rows at 30 pane rows, 15 at 40, 21 at 53), so a long text at 53 rows
+# is 23 lines high. 60 rows cover panes up to about 130 rows.
+MAX_BOX_LINES = 60
 
 
 def strip_ansi(text):
