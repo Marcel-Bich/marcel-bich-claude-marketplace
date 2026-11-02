@@ -292,6 +292,13 @@ dont_ask_twice: false
 optimize:
   idle_days: 7
 
+# --- GO stall check (credo-go-stall.sh, the autonomous idle path) ------------
+# A GO item in 2_go is listed as stalled when neither its file nor its last History line
+# shows progress for this many hours. The listing is read-only; every listed item is then
+# classified (credo items skill, "GO stall classification"). A hours argument overrides it.
+items:
+  go_stall_hours: 24
+
 # --- tmux hint (SessionStart) -----------------------------------------------
 # When credo is active and a session starts outside tmux, the SessionStart hook adds
 # one short line recommending tmux (self-compact and self-reload need it). false ->

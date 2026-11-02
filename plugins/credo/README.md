@@ -147,7 +147,9 @@ The lifecycle, moving the file with `scripts/credo-item-move.sh`:
 
 Parked work lives under `items/parked/{hold,future}`; abandoned work under `items/4_archived/`.
 
-The GO gate by clarify owner and the owner flip on entry into `2_go` are tested in `scripts/test-item-move.sh`.
+The GO gate by clarify owner and the owner flip on entry into `2_go` are tested in `scripts/test-item-move.sh`. The only deletion the move helper does is `scripts/credo-item-move.sh --remove-duplicate <path> --user-authorized`: one duplicate item file (same id, untracked or byte-identical to the other copy) on the owner's explicit yes, nothing else.
+
+`scripts/credo-go-stall.sh [hours]` lists the GO items (`1_todo/2_go`) with no progress for longer than the threshold (the argument, else `items.go_stall_hours`, default 24): file mtime and last History date both older. One line per item with id, age and the last History line; read-only. Every listed item is classified (buildable, Named-Decision, human-only verify, blocked) before any idle report; tested in `scripts/test-credo-go-stall.sh`.
 
 `scripts/credo-item-counts.sh [--json]` prints the item count per status folder of the resolved project (read-only, exit 4 when no credo project resolves), so any renderer can show live counts without knowing the folder layout.
 

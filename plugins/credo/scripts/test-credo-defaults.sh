@@ -50,6 +50,7 @@ check "release.fallback_fragments default" "15" "$("$CFG" get release.fallback_f
 check "release.fallback_days default" "7" "$("$CFG" get release.fallback_days 2>/dev/null)"
 check "dont_ask_twice default off" "false" "$("$CFG" get dont_ask_twice 2>/dev/null)"
 check "resources.max_busy_percent default" "90" "$("$CFG" get resources.max_busy_percent 2>/dev/null)"
+check "items.go_stall_hours default" "24" "$("$CFG" get items.go_stall_hours 2>/dev/null)"
 
 # --- 2. fixed fail-count brake is gone everywhere -----------------------------
 lacks "no emergency brake wording" 'emergency brake'
@@ -164,6 +165,21 @@ has "migrate asks once for release.auto" "$MIGRATE" "release finished changes au
 has "credo guide: builder range" "$GUIDE" "builders.min_per_area"
 has "credo guide: release.auto" "$GUIDE" "release.auto"
 has "credo guide: dont_ask_twice" "$GUIDE" "dont_ask_twice"
+
+# --- 9. GO stall classification, handoff labels, duplicates, grants (#142) ---
+COMPACT="$PLUGIN_DIR/skills/compact-plus/SKILL.md"
+RULES_SKILL="$PLUGIN_DIR/skills/rules/SKILL.md"
+SAFETY_SKILL="$PLUGIN_DIR/skills/safety/SKILL.md"
+has "items: GO stall classification section" "$ITEMS" "GO stall classification"
+has "items: idle report names the class of each GO item" "$ITEMS" "All GO items wait on the owner"
+has "items: handoff labels re-checked against the DoD" "$ITEMS" "Handoff labels and unticked DoD boxes"
+has "items: duplicate removal only with the owner yes" "$ITEMS" "--remove-duplicate <path>"
+has "autonomous: classify stalled GO items before an idle report" "$AUTO" "Classify stalled GO items"
+has "autonomous: the stall helper is named" "$AUTO" "credo-go-stall.sh"
+has "compact-plus: handoff labels checked against open DoD" "$COMPACT" "waits on T38"
+has "verify: shortened repeats keep the copyable command" "$VERIFY" "Shortened repeats keep the command"
+has "rules: owner question checked against grants first" "$RULES_SKILL" "Before an owner question or an approval park"
+has "safety: grant check before an install park" "$SAFETY_SKILL" "waits on approval"
 
 echo "test-credo-defaults: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

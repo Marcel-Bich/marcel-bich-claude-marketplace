@@ -148,7 +148,10 @@ then go straight to the report (step 8) and skip steps 4-7.
    questions, vetos"), so the numbering continues after the compact instead of restarting at 1.
    Move the prior handoff into `.credo/process/handoffs/archive/` before overwriting.
    Note any in-flight subagent work explicitly - either finish and fold it in, or record
-   that it is still running and what it will produce. This file is git-excluded too.
+   that it is still running and what it will produce. Re-check every per-item status label you
+   carry into the handoff ("waits on T38", "waits on owner") against that item's open DoD boxes
+   and Body first (credo `items`, "Body-freshness invariant"): a stale label is dropped, and the
+   buildable work it hid is listed as next. This file is git-excluded too.
    Then drop the one-shot post-compact rehydrate breadcrumb so the next SessionStart
    (after the compact) reminds you to reload this handoff:
 

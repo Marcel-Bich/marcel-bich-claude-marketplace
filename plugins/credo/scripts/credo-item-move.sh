@@ -7,10 +7,12 @@
 # The folder an item file lives in is the ONLY source of truth for its status.
 # Changing status means physically moving the file. This helper does that safely:
 # it locates the item by id, refuses to clobber, moves atomically with mv -f, and
-# NEVER deletes anything. The user-only 3_verified target needs an explicit opt-in.
+# NEVER deletes anything except one owner-authorized duplicate (--remove-duplicate). The
+# user-only 3_verified target needs an explicit opt-in.
 #
 # Usage:
 #   credo-item-move.sh <id> <target>
+#   credo-item-move.sh --remove-duplicate <path> --user-authorized
 #   credo-item-move.sh <id> verified --user-authorized
 #   credo-item-move.sh <id> go [--user-authorized]
 #   credo-item-move.sh <id> blocked [--unblock-to clarify|go]
@@ -93,6 +95,68 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 die() { echo "credo-item-move: $*" >&2; exit 1; }
+
+# --- --remove-duplicate (#142 d): drop one duplicate item file ----------------
+# credo-item-move.sh --remove-duplicate <path> --user-authorized
+# The only deletion this helper does. The owner's explicit yes is the flag. The file must be
+# a regular file (not a symlink) named <id>-<slug>.md inside the items tree, another file
+# with the same id must exist there, and the file must be untracked by git or byte-identical
+# to one of those other files. Any failed guard exits 1 and deletes nothing.
+remove_duplicate() {
+    local path="" have=0 authorized=0 dir real_items real_dir real_path base id f
+    local n=0 same=0 tracked=0
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --user-authorized) authorized=1 ;;
+            -*) die "--remove-duplicate: unknown option '$1' (usage: credo-item-move.sh --remove-duplicate <path> --user-authorized)" ;;
+            *)
+                [ "$have" -eq 0 ] || die "--remove-duplicate takes exactly one path"
+                path="$1"
+                have=1
+                ;;
+        esac
+        shift
+    done
+    [ "$have" -eq 1 ] && [ -n "$path" ] || die "--remove-duplicate needs the path of the duplicate item file"
+    [ "$authorized" -eq 1 ] || die "removing an item file needs the owner's explicit yes: add --user-authorized (nothing removed)"
+    if [ -n "${CREDO_DIR:-}" ]; then
+        dir="$CREDO_DIR"
+    else
+        dir="$("$SCRIPT_DIR/credo-config.sh" resolve-project 2>/dev/null)" || die "could not resolve a credo project (set CREDO_DIR; nothing removed)"
+    fi
+    real_items="$(cd "$dir/items" 2>/dev/null && pwd -P)" || die "no items directory under $dir (nothing removed)"
+    [ ! -L "$path" ] || die "refusing a symlink: $path (nothing removed)"
+    [ -f "$path" ] || die "not a regular file: $path (nothing removed)"
+    base="$(basename -- "$path")"
+    id="${base%%-*}"
+    case "$base" in *-*.md) : ;; *) die "not an item file name (<id>-<slug>.md): $base (nothing removed)" ;; esac
+    case "$id" in ''|*[!0-9]*) die "not an item file name (<id>-<slug>.md): $base (nothing removed)" ;; esac
+    id="$((10#$id))"
+    real_dir="$(cd "$(dirname -- "$path")" 2>/dev/null && pwd -P)" || die "cannot read the folder of $path (nothing removed)"
+    real_path="$real_dir/$base"
+    case "$real_path" in
+        "$real_items"/*) : ;;
+        *) die "refusing: $path is not inside the items tree of $dir (nothing removed)" ;;
+    esac
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        [ "$f" = "$real_path" ] && continue
+        n=$((n + 1))
+        if cmp -s -- "$real_path" "$f"; then same=1; fi
+    done < <(find "$real_items" -type f -name "$id-*.md" 2>/dev/null)
+    [ "$n" -ge 1 ] || die "no other item file with id #$id under the items tree: nothing would be kept (nothing removed)"
+    if git -C "$real_dir" ls-files --error-unmatch -- "$base" >/dev/null 2>&1; then tracked=1; fi
+    if [ "$tracked" -eq 1 ] && [ "$same" -ne 1 ]; then
+        die "refusing: $base is tracked by git and differs from the other #$id file (only an untracked or byte-identical duplicate may go; nothing removed)"
+    fi
+    rm -f -- "$real_path"
+    echo "credo-item-move: removed duplicate #$id: ${real_path#"$real_items"/} (the other #$id file stays)"
+}
+if [ "${1:-}" = "--remove-duplicate" ]; then
+    shift
+    remove_duplicate "$@"
+    exit 0
+fi
 
 # --- args --------------------------------------------------------------------
 [ "$#" -ge 2 ] || die "usage: credo-item-move.sh <id> <target> [--user-authorized] [--unblock-to clarify|go]  (target: clarify|go|blocked|done|verified|archived|hold|future)"

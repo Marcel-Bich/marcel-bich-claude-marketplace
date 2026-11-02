@@ -211,6 +211,28 @@ section, rather than adding a priority field or a new folder - "folder = status"
 lean frontmatter stay intact. The rule that rides on the marker: when the user is available,
 an agent surfaces these URGENT clarify items FIRST, before any other clarify or build work.
 
+## GO stall classification (no "waits on the owner" for a 2_go item)
+
+A `2_go` item never stays in `2_go` as "waits on the owner" (or "waits on T38", "waits on
+approval"). A GO item without progress - listed by `scripts/credo-go-stall.sh`, or any GO
+item you are about to report as waiting - is classified as exactly one of:
+
+- **buildable** - build it, including the buildable slice of a partly blocked item (split the
+  rest into its own item if needed). Re-read the whole DoD before you decide it is not.
+- **Named-Decision** - a genuine user-only decision (Named-Decision-Test above): move the item
+  to `1_clarify` with an URGENT note (`credo-item-move.sh <id> clarify`). An install beyond
+  the item's `## Freigaben` is such a decision only when the grant check of credo `rules` and
+  `safety` finds no grant or an unclear check.
+- **human-only verify** - everything the agent can build and check is `exercised`; only a
+  human check remains: move it to `2_done` with `human-only: pending` in `## Verify` (see
+  "Human-only checks do not block done"). `3_verified` stays the user's step.
+- **blocked** - hard-blocked by another unfinished item: `3_blocked` with `blocked_by`
+  (block-guard above).
+
+An idle heartbeat and any "nothing to do" report come only after this classification and
+name the class of every GO item that is not built. "All GO items wait on the owner" is not a
+valid report.
+
 ## Clarify owner and the agent decision rule
 
 How an agent decides an open question is set by the active model preset: the
@@ -507,6 +529,13 @@ Build-completion gate is what performs that reconciliation). Like the Folder<->H
 not-started contradictions, this is a skill-level judgement, not a script: the staleness
 lives in free-form prose, so it is caught by reading, not by a mechanical scan.
 
+**Handoff labels and unticked DoD boxes.** A per-item status label carried in a handoff
+("waits on T38", "waits on owner") is re-checked against the item's open DoD boxes and Body
+before it is carried on. A label the DoD no longer supports is dropped, and any buildable work
+it hid is listed as next (credo `compact-plus`, step 3). The same reconcile applies to DoD
+boxes left unticked after a PASS audit: tick the fully met ones in the same move (the
+Full-body reconciliation sweep).
+
 ## Item text is perspective-neutral (no "who is doing it")
 
 An item file is durable and read by whoever builds it later - often a different agent or
@@ -752,6 +781,12 @@ the main agent does it.
 A `PreToolUse` hook (`credo-item-move-guard.sh`) additionally blocks a raw `mv` / `git mv`
 of any item file in the status tree, so status changes go through the helper (which enforces
 this opt-in for `3_verified/`).
+
+A duplicate item file (a typo copy with the same `<id>`) is removed only through the helper and
+only on the owner's explicit yes: `credo-item-move.sh --remove-duplicate <path>
+--user-authorized`. It refuses unless another file with that id exists in the items tree, the
+file is untracked or byte-identical to that other copy, and it is a regular file inside
+`.credo/items`. Nothing else is removed, and the agent never runs a raw `rm` on item files.
 
 ## Bug found during verify -> back to 1_todo/1_clarify
 

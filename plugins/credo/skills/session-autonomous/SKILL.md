@@ -509,6 +509,15 @@ yet" are NONE of them a reason to bypass a standing suspend-on-idle directive wh
 factually buildable any more. If the only thing keeping you awake is blocked or
 decision-gated remnants, the buildable queue is empty and end-of-run is reached.
 
+**Classify stalled GO items before any idle or nothing-to-do report.** Before you leave the
+keep-alive idle, report "nothing to do", or start the end-of-run sequence, run
+`"${CLAUDE_PLUGIN_ROOT}/scripts/credo-go-stall.sh"` and classify every listed GO item as
+buildable (build it), Named-Decision (to `1_clarify`, URGENT), human-only verify only (to
+`2_done`) or blocked (to `3_blocked` with `blocked_by`), as in the credo `items` skill ("GO
+stall classification"). Before a Named-Decision is parked, the grant check of credo `rules`
+and `safety` applies. The report names the class of each item; "all GO items wait on the
+owner" is not a valid report.
+
 **Fresh-listing backstop (mandatory before declaring done or powering down).** Before an
 autonomous run declares itself "finished" OR starts the power-down / suspend sequence, it
 MUST FRESHLY list the GO folder right then - do not trust an earlier snapshot:

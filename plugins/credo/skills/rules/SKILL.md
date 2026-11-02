@@ -60,6 +60,16 @@ Rules must never be lost across delegation. When you spawn a subagent (credo
 command above) in the task you hand it, so a subagent honors the same project grants as the
 main agent - the same way security is inherited.
 
+## Before an owner question or an approval park
+
+Before ANY question to the owner and before parking an item as "waits on approval" (installs
+included), check this file's grants and the standing agreements in the handoff and the
+requirements log. If a grant covers the case and its conditions can be closed by the agent
+(for example a fresh security check of the package), close them and proceed. Ask only when
+no grant applies or the check comes out unclear. Agreed facts (for example "these instances
+are test instances") are applied, not worked around. The safety floor is unchanged: with no
+grant, no install happens without the owner's approval (credo `safety`).
+
 ## Precedence (grants widen, they never lower the safety floor)
 
 From highest to lowest:

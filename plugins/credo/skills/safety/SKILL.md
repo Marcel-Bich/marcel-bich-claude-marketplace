@@ -145,6 +145,13 @@ risk: an install pulls in third-party code, so it must always be an approved dec
   listed there. Anything not listed is not approved. Approved entries still pass the security
   check (source, author, license, known supply-chain problems); a suspicious entry is not
   installed and the item goes back to `1_todo/1_clarify`.
+- Before any owner question or "waits on approval" park for an install, check the repo's
+  `.credo/RULES.md` grants (credo `rules`) and the standing agreements in the handoff and the
+  requirements log. If a grant covers the install and its conditions (for example a fresh
+  security check of source, author and licence) can be closed by the agent, close them and
+  proceed. Ask only when no grant applies or the check comes out unclear. An agreed fact (for
+  example "these instances are test instances") is applied, not worked around. With no grant,
+  this default stays: no install.
 
 ## Boundary: credo states the rules, not the delete-queue mechanism (C12)
 

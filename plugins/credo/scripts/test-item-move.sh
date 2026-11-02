@@ -300,5 +300,116 @@ out="$("$SUT" 63 go 2>&1)"; rc=$?
 check "agent owner, no marker: refused" 1 "$rc"
 contains "agent owner, no marker: names neutral marker" "(GO: agent decision, <reason>)" "$out"
 
+# --- --remove-duplicate (#142 d): one duplicate item file, nothing else ----------
+present() { if [ -e "$1" ] || [ -L "$1" ]; then echo yes; else echo no; fi; }
+DUP="$I/1_todo/2_go"
+mkdir -p "$TMP/outside"
+
+# D12. no owner yes (flag missing): refused, the duplicate stays
+item 70 1_todo/2_go '' ''
+printf -- '---\nid: 70\ntitle: Typo copy\n---\n\n## History\n\n- created (clarify) 2021-01-02\n' > "$DUP/70-item-typo.md"
+out="$("$SUT" --remove-duplicate "$DUP/70-item-typo.md" 2>&1)"; rc=$?
+check "remove duplicate, no owner yes: exit" 1 "$rc"
+contains "remove duplicate, no owner yes: names the flag" "--user-authorized" "$out"
+check "remove duplicate, no owner yes: duplicate kept" "yes" "$(present "$DUP/70-item-typo.md")"
+
+# D13. authorized, untracked duplicate with other content, another #70 file exists: removed, the rest stays
+n_before="$(find "$I" -type f | wc -l)"
+out="$("$SUT" --remove-duplicate "$DUP/70-item-typo.md" --user-authorized 2>&1)"; rc=$?
+check "remove duplicate, untracked: exit" 0 "$rc"
+check "remove duplicate, untracked: duplicate gone" "no" "$(present "$DUP/70-item-typo.md")"
+check "remove duplicate, untracked: original kept" "yes" "$(present "$DUP/70-item-70.md")"
+check "remove duplicate, untracked: original unchanged" "1" "$(grep -c '^title: Item 70' "$DUP/70-item-70.md")"
+check "remove duplicate, untracked: exactly one file fewer" "$((n_before - 1))" "$(find "$I" -type f | wc -l)"
+contains "remove duplicate, untracked: names the removed id" "removed duplicate #70" "$out"
+
+# D14. no other file with that id: refused (nothing would be kept)
+printf -- '---\nid: 71\ntitle: Lone\n---\n' > "$DUP/71-lone.md"
+out="$("$SUT" --remove-duplicate "$DUP/71-lone.md" --user-authorized 2>&1)"; rc=$?
+check "remove duplicate, no other copy: exit" 1 "$rc"
+check "remove duplicate, no other copy: file kept" "yes" "$(present "$DUP/71-lone.md")"
+
+# D15. a file outside the items tree: refused, even with the owner yes
+printf -- '---\nid: 72\n---\n' > "$TMP/outside/72-copy.md"
+item 72 1_todo/2_go '' ''
+out="$("$SUT" --remove-duplicate "$TMP/outside/72-copy.md" --user-authorized 2>&1)"; rc=$?
+check "remove duplicate, outside items: exit" 1 "$rc"
+check "remove duplicate, outside items: file kept" "yes" "$(present "$TMP/outside/72-copy.md")"
+
+# D16. a symlink is never removed (the link target could be the only copy)
+item 73 1_todo/2_go '' ''
+ln -s "$DUP/73-item-73.md" "$DUP/73-link.md"
+out="$("$SUT" --remove-duplicate "$DUP/73-link.md" --user-authorized 2>&1)"; rc=$?
+check "remove duplicate, symlink: exit" 1 "$rc"
+check "remove duplicate, symlink: link kept" "yes" "$(present "$DUP/73-link.md")"
+check "remove duplicate, symlink: target kept" "yes" "$(present "$DUP/73-item-73.md")"
+
+# D17. a name that is not <id>-<slug>.md: refused
+item 74 1_todo/2_go '' ''
+printf 'notes\n' > "$DUP/notes.md"
+out="$("$SUT" --remove-duplicate "$DUP/notes.md" --user-authorized 2>&1)"; rc=$?
+check "remove duplicate, no id in name: exit" 1 "$rc"
+check "remove duplicate, no id in name: file kept" "yes" "$(present "$DUP/notes.md")"
+
+# D18. a directory is never removed
+item 75 1_todo/2_go '' ''
+mkdir "$DUP/75-dir.md"
+out="$("$SUT" --remove-duplicate "$DUP/75-dir.md" --user-authorized 2>&1)"; rc=$?
+check "remove duplicate, directory: exit" 1 "$rc"
+check "remove duplicate, directory: kept" "yes" "$(present "$DUP/75-dir.md")"
+
+# D19. the id match is numeric: 19 has no other copy when only 190 exists
+item 190 2_done '' ''
+printf -- '---\nid: 19\n---\n' > "$DUP/19-typo.md"
+out="$("$SUT" --remove-duplicate "$DUP/19-typo.md" --user-authorized 2>&1)"; rc=$?
+check "remove duplicate, 190 is not 19: exit" 1 "$rc"
+check "remove duplicate, 190 is not 19: file kept" "yes" "$(present "$DUP/19-typo.md")"
+
+# D20. an empty path and an unknown extra option: refused
+out="$("$SUT" --remove-duplicate "" --user-authorized 2>&1)"; rc=$?
+check "remove duplicate, empty path: exit" 1 "$rc"
+item 76 1_todo/2_go '' ''
+printf -- '---\nid: 76\n---\n' > "$DUP/76-typo.md"
+out="$("$SUT" --remove-duplicate "$DUP/76-typo.md" --user-authorized --force 2>&1)"; rc=$?
+check "remove duplicate, unknown option: exit" 1 "$rc"
+check "remove duplicate, unknown option: file kept" "yes" "$(present "$DUP/76-typo.md")"
+
+# D21. git: a tracked duplicate that differs from the other copy is refused
+G="$TMP/gitrepo"
+mkdir -p "$G/.credo/items/1_todo/2_go"
+git init -q "$G"
+printf -- '---\nid: 80\ntitle: Kept\n---\n' > "$G/.credo/items/1_todo/2_go/80-a.md"
+printf -- '---\nid: 80\ntitle: Other\n---\n' > "$G/.credo/items/1_todo/2_go/80-b.md"
+git -C "$G" add -- .credo
+out="$(CREDO_DIR="$G/.credo" "$SUT" --remove-duplicate "$G/.credo/items/1_todo/2_go/80-b.md" --user-authorized 2>&1)"; rc=$?
+check "git tracked differing duplicate: exit" 1 "$rc"
+check "git tracked differing duplicate: kept" "yes" "$(present "$G/.credo/items/1_todo/2_go/80-b.md")"
+contains "git tracked differing duplicate: names the rule" "tracked" "$out"
+
+# D22. git: a tracked duplicate byte-identical to the other copy may go
+printf -- '---\nid: 81\ntitle: Same\n---\n' > "$G/.credo/items/1_todo/2_go/81-a.md"
+cp "$G/.credo/items/1_todo/2_go/81-a.md" "$G/.credo/items/1_todo/2_go/81-b.md"
+git -C "$G" add -- .credo
+out="$(CREDO_DIR="$G/.credo" "$SUT" --remove-duplicate "$G/.credo/items/1_todo/2_go/81-b.md" --user-authorized 2>&1)"; rc=$?
+check "git tracked identical duplicate: exit" 0 "$rc"
+check "git tracked identical duplicate: removed" "no" "$(present "$G/.credo/items/1_todo/2_go/81-b.md")"
+check "git tracked identical duplicate: other copy kept" "yes" "$(present "$G/.credo/items/1_todo/2_go/81-a.md")"
+
+# D23. git: an untracked typo duplicate with other content may go (the reported case)
+printf -- '---\nid: 82\ntitle: Real\n---\n' > "$G/.credo/items/1_todo/2_go/82-a.md"
+git -C "$G" add -- .credo/items/1_todo/2_go/82-a.md
+printf -- '---\nid: 82\ntitle: Typo\n---\n' > "$G/.credo/items/1_todo/2_go/82-typo.md"
+out="$(CREDO_DIR="$G/.credo" "$SUT" --remove-duplicate "$G/.credo/items/1_todo/2_go/82-typo.md" --user-authorized 2>&1)"; rc=$?
+check "git untracked duplicate: exit" 0 "$rc"
+check "git untracked duplicate: removed" "no" "$(present "$G/.credo/items/1_todo/2_go/82-typo.md")"
+check "git untracked duplicate: tracked copy kept" "yes" "$(present "$G/.credo/items/1_todo/2_go/82-a.md")"
+
+# D24. a duplicate in parked/hold is inside the items tree and may go
+item 83 1_todo/2_go '' ''
+printf -- '---\nid: 83\n---\n' > "$I/parked/hold/83-copy.md"
+out="$("$SUT" --remove-duplicate "$I/parked/hold/83-copy.md" --user-authorized 2>&1)"; rc=$?
+check "remove duplicate, parked copy: exit" 0 "$rc"
+check "remove duplicate, parked copy: removed" "no" "$(present "$I/parked/hold/83-copy.md")"
+
 printf 'passed: %s, failed: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
