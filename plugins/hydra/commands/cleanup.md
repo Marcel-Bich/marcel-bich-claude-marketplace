@@ -45,7 +45,7 @@ A worktree is a removal candidate only when ALL of these hold - otherwise it is 
 - no changes to tracked files (`git -C <wt> status --porcelain --untracked-files=no` is empty); untracked scratch (cache/, the symlinks from `worktree-setup.sh`) goes with it
 - a branch without a commit of its own (a fast-forward from main does not count) may belong to an agent that just started: keep it while it is younger than 24h or has untracked, non-ignored files
 
-When credo is installed, its `credo-worktree-cleanup.sh [--dry-run] [--json] [--keep <path|branch>]...` implements exactly these checks; prefer it. It reports locked worktrees as `kept <path> branch=<b> reason=locked: <lock reason>`, and `--list-locked` lists them:
+When credo is installed, its `credo-worktree-cleanup.sh [--dry-run] [--json] [--keep <path|branch>]...` implements these checks plus the lossless case below; prefer it. A merged worktree whose only leftovers are setup symlinks into the main checkout (they never block removal) or `.credo/` changes that already exist in the main checkout is lossless and is removed too: with the owner's auto setting directly, otherwise after the owner's yes via `--allow-lossless <branch>`. It reports locked worktrees as `kept <path> branch=<b> reason=locked: <lock reason>`, and `--list-locked` lists them:
 
 ```bash
 CREDO_CLEANUP=$(ls -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/*/credo/*/scripts/credo-worktree-cleanup.sh 2>/dev/null | sort -V | tail -1)

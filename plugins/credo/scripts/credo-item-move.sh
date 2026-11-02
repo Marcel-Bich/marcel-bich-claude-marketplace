@@ -462,7 +462,7 @@ case "$TARGET" in
             case "$SRC_DIR" in
                 */1_todo/1_clarify)
                     if [ -z "$GO_LINES" ] && [ "$FLAG" != "--user-authorized" ]; then
-                        die "item #$ID is agent-owned but its History has no GO line. Log the decision first, e.g. '- -> go <date> (GO: agent decision, <reason>)', and name it in the next report so the user can veto."
+                        die "item #$ID is agent-owned but its History has no GO line. Log the decision first, e.g. '- -> go <date> (GO: agent decision, <reason>)'. Internal process decisions stay in the History; a decision the owner notices in the product is also named in the next report with a veto code."
                     fi
                     ;;
             esac

@@ -282,8 +282,10 @@ Where another credo text states otherwise, this section wins.
   (`clarify_owner human -> agent` in the History) or the item was created as an agent item
   (`parent:` or a `created by agent` History line). A hand-edited `clarify_owner: agent` on a
   user item is treated as human.
-  Log EVERY such decision in the item History (what was decided, why) and name it in the
-  next reply or report, so the user can veto it.
+  Log EVERY such decision in the item History (what was decided, why). A decision the owner
+  notices in the product is also named in the next reply or report with a veto code (credo
+  `verify`, "Typed codes"), so the user can veto it; an internal process decision stays in
+  the History.
 
 **Still escalated to the user, also on agent-owned items:**
 

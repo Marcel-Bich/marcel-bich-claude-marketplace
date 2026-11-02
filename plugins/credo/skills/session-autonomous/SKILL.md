@@ -118,7 +118,7 @@ agent decision rule (credo `items`, "Clarify owner and the agent decision rule")
 plan agent peer known, you take the pseudo plan role for the moment (your real role does
 not change): decide the uncritical questions per the active mainagent-prompt; GO a feasible
 item with `(GO: agent decision, <reason>)` and build it; log every decision in the item
-History, and list a decision with real consequences in the end-of-run report with a veto
+History, and list a decision the owner notices in the product in the end-of-run report with a veto
 code (see "No Ask tool: questions and vetos as text" below). Park the escalated
 questions (the user's taste or preference, deleting user data, installs beyond the item's `## Freigaben`, money beyond an
 approved budget, the hard safety rules, anything that would change or narrow the verbatim
@@ -251,9 +251,9 @@ for the budget. Nobody is there to answer, so an Ask would block the run. A ques
 needs the user goes into the end-of-run report as text with a Q code (credo `verify`,
 "Typed codes"); the deferred-question flow below covers the bounded wait before that.
 
-Veto codes only for decisions with real consequences (a GO the agent gave, a changed scope,
+Veto codes only for decisions the owner notices in the product (behaviour, visible text, money, taste, data) with real consequences (a changed scope,
 money spent inside an approved budget, a lock removed, a default adopted for an open
-point). A trivial point gets a History line only, no veto code. Each veto states the
+point). Internal process, measurement, test-set and tooling decisions (a GO the agent gave, a skipped audit, a preset rule) go only into the History and the report, no veto code. Each veto states the
 consequences for the user when they are not obvious.
 
 ### Never build a skill autonomously (hard guarantee)
@@ -462,7 +462,7 @@ re-raised. Only if it is truly unanswered:
    approved budget, the hard safety rules, a change to the verbatim requirement) or the GO of
    a human-owned item is NEVER defaulted: park it (the item stays where it is), continue with
    other work, and put it into the end-of-run report with its Q code. A defaulted decision
-   with real consequences gets a veto code there too. Do not block the run on an absent user.
+   the owner notices in the product gets a veto code there too. Do not block the run on an absent user.
 
 This replaces blocking on the user with a bounded wait plus a safe, documented fallback. If
 a subagent is the one that hit the question, use return-and-resume (credo `orchestration`):

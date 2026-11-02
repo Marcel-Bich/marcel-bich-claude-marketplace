@@ -71,8 +71,8 @@ rule"); in short:
   or with no known plan agent peer the executing agent in a temporary pseudo plan role; its real
   role does not change). Uncritical questions per the active mainagent-prompt, a feasible item
   GO'd with `(GO: agent decision, <reason>)`, each decision logged in the item History; a
-  decision with real consequences is also named in the next reply with a veto code (credo
-  `verify`, "Typed codes"), a trivial one keeps the History line only. In an interactive mode
+  decision the owner notices in the product is also named in the next reply with a veto code (credo
+  `verify`, "Typed codes"), an internal process decision keeps the History line only. In an interactive mode
   they go to the user like any clarify item: the agent recommends, the user decides.
 - **Always the user's call, on every item:** the user's taste
   or preference, deleting user data, installs beyond the item's `## Freigaben`, money beyond an

@@ -148,7 +148,7 @@ Default: `[x] use Hydra for 2+ independent tasks`
 Note: If Hydra is not installed, work proceeds sequentially without asking. With credo installed, `[x]` makes credo use hydra's worktree flow for parallel code tracks automatically, `[?]` asks once per batch, `[ ]` uses plain `git worktree add`.
 
 Ask: "Clean up merged worktrees automatically when an item is closed?" (3 options):
-- auto `[x]` (default, set-and-forget): remove worktrees whose branch is fully merged into the main branch and that have no changes to tracked files, plus their merged branch
+- auto `[x]` (default, set-and-forget): remove worktrees whose branch is fully merged into the main branch and that have no changes to tracked files, plus their merged branch; setup symlinks into the main checkout do not count as changes, and a merged worktree whose only leftovers are `.credo/` changes already present in the main checkout (lossless) is removed too
 - ask `[?]`: list the candidates and ask each time
 - never `[ ]`: never remove worktrees automatically
 
