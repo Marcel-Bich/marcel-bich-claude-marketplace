@@ -66,6 +66,12 @@ PERMISSION_RE = re.compile(
     r"Do you want to (proceed|make this edit|create|allow)|requires confirmation"
     r"|Yes, and don't ask again|to stop background agents", re.I)
 NO_BOX_SCAN = 30
+# Scrollback rows read above the visible pane (tmux capture-pane -S -N). Only the top search of a
+# dialog reads them: a box taller than the pane has its top above the visible area.
+SCROLLBACK_ROWS = 500
+REFUSAL_UNFIT = "dialog-does-not-fit"
+REFUSAL_INVISIBLE = "invisible-characters"
+REVIEW_TABS_RE = re.compile(r"^\s*←.*✔ Submit")
 
 # Background work shown in the footer under the input box while it runs: a shell
 # count ("1 shell", "3 shells", also inside the status line) and the background agent
@@ -291,6 +297,23 @@ def _no_box_reason(lines):
     return "no empty prompt input box visible (dialog, menu or not Claude Code)"
 
 
+class Capture(str):
+    """A visible-pane capture. window is the same capture with its scrollback above it (see
+    with_window); classify_pane reads the dialogs from the window and the input field from the visible
+    text only, so an old input box in the scrollback is never taken for the current one."""
+    window = None
+
+
+def with_window(text, window):
+    cap = Capture(text)
+    cap.window = window
+    return cap
+
+
+def window_of(text):
+    return getattr(text, "window", None)
+
+
 # --- AskUserQuestion box, review page and permission prompt -------------------------
 # Layout measured on a real pane (Claude Code 2.1.316): a rule, a header row with a tab
 # marker (box for an unanswered question, crossed box for multi select), the question,
@@ -303,8 +326,9 @@ def _no_box_reason(lines):
 # footer), and only while no input box is drawn. Dialog-shaped rows above a visible input
 # box make the pane unknown (fail closed, see classify_pane and _dialog_above).
 # The box is read from its top rule to its footer, and that whole block is kept (block, the
-# rows show prints verbatim) with the digest rows (digest_rows). The top rule must be the only
-# rule-shaped row above the question, see _box_top.
+# rows show prints verbatim) with the digest rows (digest_rows). The top rule is the topmost rule
+# whose next row is the header or the title (see _dialog_top); a second rule row inside the block
+# refuses the box (_rules_in), so a rule drawn inside the command cannot hide the rows above it.
 # The footer may carry extra hints between the navigation and the cancel part (measured:
 # "ctrl+g to edit in VS Code" in an IDE session), and tabbed boxes (several questions) say
 # "Tab/Arrow keys to navigate" instead of "↑/↓ to navigate" (measured on 2.1.316).
@@ -374,16 +398,6 @@ def _only_blank_after(rows, idx):
     return all(not rows[j].strip() for j in range(idx + 1, len(rows)))
 
 
-def _box_top(rows, idx):
-    """The top rule of the box that row idx belongs to: the ONLY rule-shaped row above idx in
-    the visible pane. None when there is none, or when a second one lies above idx (a rule
-    drawn inside the box content, or a rule in the transcript). The box is then not read at all,
-    so no row above an apparent top rule can be left out of what the owner is shown (fix round 2:
-    the nearest rule used to be taken, which let a fake rule row hide the command above it)."""
-    found = [j for j in range(idx) if is_rule(rows[j])]
-    return found[0] if len(found) == 1 else None
-
-
 def _block(rows, top, end):
     """Every non-blank row from top to end (inclusive), exactly as drawn (rstripped only)."""
     return [rows[i] for i in range(top, end + 1) if rows[i].strip()]
@@ -419,13 +433,79 @@ def _digest_rows(block, type_n=None):
     return out
 
 
+def _marker_row(row):
+    return row.lstrip().startswith(MARKERS)
+
+
+def _zone_start(rows, stop):
+    """Index where the current turn starts above row stop: after the last dialog footer or the
+    closing rule of an input box (rule, marker row, rule). Rows above it are older transcript."""
+    start = 0
+    for i in range(stop):
+        if ASK_FOOTER_RE.match(rows[i]) or DIALOG_FOOT_RE.match(rows[i]):
+            start = i + 1
+        elif i >= 2 and is_rule(rows[i]) and is_rule(rows[i - 2]) and _marker_row(rows[i - 1]):
+            start = i + 1
+    return start
+
+
+def _first_nonblank_after(rows, j, stop):
+    for k in range(j + 1, stop):
+        if rows[k].strip():
+            return k
+    return None
+
+
+def _ask_head(row):
+    return ASK_HEADER_RE.search(row) is not None
+
+
+def _review_tabs(row):
+    return REVIEW_TABS_RE.search(row) is not None
+
+
+def _perm_title(row):
+    """A permission box title: a text row, not a rule, option or dashed separator."""
+    return (bool(row.strip()) and not is_rule(row) and not ASK_OPTION_RE.match(row)
+            and not SEPARATOR_RE.match(row))
+
+
+def _dialog_top(rows, stop, strong):
+    """(top, unfit) of the dialog whose lower part (question, chat row or footer) is row stop. top is
+    the topmost rule above stop, in the current turn, whose first non-blank row below satisfies strong
+    (the box header or the title). unfit is True when no row at all lies above top in the capture: the
+    top may have scrolled out of view, and the box is refused rather than read from its first row.
+    Rule rows inside the command never become the top, because the topmost candidate wins; a box
+    that holds a second rule row is refused by the callers (_rules_in)."""
+    zone = _zone_start(rows, stop)
+    for j in range(zone, stop):
+        if not is_rule(rows[j]):
+            continue
+        k = _first_nonblank_after(rows, j, stop)
+        if k is None or not strong(rows[k]):
+            continue
+        return j, not any(rows[x].strip() for x in range(j))
+    return None, True
+
+
+def _rules_in(block):
+    return sum(1 for row in block if is_rule(row))
+
+
+def _has_format(block):
+    """True when a row of the block holds a Unicode format character (category Cf): bidi overrides
+    and isolates, zero-width and other invisible characters. Such a dialog is refused."""
+    return any(unicodedata.category(ch) == "Cf" for row in block for ch in row)
+
+
 def ask_box(lines):
     """The AskUserQuestion box of a capture, or None. Returns a dict: question, header,
     multi, options (n, label, checked, desc; without the Type something row), type_n,
     type_label (the typed text once free text is entered), type_checked, chat_n, cursor (the n
     of the highlighted row), tabs (the questions in the tab bar: 1 for a single question), block
-    (every non-blank row from the box top rule to the footer, verbatim) and digest_rows (the block
-    as the digest sees it)."""
+    (every non-blank row from the box top rule to the footer, verbatim), digest_rows (the block
+    as the digest sees it), invisible (a format character in the block) and span. {"unfit": True}
+    when the box is found but its top rule is not in view (see _dialog_top)."""
     rows = _plain_rows(lines)
     foot = next((i for i in range(len(rows) - 1, -1, -1) if ASK_FOOTER_RE.match(rows[i])), None)
     if foot is None or not _only_blank_after(rows, foot):
@@ -437,9 +517,14 @@ def ask_box(lines):
     mid = _prev_nonblank(rows, chat)
     if mid is None or not is_rule(rows[mid]):
         return None
-    top = _box_top(rows, mid)
+    top, unfit = _dialog_top(rows, mid, _ask_head)
     if top is None:
+        return {"unfit": True}
+    block = _block(rows, top, foot)
+    if _rules_in(block) != 2:
         return None
+    if unfit:
+        return {"unfit": True}
     region = rows[top + 1:mid]
     body = [r for r in region if r.strip()]
     if len(body) < 3:
@@ -458,7 +543,6 @@ def ask_box(lines):
     if cursor is None:
         return None
     type_row = opts[-1]
-    block = _block(rows, top, foot)
     return {
         "question": body[1].strip(), "header": head.group(1), "multi": all(boxed),
         "options": [{"n": o["n"], "label": o["label"], "checked": o["checked"], "desc": o["desc"]}
@@ -467,6 +551,7 @@ def ask_box(lines):
         "chat_n": chat_n, "cursor": cursor,
         "tabs": len(re.findall(r"[☐☒]", body[0])),
         "block": block, "digest_rows": _digest_rows(block, type_n=k), "span": (top, foot),
+        "invisible": _has_format(block),
     }
 
 
@@ -491,10 +576,10 @@ def _review_answers(rows, start, stop):
 
 def review_page(lines):
     """The review page of a multi-question or multi-select Ask box, or None. Returns
-    answers (a list of (question, [labels])), options (labels), cursor (n), block and
-    digest_rows. Refused when it parsed no answer at all or when a row between the header and
-    the "ready" line is not an answer with its value. The options are the last block of the pane
-    (an optional footer may follow them)."""
+    answers (a list of (question, [labels])), options (labels), cursor (n), block, digest_rows,
+    invisible and span. Refused (None) when it parsed no answer at all or when a row between the
+    header and the "ready" line is not an answer with its value. The options are the last block of
+    the pane (an optional footer may follow them). {"unfit": True} when the top rule is not in view."""
     rows = _plain_rows(lines)
     head = next((i for i in range(len(rows) - 1, -1, -1) if REVIEW_HEAD_RE.match(rows[i])), None)
     if head is None:
@@ -502,9 +587,9 @@ def review_page(lines):
     ready = next((i for i in range(head, len(rows)) if REVIEW_READY_RE.match(rows[i])), None)
     if ready is None:
         return None
-    top = _box_top(rows, head)
+    top, unfit = _dialog_top(rows, head, _review_tabs)
     if top is None:
-        return None
+        return {"unfit": True}
     answers = _review_answers(rows, head + 1, ready)
     if not answers:
         return None
@@ -518,9 +603,14 @@ def review_page(lines):
     if cursor is None:
         return None
     block = _block(rows, top, len(rows) - 1)
+    if _rules_in(block) != 1:
+        return None
+    if unfit:
+        return {"unfit": True}
     end = max(i for i in range(top, len(rows)) if rows[i].strip())
     return {"answers": answers, "options": [o["label"] for o in opts], "cursor": cursor,
-            "block": block, "digest_rows": _digest_rows(block), "span": (top, end)}
+            "block": block, "digest_rows": _digest_rows(block), "span": (top, end),
+            "invisible": _has_format(block)}
 
 
 def permission_prompt(lines):
@@ -528,9 +618,9 @@ def permission_prompt(lines):
     (first line of the box, e.g. "Bash command"), body (the command and description lines,
     dashed separators left out), question, option labels, full option labels (label plus the
     continuation rows under it, used for the --persist allow-list), the cursor (n), block (every
-    non-blank row from the box top rule to the footer, verbatim) and digest_rows. Needs the box
-    rule above it (the only rule-shaped row above the question), the question line, the numbered
-    options from 1 and the "Esc to cancel" footer as the last block."""
+    non-blank row from the box top rule to the footer, verbatim), digest_rows, invisible and span.
+    Needs the question line, the numbered options from 1 and the "Esc to cancel" footer as the last
+    block. {"unfit": True} when the top rule is not in view (see _dialog_top)."""
     rows = _plain_rows(lines)
     start = max(0, len(rows) - 60)
     foot = next((i for i in range(len(rows) - 1, start - 1, -1) if "Esc to cancel" in rows[i]), None)
@@ -541,9 +631,9 @@ def permission_prompt(lines):
               if PERMISSION_RE.search(rows[i]) and not ASK_OPTION_RE.match(rows[i])), None)
     if p is None:
         return None
-    top = _box_top(rows, p)
+    top, unfit = _dialog_top(rows, p, _perm_title)
     if top is None:
-        return None
+        return {"unfit": True}
     lines_above = [r.strip() for r in rows[top + 1:p] if r.strip() and not SEPARATOR_RE.match(r)]
     if not lines_above:
         return None
@@ -554,11 +644,15 @@ def permission_prompt(lines):
     if cursor is None:
         return None
     block = _block(rows, top, foot)
+    if _rules_in(block) != 1:
+        return None
+    if unfit:
+        return {"unfit": True}
     return {"title": lines_above[0], "body": lines_above[1:], "question": rows[p].strip(),
             "options": [o["label"] for o in opts],
             "full": [" ".join((o["label"] + " " + o["desc"]).split()) for o in opts],
             "cursor": cursor, "block": block, "digest_rows": _digest_rows(block),
-            "span": (top, foot)}
+            "span": (top, foot), "invisible": _has_format(block)}
 
 
 def _text_after_cell(row, x):
@@ -593,22 +687,6 @@ def cursor_at_end(text, cursor):
 DIALOG_FOOT_RE = re.compile(r"^\s*(?:[^·]+·\s*)*Esc to cancel(?:\s*·\s*[^·]+?)*\s*$")
 
 
-DIALOG_KEYS = {"ask": "ask", "permission": "perm", "review": "review"}
-
-
-def fits_pane(text, state):
-    """False when the dialog block of an Ask box, review page or permission prompt cannot be read
-    whole from the visible pane. A block whose top rule is the first captured row may have scrolled
-    out of view (the rows above it are not shown, and the real top rule is not visible); a block
-    that spans the whole captured height is refused as well. Such a dialog is answered at the PC
-    (the owner module refuses show and answer with dialog-does-not-fit). Other states always fit."""
-    key = DIALOG_KEYS.get(state.get("kind"))
-    if key is None:
-        return True
-    top, end = state[key]["span"]
-    raw = (text or "").split("\n")
-    height = len(raw) - 1 if raw and raw[-1] == "" else len(raw)
-    return top > 0 and end - top + 1 < height
 
 
 def _dialog_above(rows, top):
@@ -620,26 +698,38 @@ def _dialog_above(rows, top):
     return any(ASK_FOOTER_RE.match(rows[j]) or DIALOG_FOOT_RE.match(rows[j]) for j in range(top))
 
 
+DIALOG_DETECTORS = (("review", review_page, "review"), ("ask", ask_box, "ask"),
+                    ("permission", permission_prompt, "perm"))
+DIALOG_REASON = {"review": "review page", "ask": "Ask box", "permission": "permission prompt"}
+
+
 def classify_pane(text):
-    """What the pane shows, from one capture. kind is one of: ask, review, permission (the
-    option box of a question or prompt is the last block, and no input box is drawn), input
-    (an input box with no dialog next to it; typed or empty, see the caller), dialog (a
-    picker, menu or other dialog next to the input box), unknown (neither, or dialog-shaped
-    rows above a visible input box). busy is True while a turn runs above the box."""
+    """What the pane shows, from one capture. kind is one of: ask, review, permission (a dialog, read
+    from the scrollback window when the capture carries one, see Capture; a dialog in a capture with no
+    scrollback above its visible area is refused, its top cannot be verified), input (the input box is the
+    last box of the visible pane, nothing dialog-shaped next to it; typed or empty, see the caller),
+    dialog (a picker, menu or other dialog next to the input box), unknown (neither, dialog-shaped rows
+    above a visible input box, another box below the input box, or a dialog whose top is not in view).
+    A dialog state carries refusal (REFUSAL_UNFIT or REFUSAL_INVISIBLE) when it must not be read or
+    answered. busy is True while a turn runs above the box."""
     lines = (text or "").rstrip("\n").split("\n")
     rows = _plain_rows(lines)
+    window = window_of(text)
+    wlines = (window or "").rstrip("\n").split("\n") if window is not None else lines
+    # a capture with no rows above its visible area (no scrollback) cannot show where a dialog starts
+    no_history = window is not None and len(wlines) <= len(lines)
+    for kind, detect, key in DIALOG_DETECTORS:
+        found = detect(wlines)
+        if found is None:
+            continue
+        if no_history or found.get("unfit"):
+            return {"kind": "unknown", "busy": False, "refusal": REFUSAL_UNFIT,
+                    "reason": "dialog does not fit the pane (its top is not in view)"}
+        refusal = REFUSAL_INVISIBLE if found.get("invisible") else None
+        return {"kind": kind, "busy": False, "reason": DIALOG_REASON[kind], key: found,
+                "refusal": refusal}
     box = find_input_box(lines)
     if box is None:
-        review = review_page(lines)
-        if review is not None:
-            return {"kind": "review", "busy": False, "reason": "review page", "review": review}
-        ask = ask_box(lines)
-        if ask is not None:
-            return {"kind": "ask", "busy": False, "reason": "Ask box", "ask": ask}
-        perm = permission_prompt(lines)
-        if perm is not None:
-            return {"kind": "permission", "busy": False, "reason": "permission prompt",
-                    "perm": perm}
         return {"kind": "unknown", "busy": False, "reason": _no_box_reason(lines)}
     top, bottom = box
     busy = any(SPINNER_LINE_RE.search(rows[i]) or BUSY_ANY_RE.search(rows[i])
@@ -647,6 +737,8 @@ def classify_pane(text):
     if _dialog_above(rows, top):
         return {"kind": "unknown", "busy": busy,
                 "reason": "dialog-shaped rows above the input box"}
+    if any(is_rule(rows[i]) for i in range(bottom + 1, len(rows))):
+        return {"kind": "unknown", "busy": busy, "reason": "another box drawn below the input box"}
     # a dialog or menu is what is drawn BELOW the input box; text above it is transcript
     below = range(bottom + 1, len(rows))
     if any(MENU_ROW_RE.match(rows[i]) for i in below):
@@ -798,6 +890,13 @@ def capture(pane, socket=None):
 def capture_exact(pane, socket=None):
     """As capture(), with -N: trailing spaces are kept, so a row's width matches the cursor."""
     return _run(tmux_base(socket) + ["capture-pane", "-p", "-e", "-N", "-t", pane])
+
+
+def capture_window(pane, socket=None, rows=SCROLLBACK_ROWS):
+    """The visible pane with up to `rows` rows of scrollback above it (capture-pane -p -e -N -S -rows),
+    or None. The visible area is the last rows of the result."""
+    return _run(tmux_base(socket) + ["capture-pane", "-p", "-e", "-N", "-S", "-%d" % int(rows),
+                                     "-t", pane])
 
 
 def pane_cursor(pane, socket=None):

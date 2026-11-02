@@ -2,7 +2,7 @@
 prompt, into the owner's own Claude Code session pane (the tmux pane the session runs in).
 
 A local connector (for example a phone app) runs credo-owner-type.py; this module does the
-work. Every key goes through the same checks, in this order:
+work. Every key or paste goes through the same checks:
 
   1. Target: the session must be live in the session registry (credo_session_registry:
      pid and start time, session descriptor, pane on its server, pane not dead, still owned
@@ -11,42 +11,38 @@ work. Every key goes through the same checks, in this order:
      belong to the session right before every step (credo-self-restart pane_owner_error via
      registry.restart.session_owner_check). Copy or view mode is refused.
   3. Pane state (credo_pane_guard.classify_pane): an open Ask box, review page, permission
-     prompt, slash menu, picker or unknown dialog is refused - nothing is typed into it. A
-     dialog counts only as the last block of the pane. Dialog-shaped rows drawn above a visible
-     input box (a dialog footer, "Esc to cancel" with its "·" hints) makes the pane unknown
-     (fail closed): nothing is typed into it and nothing is answered there. A box is read only when exactly one rule-shaped row lies above its question
-     (its top rule); a second one (a rule inside the command, or in the transcript) refuses it.
-  4. Prompt binding: show prints the whole dialog block verbatim (every non-blank row from the
-     box top rule to the footer) and its digest: sha256 over those rows, whitespace normalized.
-     The cursor, the checkbox and tab states, the typed text of the Type something row and the
-     footer are not part of the digest (the answer itself changes the first three, the footer's
-     key hints follow the highlight). Every answer needs --expect
-     <digest> (dry runs included), and the prompt is read again before every key: a key is not
-     sent unless the prompt still has that digest (after the first key the bound prompt is the
-     one read before it, so the answer's own toggles do not count as a change).
+     prompt, slash menu, picker or unknown dialog is refused - nothing is typed into it. Dialogs
+     are read from the capture with its scrollback (tmux capture-pane -S -N), so a box taller
+     than the pane is read from its real top. A dialog whose top is not in view, or whose block
+     holds an invisible or bidi (Unicode category Cf) character, is refused (dialog-does-not-fit,
+     invisible-characters): the owner answers it at the PC.
+  4. Answer binding: show prints the whole dialog block (every row from the box top rule to the
+     footer, each prefixed with "| " so agent text cannot fake the end marker) and its digest:
+     sha256 over those rows, whitespace normalized. Every answer needs --expect <digest>, and the
+     prompt is read again before every key. The cursor, the checkbox and tab states, the typed text
+     of the Type something row and the footer are not part of the digest.
 
-Send (credo-owner-type.py send): the input field must be empty, or with --force-append it
-may hold text: then " " + text is appended at the end. The existing text is sent together
-with the appended text (that is what force-append means); it is never deleted or changed by
-this module. A busy session is fine: typed text + Enter goes into Claude Code's queue
-(measured on Claude Code 2.1.316). The text is typed in pieces of at most 200 characters
-(credo_pane_wake type_chunks), each line break is a typed backslash followed by Enter (Claude
-Code turns a trailing backslash plus Enter into a line break; measured). Before every piece,
-every line-break Enter and the final Enter the pane must still be an input box with exactly
-the text typed so far (whitespace ignored). A dialog that opens meanwhile, a changed field
-or a failed key stops it before the next key. In normal mode the own typed text is taken back
-(BSpace) only when the field still reads exactly "what was there before" plus that text. In
-force mode nothing is ever removed: the draft and the appended text stay in the field and are
-reported. A line break that submits the text early is reported as partly sent (exit 4).
+Send (credo-owner-type.py send), simplified by owner decision Q56:
+  - normal mode: the input field must be empty. The whole text is loaded into a named tmux buffer
+    and pasted into the pane in one bracketed paste (tmux paste-buffer -p, so a line break stays a
+    line break inside one message). After a short settle (0.5 s) the pane must still be an input box
+    with no dialog open, then Enter is sent. No character-by-character or text confirmation: a paste
+    placeholder ("[Pasted text #N ...]") or any other rendering of the field is accepted. The field
+    is then checked once: empty again means delivered, else unconfirmed (exit 4).
+  - force-append (--force-append): " " + text is pasted at the end of the existing text and Enter is
+    sent. The field may hold a draft, which is never changed by this module; the cursor must be at its
+    end. No digest is needed (--expect is accepted and not checked).
+  - A busy session is fine: the text is queued by Claude Code (measured on Claude Code 2.1.316).
 
 Answer (credo-owner-type.py answer): only when an Ask box or a permission prompt is open.
 Ask box: a digit selects and sends; a label is mapped to its option (unique, case-insensitive;
-options above 9 are reached with Down/Up, the highlight is read again and must be on the target,
-and only then Enter is sent; a digit is never sent as text); "esc" declines; "free:<text>" moves
-to the Type something row (Up/Down), types the text and sends it (the row must be empty before);
-"multi:<d,d>" toggles exactly the boxes that differ from the wanted set (digits toggle, options
-above 9 by navigation, a highlight check and Space), checks the checked set, presses Right (review
-page), checks that the review page's first option is "Submit answers" and submits with Enter.
+options above 9 are reached with Down/Up, the highlight is read again right before the Enter or
+Space, and only then the key is sent; a digit is never sent as text); "esc" declines;
+"free:<text>" moves to the Type something row (Up/Down), types the text and sends it (the row must
+be empty before; the highlight must stay on that row for every piece); "multi:<d,d>" toggles exactly
+the boxes that differ from the wanted set, checks the checked set, presses Right (review page),
+checks that the review page's first option is "Submit answers" and submits with Enter, bound to the
+review page's own digest.
 Permission prompt: a digit within the options, or esc. Only an option whose full label (the label
 plus the rows under it) is exactly Yes or No (case-insensitive, trimmed) runs without --persist;
 every other option needs --persist. Review page: digit 1 (Submit answers), only when every answer
@@ -60,12 +56,16 @@ count, result, the chosen option label. The text is logged only with CREDO_OWNER
 If the log cannot be written (a FIFO, a symlink, a foreign or group-writable file), nothing is
 typed.
 
-Residual race (documented, not closed): a dialog that opens between the last check and an
-Enter can still receive that Enter. The window is one capture and one key press; the
-checks above narrow it, they cannot remove it.
+Residual risks (documented, not closed): a dialog that opens between the last check and an Enter
+can still receive that Enter (the window is one capture and one key press); a box whose top lies
+beyond the scrollback window (500 rows, CREDO_OWNER_TYPE_SCROLLBACK_ROWS) is not readable and is
+refused only when no row above the visible top is in view, so a crafted command with a fake box
+structure inside a box taller than the window is not detected; the digest binds content, not the
+session or the time (the connector binds each reply to both); the Enter after a paste is not
+verified against the text (a placeholder hides it); the answer and send tools trust the OS user.
 
-Timing overrides (tests and slow terminals): CREDO_OWNER_TYPE_TYPE_PAUSE,
-CREDO_OWNER_TYPE_KEY_PAUSE, CREDO_OWNER_TYPE_SETTLE, CREDO_OWNER_TYPE_CONFIRM_WAIT.
+Timing overrides (tests and slow terminals): CREDO_OWNER_TYPE_SETTLE, CREDO_OWNER_TYPE_CONFIRM_WAIT,
+CREDO_OWNER_TYPE_KEY_PAUSE, CREDO_OWNER_TYPE_TYPE_PAUSE, CREDO_OWNER_TYPE_SCROLLBACK_ROWS.
 
 Python 3 stdlib only.
 """
@@ -75,8 +75,10 @@ import json
 import os
 import re
 import stat
+import subprocess
 import sys
 import time
+import unicodedata
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
@@ -92,7 +94,7 @@ ENTER = "Enter"
 MAX_TEXT_CHARS = 4000
 DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 EXIT = {"delivered": 0, "answered": 0, "dry-run": 0, "shown": 0, "refused": 1, "failed": 1,
-        "unconfirmed": 4, "partly-sent": 4, "unknown": 3, "ambiguous": 3, "usage": 2}
+        "unconfirmed": 4, "unknown": 3, "ambiguous": 3, "usage": 2}
 # A permission option runs without --persist only when its full label (the label plus the rows
 # under it) is exactly one of these (case-insensitive, trimmed). Every other option, including
 # "don't ask again" and any wording not listed, keeps approval for later prompts: --persist.
@@ -100,8 +102,13 @@ PLAIN_ANSWERS = ("yes", "no")
 SUBMIT_LABEL = "Submit answers"
 # A dialog whose block cannot be read whole from the visible pane (its top rule may have scrolled
 # out of view) is refused by show and answer; it is answered at the PC.
-NOT_FITTING = "dialog-does-not-fit"
+NOT_FITTING = guard.REFUSAL_UNFIT
 NOT_FITTING_TEXT = "dialog does not fit the pane, answer at the PC"
+INVISIBLE = guard.REFUSAL_INVISIBLE
+INVISIBLE_TEXT = "dialog contains invisible/bidi characters, answer at the PC"
+CONFIRM_KEYS = ("Enter", "Space")
+PASTE_BUFFER = "credo-owner-type"
+SCROLLBACK_ENV = "CREDO_OWNER_TYPE_SCROLLBACK_ROWS"
 
 
 class UsageError(ValueError):
@@ -123,10 +130,6 @@ class Abort(Exception):
         Exception.__init__(self, reason)
         self.reason = reason
         self.typed = typed
-
-
-class PartlySent(Abort):
-    """A line break submitted the text typed so far; the rest was not typed."""
 
 
 def norm(text):
@@ -162,20 +165,19 @@ def _env_float(name, default):
 def timing():
     return {"type_pause": _env_float("CREDO_OWNER_TYPE_TYPE_PAUSE", wake.TYPE_PAUSE),
             "key_pause": _env_float("CREDO_OWNER_TYPE_KEY_PAUSE", 0.3),
-            "settle": _env_float("CREDO_OWNER_TYPE_SETTLE", 0.4),
+            "settle": _env_float("CREDO_OWNER_TYPE_SETTLE", 0.5),
             "confirm_wait": _env_float("CREDO_OWNER_TYPE_CONFIRM_WAIT", 3.0)}
 
 
 # --------------------------------------------------------------------------- text and keys
 
 def _bad_char(ch):
-    """Control characters (except the line break), C1 controls, U+2028/2029 line and
-    paragraph separators, and bidi overrides and isolates."""
+    """Control characters (except the line break), C1 controls, U+2028/2029 line and paragraph
+    separators, and every Unicode format character (category Cf: bidi overrides and isolates,
+    zero-width and other invisible characters)."""
     if ch == "\n":
         return False
-    o = ord(ch)
-    return (o < 32 or o == 127 or 0x80 <= o <= 0x9F or o in (0x2028, 0x2029)
-            or 0x202A <= o <= 0x202E or 0x2066 <= o <= 0x2069)
+    return unicodedata.category(ch) in ("Cc", "Zl", "Zp", "Cf")
 
 
 def validate_text(text):
@@ -188,24 +190,21 @@ def validate_text(text):
     if len(text) > MAX_TEXT_CHARS:
         return "the text is longer than %d characters" % MAX_TEXT_CHARS
     if any(_bad_char(ch) for ch in text):
-        return ("control, separator or bidi characters are not typed (tab, escape, carriage "
-                "return, U+0080 to U+009F, U+2028, U+2029, U+202A to U+202E, U+2066 to U+2069)")
+        return ("control, separator, bidi or invisible characters (category Cc, Zl, Zp, Cf) are not "
+                "typed: tab, escape, carriage return, U+2028, U+2029, bidi overrides and isolates, "
+                "zero-width characters")
     if any(line.endswith("\\") for line in text.split("\n")):
         return "a line ends with a backslash, which Claude Code reads as a line break; reword it"
     return None
 
 
-def keystrokes(text):
-    """Steps that type `text`: ("text", piece) for literal pieces of at most
-    wake.TYPE_CHUNK_CHARS characters, and a line break as ("text", backslash) followed by
-    ("key", Enter)."""
-    steps = []
-    for i, line in enumerate(text.split("\n")):
-        if i:
-            steps.append(("text", LINE_BREAK))
-            steps.append(("key", ENTER))
-        steps.extend(("text", piece) for piece in wake.type_chunks(line))
-    return steps
+def literal_args(piece):
+    """The send-keys arguments that type `piece` literally, one argument per call. tmux 3.2 reads a
+    trailing ";" of an argument as a command separator and drops it (measured), so every trailing ";"
+    is sent as its own argument "\\;", which types ";" (measured). The text before them has no
+    trailing ";" and is sent as it is."""
+    head = piece.rstrip(";")
+    return ([head] if head else []) + ["\\;"] * (len(piece) - len(head))
 
 
 def parse_answer(spec):
@@ -385,9 +384,15 @@ def choice_label(state, parsed):
 PROMPT_KEYS = {"ask": "ask", "permission": "perm", "review": "review"}
 
 
-def fits_dialog(text, state):
-    """True when the open dialog can be read whole from the visible pane (see guard.fits_pane)."""
-    return guard.fits_pane(text, state)
+def dialog_refusal(state):
+    """A Refused for a dialog that must not be read or answered (the top is not in view, or it holds
+    invisible or bidi characters), else None. Checked before every read of a dialog."""
+    code = state.get("refusal")
+    if code == NOT_FITTING:
+        return Refused(NOT_FITTING, NOT_FITTING_TEXT + "; nothing typed or answered")
+    if code == INVISIBLE:
+        return Refused(INVISIBLE, INVISIBLE_TEXT + "; nothing typed or answered")
+    return None
 
 
 def prompt_digest(state):
@@ -496,15 +501,60 @@ def pane_problem(t):
     return None
 
 
+def scrollback_rows():
+    raw = os.environ.get(SCROLLBACK_ENV)
+    try:
+        return max(1, int(raw)) if raw else guard.SCROLLBACK_ROWS
+    except ValueError:
+        return guard.SCROLLBACK_ROWS
+
+
+def _same_visible(window, visible):
+    """True when the window (scrollback plus visible area) ends with the visible capture."""
+    w = [r.rstrip() for r in (window or "").rstrip("\n").split("\n")]
+    v = [r.rstrip() for r in (visible or "").rstrip("\n").split("\n")]
+    return len(v) <= len(w) and w[len(w) - len(v):] == v
+
+
 def read_pane(t):
-    """(capture text, None) when the pane is usable, else (None, (code, reason))."""
+    """(capture, None) when the pane is usable, else (None, (code, reason)). The capture is the visible
+    text, carrying its scrollback window (guard.Capture) for the dialog top search."""
     problem = pane_problem(t)
     if problem:
         return None, problem
     text = guard.capture_exact(t["pane"], t["socket"])
     if text is None:
         return None, ("pane-missing", "the capture of the pane failed")
-    return text, None
+    window = guard.capture_window(t["pane"], t["socket"], scrollback_rows())
+    if window is None:
+        return None, ("pane-missing", "the capture of the pane with its scrollback failed")
+    if not _same_visible(window, text):
+        return None, ("pane-changed", "the pane changed while it was read; nothing typed, read it again")
+    return guard.with_window(text, window), None
+
+
+def paste_text(t, text):
+    """Load `text` into a named tmux buffer (stdin) and paste it into the own pane as one bracketed
+    paste (-p; -d drops the buffer afterwards). True when tmux accepted both calls."""
+    pane = t["pane"]
+    if not wake.PANE_RE.fullmatch(pane or ""):
+        return False
+    name = "%s-%d" % (PASTE_BUFFER, os.getpid())
+    base = guard.tmux_base(t.get("socket"))
+    try:
+        load = subprocess.run(base + ["load-buffer", "-b", name, "-"], input=text, encoding="utf-8",
+                              capture_output=True, timeout=10)
+        if load.returncode != 0:
+            return False
+        paste = subprocess.run(base + ["paste-buffer", "-p", "-d", "-b", name, "-t", pane],
+                               capture_output=True, timeout=10)
+        if paste.returncode == 0:
+            return True
+    except (OSError, subprocess.SubprocessError):
+        pass
+    # the buffer holds the owner's text: drop it when the paste did not take it (best effort)
+    subprocess.run(base + ["delete-buffer", "-b", name], capture_output=True, timeout=10)
+    return False
 
 
 def plan_of(t):
@@ -587,14 +637,16 @@ def finish(t, mode, chars, status, code, reason, text=None, log=True, label=None
 # --------------------------------------------------------------------------- send
 
 def plan_send(t, text, force):
-    """(before, appended): the input field before typing and what will be typed. Raises
-    Refused when nothing may be typed now."""
+    """(before, appended): the input field before pasting and what will be pasted. Raises Refused when
+    nothing may be typed now: a dialog is open, the field holds text without --force-append, or with
+    --force-append the cursor is not at the end of the field."""
     cap, problem = read_pane(t)
     if problem:
         raise Refused(problem[0], problem[1])
     state = guard.classify_pane(cap)
-    if not fits_dialog(cap, state):
-        raise Refused(NOT_FITTING, NOT_FITTING_TEXT + "; nothing typed")
+    ref = dialog_refusal(state)
+    if ref:
+        raise ref
     kind = state["kind"]
     if kind == "ask":
         raise Refused("ask-box", "an Ask box is open in this session; answer it with answer "
@@ -624,67 +676,6 @@ def plan_send(t, text, force):
         raise Refused("cursor-not-at-end", "the cursor is not at the end of the input field; move it "
                       "there in the pane; nothing typed")
     return before, (" " + text if before else text)
-
-
-def still_typing(t, before, typed):
-    """Raises Abort unless the pane is still an input box with exactly `before` + what was typed
-    so far. Checked before every literal piece, every line-break Enter and the final Enter: a
-    permission prompt or Ask box that opens mid-message would otherwise receive the characters
-    as answers (a typed digit selects an option, an Enter confirms the default)."""
-    text, problem = read_pane(t)
-    if problem:
-        raise Abort(problem[1], typed)
-    state = guard.classify_pane(text)
-    if state["kind"] != "input":
-        raise Abort("a dialog opened while typing", typed)
-    now = guard.input_content(text)
-    if now is None or norm(now) != norm(before) + norm("".join(typed)):
-        raise Abort("the input field changed while typing", typed)
-
-
-def verify_break(t, before, typed):
-    """After a line-break Enter the field must still hold the text typed so far. An empty field
-    means the Enter submitted it: partly sent (the rest was not typed)."""
-    text, problem = read_pane(t)
-    if problem:
-        raise Abort(problem[1], typed)
-    state = guard.classify_pane(text)
-    if state["kind"] != "input":
-        raise Abort("a dialog opened at the line break", typed)
-    now = guard.input_content(text)
-    if now is None:
-        raise Abort("no input box visible after the line break", typed)
-    if norm(now) == norm(before) + norm("".join(typed)):
-        return
-    if not norm(now):
-        raise PartlySent("a line break submitted the text typed so far", typed)
-    raise Abort("the input field changed at the line break", typed)
-
-
-def type_and_enter(t, before, appended, tm, typed):
-    """Type `appended`, confirm the input field, then Enter. `typed` collects what was sent
-    (a line break counts as "\\n" once Enter has converted the backslash). Returns the
-    status "delivered" or "unconfirmed"; raises Abort before the final Enter on any failure."""
-    plan = plan_of(t)
-    for kind, value in keystrokes(appended):
-        still_typing(t, before, typed)
-        if kind == "text":
-            typed.append(value)
-            if not wake.send_keys(plan, value, literal=True):
-                typed.pop()
-                raise Abort("typing failed", typed)
-            time.sleep(tm["type_pause"])
-        else:
-            if not wake.send_keys(plan, value):
-                raise Abort("the line break failed", typed)
-            typed[-1] = "\n"
-            time.sleep(tm["key_pause"])
-            verify_break(t, before, typed)
-    time.sleep(tm["settle"])
-    still_typing(t, before, typed)
-    if not wake.send_keys(plan_of(t), ENTER):
-        raise Abort("Enter could not be sent", typed)
-    return wait_cleared(t, tm)
 
 
 def _cleared(text, state):
@@ -731,13 +722,9 @@ def take_back(t, own, read_now, before, tm):
     return now is not None and norm(now) == norm(before)
 
 
-def input_now(state, text):
-    if state["kind"] != "input":
-        return None
-    return guard.input_content(text)
-
-
-def send(query, text, force=False, dry_run=False, all_profiles=False):
+def send(query, text, force=False, dry_run=False, all_profiles=False, expect=None):
+    """Pastes the text into the session's input field and presses Enter (see the module docstring).
+    expect is accepted for compatibility and not checked (owner decision Q56)."""
     mode = "force-append" if force else "normal"
     chars = len(text or "")
     usage = validate_text(text)
@@ -757,45 +744,46 @@ def send(query, text, force=False, dry_run=False, all_profiles=False):
     except Refused as exc:
         return finish(t, mode, chars, "refused", exc.code, str(exc), text, log=not dry_run)
     if dry_run:
-        steps = len(keystrokes(appended))
         return finish(t, mode, chars, "dry-run", "dry-run",
-                      "would type %d character(s) in %d step(s); nothing typed" % (chars, steps),
+                      "would paste %d character(s) and press Enter; nothing typed" % len(appended),
                       log=False)
-    return _type(t, mode, chars, text, before, appended)
+    return _deliver(t, mode, chars, text, appended, timing())
 
 
-def _type(t, mode, chars, text, before, appended):
-    tm = timing()
-    typed = []
-    try:
-        status = type_and_enter(t, before, appended, tm, typed)
-    except PartlySent as exc:
-        return finish(t, mode, chars, "partly-sent", "partly-sent",
-                      "partly sent: %s; the rest was not typed; check the pane" % exc.reason,
-                      text)
-    except Abort as exc:
-        return _failed(t, mode, chars, text, before, exc.typed, exc.reason, tm)
-    except Exception as exc:  # a tmux call that hangs or fails: never leave text behind
-        return _failed(t, mode, chars, text, before, typed, "error (%s)" % type(exc).__name__, tm)
-    if status == "delivered":
+def before_enter(t):
+    """None when the pane is an input box with no dialog open (Enter may be sent), else the reason."""
+    text, problem = read_pane(t)
+    if problem:
+        return problem[1]
+    state = guard.classify_pane(text)
+    ref = dialog_refusal(state)
+    if ref:
+        return str(ref)
+    if state["kind"] != "input" or guard.input_content(text) is None:
+        return "the pane shows %s" % describe(state)
+    return None
+
+
+def _deliver(t, mode, chars, text, appended, tm):
+    """Paste, settle, check the pane once more (no dialog), Enter, then check the field is empty."""
+    if not paste_text(t, appended):
+        return finish(t, mode, chars, "failed", "paste-failed",
+                      "the text could not be pasted; nothing submitted", text)
+    time.sleep(tm["settle"])
+    stop = before_enter(t)
+    if stop:
+        return finish(t, mode, chars, "failed", "dialog-after-paste",
+                      "%s after the paste; the text is in the input field, Enter not sent; check the "
+                      "pane" % stop, text)
+    if not send_one(t, ENTER):
+        return finish(t, mode, chars, "failed", "enter-failed",
+                      "Enter could not be sent; the text is in the input field; check the pane", text)
+    if wait_cleared(t, tm) == "delivered":
         return finish(t, mode, chars, "delivered", "delivered",
                       "text sent (%d character(s))" % chars, text)
     return finish(t, mode, chars, "unconfirmed", "unconfirmed",
                   "Enter sent, but the input field did not clear within %gs; check the pane "
                   "before sending again" % tm["confirm_wait"], text)
-
-
-def _failed(t, mode, chars, text, before, typed, reason, tm):
-    """An abort before the final Enter. Normal mode takes back its own text when the field
-    still reads exactly as before plus that text. Force mode never removes anything: the draft
-    and the appended text stay in the field and are reported."""
-    if mode == "force-append":
-        note = ("the appended text is left in the input field, not submitted; check the pane"
-                if typed else "nothing was typed")
-        return finish(t, mode, chars, "failed", "typing-aborted", "%s; %s" % (reason, note), text)
-    removed = take_back(t, "".join(typed), input_now, before, tm)
-    note = "own text taken back" if removed else "own text left in the input field, not submitted"
-    return finish(t, mode, chars, "failed", "typing-aborted", "%s; %s" % (reason, note), text)
 
 
 # --------------------------------------------------------------------------- show
@@ -810,8 +798,9 @@ def show(query, all_profiles=False):
     if problem:
         return finish(None, "show", 0, "refused", problem[0], problem[1], log=False)
     state = guard.classify_pane(cap)
-    if not fits_dialog(cap, state):
-        return finish(t, "show", 0, "refused", NOT_FITTING, NOT_FITTING_TEXT, log=False)
+    ref = dialog_refusal(state)
+    if ref:
+        return finish(t, "show", 0, "refused", ref.code, str(ref), log=False)
     result = finish(None, "show", 0, "shown", "shown", describe(state), log=False)
     result.update(session=t["session_id"], kind=state["kind"], digest=prompt_digest(state))
     result.update(details(state))
@@ -895,9 +884,10 @@ def answer(query, spec, dry_run=False, all_profiles=False, expect=None, persist=
         if problem:
             raise Refused(problem[0], problem[1])
         state = guard.classify_pane(cap)
+        ref = dialog_refusal(state)
+        if ref:
+            raise ref
         how = route(state, parsed)
-        if not fits_dialog(cap, state):
-            raise Refused(NOT_FITTING, NOT_FITTING_TEXT + "; nothing sent")
         if prompt_digest(state) != expect:
             raise Refused("prompt-mismatch", "the open prompt is not the one with digest --expect "
                           "(it changed since show, or the digest is wrong); nothing sent")
@@ -940,8 +930,9 @@ def reread_same(t, state, expect=None):
     if problem:
         return Refused(problem[0], problem[1])
     now = guard.classify_pane(text)
-    if not fits_dialog(text, now):
-        return Refused(NOT_FITTING, NOT_FITTING_TEXT)
+    ref = dialog_refusal(now)
+    if ref:
+        return ref
     if not same_prompt(state, now):
         return Refused("prompt-changed", "the open prompt changed since it was read")
     if expect is not None and prompt_digest(now) != expect:
@@ -971,16 +962,16 @@ def highlight_problem(t, bound, n):
 
 def run_steps(ctx, bound, steps, tm, expect=None):
     """Presses the steps in order. Before EVERY key the open prompt is read again and must still
-    be the bound one (and the digest given with --expect, for the first prompt); a highlight
-    check reads the pane and must show the target row. Returns None when every step went out,
-    else the finished result: refused before the first key, failed after it."""
+    be the bound one (and the digest given with --expect, for the first prompt). After a navigation
+    step the next Enter or Space is sent only when the highlight is on the target row, read right
+    before that key. Returns None when every step went out, else the finished result: refused before
+    the first key, failed after it."""
     t = ctx["t"]
     sent = 0
+    target = None
     for kind, value in steps:
         if kind == "cursor":
-            problem = highlight_problem(t, bound, value)
-            if problem:
-                return _done(ctx, "failed", "highlight-mismatch", problem)
+            target = value
             continue
         for key in value:
             stale = reread_same(t, bound, expect)
@@ -989,6 +980,11 @@ def run_steps(ctx, bound, steps, tm, expect=None):
                     return _done(ctx, "failed", stale.code, "%s after %d key(s); nothing more sent, "
                                  "check the pane" % (stale, sent))
                 return _done(ctx, "refused", stale.code, "%s; nothing sent" % stale)
+            if target is not None and key in CONFIRM_KEYS:
+                problem = highlight_problem(t, bound, target)
+                if problem:
+                    return _done(ctx, "failed", "highlight-mismatch", problem)
+                target = None
             if not send_one(t, key):
                 return _done(ctx, "failed", "key-failed", "a key could not be sent")
             sent += 1
@@ -1026,18 +1022,20 @@ def _free_now(state, text):
 
 
 def still_free(t, bound, typed):
-    """Raises Abort unless the bound Ask box is still open and its Type something row holds exactly
-    what was typed so far. Checked before every piece and before the Enter, as still_typing does
-    for the input field; the digest ignores the Type something text, so typing does not count as a
-    change of the prompt."""
+    """Raises Abort unless the bound Ask box is still open, the highlight is on its Type something row
+    and that row holds exactly what was typed so far. Checked before every piece and before the Enter.
+    The digest ignores the Type something text, so typing does not count as a change of the prompt."""
     text, problem = read_pane(t)
     if problem:
         raise Abort(problem[1], typed)
     state = guard.classify_pane(text)
-    if not fits_dialog(text, state):
-        raise Abort(NOT_FITTING_TEXT, typed)
+    ref = dialog_refusal(state)
+    if ref:
+        raise Abort(str(ref), typed)
     if not same_prompt(bound, state):
         raise Abort("the Ask box changed while typing", typed)
+    if state["ask"]["cursor"] != bound["ask"]["type_n"]:
+        raise Abort("the highlight left the Type something row while typing", typed)
     if norm(_free_now(state, text)) != norm("".join(typed)):
         raise Abort("the Ask box changed while typing", typed)
 
@@ -1064,7 +1062,7 @@ def _answer_free(ctx, state, tm):
         for piece in wake.type_chunks(text):
             still_free(t, state, typed)
             typed.append(piece)
-            if not wake.send_keys(plan_of(t), piece, literal=True):
+            if not all(wake.send_keys(plan_of(t), arg, literal=True) for arg in literal_args(piece)):
                 typed.pop()
                 raise Abort("typing failed", typed)
             time.sleep(tm["type_pause"])
@@ -1140,7 +1138,7 @@ def _answer_multi(ctx, state, steps, targets, tm):
     if ask.get("tabs", 1) > 1:
         # a tabbed box: the review page of all questions is submitted with its own call
         return _answered(ctx)
-    stopped = run_steps(ctx, nxt, [("keys", ["1"])], tm, None)
+    stopped = run_steps(ctx, nxt, [("keys", ["1"])], tm, prompt_digest(nxt))
     if stopped:
         return stopped
     if wait_changed(t, nxt, tm) == "answered":

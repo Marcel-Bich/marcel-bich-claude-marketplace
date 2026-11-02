@@ -10,11 +10,11 @@ prompt, into one of the owner's own Claude Code sessions (logic: credo_owner_typ
 
   credo-owner-type.py send --session <session-id|name> (--text T | --stdin)
                            [--force-append] [--dry-run] [--json] [--all-profiles]
-      Types T into the session's input field and presses Enter. The input field must be
-      empty (a busy session is fine: the text is queued by Claude Code). With
-      --force-append the field may hold text: " " + T is appended; the existing text is sent
-      with it and never deleted by this tool. --stdin reads the text from stdin (one trailing
-      newline is dropped).
+      Pastes T into the session's input field (one bracketed paste, line breaks kept) and presses
+      Enter. The input field must be empty; with --force-append it may hold text, and " " + T is
+      appended at its end (the existing text is sent with it and never changed by this tool). A busy
+      session is fine: Claude Code queues the text. --expect is accepted and not checked. --stdin
+      reads the text from stdin (one trailing newline is dropped).
 
   credo-owner-type.py answer --session <session-id|name> --ask SPEC [--expect DIGEST]
                              [--persist] [--dry-run] [--json] [--all-profiles]
@@ -32,8 +32,8 @@ prompt, into one of the owner's own Claude Code sessions (logic: credo_owner_typ
 
 Exit codes: 0 delivered, answered, shown or dry-run; 1 refused or failed (nothing submitted,
 or own text taken back, or left and reported); 2 usage (text or answer not valid); 3 unknown
-or ambiguous session; 4 sent but not confirmed, or partly sent (check the pane before sending
-again: the text may already be submitted).
+or ambiguous session; 4 sent but not confirmed (check the pane before sending again: the text
+may already be submitted).
 
 The session is looked up in the session registry (the active profile, else --all-profiles),
 and only a live session whose pane still belongs to it is used. Every attempt is appended to
@@ -75,6 +75,7 @@ def build_parser():
     source.add_argument("--stdin", action="store_true", help="read the text from stdin")
     send.add_argument("--force-append", action="store_true",
                       help="append after text already in the input field (never deletes it)")
+    send.add_argument("--expect", metavar="DIGEST", help="accepted and not checked")
     answer = sub.choices["answer"]
     answer.add_argument("--ask", required=True, help="the answer, see the header")
     answer.add_argument("--expect", metavar="DIGEST",
@@ -102,7 +103,7 @@ def run(args):
     if args.cmd == "send":
         text = text_from_args(args)
         return ot.send(args.session, text, force=args.force_append, dry_run=args.dry_run,
-                       all_profiles=args.all_profiles)
+                       all_profiles=args.all_profiles, expect=args.expect)
     return ot.answer(args.session, args.ask, dry_run=args.dry_run, all_profiles=args.all_profiles,
                      expect=args.expect, persist=args.persist)
 
@@ -115,8 +116,9 @@ def format_show(result):
     if result.get("digest"):
         lines.append("digest: %s" % result["digest"])
     if result.get("block"):
+        # every row is prefixed, so no row of the agent text can look like the end marker
         lines.append("--- prompt, as the box shows it (top rule to footer) ---")
-        lines += result["block"]
+        lines += ["| " + row for row in result["block"]]
         lines.append("--- end of prompt ---")
     if result.get("cursor") is not None:
         lines.append("cursor: %s" % result["cursor"])
