@@ -32,4 +32,11 @@ def redact:
 
 def scrub: walk(if type == "string" then redact else . end);
 
-.event // empty | scrub
+# Identifier fields the sink needs to route an event are never masked (a session id is a
+# UUID and would otherwise hit rule 8). They are set by the hook, not by free text.
+def ids: ["type", "session_id", "ts", "tool_use_id", "chat_id", "agent_type", "agent_id"];
+
+.event // empty
+| . as $ev
+| (with_entries(select(.key as $k | ids | index($k) | not)) | scrub)
+  + ($ev | with_entries(select(.key as $k | ids | index($k))))

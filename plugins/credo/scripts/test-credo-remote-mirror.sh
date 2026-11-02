@@ -17,7 +17,7 @@ HOOKS_JSON="$PLUGIN/hooks/hooks.json"
 TEMPLATE="$PLUGIN/templates/config.default.yaml"
 CONFIG_SH="$PLUGIN/scripts/credo-config.sh"
 
-SID="11111111-2222-3333-4444-555555555555"
+SID="aaaaaaaa-1111-2222-3333-cccccccccccc"  # letters and digits: a real session id shape (must never be masked)
 CWD="/work/acme-task"
 
 # Emoji as UTF-8 bytes, so this test source stays ASCII.
