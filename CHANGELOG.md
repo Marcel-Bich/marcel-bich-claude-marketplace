@@ -2,11 +2,57 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-11
 
+## dogma
+
+### v1
+
+#### v1.47
+
+##### v1.47.5
+
+###### Changed
+
+- Auto worktree cleanup option names the lossless case: a merged worktree whose only leftovers are `.credo/` changes already present in the main checkout is removed too; setup symlinks into the main checkout do not count as changes
+
+##### v1.47.4
+
+###### Fixed
+
+- Command substitutions inside arithmetic expansion are checked like top-level ones
+
+##### v1.47.3
+
+###### Added
+
+- Session-start warning when `jq` is missing: dogma's protection hooks (delete guard, git permissions, dependency verification) are off without it, so the user is urged to install jq (`hooks/jq-missing-warn.sh`)
+
+###### Fixed
+
+- Redirect-like text in an unquoted heredoc body of `cat` or `tee` (`see <dogma>/x`, `a>/x`) is no longer denied as a redirect onto a critical path; command substitutions and backticks in the body are still checked
+
+## hydra
+
+### v0
+
+#### v0.3
+
+##### v0.3.1
+
+###### Changed
+
+- `/hydra:cleanup` names the lossless case: a merged worktree whose only leftovers are setup symlinks into the main checkout or `.credo/` changes already present in the main checkout is removed too, under credo's owner setting
+
 ## credo
 
 ### v0
 
 #### v0.84
+
+##### v0.84.22
+
+###### Changed
+
+- Veto codes (V) only for decisions the owner notices in the product (behaviour, visible text, money, taste, data); internal process, measurement, test-set and tooling decisions go only into the History. The agent closes a veto itself when its item is done or verified and nothing of the decision is still open, or when later work superseded it, and notes the closure in the handoff. The periodic reminder checks every open veto against its item status.
 
 ##### v0.84.21
 
@@ -165,28 +211,6 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 - A bound network whose Windows network category is Public (outside `windows_profiles`) gets the same hint, telling the user where to switch the network to Private.
 - `check` prints a hint line for both cases, and the new `network-hint` subcommand prints the pending agent text for the SessionStart hook.
 - A router refused for a subnet cannot be bound again: `bind` refuses it and `init` offers no bind command for it. `bind` also refuses a profile name that another router already uses, instead of overwriting that profile.
-
-## dogma
-
-### v1
-
-#### v1.47
-
-##### v1.47.4
-
-###### Fixed
-
-- Command substitutions inside arithmetic expansion are checked like top-level ones
-
-##### v1.47.3
-
-###### Added
-
-- Session-start warning when `jq` is missing: dogma's protection hooks (delete guard, git permissions, dependency verification) are off without it, so the user is urged to install jq (`hooks/jq-missing-warn.sh`)
-
-###### Fixed
-
-- Redirect-like text in an unquoted heredoc body of `cat` or `tee` (`see <dogma>/x`, `a>/x`) is no longer denied as a redirect onto a critical path; command substitutions and backticks in the body are still checked
 
 ## limit
 
