@@ -39,6 +39,7 @@ Python 3 stdlib only.
 import re
 import subprocess
 import time
+import unicodedata
 
 RULE_CHARS = set("─━╭╮╰╯")
 MARKERS = ("❯", ">")
@@ -290,7 +291,224 @@ def _no_box_reason(lines):
     return "no empty prompt input box visible (dialog, menu or not Claude Code)"
 
 
-def assess(text, expect=None, block_on_background=True):
+# --- AskUserQuestion box, review page and permission prompt -------------------------
+# Layout measured on a real pane (Claude Code 2.1.316): a rule, a header row with a tab
+# marker (box for an unanswered question, crossed box for multi select), the question,
+# the numbered options (the highlighted one starts with the marker), a description row
+# under each option, the "Type something" row (always the option before the rule), a rule,
+# "Chat about this" and the footer. Multi select adds "[ ]" / "[✔]" boxes to the options.
+# The detector needs the footer AND the chat row AND the numbered options 1..K, so
+# DIALOG_RE hits alone (a picker, a permission prompt, a transcript quote) never count.
+# The footer may carry extra hints between the navigation and the cancel part (measured:
+# "ctrl+g to edit in VS Code" in an IDE session), so only the first and last parts are fixed.
+ASK_FOOTER_RE = re.compile(
+    r"^\s*Enter to select\s+·\s+↑/↓ to navigate\s+(?:·\s+.+?\s+)?·\s+Esc to cancel\s*$")
+ASK_HEADER_RE = re.compile(r"[☐☒]\s+([^\s].*?)(?:\s{2,}|\s*$)")
+# An option row: at most two spaces of indent, the marker on the highlighted row, the number,
+# an optional checkbox (multi select). Description rows are indented five spaces and never
+# match, so a description that starts with a digit does not count as an option.
+ASK_OPTION_RE = re.compile(r"^\s{0,2}(❯?)\s?(\d{1,2})\. (?:\[([ ✔])\] )?(\S.*?)\s*$")
+CHAT_RE = re.compile(r"^\s*(\d{1,2})\. Chat about this\s*$")
+REVIEW_HEAD_RE = re.compile(r"^\s*Review your answers\s*$")
+REVIEW_READY_RE = re.compile(r"^\s*Ready to submit your answers\?\s*$")
+REVIEW_ANSWER_RE = re.compile(r"^\s*●\s+(\S.*?)\s*$")
+REVIEW_VALUE_RE = re.compile(r"^\s*→\s+(\S.*?)\s*$")
+# A slash-command menu under the input box ("  /compact   Clear history ...").
+MENU_ROW_RE = re.compile(r"^\s+/[A-Za-z][\w-]*\s{2,}\S")
+
+
+def _options(rows):
+    """Numbered option rows of `rows`, in order: n, cursor (the marker is on the row),
+    checked (None without a checkbox, else bool) and label."""
+    out = []
+    for row in rows:
+        m = ASK_OPTION_RE.match(row)
+        if m:
+            out.append({"n": int(m.group(2)), "cursor": m.group(1) == "❯",
+                        "checked": None if m.group(3) is None else m.group(3) == "✔",
+                        "label": m.group(4)})
+    return out
+
+
+def _cursor_n(opts):
+    """The n of the single highlighted option, else None."""
+    marked = [o["n"] for o in opts if o["cursor"]]
+    return marked[0] if len(marked) == 1 else None
+
+
+def _prev_nonblank(rows, idx, limit=4):
+    for j in range(idx - 1, max(-1, idx - 1 - limit), -1):
+        if rows[j].strip():
+            return j
+    return None
+
+
+def _prev_rule(rows, idx, limit=60):
+    for j in range(idx - 1, max(-1, idx - 1 - limit), -1):
+        if is_rule(rows[j]):
+            return j
+    return None
+
+
+def _plain_rows(lines):
+    return [strip_ansi(line).rstrip() for line in lines]
+
+
+def ask_box(lines):
+    """The AskUserQuestion box of a capture, or None. Returns a dict: question, header,
+    multi, options (n, label, checked; without the Type something row), type_n,
+    type_label (the typed text once free text is entered), type_checked, chat_n and
+    cursor (the n of the highlighted row)."""
+    rows = _plain_rows(lines)
+    foot = next((i for i in range(len(rows) - 1, -1, -1) if ASK_FOOTER_RE.match(rows[i])), None)
+    if foot is None:
+        return None
+    chat = _prev_nonblank(rows, foot)
+    if chat is None or not CHAT_RE.match(rows[chat]):
+        return None
+    chat_n = int(CHAT_RE.match(rows[chat]).group(1))
+    mid = _prev_nonblank(rows, chat)
+    if mid is None or not is_rule(rows[mid]):
+        return None
+    top = _prev_rule(rows, mid)
+    if top is None:
+        return None
+    region = rows[top + 1:mid]
+    body = [r for r in region if r.strip()]
+    if len(body) < 3:
+        return None
+    head = ASK_HEADER_RE.search(body[0])
+    if head is None:
+        return None
+    opts = _options(region)
+    k = chat_n - 1
+    if k < 2 or [o["n"] for o in opts] != list(range(1, k + 1)):
+        return None
+    boxed = [o["checked"] is not None for o in opts]
+    if any(boxed) and not all(boxed):
+        return None
+    cursor = _cursor_n(opts)
+    if cursor is None:
+        return None
+    type_row = opts[-1]
+    return {
+        "question": body[1].strip(), "header": head.group(1), "multi": all(boxed),
+        "options": [{"n": o["n"], "label": o["label"], "checked": o["checked"]} for o in opts[:-1]],
+        "type_n": k, "type_label": type_row["label"], "type_checked": type_row["checked"],
+        "chat_n": chat_n, "cursor": cursor,
+    }
+
+
+def review_page(lines):
+    """The review page of a multi-question or multi-select Ask box, or None. Returns
+    answers (a list of (question, [labels])), options (labels) and cursor (n)."""
+    rows = _plain_rows(lines)
+    head = next((i for i in range(len(rows) - 1, -1, -1) if REVIEW_HEAD_RE.match(rows[i])), None)
+    if head is None:
+        return None
+    ready = next((i for i in range(head, len(rows)) if REVIEW_READY_RE.match(rows[i])), None)
+    if ready is None:
+        return None
+    answers = []
+    for i in range(head, ready):
+        m = REVIEW_ANSWER_RE.match(rows[i])
+        j = _next_nonblank(rows, i)
+        value = REVIEW_VALUE_RE.match(rows[j]) if j is not None else None
+        if m and value:
+            answers.append((m.group(1), [part.strip() for part in value.group(1).split(",")]))
+    opts = _options(rows[ready:])
+    if len(opts) < 2 or [o["n"] for o in opts] != list(range(1, len(opts) + 1)):
+        return None
+    cursor = _cursor_n(opts)
+    if cursor is None:
+        return None
+    return {"answers": answers, "options": [o["label"] for o in opts], "cursor": cursor}
+
+
+def _next_nonblank(rows, idx, limit=4):
+    for j in range(idx + 1, min(len(rows), idx + 1 + limit)):
+        if rows[j].strip():
+            return j
+    return None
+
+
+def permission_prompt(lines):
+    """A permission prompt (also one a background agent raises), or None. Returns the option
+    labels and the cursor (n). Needs the question line, the numbered options from 1 and the
+    "Esc to cancel" footer below it."""
+    rows = _plain_rows(lines)
+    start = max(0, len(rows) - 60)
+    # the question line, not an option that repeats its words ("Yes, and don't ask again")
+    p = next((i for i in range(len(rows) - 1, start - 1, -1)
+              if PERMISSION_RE.search(rows[i]) and not ASK_OPTION_RE.match(rows[i])), None)
+    if p is None or not any("Esc to cancel" in r for r in rows[p:]):
+        return None
+    opts = _options(rows[p:])
+    if len(opts) < 2 or [o["n"] for o in opts] != list(range(1, len(opts) + 1)):
+        return None
+    cursor = _cursor_n(opts)
+    if cursor is None:
+        return None
+    return {"options": [o["label"] for o in opts], "cursor": cursor}
+
+
+def _text_after_cell(row, x):
+    """The part of `row` from display cell x on (a wide character counts 2 cells)."""
+    pos = 0
+    for i, ch in enumerate(row):
+        if unicodedata.combining(ch):
+            continue
+        if pos >= x:
+            return row[i:]
+        pos += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return ""
+
+
+def cursor_at_end(text, cursor):
+    """True when the tmux cursor (x, y) sits on the last row of the input box with nothing but
+    padding after it. A capture with -N pads each row to the pane width, so the row's length
+    is not the end of the text: only the characters after the cursor count."""
+    lines = (text or "").split("\n")
+    box = find_input_box(lines)
+    if box is None or cursor is None:
+        return False
+    last = box[1] - 1
+    if cursor[1] != last:
+        return False
+    return not _text_after_cell(strip_ansi(lines[last]), cursor[0]).strip()
+
+
+def classify_pane(text):
+    """What the pane shows, from one capture. kind is one of: ask, review, permission (the
+    option box of a question or prompt is open), input (an input box with no dialog next to
+    it; typed or empty, see the caller), dialog (a picker, menu or other dialog next to the
+    input box), unknown (neither). busy is True while a turn runs above the box."""
+    lines = (text or "").rstrip("\n").split("\n")
+    rows = _plain_rows(lines)
+    review = review_page(lines)
+    if review is not None:
+        return {"kind": "review", "busy": False, "reason": "review page", "review": review}
+    ask = ask_box(lines)
+    if ask is not None:
+        return {"kind": "ask", "busy": False, "reason": "Ask box", "ask": ask}
+    perm = permission_prompt(lines)
+    if perm is not None:
+        return {"kind": "permission", "busy": False, "reason": "permission prompt", "perm": perm}
+    box = find_input_box(lines)
+    if box is None:
+        return {"kind": "unknown", "busy": False, "reason": _no_box_reason(lines)}
+    top, bottom = box
+    busy = any(SPINNER_LINE_RE.search(rows[i]) or BUSY_ANY_RE.search(rows[i])
+               for i in range(max(0, top - BUSY_SCAN_ABOVE), top))
+    if any(MENU_ROW_RE.match(rows[i]) for i in range(bottom + 1, len(rows))):
+        return {"kind": "dialog", "busy": busy, "reason": "slash-command menu open"}
+    safe, reason = assess(text, allow_busy=True, block_on_background=False)
+    if reason.startswith("dialog or menu open"):
+        return {"kind": "dialog", "busy": busy, "reason": reason}
+    return {"kind": "input", "busy": busy, "reason": reason}
+
+
+def assess(text, expect=None, block_on_background=True, allow_busy=False):
     """(safe, reason) for one capture-pane snapshot. safe only when an input box is
     visible, no busy indicator is shown, no dialog, picker or menu hint is visible near
     the box, the footer under the box shows no background shells / agents (only when
@@ -306,6 +524,8 @@ def assess(text, expect=None, block_on_background=True):
     top, bottom = box
     plain = [strip_ansi(l) for l in lines]
     for idx in range(max(0, top - BUSY_SCAN_ABOVE), top):
+        if allow_busy:
+            break  # owner delivery: a turn running is fine, typing only edits the input
         if SPINNER_LINE_RE.search(plain[idx]) or BUSY_ANY_RE.search(plain[idx]):
             return False, "busy: %s" % plain[idx].strip()[:80]
     for idx in range(max(0, top - DIALOG_SCAN_ABOVE), len(plain)):
@@ -425,6 +645,20 @@ def pane_info(pane, socket=None):
 def capture(pane, socket=None):
     """Visible pane text with SGR attributes (capture-pane -p -e), or None."""
     return _run(tmux_base(socket) + ["capture-pane", "-p", "-e", "-t", pane])
+
+
+def capture_exact(pane, socket=None):
+    """As capture(), with -N: trailing spaces are kept, so a row's width matches the cursor."""
+    return _run(tmux_base(socket) + ["capture-pane", "-p", "-e", "-N", "-t", pane])
+
+
+def pane_cursor(pane, socket=None):
+    """(x, y) of the pane cursor (tmux cursor_x, cursor_y), or None."""
+    out = _run(tmux_base(socket) + ["display-message", "-p", "-t", pane, "#{cursor_x},#{cursor_y}"])
+    parts = (out or "").strip().split(",")
+    if len(parts) != 2 or not all(p.isdigit() for p in parts):
+        return None
+    return int(parts[0]), int(parts[1])
 
 
 def probe_pane(pane, socket=None, expect=None, block_on_background=True):
