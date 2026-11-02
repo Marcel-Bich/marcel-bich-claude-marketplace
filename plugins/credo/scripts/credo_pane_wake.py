@@ -314,15 +314,19 @@ def send_whole(pane, text):
         time.sleep(pane.tim["key_pause"])
     except Cancelled as exc:
         stopped = exc
-    cap = guard.capture(plan["pane"], plan.get("socket"))
-    content = guard.input_content(cap) if cap is not None else None
-    if content is None:
-        raise StepFailed("failed: input not visible", "no input box after the burst")
-    if not content:
-        raise StepFailed("failed: nothing typed", "the input field is still empty")
-    safe, why = guard.assess(cap, expect=content, block_on_background=False)
-    if not safe:
-        raise StepFailed("failed: pre-Enter check", why)
+    # Best effort (owner Q56): the input field is NOT read back after the burst. Reading it
+    # depends on the screen layout (box lines, height, pane size) and a failed read left the
+    # text stuck. Only a visible dialog withholds Enter, so Enter never answers a dialog.
+    cap = guard.capture(plan["pane"], plan.get("socket")) or ""
+    tail = [guard.strip_ansi(l) for l in cap.rstrip("\n").split("\n")[-guard.NO_BOX_SCAN:]]
+    own = "".join(text.split())
+    for line in tail:
+        row = "".join(line.split()).lstrip("❯>")
+        if row and row in own:
+            continue  # a row of the typed text itself (it may quote dialog words)
+        if guard.PERMISSION_RE.search(line) or guard.DIALOG_RE.search(line):
+            raise StepFailed("failed: dialog open", "a dialog opened, Enter withheld: %s"
+                             % line.strip()[:80])
     if not send_keys(plan, "Enter"):
         raise StepFailed("failed: send-keys Enter", "Enter after the reminder failed")
     log("Enter sent after the reminder burst")

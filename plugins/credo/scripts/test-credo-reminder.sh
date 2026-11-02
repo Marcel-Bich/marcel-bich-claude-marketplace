@@ -635,7 +635,7 @@ set_state "$SID_D2"; mode_of "$SID_D2" autonomous
 S0="$(n_submits)"; EN0="$(grep -c '' "$FAKE_ENTER_LOG")"; rm -f "$FAKE_NOBOX_FLAG"
 export FAKE_NOBOX_ON_TYPE=1
 hook start "$SID_D2" startup
-wait_for 60 grep -q "no input box after the burst" "$CFG/credo/reminder-$SID_D2.log"; ok "dialog after the burst: the reminder is skipped" "$?"
+wait_for 60 grep -q "Enter withheld" "$CFG/credo/reminder-$SID_D2.log"; ok "dialog after the burst: the reminder is skipped" "$?"
 stop_worker "$SID_D2"
 unset FAKE_NOBOX_ON_TYPE; rm -f "$FAKE_NOBOX_FLAG"
 check "dialog after the burst: no Enter sent" "$EN0" "$(grep -c '' "$FAKE_ENTER_LOG")"
