@@ -6,6 +6,12 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.84
 
+#### v0.84.39
+
+##### Fixed
+
+- Autonomous mode with the keep-alive paused: a new PreToolUse hook (`hooks/credo-paused-wake-guard.sh`) denies `ScheduleWakeup` while `credo/autonomy/<session>/paused` exists, and the per-prompt mode line now says "keep-alive PAUSED: no Ask tool, no wake-ups, react to messages only" instead of asking for wake-ups.
+
 #### v0.84.38
 
 ##### Changed
