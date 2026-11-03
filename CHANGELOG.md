@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.34
+
+###### Changed
+
+- `deploy fastfast` deploys to the target(s) agreed for the project (for example test and live), not always to both; if it is unclear what goes where (stage, prod, both), the target is clarified first.
+
 ##### v0.84.33
 
 ###### Added
