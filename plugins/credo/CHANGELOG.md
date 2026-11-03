@@ -6,6 +6,12 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.84
 
+#### v0.84.32
+
+##### Fixed
+
+- Remote mirror: a remote chat prompt that arrives as a paste (credo-owner-type send) is wrapped by Claude Code as `<pasted_content id="...">`; the wrapper is stripped before the `[remote chat <id>]` check, so the reply is mirrored.
+
 #### v0.84.31
 
 ##### Fixed
