@@ -359,8 +359,10 @@ def same_code(pid):
 
 
 def worker_running(state_path):
+    """True when a worker of THIS credo version runs. A worker of an older version counts as
+    not running, so the turn hook calls ensure_worker, which replaces it (#151)."""
     pid = read_state(state_path).get("worker_pid")
-    return isinstance(pid, int) and csr.alive(pid) and is_worker(pid)
+    return isinstance(pid, int) and csr.alive(pid) and is_worker(pid) and same_code(pid)
 
 
 def stop_pid(pid):
