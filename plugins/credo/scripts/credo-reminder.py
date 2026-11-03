@@ -23,7 +23,8 @@ no worker starts.
 Arming - every real user turn of a session is counted (UserPromptSubmit, hook
 hooks/credo-reminder.sh turn). The 10th one arms the session for good; the state is on
 disk per session id, so it survives a compact and a resume (same session id). Arming sets
-the reference point: the first reminder comes 10 turns or 60 minutes after it. Not counted:
+the reference point: the first reminder comes 10 turns or 60 minutes after it. In autonomous mode with the
+keep-alive paused (the owner is present) only turns count, never minutes. Not counted:
 injected reminders (prefix "[credo-reminder]"), a bare ".", the credo automated prompts
 (self-wake dot, autonomy wake marker, task and system notifications, cross-session messages
 and notices) and blank prompts.
@@ -339,6 +340,13 @@ def current_mode(plan):
                                    [plan["session_id"]])
 
 
+def autonomy_paused(plan):
+    """True when this session's autonomy keep-alive is paused (credo/autonomy/<sid>/paused)."""
+    sids = plan.get("state_sids") or [plan["session_id"]]
+    return any(os.path.exists(os.path.join(plan["config_dir"], "credo", "autonomy", s, "paused"))
+               for s in sids)
+
+
 def is_worker(pid):
     argv = csr.read_cmdline(pid)
     return "_worker" in argv and any(a.endswith("credo-reminder.py") for a in argv)
@@ -567,6 +575,9 @@ def worker(plan_path):
             wait_for_owner(pane)
             mode = current_mode(plan)
             trig = triggers.get(mode) if mode else None
+            if trig and mode == "autonomous" and autonomy_paused(plan):
+                # autonomous mode with keep-alive paused (owner present): turns only, no time
+                trig = {"turns": trig.get("turns") or ARM_TURNS, "minutes": None}
             if trig and due_now(plan, trig):
                 attempt(pane, plan, text, mode, trig)
             time.sleep(pane.tim["poll"])
