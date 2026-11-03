@@ -6,6 +6,12 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.84
 
+#### v0.84.38
+
+##### Changed
+
+- Periodic reminder: in autonomous mode with the keep-alive paused (owner present) only turns count (default 10), never minutes.
+
 #### v0.84.37
 
 ##### Changed
