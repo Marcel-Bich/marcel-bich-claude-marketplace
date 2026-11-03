@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.35
+
+###### Changed
+
+- `deploy fastfast` wording is generic: the deploy target comes from a project rule (for example in `.credo/RULES.md`); no example targets in credo's texts.
+
 ##### v0.84.34
 
 ###### Changed
