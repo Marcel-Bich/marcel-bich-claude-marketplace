@@ -6,6 +6,12 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.84
 
+#### v0.84.33
+
+##### Added
+
+- Shorthand `fastfast`: speed order anywhere in a message. Do it immediately and skip audits, full test suites, verify runs and detours (commit gate and hard safety rules stay); catch up the checks afterwards in the item. `deploy fastfast` deploys the current main to live/prod and the test instance through the project's deploy path.
+
 #### v0.84.32
 
 ##### Fixed
