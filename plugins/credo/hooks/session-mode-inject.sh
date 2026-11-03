@@ -81,7 +81,11 @@ case "$mode" in
         rules="passive: handle most work alongside, actively push every item to a 100 percent GO, less is more (only ambiguous items via the Ask tool), no keep-alive. Load skill session-passive."
         ;;
     autonomous)
+        if [[ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/autonomy/${session_id}/paused" ]]; then
+            rules="autonomous, keep-alive PAUSED (the owner is present): never use the Ask tool, decide by the agreements and best effort; do NOT schedule ScheduleWakeup or wake markers (a hook blocks them while paused); react to owner and peer messages only. Load skill session-autonomous."
+        else
         rules="autonomous: work approved GO items only (plus agent-owned clarify items decided under the agent decision rule, items skill), hook-enforced keep-alive (a Stop hook blocks a stop with no scheduled wake; schedule your own ScheduleWakeup plus wake marker), budget caps enforced, ntfy per task and question, secure progress via compact-plus. Load skill session-autonomous."
+        fi
         ;;
     *)
         # Unknown value -> do not invent a rule set, stay silent.

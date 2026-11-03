@@ -3,6 +3,16 @@
   "hooks": {
     "PreToolUse": [
       {
+        "matcher": "ScheduleWakeup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-paused-wake-guard.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Task|Agent|Bash|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch",
         "hooks": [
           {
