@@ -45,15 +45,21 @@ result and every owner message it starts builders for buildable `2_go` items wit
 files, up to `builders.max_per_area` per independent area (overlap check and resource gate
 as always). Active mode has no idle-capacity rule.
 
-### Speed orders (fastfast) keep the caps
+### Speed orders (fastfast) and the builder cap
 
-A "fastfast" order never adds a builder slot. The builder cap (`builders.max_per_area`, or
-a lower cap in the repo's `.credo/RULES.md`), the same-files-never-parallel rule (item
-`touches:` overlap) and the resource gate stay in force. fastfast only skips audit, full
-suite and verify, and moves the item to the FRONT of the build queue: when every slot is
-taken it waits for the next free one (it may jump ahead of queued items, never stop a running
-builder). Builders of a fastfast item run only the relevant/changed tests; the full suite
-runs once at merge.
+fastfast skips audit, full suite and verify and moves the item to the FRONT of the build
+queue. The builder cap (`builders.max_per_area`, or a lower cap in the repo's
+`.credo/RULES.md`), the same-files-never-parallel rule (item `touches:` overlap) and the
+resource gate normally stay in force. One exception: a fastfast item MAY get ONE extra
+builder slot above the cap.
+- The main agent grants it alone only when the case is clearly simple: (a) its `touches:` do
+  not overlap any running builder, (b) no migration and no shared hot file, (c) a small,
+  bounded change.
+- In doubt it asks the owner first (Ask tool in an interactive session, naming the running
+  builders). In an autonomous run with the owner absent it does not ask: the item waits for
+  the next free slot (it may jump ahead of queued items, never stop a running builder).
+- The resource gate always stays in force. Builders of a fastfast item run only the
+  relevant/changed tests; the full suite runs once at merge.
 
 ## Default batch workflow (measured)
 
