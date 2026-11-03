@@ -340,6 +340,15 @@ check "remote: prompt without a reply sends nothing" 2 "$(count)"
 run "remote: unreadable transcript" stop "$(stop_payload "All green." "$TMP/missing.jsonl")"
 check "remote: unreadable transcript sends nothing extra" 2 "$(count)"
 
+new_case
+tr_prompt u-p1 '<pasted_content id="ab12cd">
+[remote chat c-77] pasted status?
+</pasted_content>'
+tr_text a-p1 "Pasted green."
+run "remote: pasted prompt" stop "$(stop_payload "Pasted green." "$TR")"
+check "remote: pasted prompt is mirrored" 1 "$(count)"
+check "remote: pasted prompt chat id" c-77 "$(jqf '.chat_id')"
+
 # --- robustness: never break the session ---------------------------------------
 echo "== redaction (secret-looking text never leaves the hook)"
 check "redaction program present" 0 "$([ -f "$REDACT" ] && echo 0 || echo 1)"

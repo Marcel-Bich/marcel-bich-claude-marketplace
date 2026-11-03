@@ -193,7 +193,9 @@ transcript_summary() {
         | ([range(0; $e | length) | select($e[.] | owner_prompt)] | last) as $p
         | ([range(0; $e | length) | select($e[.].type == "assistant" and ($e[.] | has_text))] | last) as $a
         | (if $a == null then "" else ($e[$a].message.content | text_of) end) as $text
-        | (if $p == null then "" else ($e[$p].message.content | text_of) end) as $ptext
+        | (if $p == null then "" else ($e[$p].message.content | text_of) end)
+        # a pasted prompt (credo-owner-type send) arrives wrapped as <pasted_content id="..">
+        | sub("^\\s*<pasted_content[^>]*>\\s*"; "") as $ptext
         | (if ($ptext | test("^\\[remote chat [A-Za-z0-9._-]{1,64}\\]"))
               and $p != null and $a != null and $a > $p
            then ($ptext | capture("^\\[remote chat (?<id>[A-Za-z0-9._-]{1,64})\\]") | .id)
