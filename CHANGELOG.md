@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.37
+
+###### Changed
+
+- fastfast may get one extra builder slot above the cap when the case is clearly simple (no touches overlap with running builders, no migration or shared hot file, small change); in doubt the owner is asked first, and an autonomous run with the owner absent waits for a free slot. The resource gate always stays.
+
 ##### v0.84.36
 
 ###### Changed
