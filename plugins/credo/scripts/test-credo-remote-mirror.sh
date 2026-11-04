@@ -648,5 +648,56 @@ run "blocker: whitespace-free run at the cut" stop "$(stop_payload "Blocker: $bl
 check "blocker: no partial secret at a whitespace-free cut" 0 "$(grep -c '0123456789abcdef' "$OUTF")"
 check "blocker: cut flagged at a whitespace-free cut" true "$(blockq 0 '.cut')"
 
+# --- question context: the reply text above the heading (credo item #165) ------------
+echo "== question context"
+# codeq <type> <index> <jq expr>: the expression on the event of that type at that index
+codeq() {
+    jq -s -j --argjson i "$2" "[.[] | select(.type == \"$1\")] | .[\$i] | $3" "$OUTF" 2>/dev/null
+}
+
+new_case
+reply="$(printf 'The problem is the cache.\nIt keeps old rows.\n\n### %s Q7) Clear it?\nA or B?' "$Q")"
+run "context: text above the question" stop "$(stop_payload "$reply" "")"
+check "context: question carries the text above its heading" \
+    "$(printf 'The problem is the cache.\nIt keeps old rows.')" "$(codeq question_codes 0 '.context')"
+check "context: text below unchanged" "A or B?" "$(codeq question_codes 0 '.text')"
+check "context: short context has no context_cut" false "$(codeq question_codes 0 'has("context_cut")')"
+
+new_case
+reply="$(printf 'Intro\n### %s Q1) First?\nfirst body\n## Other\nBetween the two\n### %s Q2) Second?\nsecond body' "$Q" "$Q")"
+run "context: second question starts after the first block" stop "$(stop_payload "$reply" "")"
+check "context: first question context is the intro" "Intro" "$(codeq question_codes 0 '.context')"
+check "context: second question context starts at the end of the first block" \
+    "$(printf '## Other\nBetween the two')" "$(codeq question_codes 1 '.context')"
+
+new_case
+reply="$(printf '### %s Q3) Bare?\nonly body' "$Q")"
+run "context: question at the reply start" stop "$(stop_payload "$reply" "")"
+check "context: no context field when nothing is above" false "$(codeq question_codes 0 'has("context")')"
+
+new_case
+reply="$(printf 'Why\n%s\n### %s Q9) not a heading\n%s\n### %s Q8) Real?\nbody' "$FENCE" "$Q" "$FENCE" "$Q")"
+run "context: fenced heading is context" stop "$(stop_payload "$reply" "")"
+check "context: one event only (fenced heading ignored)" 1 "$(count)"
+check "context: fenced lines stay in the context" \
+    "$(printf 'Why\n%s\n### %s Q9) not a heading\n%s' "$FENCE" "$Q" "$FENCE")" "$(codeq question_codes 0 '.context')"
+
+new_case
+reply="$(printf 'Run this first.\n### %s T5) Smoke test [blocking]\nsteps' "$T")"
+run "context: blocking test" stop "$(stop_payload "$reply" "")"
+check "context: blocking test carries context" "Run this first." "$(codeq test_blocking 0 '.context')"
+
+new_case
+long_ctx="$(printf 'word %.0s' $(seq 1 1000))"
+reply="$(printf '%s\n### %s Q6) Long?\nbody' "$long_ctx" "$Q")"
+run "context: over 4000 characters" stop "$(stop_payload "$reply" "")"
+check "context: context_cut true when shortened" true "$(codeq question_codes 0 '.context_cut')"
+check "context: capped at 4000" true "$(codeq question_codes 0 '(.context | length) <= 4000')"
+
+new_case
+reply="$(printf 'Use TOKEN=abc123 here.\n### %s Q2) Ok?\nbody' "$Q")"
+run "context: secret masked" stop "$(stop_payload "$reply" "")"
+check "context: raw secret never sent" 0 "$(grep -c 'abc123' "$OUTF")"
+
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]

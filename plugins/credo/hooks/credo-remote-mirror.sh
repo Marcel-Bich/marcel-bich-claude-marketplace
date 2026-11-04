@@ -11,7 +11,9 @@
 #               marked "[blocking]" (heading "### T-emoji Tn) topic [blocking]"), lines
 #               "Blocker: <text>", and the reply to a message that started with
 #               "[remote chat <id>]". A question or blocking test event carries its block
-#               below the heading as "text" (at most 4000 characters, cut when shorter);
+#               below the heading as "text" (at most 4000 characters, cut when shorter)
+#               and the reply text above the heading as "context" (from the reply start or
+#               the end of the previous code block, at most 4000, context_cut when shorter);
 #               a blocker event carries its Blocker line and the lines below it the same way
 # The hook prints no decision, never blocks or changes a tool call, and always exits 0.
 # The sink runs in the background (fire-and-forget) with a timeout and its output
@@ -257,7 +259,9 @@ stop_lines() {
         def isblk: test("^(> )?(\\*\\*)?Blocker(\\*\\*)?:");
         def ev($type; $cd; $topic; $b):
             {type: $type, code: $cd, heading: ($topic | clean | .[0:300]), text: $b.text}
-            + (if $b.cut then {cut: true} else {} end);
+            + (if $b.cut then {cut: true} else {} end)
+            + (if ($b.context // "") != "" then {context: $b.context} else {} end)
+            + (if $b.context_cut then {context_cut: true} else {} end);
         . as $text
         | split("\n") as $ls
         | ($ls | length) as $n
@@ -267,26 +271,36 @@ stop_lines() {
               .x)] as $fenced
         # $L: the heading level that ends the block (6 = every markdown heading); $blk: a
         # Blocker line ends it too; $head: the first line of the block (text of a Blocker line)
-        | def block($i; $L; $blk; $head):
-              ([range($i + 1; $n)
-                | select(($fenced[.] | not)
-                         and (($ls[.] | codeh) or (($ls[.] | mdlvl) as $v | $v > 0 and $v <= $L)
-                              or ($blk and ($ls[.] | isblk))))]
-               | .[0] // $n) as $e
+        | def bend($i; $L; $blk):
+              [range($i + 1; $n)
+               | select(($fenced[.] | not)
+                        and (($ls[.] | codeh) or (($ls[.] | mdlvl) as $v | $v > 0 and $v <= $L)
+                             or ($blk and ($ls[.] | isblk))))]
+              | .[0] // $n;
+          def block($i; $L; $blk; $head):
+              bend($i; $L; $blk) as $e
               | ([$head] + $ls[($i + 1):$e] | join("\n") | trimws) as $full
               | {text: ($full | capped(4000)), cut: ($full | length > 4000)};
+          # context of a code heading at $i: the reply text above it, from the start of the reply
+          # or from the end of the block of the previous code heading (fenced-aware), capped
+          def context($i):
+              ([range(0; $i) | select(($fenced[.] | not) and ($ls[.] | codeh))] | last) as $p
+              | (if $p == null then 0
+                 else bend($p; ($ls[$p] | mdlvl); false) | if . > $i then $i else . end end) as $s
+              | ($ls[$s:$i] | join("\n") | trimws) as $full
+              | {context: ($full | capped(4000)), context_cut: ($full | length > 4000)};
         ([ range(0; $n) as $i
            | $ls[$i]
-           | select(test("^#{2,4} \u2753 Q[0-9]+\\)"))
+           | select(test("^#{2,4} \u2753 Q[0-9]+\\)")) | select($fenced[$i] | not)
            | capture("^(?<h>#{2,4}) \u2753 (?<code>Q[0-9]+)\\)[ \t]*(?<topic>.*)$")
-           | block($i; (.h | length); false; "") as $b
+           | (block($i; (.h | length); false; "") + context($i)) as $b
            | {key: .code, window: 0, event: ($base + ev("question_codes"; .code; .topic; $b))} ]
           + [ range(0; $n) as $i
               | $ls[$i]
-              | select(test("^#{2,4} \ud83e\uddea T[0-9]+\\)"))
+              | select(test("^#{2,4} \ud83e\uddea T[0-9]+\\)")) | select($fenced[$i] | not)
               | capture("^(?<h>#{2,4}) \ud83e\uddea (?<code>T[0-9]+)\\)[ \t]*(?<topic>.*)$")
               | select(.topic | test("\\[blocking\\]"))
-              | block($i; (.h | length); false; "") as $b
+              | (block($i; (.h | length); false; "") + context($i)) as $b
               | {key: .code, window: 0, event: ($base + ev("test_blocking"; .code; .topic; $b))} ]
           + [ range(0; $n) as $i
               | $ls[$i] | select(isblk)

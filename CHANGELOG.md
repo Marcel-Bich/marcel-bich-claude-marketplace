@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.48
+
+###### Added
+
+- Remote mirror: question_codes and test_blocking events carry `context`, the reply text above the heading (from the reply start or the end of the previous code block, at most 4000 characters, `context_cut` when shortened). A code heading inside a fenced code block is no longer an event.
+
 ##### v0.84.47
 
 ###### Fixed
