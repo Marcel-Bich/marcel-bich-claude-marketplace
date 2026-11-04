@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.47
+
+###### Fixed
+
+- owner-type: a redraw between the two pane captures (busy spinner, timers) no longer refuses with pane-changed at once; the pane is read again up to four times, 0.15 s apart.
+
 ##### v0.84.46
 
 ###### Changed

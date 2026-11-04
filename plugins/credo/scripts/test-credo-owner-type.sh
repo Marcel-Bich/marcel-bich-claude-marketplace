@@ -1125,8 +1125,8 @@ def paste(st, data):
     if st.get("inject_after_paste"):
         st["kind"] = "ask"
     if st.get("glitch_after_paste"):
-        # the visible area changes once between the two captures of the next read (a spinner row)
-        st["glitch_window"] = True
+        # the visible area changes between the two captures of the next read(s) (a spinner row)
+        st["glitch_window"] = st.get("glitch_reads", 1)
 
 
 def tmux_text(arg):
@@ -1190,7 +1190,10 @@ def main(argv):
                 st["input"] = ""  # the owner also cleared the field at the PC
         glitch = False
         if "-S" in args:
-            glitch = st.pop("glitch_window", False)
+            left = st.get("glitch_window", 0)
+            glitch = left > 0
+            if glitch:
+                st["glitch_window"] = left - 1
         save(st)
         above, lines, _ = frame(st)
         if "-S" in args:
@@ -1329,7 +1332,7 @@ SCEN = {
     "review_labels": base(kind="review", ask=fruit(),
                           review={"question": "Which fruits?", "labels": ["Apple", "Cherry"],
                                   "cursor": 0, "options": ["Send it", "Cancel"]}),
-    "ask_changed": base(kind="ask", ask=json.loads(json.dumps(ASK)), change_at_capture=2,
+    "ask_changed": base(kind="ask", ask=json.loads(json.dumps(ASK)), change_at_capture=3,
                         change_question="A different question?"),
     # fix round 2: fake rule in the command, description rows, extra question rows, wording
     # on no list, a highlight that stops moving, a prompt replaced after N keys, dialog rows
@@ -1388,6 +1391,7 @@ SCEN = {
                             placeholder="[Pasted text #12 +150 lines]"),
     # item 160: the pane changes once between the reads after the paste (a spinner row)
     "paste_glitch": base(glitch_after_paste=True),
+    "paste_glitch_persist": base(glitch_after_paste=True, glitch_reads=4),
     # item 160: a dialog opens after the paste and is dismissed before the take-back read. Captures
     # count every capture-pane call: 2 for the read before the paste, 2 per check (5 checks), then
     # the take-back read starts with its exact capture (13th), which must already show the box.
@@ -1587,7 +1591,13 @@ check "the pane changed once between the reads after the paste: exit 0" "0" "$RC
 check "the pane changed once after the paste: delivered" "1" "$(printf '%s' "$OUT" | grep -c '^delivered')"
 check "the pane changed once after the paste: submitted once" "['glitch once']" "$(st 's.get("submitted")')"
 check "the pane changed once after the paste: Enter was the only key" "['Enter']" "$(st 's.get("keys")')"
-check "the pane changed once after the paste: logged as pane-changed, then clear" "1" \
+check "the pane changed once after the paste: the re-read absorbs it, logged as clear" "1" \
+    "$(tail -n 1 "$LOGF" | grep -c 'result=delivered checks=clear')"
+scenario paste_glitch_persist
+run_cli send --session "$SID" --text "glitch long"
+check "the pane keeps changing over every re-read: exit 0" "0" "$RC"
+check "the pane keeps changing over every re-read: submitted once" "['glitch long']" "$(st 's.get("submitted")')"
+check "the pane keeps changing over every re-read: logged as pane-changed, then clear" "1" \
     "$(grep -c 'result=delivered checks=pane-changed,clear' "$LOGF")"
 scenario dialog_closes
 run_cli send --session "$SID" --text "held text"

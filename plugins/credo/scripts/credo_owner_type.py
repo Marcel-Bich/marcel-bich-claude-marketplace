@@ -525,6 +525,10 @@ def scrollback_rows():
         return guard.SCROLLBACK_ROWS
 
 
+READ_TRIES = 4
+READ_RETRY_DELAY = 0.15
+
+
 def _same_visible(window, visible):
     """True when the window (scrollback plus visible area) ends with the visible capture. Compared
     without escape sequences: in the window capture tmux carries the colour state of the row above
@@ -541,15 +545,20 @@ def read_pane(t):
     problem = pane_problem(t)
     if problem:
         return None, problem
-    text = guard.capture_exact(t["pane"], t["socket"])
-    if text is None:
-        return None, ("pane-missing", "the capture of the pane failed")
-    window = guard.capture_window(t["pane"], t["socket"], scrollback_rows())
-    if window is None:
-        return None, ("pane-missing", "the capture of the pane with its scrollback failed")
-    if not _same_visible(window, text):
-        return None, ("pane-changed", "the pane changed while it was read; nothing typed, read it again")
-    return guard.with_window(text, window), None
+    # the two captures are separate tmux calls; a redraw between them (busy spinner, timers) makes
+    # them differ, so a mismatch is read again a few times before it counts as pane-changed
+    for attempt in range(READ_TRIES):
+        if attempt:
+            time.sleep(READ_RETRY_DELAY)
+        text = guard.capture_exact(t["pane"], t["socket"])
+        if text is None:
+            return None, ("pane-missing", "the capture of the pane failed")
+        window = guard.capture_window(t["pane"], t["socket"], scrollback_rows())
+        if window is None:
+            return None, ("pane-missing", "the capture of the pane with its scrollback failed")
+        if _same_visible(window, text):
+            return guard.with_window(text, window), None
+    return None, ("pane-changed", "the pane kept changing while it was read; nothing typed, read it again")
 
 
 def paste_text(t, text):
