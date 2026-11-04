@@ -48,6 +48,11 @@
 #     required for every answer and re-read before every key (a prompt replaced after three keys
 #     stops the rest); options above 9 need the highlight on the target before Enter; dialog-shaped
 #     rows above a visible input box make the pane unknown (nothing typed, nothing answered)
+#   - checks after the paste (item 160): a pane that changes once between the reads after the
+#     paste ends delivered (one Enter); a recognised dialog that stays open holds Enter, the text
+#     is not taken back (taken_back=no); a dialog dismissed before the take-back read has the own
+#     text taken back with one BSpace per character, a paste placeholder with one BSpace; a draft
+#     of a force-append is never touched; the stop codes are logged as checks= categories
 #   - delivery log: one line per attempt, no message content unless
 #     CREDO_OWNER_TYPE_LOG_TEXT=1, owner-only file mode, --json output
 #
@@ -960,6 +965,9 @@ def input_key(st, key):
             st.setdefault("submitted", []).append(text)
             st["input"] = ""
         st["cursor"] = None
+    elif key == "BSpace" and st.get("input", "").startswith("[Pasted text #") and st["input"].endswith("]"):
+        # measured on Claude Code: one BSpace removes a whole paste placeholder
+        st["input"] = ""
     elif key == "BSpace":
         cur = st.get("cursor")
         if cur is None or cur >= len(st["input"]):
@@ -1116,6 +1124,9 @@ def paste(st, data):
         st["input"] = st.get("placeholder", "[Pasted text #1 +3 lines]")
     if st.get("inject_after_paste"):
         st["kind"] = "ask"
+    if st.get("glitch_after_paste"):
+        # the visible area changes once between the two captures of the next read (a spinner row)
+        st["glitch_window"] = True
 
 
 def tmux_text(arg):
@@ -1172,12 +1183,22 @@ def main(argv):
         st["captures"] = st.get("captures", 0) + 1
         if st.get("change_at_capture") == st["captures"]:
             st["ask"]["question"] = st["change_question"]
+        if st.get("dialog_closes_at_capture") == st["captures"]:
+            # the dialog is dismissed at the PC: the input box with the draft is drawn again
+            st["kind"] = "input"
+            if st.get("clear_on_close"):
+                st["input"] = ""  # the owner also cleared the field at the PC
+        glitch = False
+        if "-S" in args:
+            glitch = st.pop("glitch_window", False)
         save(st)
         above, lines, _ = frame(st)
         if "-S" in args:
             # scrollback: the last N history rows (-S -N) above the visible area
             depth = -int(args[args.index("-S") + 1])
             lines = (st.get("history", []) + above)[-depth:] + lines
+            if glitch:
+                lines[-1] = "* Thinking (2s)"
         if "-N" in args:
             # real tmux pads every row to the pane width (110 columns here) with -N
             lines = [ln.ljust(PANE_WIDTH) for ln in lines]
@@ -1365,6 +1386,19 @@ SCEN = {
     "placeholder": base(placeholder_after_text=1),
     "placeholder_two": base(placeholder_after_text=1,
                             placeholder="[Pasted text #12 +150 lines]"),
+    # item 160: the pane changes once between the reads after the paste (a spinner row)
+    "paste_glitch": base(glitch_after_paste=True),
+    # item 160: a dialog opens after the paste and is dismissed before the take-back read. Captures
+    # count every capture-pane call: 2 for the read before the paste, 2 per check (5 checks), then
+    # the take-back read starts with its exact capture (13th), which must already show the box.
+    "dialog_closes": base(inject_after_paste=True, ask=json.loads(json.dumps(ASK)),
+                          dialog_closes_at_capture=13),
+    "dialog_closes_placeholder": base(inject_after_paste=True, placeholder_after_text=1,
+                                      ask=json.loads(json.dumps(ASK)), dialog_closes_at_capture=13),
+    "dialog_closes_empty": base(inject_after_paste=True, ask=json.loads(json.dumps(ASK)),
+                                dialog_closes_at_capture=13, clear_on_close=True),
+    "typed_dialog": base(input="half written", inject_after_paste=True,
+                         ask=json.loads(json.dumps(ASK))),
 }
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(SCEN[name], fh, ensure_ascii=False)
@@ -1543,6 +1577,50 @@ check "a dialog opens between the paste and the Enter: exit 1" "1" "$RC"
 check "a dialog opens between the paste and the Enter: no Enter sent" "[]" "$(st 's.get("keys")')"
 check "a dialog opens between the paste and the Enter: reported, Enter not sent" "1" \
     "$(printf '%s' "$OUT" | grep -c 'Enter not sent')"
+check "a dialog that stays open: five checks logged, text not taken back (taken_back=no)" "1" \
+    "$(grep -c 'result=failed code=dialog-after-paste checks=dialog-after-paste,dialog-after-paste,dialog-after-paste,dialog-after-paste,dialog-after-paste taken_back=no' "$LOGF")"
+
+# --- B5b. send: checks after the paste (item 160, owner decision Q56) ---------------------
+scenario paste_glitch
+run_cli send --session "$SID" --text "glitch once"
+check "the pane changed once between the reads after the paste: exit 0" "0" "$RC"
+check "the pane changed once after the paste: delivered" "1" "$(printf '%s' "$OUT" | grep -c '^delivered')"
+check "the pane changed once after the paste: submitted once" "['glitch once']" "$(st 's.get("submitted")')"
+check "the pane changed once after the paste: Enter was the only key" "['Enter']" "$(st 's.get("keys")')"
+check "the pane changed once after the paste: logged as pane-changed, then clear" "1" \
+    "$(grep -c 'result=delivered checks=pane-changed,clear' "$LOGF")"
+scenario dialog_closes
+run_cli send --session "$SID" --text "held text"
+check "a recognised dialog after the paste, dismissed before the take back: exit 1" "1" "$RC"
+check "a recognised dialog after the paste: no Enter, nothing submitted" "[]" "$(st 's.get("submitted")')"
+check "a recognised dialog after the paste: own text taken back, field empty" "''" "$(st 's["input"]')"
+check "a recognised dialog after the paste: one BSpace per character of the text" "9" \
+    "$(st 's.get("keys", []).count("BSpace")')"
+check "a recognised dialog after the paste: the result says it was taken back" "1" \
+    "$(printf '%s' "$OUT" | grep -c 'taken back')"
+check "a recognised dialog after the paste: logged as dialog-after-paste with taken_back=yes" "1" \
+    "$(grep -c 'result=failed code=dialog-after-paste checks=dialog-after-paste,dialog-after-paste,dialog-after-paste,dialog-after-paste,dialog-after-paste taken_back=yes' "$LOGF")"
+scenario dialog_closes_placeholder
+run_cli send --session "$SID" --text "a long pasted message"
+check "a paste placeholder held after a dialog: exit 1" "1" "$RC"
+check "a paste placeholder held after a dialog: one BSpace removes it" "1" \
+    "$(st 's.get("keys", []).count("BSpace")')"
+check "a paste placeholder held after a dialog: field empty" "''" "$(st 's["input"]')"
+scenario dialog_closes_empty
+run_cli send --session "$SID" --text "gone at the PC"
+check "a dialog dismissed and the field cleared at the PC: exit 1" "1" "$RC"
+check "a dialog dismissed and the field cleared at the PC: nothing removed (no BSpace)" "0" \
+    "$(st 's.get("keys", []).count("BSpace")')"
+check "a dialog dismissed and the field cleared at the PC: logged as taken_back=yes" "1" \
+    "$(tail -n 1 "$LOGF" | grep -c 'taken_back=yes')"
+scenario typed_dialog
+run_cli send --session "$SID" --text "more" --force-append
+check "force-append with a dialog after the paste: exit 1" "1" "$RC"
+check "force-append with a dialog after the paste: the draft is never touched" \
+    "'half written more'" "$(st 's["input"]')"
+check "force-append with a dialog after the paste: nothing deleted" "[]" "$(st 's.get("keys")')"
+check "force-append with a dialog after the paste: logged as taken_back=no" "1" \
+    "$(tail -n 1 "$LOGF" | grep -c 'code=dialog-after-paste checks=dialog-after-paste,dialog-after-paste,dialog-after-paste,dialog-after-paste,dialog-after-paste taken_back=no')"
 scenario enter_noop
 run_cli send --session "$SID" --text "maybe"
 check "Enter without effect: exit 4" "4" "$RC"

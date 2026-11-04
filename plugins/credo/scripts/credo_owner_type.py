@@ -22,13 +22,19 @@ work. Every key or paste goes through the same checks:
      prompt is read again before every key. The cursor, the checkbox and tab states, the typed text
      of the Type something row and the footer are not part of the digest.
 
-Send (credo-owner-type.py send), simplified by owner decision Q56:
+Send (credo-owner-type.py send), simplified by owner decision Q56 and item 160:
   - normal mode: the input field must be empty. The whole text is loaded into a named tmux buffer
     and pasted into the pane in one bracketed paste (tmux paste-buffer -p, so a line break stays a
-    line break inside one message). After a short settle (0.5 s) the pane must still be an input box
-    with no dialog open, then Enter is sent. No character-by-character or text confirmation: a paste
-    placeholder ("[Pasted text #N ...]") or any other rendering of the field is accepted. The field
-    is then checked once: empty again means delivered, else unconfirmed (exit 4).
+    line break inside one message). After a settle (0.5 s) the pane is checked up to 5 times, 0.5 s
+    apart. A recognised dialog (Ask box, review page, permission prompt, menu or picker, a dialog
+    that does not fit or holds invisible characters) on the last check holds back Enter; a pane stop
+    (owner, copy mode, dead or missing pane) holds it at once. pane-changed, unknown-state and
+    input-not-visible are retried; when the last check shows neither a recognised dialog nor a pane
+    stop, Enter is sent. A held text is taken back out of the field only when the field was empty
+    before and then shows exactly the text or one paste placeholder. No character-by-character or
+    text confirmation: a paste placeholder ("[Pasted text #N ...]") or any other rendering of the
+    field is accepted. The field is then checked once: empty again means delivered, else unconfirmed
+    (exit 4).
   - force-append (--force-append): " " + text is pasted at the end of the existing text and Enter is
     sent. The field may hold a draft, which is never changed by this module; the cursor must be at its
     end. No digest is needed (--expect is accepted and not checked).
@@ -64,8 +70,9 @@ structure inside a box taller than the window is not detected; the digest binds 
 session or the time (the connector binds each reply to both); the Enter after a paste is not
 verified against the text (a placeholder hides it); the answer and send tools trust the OS user.
 
-Timing overrides (tests and slow terminals): CREDO_OWNER_TYPE_SETTLE, CREDO_OWNER_TYPE_CONFIRM_WAIT,
-CREDO_OWNER_TYPE_KEY_PAUSE, CREDO_OWNER_TYPE_TYPE_PAUSE, CREDO_OWNER_TYPE_SCROLLBACK_ROWS.
+Timing overrides (tests and slow terminals): CREDO_OWNER_TYPE_SETTLE, CREDO_OWNER_TYPE_RECHECK,
+CREDO_OWNER_TYPE_CONFIRM_WAIT, CREDO_OWNER_TYPE_KEY_PAUSE, CREDO_OWNER_TYPE_TYPE_PAUSE,
+CREDO_OWNER_TYPE_SCROLLBACK_ROWS.
 
 Python 3 stdlib only.
 """
@@ -109,6 +116,14 @@ INVISIBLE_TEXT = "dialog contains invisible/bidi characters, answer at the PC"
 CONFIRM_KEYS = ("Enter", "Space")
 PASTE_BUFFER = "credo-owner-type"
 SCROLLBACK_ENV = "CREDO_OWNER_TYPE_SCROLLBACK_ROWS"
+# Checks of the pane after a paste (item 160, owner decision Q56): one after the settle time, then
+# up to CHECKS_AFTER_PASTE - 1 more, timing()["recheck"] apart.
+CHECKS_AFTER_PASTE = 5
+# Pane stops hold back Enter at once and are never retried: the pane is not ours or cannot be used.
+PANE_STOPS = ("owner", "owner-mismatch", "pane-missing", "pane-dead", "copy-mode")
+DIALOG_KINDS = ("ask", "review", "permission", "dialog")
+# A single paste placeholder in the input field (one BSpace removes it, measured on Claude Code).
+PLACEHOLDER_RE = re.compile(r"\[Pasted text #\d+(?: \+\d+ lines)?\]")
 
 
 class UsageError(ValueError):
@@ -166,6 +181,7 @@ def timing():
     return {"type_pause": _env_float("CREDO_OWNER_TYPE_TYPE_PAUSE", wake.TYPE_PAUSE),
             "key_pause": _env_float("CREDO_OWNER_TYPE_KEY_PAUSE", 0.3),
             "settle": _env_float("CREDO_OWNER_TYPE_SETTLE", 0.5),
+            "recheck": _env_float("CREDO_OWNER_TYPE_RECHECK", 0.5),
             "confirm_wait": _env_float("CREDO_OWNER_TYPE_CONFIRM_WAIT", 3.0)}
 
 
@@ -571,7 +587,16 @@ def send_one(t, keys):
 
 # --------------------------------------------------------------------------- delivery log
 
-def log_line(t, mode, chars, status, code, text, label=None):
+def _log_value(value):
+    """A log value of the delivery details: categories only (lists joined, booleans as yes or no)."""
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, (list, tuple)):
+        return ",".join(value)
+    return str(value)
+
+
+def log_line(t, mode, chars, status, code, text, label=None, extra=None):
     stamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
     parts = [stamp, "session=%s" % t["session_id"], "mode=%s" % mode, "chars=%d" % chars,
              "result=%s" % status]
@@ -579,6 +604,8 @@ def log_line(t, mode, chars, status, code, text, label=None):
         parts.append("code=%s" % code)
     if label:
         parts.append("option=%s" % json.dumps(label, ensure_ascii=False))
+    for key, value in (extra or {}).items():
+        parts.append("%s=%s" % (key, _log_value(value)))
     if text and os.environ.get("CREDO_OWNER_TYPE_LOG_TEXT") == "1":
         parts.append("text=%s" % json.dumps(text, ensure_ascii=False))
     return " ".join(parts)
@@ -624,14 +651,16 @@ def ensure_log(t):
     os.close(_open_log(t["profile"]))
 
 
-def finish(t, mode, chars, status, code, reason, text=None, log=True, label=None):
-    """The result of one call. Deliveries and refusals are logged (not dry runs, not show)."""
+def finish(t, mode, chars, status, code, reason, text=None, log=True, label=None, extra=None):
+    """The result of one call. Deliveries and refusals are logged (not dry runs, not show). extra holds
+    the delivery details (the checks after the paste, whether the text was taken back)."""
     result = {"status": status, "code": code, "reason": reason, "exit": EXIT[status],
               "mode": mode, "chars": chars, "label": label,
               "session": t["session_id"] if t else None}
+    result.update(extra or {})
     if t is not None and log and status != "dry-run":
         try:
-            write_log(t["profile"], log_line(t, mode, chars, status, code, text, label))
+            write_log(t["profile"], log_line(t, mode, chars, status, code, text, label, extra))
         except OSError as exc:
             result["reason"] = reason + " (delivery log not written: %s)" % type(exc).__name__
     return result
@@ -750,43 +779,102 @@ def send(query, text, force=False, dry_run=False, all_profiles=False, expect=Non
         return finish(t, mode, chars, "dry-run", "dry-run",
                       "would paste %d character(s) and press Enter; nothing typed" % len(appended),
                       log=False)
-    return _deliver(t, mode, chars, text, appended, timing())
+    return _deliver(t, mode, chars, text, appended, before, timing())
 
 
-def before_enter(t):
-    """None when the pane is an input box with no dialog open (Enter may be sent), else the reason."""
+def _check_after_paste(t):
+    """One check of the pane after the paste: (code, reason). The code is clear (an input box with no
+    dialog drawn), dialog-after-paste (a recognised dialog), a pane stop (PANE_STOPS), pane-changed (the
+    capture was not stable), input-not-visible (no input box drawn) or unknown-state (an input box with
+    something unrecognised around it). The reason never carries pane text."""
     text, problem = read_pane(t)
     if problem:
-        return problem[1]
+        return problem
     state = guard.classify_pane(text)
-    ref = dialog_refusal(state)
-    if ref:
-        return str(ref)
-    if state["kind"] != "input" or guard.input_content(text) is None:
-        return "the pane shows %s" % describe(state)
+    if state.get("refusal") or state["kind"] in DIALOG_KINDS:
+        return "dialog-after-paste", "dialog open (%s)" % state.get("reason", "unknown")
+    if state["kind"] == "input":
+        return "clear", ""
+    if guard.input_content(text) is None:
+        return "input-not-visible", "no input box is drawn"
+    return "unknown-state", state.get("reason", "unknown")
+
+
+def _after_paste(t, tm):
+    """The checks after the paste: (hold, code, reason, checks). A pane stop holds Enter at once. The
+    last check decides otherwise: only a recognised dialog holds Enter back. pane-changed, unknown-state
+    and input-not-visible are retried (a clear check ends the checks early)."""
+    time.sleep(tm["settle"])
+    checks, code, reason = [], "clear", ""
+    for i in range(CHECKS_AFTER_PASTE):
+        if i:
+            time.sleep(tm["recheck"])
+        code, reason = _check_after_paste(t)
+        checks.append(code)
+        if code in PANE_STOPS:
+            return True, code, reason, checks
+        if code == "clear":
+            break
+    return code == "dialog-after-paste", code, reason, checks
+
+
+def _own_keys(content, own):
+    """BSpace presses that remove the pasted text `own` from a field that reads `content`: one per
+    character of the text when the field shows exactly it, one for a single paste placeholder. None when
+    the field shows anything else."""
+    if norm(content) and norm(content) == norm(own):
+        return len(own)
+    if PLACEHOLDER_RE.fullmatch(content or ""):
+        return 1
     return None
 
 
-def _deliver(t, mode, chars, text, appended, tm):
-    """Paste, settle, check the pane once more (no dialog), Enter, then check the field is empty."""
+def take_back_paste(t, own, before, tm):
+    """After a held Enter, remove the own pasted text from the input field so the field is not left
+    blocked. Only when the field was empty before the paste, the pane is readable and shows an input box
+    with no dialog, and the field reads exactly the own text or one paste placeholder. Nothing else is
+    removed. Returns (taken back, note for the result)."""
+    if before:
+        return False, "the field held text before the paste; it is left as it is"
+    text, problem = read_pane(t)
+    if problem:
+        return False, "the pane could not be read; the text stays in the input field"
+    content = guard.input_content(text)
+    if guard.classify_pane(text)["kind"] != "input" or content is None:
+        return False, "a dialog is open or no input box is drawn; the text stays in the input field"
+    if not norm(content):
+        return True, "the input field is empty; nothing to take back"
+    count = _own_keys(content, own)
+    if count is None:
+        return False, "the input field shows other text; it is left as it is"
+    if not wake.send_key_list(plan_of(t), ["BSpace"] * count):
+        return False, "the removal keys could not be sent; check the pane"
+    if wait_cleared(t, tm) == "delivered":
+        return True, "the text was taken back out of the input field"
+    return False, "the input field still holds text; check the pane"
+
+
+def _deliver(t, mode, chars, text, appended, before, tm):
+    """Paste, the checks after the paste, Enter, then check the field is empty."""
     if not paste_text(t, appended):
         return finish(t, mode, chars, "failed", "paste-failed",
                       "the text could not be pasted; nothing submitted", text)
-    time.sleep(tm["settle"])
-    stop = before_enter(t)
-    if stop:
-        return finish(t, mode, chars, "failed", "dialog-after-paste",
-                      "%s after the paste; the text is in the input field, Enter not sent; check the "
-                      "pane" % stop, text)
+    hold, code, reason, checks = _after_paste(t, tm)
+    if hold:
+        taken, note = take_back_paste(t, appended, before, tm)
+        return finish(t, mode, chars, "failed", code,
+                      "%s after the paste; Enter not sent; %s" % (reason, note), text,
+                      extra={"checks": checks, "taken_back": taken})
     if not send_one(t, ENTER):
         return finish(t, mode, chars, "failed", "enter-failed",
-                      "Enter could not be sent; the text is in the input field; check the pane", text)
+                      "Enter could not be sent; the text is in the input field; check the pane", text,
+                      extra={"checks": checks})
     if wait_cleared(t, tm) == "delivered":
         return finish(t, mode, chars, "delivered", "delivered",
-                      "text sent (%d character(s))" % chars, text)
+                      "text sent (%d character(s))" % chars, text, extra={"checks": checks})
     return finish(t, mode, chars, "unconfirmed", "unconfirmed",
                   "Enter sent, but the input field did not clear within %gs; check the pane "
-                  "before sending again" % tm["confirm_wait"], text)
+                  "before sending again" % tm["confirm_wait"], text, extra={"checks": checks})
 
 
 # --------------------------------------------------------------------------- show
