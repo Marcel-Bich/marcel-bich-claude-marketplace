@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.53
+
+###### Fixed
+
+- Remote mirror: legacy single-letter question and blocking test headings (`### ❓ B) topic`) are reported too; a reused letter is deduplicated together with its topic.
+
 ##### v0.84.52
 
 ###### Changed

@@ -7,7 +7,8 @@
 #   ask         PreToolUse AskUserQuestion: the Ask-box questions and their options
 #   permission  PermissionRequest: a permission dialog (tool name and a summary, cut at 2000
 #               characters; cut ones carry cut; every one carries sha256 of the full unmasked command, masked when the masking changed it)
-#   stop        Stop: question codes (heading "### Q-emoji Qn) topic"), test blocks
+#   stop        Stop: question codes (heading "### Q-emoji Qn) topic", also a legacy single
+#               letter "### Q-emoji B) topic", deduplicated with its topic), test blocks
 #               marked "[blocking]" (heading "### T-emoji Tn) topic [blocking]"), lines
 #               "Blocker: <text>", and the reply to a message that started with
 #               "[remote chat <id>]". A question or blocking test event carries its block
@@ -306,17 +307,19 @@ stop_lines() {
               | {context: ($full | tailcapped(4000)), context_cut: ($full | length > 4000)};
         ([ range(0; $n) as $i
            | $ls[$i]
-           | select(test("^#{2,4} \u2753 Q[0-9]+\\)")) | select($fenced[$i] | not)
-           | capture("^(?<h>#{2,4}) \u2753 (?<code>Q[0-9]+)\\)[ \t]*(?<topic>.*)$")
+           | select(test("^#{2,4} \u2753 (Q[0-9]+|[A-Z])\\)")) | select($fenced[$i] | not)
+           | capture("^(?<h>#{2,4}) \u2753 (?<code>Q[0-9]+|[A-Z])\\)[ \t]*(?<topic>.*)$")
            | (block($i; (.h | length); false; "") + context($i)) as $b
-           | {key: .code, window: 0, event: ($base + ev("question_codes"; .code; .topic; $b))} ]
+           | {key: (if (.code | length) == 1 then "legacy-q:" + .code + ":" + (.topic | @base64) else .code end),
+              window: 0, event: ($base + ev("question_codes"; .code; .topic; $b))} ]
           + [ range(0; $n) as $i
               | $ls[$i]
-              | select(test("^#{2,4} \ud83e\uddea T[0-9]+\\)")) | select($fenced[$i] | not)
-              | capture("^(?<h>#{2,4}) \ud83e\uddea (?<code>T[0-9]+)\\)[ \t]*(?<topic>.*)$")
+              | select(test("^#{2,4} \ud83e\uddea (T[0-9]+|[A-Z])\\)")) | select($fenced[$i] | not)
+              | capture("^(?<h>#{2,4}) \ud83e\uddea (?<code>T[0-9]+|[A-Z])\\)[ \t]*(?<topic>.*)$")
               | select(.topic | test("\\[blocking\\]"))
               | (block($i; (.h | length); false; "") + context($i)) as $b
-              | {key: .code, window: 0, event: ($base + ev("test_blocking"; .code; .topic; $b))} ]
+              | {key: (if (.code | length) == 1 then "legacy-t:" + .code + ":" + (.topic | @base64) else .code end),
+                 window: 0, event: ($base + ev("test_blocking"; .code; .topic; $b))} ]
           + [ range(0; $n) as $i
               | $ls[$i] | select(isblk)
               | capture("^(> )?(\\*\\*)?Blocker(\\*\\*)?:(\\*\\*)?[ \t]*(?<text>.*)$")

@@ -758,5 +758,21 @@ tr_text a-f1 "plain answer"
 run "command: normal prompt" stop "$(stop_payload "plain answer" "$TR")"
 check "command: a normal prompt is not mirrored" 0 "$(count)"
 
+# --- legacy letter codes (credo item #170) ------------------------------------------
+echo "== legacy letter codes"
+new_case
+run "legacy: letter question" stop "$(stop_payload "$(printf '### %s B) #57 rank\nA or B?' "$Q")" "")"
+check "legacy: letter question sent" question_codes "$(codeq question_codes 0 '.type')"
+check "legacy: code is the letter" B "$(codeq question_codes 0 '.code')"
+check "legacy: heading" "#57 rank" "$(codeq question_codes 0 '.heading')"
+run "legacy: same letter, same topic again" stop "$(stop_payload "$(printf '### %s B) #57 rank\nA or B?' "$Q")" "")"
+check "legacy: same question sent once" 1 "$(count)"
+run "legacy: same letter, new topic" stop "$(stop_payload "$(printf '### %s B) #60 colour\nRed?' "$Q")" "")"
+check "legacy: a reused letter with a new topic is sent again" 2 "$(count)"
+run "legacy: letter test blocking" stop "$(stop_payload "$(printf '### %s B) Smoke [blocking]\nsteps' "$T")" "")"
+check "legacy: letter test does not collide with the letter question" 3 "$(count)"
+run "legacy: two letters are no code" stop "$(stop_payload "$(printf '### %s AB) nope\nx' "$Q")" "")"
+check "legacy: only single letters" 3 "$(count)"
+
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]

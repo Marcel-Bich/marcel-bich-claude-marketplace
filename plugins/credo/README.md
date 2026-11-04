@@ -459,7 +459,7 @@ Set `remote.mirror_command` in the global or profile config to a shell command. 
 
 - `ask` - an Ask-box question (`PreToolUse` on `AskUserQuestion`): the questions, options and `multiSelect`.
 - `permission` - a permission dialog (`PermissionRequest`): tool name and a summary (the command, or the file path; file content is never sent). A subagent origin is marked. A summary beyond 2000 characters is cut at a word boundary and the event then carries `cut: true`. Every permission event carries `sha256`, the SHA-256 hex digest of the full unmasked command, so the exact command can be matched without being sent; `masked: true` marks a summary that the masking changed.
-- `question_codes` - a question heading `### ❓ Q<n>) <topic>` in the final reply of a turn (the footer is not a source). Carries `text`, see below.
+- `question_codes` - a question heading `### ❓ Q<n>) <topic>` in the final reply of a turn (the footer is not a source). Carries `text`, see below. A legacy single-letter heading `### ❓ B) <topic>` (older sessions) is sent too, with the letter as `code`; since letters are reused, it is deduplicated together with its topic. The same holds for `test_blocking`.
 - `test_blocking` - a test heading `### 🧪 T<n>) <topic> [blocking]`. A test without the marker is not sent. Carries `text`, see below.
 - `blocker` - a line `Blocker: <what only the owner can solve>` (or `**Blocker:**`). `Blocker: none`, `-` or empty is not sent. Carries `text`, see below.
 - `remote_reply` - the final reply to a message that started with `[remote chat <id>]` (`<id>`: letters, digits, `.`, `_`, `-`).
