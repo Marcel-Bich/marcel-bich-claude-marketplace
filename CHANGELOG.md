@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.51
+
+###### Fixed
+
+- Remote mirror: a question or test `context` longer than 4000 characters now keeps its end (the text right above the heading), starting at a line boundary, instead of its start.
+
 ##### v0.84.50
 
 ###### Fixed

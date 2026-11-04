@@ -13,7 +13,8 @@
 #               "[remote chat <id>]". A question or blocking test event carries its block
 #               below the heading as "text" (at most 4000 characters, cut when shorter)
 #               and the reply text above the heading as "context" (from the reply start or
-#               the end of the previous code block, at most 4000, context_cut when shorter);
+#               the end of the previous code block, the last 4000 characters from a line
+#               start, context_cut when shorter);
 #               a blocker event carries its Blocker line and the lines below it the same way
 # The hook prints no decision, never blocks or changes a tool call, and always exits 0.
 # The sink runs in the background (fire-and-forget) with a timeout and its output
@@ -145,12 +146,20 @@ dispatch() {
 # characters at a word boundary: the partial word at the edge is dropped, so the start of a
 # secret is never sent. A run without any space is cut hard, but its trailing token characters
 # are dropped as well, so a partial token is never sent; such a run may leave nothing.
+# tailcapped(n) keeps the LAST n characters instead (the text right above a heading matters
+# most): it starts at the next line boundary, or after the partial word at the edge when the
+# tail holds no newline, so a partial secret is never sent either.
 # trimws drops the surrounding whitespace. The end anchor is \z (absolute end), since $ also
 # matches before a newline.
 JQ_CAP_DEF='def trimws: sub("^\\s+"; "") | sub("\\s+\\z"; "");
 def capped($n): if length <= $n then . else (.[0:$n] | sub("[^ \t\n]*\\z"; "") | trimws) as $b
                 | if $b != "" then $b
-                  else (.[0:$n] | sub("[A-Za-z0-9+_=/.-]*\\z"; "") | trimws) end end;'
+                  else (.[0:$n] | sub("[A-Za-z0-9+_=/.-]*\\z"; "") | trimws) end end;
+def tailcapped($n): if length <= $n then . else .[(length - $n):] as $t
+                    | (if ($t | test("\n")) then ($t | sub("^[^\n]*\n"; ""))
+                       else ($t | sub("^[^ \t\n]*"; "")) end | trimws) as $b
+                    | if $b != "" then $b
+                      else ($t | sub("^[A-Za-z0-9+_=/.-]*"; "") | trimws) end end;'
 
 # PERM_SRC_DEF: jq def of src, the full unmasked source of a permission summary: the command
 # (Bash), the path (file tools) or the URL (WebFetch); empty for other tools.
@@ -294,7 +303,7 @@ stop_lines() {
               | (if $p == null then 0
                  else bend($p; ($ls[$p] | mdlvl); false) | if . > $i then $i else . end end) as $s
               | ($ls[$s:$i] | join("\n") | trimws) as $full
-              | {context: ($full | capped(4000)), context_cut: ($full | length > 4000)};
+              | {context: ($full | tailcapped(4000)), context_cut: ($full | length > 4000)};
         ([ range(0; $n) as $i
            | $ls[$i]
            | select(test("^#{2,4} \u2753 Q[0-9]+\\)")) | select($fenced[$i] | not)

@@ -693,6 +693,18 @@ reply="$(printf '%s\n### %s Q6) Long?\nbody' "$long_ctx" "$Q")"
 run "context: over 4000 characters" stop "$(stop_payload "$reply" "")"
 check "context: context_cut true when shortened" true "$(codeq question_codes 0 '.context_cut')"
 check "context: capped at 4000" true "$(codeq question_codes 0 '(.context | length) <= 4000')"
+check "context: the end right above the heading is kept" true "$(codeq question_codes 0 '.context | endswith("word")')"
+
+new_case
+ctx_lines="$(for i in $(seq 1 300); do printf 'line number %03d of the context\n' "$i"; done)"
+reply="$(printf '%s\nThe key point right above.\n### %s Q4) Which?\nbody' "$ctx_lines" "$Q")"
+run "context: long multi-line context" stop "$(stop_payload "$reply" "")"
+check "context: multi-line context_cut" true "$(codeq question_codes 0 '.context_cut')"
+check "context: keeps the last line above the heading" true \
+    "$(codeq question_codes 0 '.context | endswith("The key point right above.")')"
+check "context: the first lines are dropped" false "$(codeq question_codes 0 '.context | contains("line number 001")')"
+check "context: starts at a line boundary" true "$(codeq question_codes 0 '.context | test("^line number [0-9]{3} of the context\n")')"
+check "context: capped at 4000 (lines)" true "$(codeq question_codes 0 '(.context | length) <= 4000')"
 
 new_case
 reply="$(printf 'Use TOKEN=abc123 here.\n### %s Q2) Ok?\nbody' "$Q")"
