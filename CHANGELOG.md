@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.42
+
+###### Fixed
+
+- A message from a remote app (prefix `[remote chat <id>]`, also inside a `<pasted_content>` wrapper) no longer pauses autonomous mode; the prior state (running or already paused) stays.
+
 ##### v0.84.41
 
 ###### Fixed
