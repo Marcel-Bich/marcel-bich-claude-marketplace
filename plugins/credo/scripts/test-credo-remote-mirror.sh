@@ -448,5 +448,109 @@ check "async: exit 0" 0 "$rc"
 check "async: stdout empty" "" "$out"
 check "async: the hook returns before the sink finishes" 1 "$([ "$ms" -lt 1500 ] && echo 1 || echo 0)"
 
+# --- question and test blocks: full text (credo item #158) ------------------------
+echo "== question and test blocks: full text"
+# codeq <code> <jq expr>: the expression on the last event of that code (raw, no newline)
+codeq() {
+    jq -s -j --arg c "$1" "[.[] | select(.code == \$c)] | last | $2" "$OUTF" 2>/dev/null
+}
+FENCE='```'
+new_case
+q_body="$(printf 'Context: the rank changes the price.\n\n%sbash\n# install step\nmake install\n%s\n\nOptions:\n- A: cheap\n- B: fast' "$FENCE" "$FENCE")"
+reply="$(printf 'Summary line\n### %s Q4) Which rank: A or B?\n%s\n### %s T2) Login check\nDone.' "$Q" "$q_body" "$T")"
+run "text: question with body, fence and options" stop "$(stop_payload "$reply" "")"
+check "text: Q4 text is the whole block" "$q_body" "$(codeq Q4 '.text')"
+check "text: Q4 carries the text key" true "$(codeq Q4 'has("text")')"
+check "text: short block is not cut" false "$(codeq Q4 'has("cut")')"
+check "text: heading unchanged" "Which rank: A or B?" "$(codeq Q4 '.heading')"
+
+new_case
+reply="$(printf 'Intro\n### %s Q4) Scope?\nIntro line\n#### Detail kept\nDetail text\n## Other section\nNot part of the question' "$Q")"
+run "text: level 2 heading ends the block" stop "$(stop_payload "$reply" "")"
+check "text: #### stays inside, ## ends the block" "$(printf 'Intro line\n#### Detail kept\nDetail text')" "$(codeq Q4 '.text')"
+
+new_case
+reply="$(printf '### %s Q4) First?\nfirst body\n### %s Q5) Second?\nsecond body' "$Q" "$Q")"
+run "text: two codes in one reply" stop "$(stop_payload "$reply" "")"
+check "text: first code gets its own block" "first body" "$(codeq Q4 '.text')"
+check "text: second code gets its own block" "second body" "$(codeq Q5 '.text')"
+
+new_case
+reply="$(printf '### %s T4) Login check [blocking]\nSteps: open the app\nThen sign in\n### %s Q6) Ship?\nyes or no' "$T" "$Q")"
+run "text: blocking test block" stop "$(stop_payload "$reply" "")"
+check "text: test_blocking carries its block" "$(printf 'Steps: open the app\nThen sign in')" "$(codeq T4 '.text')"
+check "text: test_blocking type unchanged" test_blocking "$(codeq T4 '.type')"
+
+new_case
+reply="$(printf '### %s Q7) Deploy?\nSet TOKEN=abc123 first.\nThen go.' "$Q")"
+run "text: secret in the body is masked" stop "$(stop_payload "$reply" "")"
+check "text: masked inside the block" "$(printf 'Set TOKEN=*** first.\nThen go.')" "$(codeq Q7 '.text')"
+check "text: raw secret never sent" 0 "$(grep -c 'abc123' "$OUTF")"
+
+new_case
+long_body="$(printf 'word %.0s' $(seq 1 1000))"
+reply="$(printf '### %s Q8) Long?\n%s' "$Q" "$long_body")"
+run "text: over 4000 characters" stop "$(stop_payload "$reply" "")"
+check "text: cut true when shortened" true "$(codeq Q8 '.cut')"
+check "text: capped at 4000 characters" true "$(codeq Q8 '(.text | length) <= 4000')"
+check "text: cut between words" true "$(codeq Q8 '.text | endswith("word")')"
+
+new_case
+filler="$(printf 'word %.0s' $(seq 1 798))"
+reply="$(printf '### %s Q9) Token?\n%sghp_0123456789abcdefghij0123' "$Q" "$filler")"
+run "text: cut at the token keeps no partial secret" stop "$(stop_payload "$reply" "")"
+check "text: edge cut marked" true "$(codeq Q9 '.cut')"
+check "text: partial token prefix not sent" 0 "$(grep -c 'ghp_0' "$OUTF")"
+
+echo "== permission cut and sha256 (credo item #158)"
+new_case
+long_cmd="echo $(printf 'part %.0s' $(seq 1 600))TAILMARKER"
+run "perm: long command" permission "$(perm_payload Bash "$(jq -n --arg c "$long_cmd" '{command: $c}')")"
+check "perm: long command is cut" true "$(jqf '.cut')"
+check "perm: summary capped at 2000 characters" true "$(jqf '(.summary | length) <= 2000')"
+check "perm: tail of the command not sent" 0 "$(grep -c 'TAILMARKER' "$OUTF")"
+check "perm: sha256 is the digest of the full command" \
+    "$(printf '%s' "$long_cmd" | sha256sum | awk '{print $1}')" "$(jqf '.sha256')"
+
+run "perm: short command" permission "$(perm_payload Bash '{"command":"make test"}')"
+check "perm: short command has no cut" false "$(jqf 'has("cut")')"
+check "perm: short command has no sha256" false "$(jqf 'has("sha256")')"
+
+new_case
+perm_same="$(perm_payload Bash "$(jq -n --arg c "$long_cmd" '{command: $c}')")"
+run "perm: long command first" permission "$perm_same"
+run "perm: same long command again" permission "$perm_same"
+check "perm: same long command sent once" 1 "$(count)"
+other_cmd="echo $(printf 'part %.0s' $(seq 1 600))OTHERTAIL"
+run "perm: other long command, same prefix" permission "$(perm_payload Bash "$(jq -n --arg c "$other_cmd" '{command: $c}')")"
+check "perm: a different long command is sent too" 2 "$(count)"
+
+# sha256_hex (the real function text): the digest of stdin, and nothing without a digest tool.
+# The config read needs python3, so the no-tool case is checked on the function alone.
+SHA_FN="$TMP/sha256_hex.sh"
+sed -n '/^sha256_hex() {/,/^}/p' "$HOOK" > "$SHA_FN"
+NOSHA="$TMP/nosha"
+mkdir -p "$NOSHA"
+ln -sf "$(command -v bash)" "$NOSHA/bash"
+check "sha256_hex: digest of stdin" "$(printf 'abc' | sha256sum | awk '{print $1}')" \
+    "$(printf 'abc' | bash -c '. "$1"; sha256_hex' _ "$SHA_FN")"
+check "sha256_hex: no digest tool on PATH prints nothing" "" \
+    "$(printf 'abc' | PATH="$NOSHA" bash -c '. "$1"; sha256_hex' _ "$SHA_FN" 2>/dev/null)"
+
+# a hook without a digest (sha256_hex returns nothing): the cut is still marked, sha256 is left out
+NODIGEST="$TMP/nodigest"
+mkdir -p "$NODIGEST/hooks"
+ln -sf "$PLUGIN/scripts" "$NODIGEST/scripts"
+cp "$REDACT" "$NODIGEST/hooks/credo-remote-mirror-redact.jq"
+sed 's/^sha256_hex() {$/sha256_hex() { return 0;/' "$HOOK" > "$NODIGEST/hooks/credo-remote-mirror.sh"
+new_case
+np="$(perm_payload Bash "$(jq -n --arg c "$long_cmd" '{command: $c}')")"
+out="$(printf '%s' "$np" | bash "$NODIGEST/hooks/credo-remote-mirror.sh" permission 2>/dev/null)"
+rc=$?
+check "perm no digest: exit 0" 0 "$rc"
+check "perm no digest: stdout empty" "" "$out"
+check "perm no digest: cut still marked" true "$(jqf '.cut')"
+check "perm no digest: sha256 omitted" false "$(jqf 'has("sha256")')"
+
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]

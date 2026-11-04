@@ -5,11 +5,13 @@
 # Observe-only hook. It forwards ONLY the events that need the owner, one JSON event per
 # sink call, to the command configured as remote.mirror_command:
 #   ask         PreToolUse AskUserQuestion: the Ask-box questions and their options
-#   permission  PermissionRequest: a permission dialog (tool name and a short summary)
+#   permission  PermissionRequest: a permission dialog (tool name and a summary, cut at 2000
+#               characters; a cut summary carries cut and sha256 of the full command)
 #   stop        Stop: question codes (heading "### Q-emoji Qn) topic"), test blocks
 #               marked "[blocking]" (heading "### T-emoji Tn) topic [blocking]"), lines
 #               "Blocker: <text>", and the reply to a message that started with
-#               "[remote chat <id>]"
+#               "[remote chat <id>]". A question or blocking test event carries its block
+#               below the heading as "text" (at most 4000 characters, cut when shorter)
 # The hook prints no decision, never blocks or changes a tool call, and always exits 0.
 # The sink runs in the background (fire-and-forget) with a timeout and its output
 # discarded; the event arrives on its stdin. Dedup state per session (sent Ask ids, Q and
@@ -136,6 +138,31 @@ dispatch() {
     return 0
 }
 
+# JQ_CAP_DEF: jq helpers for the stop and permission programs. capped(n) cuts a string to n
+# characters at a word boundary: the partial word at the edge is dropped, so the start of a
+# secret is never sent (a run without any space is cut hard). trimws drops the surrounding
+# whitespace. The end anchor is \z (absolute end), since $ also matches before a newline.
+JQ_CAP_DEF='def trimws: sub("^\\s+"; "") | sub("\\s+\\z"; "");
+def capped($n): if length <= $n then . else (.[0:$n] | sub("[^ \t\n]*\\z"; "") | trimws) as $b
+                | if $b == "" then .[0:$n] else $b end end;'
+
+# PERM_SRC_DEF: jq def of src, the full unmasked source of a permission summary: the command
+# (Bash), the path (file tools) or the URL (WebFetch); empty for other tools.
+PERM_SRC_DEF='def src: (.tool_input // {}) as $ti | (.tool_name // "") as $tn
+    | (if $tn == "Bash" then ($ti.command // "")
+       elif ($tn | test("^(Edit|MultiEdit|Write|NotebookEdit)$")) then ($ti.file_path // $ti.notebook_path // "")
+       elif $tn == "WebFetch" then ($ti.url // "")
+       else "" end) | tostring;'
+
+# sha256_hex: hex digest of stdin's exact bytes; prints nothing when no tool is available
+sha256_hex() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum | awk '{ print $1 }'
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 -I -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())' 2>/dev/null
+    fi
+}
+
 # ask_lines: the Ask-box event, plus a mark for every Q code in the question text
 ask_lines() {
     printf '%s' "$INPUT" | jq -c --argjson base "$BASE" '
@@ -156,22 +183,26 @@ ask_lines() {
     ' 2>/dev/null
 }
 
-# permission_lines: one permission dialog; a file body or a command beyond 500 bytes is
-# cut, and file content never leaves the hook (only the path)
+# permission_lines: one permission dialog. A summary beyond 2000 characters is cut at a word
+# boundary and marked cut, with sha256 of the full unmasked source (taken here, before
+# masking; a hex digest is not masked). File content never leaves the hook (only the path).
 permission_lines() {
-    printf '%s' "$INPUT" | jq -c --argjson base "$BASE" --argjson w "$PERM_WINDOW" '
+    local src_sha
+    src_sha="$(printf '%s' "$INPUT" | jq -j "$PERM_SRC_DEF src" 2>/dev/null | sha256_hex)"
+    printf '%s' "$INPUT" | jq -c --argjson base "$BASE" --argjson w "$PERM_WINDOW" \
+        --arg sha "$src_sha" "$JQ_CAP_DEF$PERM_SRC_DEF"'
         def origin: if (.agent_id // "") == "" then {subagent: false}
                     else {subagent: true, agent_type: (.agent_type // "")} end;
         (.tool_name // "") as $tn
-        | (.tool_input // {}) as $ti
-        | (if $tn == "Bash" then ($ti.command // "")
-           elif ($tn | test("^(Edit|MultiEdit|Write|NotebookEdit)$")) then
-               ($ti.file_path // $ti.notebook_path // "")
-           elif $tn == "WebFetch" then ($ti.url // "")
-           else "" end | .[0:500]) as $sum
-        | {key: ("perm:" + ([$tn, $sum, (.agent_id // "")] | join("|") | @base64)),
+        | src as $full
+        | ($full | capped(2000)) as $sum
+        | ($full | length > 2000) as $cut
+        | {key: ("perm:" + ([$tn, (if $sha == "" then $sum else $sha end), (.agent_id // "")]
+                            | join("|") | @base64)),
            window: $w,
-           event: ($base + origin + {type: "permission", tool_name: $tn, summary: $sum})}
+           event: ($base + origin + {type: "permission", tool_name: $tn, summary: $sum}
+                   + (if $cut then {cut: true} + (if $sha == "" then {} else {sha256: $sha} end)
+                      else {} end))}
     ' 2>/dev/null
 }
 
@@ -205,25 +236,48 @@ transcript_summary() {
     ' 2>/dev/null
 }
 
-# stop_lines <text> <chat> <prompt key>: candidates from the final reply text
+# stop_lines <text> <chat> <prompt key>: candidates from the final reply text. A question or
+# test code event carries its block as "text": the lines below its heading up to the next code
+# heading (Q-emoji, T-emoji or V-emoji), the next markdown heading of the same or a higher
+# level, or the end of the reply; trimmed and capped at 4000 characters (cut when shortened).
+# Lines inside a fenced code block are never headings and never end a block.
 stop_lines() {
-    printf '%s' "$1" | jq -R -s -c --argjson base "$BASE" --arg chat "$2" --arg pkey "$3" '
+    printf '%s' "$1" | jq -R -s -c --argjson base "$BASE" --arg chat "$2" --arg pkey "$3" "$JQ_CAP_DEF"'
         def clean: sub("[ \t\r]+$"; "");
         def noneish: ascii_downcase as $d
                      | ["", "none", "no", "keine", "nein", "-", "n/a"] | map(. == $d) | any;
+        def codeh: test("^#{2,4} (\u2753|\ud83e\uddea|\u270b)");
+        def mdlvl: (capture("^(?<h>#{1,6})[ \t]") | .h | length) // 0;
+        def ev($type; $cd; $topic; $b):
+            {type: $type, code: $cd, heading: ($topic | clean | .[0:300]), text: $b.text}
+            + (if $b.cut then {cut: true} else {} end);
         . as $text
         | split("\n") as $ls
-        | ([ $ls[] | select(test("^#{2,4} \u2753 Q[0-9]+\\)"))
-              | capture("^#{2,4} \u2753 (?<code>Q[0-9]+)\\)[ \t]*(?<topic>.*)$")
-              | {key: .code, window: 0,
-                 event: ($base + {type: "question_codes", code: .code,
-                                  heading: (.topic | clean | .[0:300])})} ]
-          + [ $ls[] | select(test("^#{2,4} \ud83e\uddea T[0-9]+\\)"))
-              | capture("^#{2,4} \ud83e\uddea (?<code>T[0-9]+)\\)[ \t]*(?<topic>.*)$")
+        | ($ls | length) as $n
+        | [foreach $ls[] as $l ({f: false, x: false};
+              if ($l | test("^[ \t]{0,3}(```|~~~)")) then {f: (.f | not), x: true}
+              else {f: .f, x: .f} end;
+              .x)] as $fenced
+        | def block($i; $L):
+              ([range($i + 1; $n)
+                | select(($fenced[.] | not)
+                         and (($ls[.] | codeh) or (($ls[.] | mdlvl) as $v | $v > 0 and $v <= $L)))]
+               | .[0] // $n) as $e
+              | ($ls[($i + 1):$e] | join("\n") | trimws) as $full
+              | {text: ($full | capped(4000)), cut: ($full | length > 4000)};
+        ([ range(0; $n) as $i
+           | $ls[$i]
+           | select(test("^#{2,4} \u2753 Q[0-9]+\\)"))
+           | capture("^(?<h>#{2,4}) \u2753 (?<code>Q[0-9]+)\\)[ \t]*(?<topic>.*)$")
+           | block($i; (.h | length)) as $b
+           | {key: .code, window: 0, event: ($base + ev("question_codes"; .code; .topic; $b))} ]
+          + [ range(0; $n) as $i
+              | $ls[$i]
+              | select(test("^#{2,4} \ud83e\uddea T[0-9]+\\)"))
+              | capture("^(?<h>#{2,4}) \ud83e\uddea (?<code>T[0-9]+)\\)[ \t]*(?<topic>.*)$")
               | select(.topic | test("\\[blocking\\]"))
-              | {key: .code, window: 0,
-                 event: ($base + {type: "test_blocking", code: .code,
-                                  heading: (.topic | clean | .[0:300])})} ]
+              | block($i; (.h | length)) as $b
+              | {key: .code, window: 0, event: ($base + ev("test_blocking"; .code; .topic; $b))} ]
           + [ $ls[] | select(test("^(> )?(\\*\\*)?Blocker(\\*\\*)?:"))
               | capture("^(> )?(\\*\\*)?Blocker(\\*\\*)?:(\\*\\*)?[ \t]*(?<text>.*)$")
               | .text | clean | select(noneish | not)

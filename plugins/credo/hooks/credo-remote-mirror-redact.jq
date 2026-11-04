@@ -33,8 +33,10 @@ def redact:
 def scrub: walk(if type == "string" then redact else . end);
 
 # Identifier fields the sink needs to route an event are never masked (a session id is a
-# UUID and would otherwise hit rule 8). They are set by the hook, not by free text.
-def ids: ["type", "session_id", "ts", "tool_use_id", "chat_id", "agent_type", "agent_id"];
+# UUID and would otherwise hit rule 8). They are set by the hook, not by free text. sha256 is
+# the hook's digest of the full command of a cut permission summary: 64 hex characters, which
+# rule 8 would mask.
+def ids: ["type", "session_id", "ts", "tool_use_id", "chat_id", "agent_type", "agent_id", "sha256"];
 
 .event // empty
 | . as $ev
