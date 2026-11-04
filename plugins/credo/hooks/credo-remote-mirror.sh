@@ -141,11 +141,14 @@ dispatch() {
 
 # JQ_CAP_DEF: jq helpers for the stop and permission programs. capped(n) cuts a string to n
 # characters at a word boundary: the partial word at the edge is dropped, so the start of a
-# secret is never sent (a run without any space is cut hard). trimws drops the surrounding
-# whitespace. The end anchor is \z (absolute end), since $ also matches before a newline.
+# secret is never sent. A run without any space is cut hard, but its trailing token characters
+# are dropped as well, so a partial token is never sent; such a run may leave nothing.
+# trimws drops the surrounding whitespace. The end anchor is \z (absolute end), since $ also
+# matches before a newline.
 JQ_CAP_DEF='def trimws: sub("^\\s+"; "") | sub("\\s+\\z"; "");
 def capped($n): if length <= $n then . else (.[0:$n] | sub("[^ \t\n]*\\z"; "") | trimws) as $b
-                | if $b == "" then .[0:$n] else $b end end;'
+                | if $b != "" then $b
+                  else (.[0:$n] | sub("[A-Za-z0-9+_=/.-]*\\z"; "") | trimws) end end;'
 
 # PERM_SRC_DEF: jq def of src, the full unmasked source of a permission summary: the command
 # (Bash), the path (file tools) or the URL (WebFetch); empty for other tools.

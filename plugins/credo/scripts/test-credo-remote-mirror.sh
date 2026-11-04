@@ -641,5 +641,12 @@ run "blocker: cut at a token" stop "$(stop_payload "$reply" "")"
 check "blocker: edge cut marked" true "$(blockq 0 '.cut')"
 check "blocker: partial token prefix not sent" 0 "$(grep -c 'ghp_0' "$OUTF")"
 
+new_case
+hexsec="0123456789abcdef0123456789abcdef01234567"
+blong="$(printf 'a%.0s' $(seq 1 3968))/"
+run "blocker: whitespace-free run at the cut" stop "$(stop_payload "Blocker: $blong$hexsec" "")"
+check "blocker: no partial secret at a whitespace-free cut" 0 "$(grep -c '0123456789abcdef' "$OUTF")"
+check "blocker: cut flagged at a whitespace-free cut" true "$(blockq 0 '.cut')"
+
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]
