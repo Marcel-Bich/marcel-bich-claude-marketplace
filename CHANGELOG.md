@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.46
+
+###### Changed
+
+- Remote mirror: a `blocker` event carries `text` with the Blocker line and the lines below it, up to the next heading, code heading or Blocker line (redacted, at most 4000 characters, `cut: true` when shortened). Its first line is unchanged.
+
 ##### v0.84.45
 
 ###### Changed
