@@ -67,6 +67,20 @@ fails += check("own_text_at_end unchanged: two stray characters are not own",
                not g.own_text_at_end("xy/compact", "/compact"))
 fails += check("own_text_at_end unchanged: /compact not at the end",
                not g.own_text_at_end("/compact x", "/compact"))
+bang = "\n".join(["transcript line", RULE, "! rm /tmp/invented/file", RULE, "  cwd: /tmp/invented"])
+fails += check("bash-mode box (leading !) is an input box",
+               g.find_input_box(bang.split("\n")) is not None)
+fails += check("bash-mode box content is read without the marker",
+               g.input_content(bang) == "rm /tmp/invented/file")
+
+sys.path.insert(0, sys.argv[1])
+import credo_owner_type as ot  # noqa: E402
+vis = "row a\nrow b\n"
+win = "older row\n\x1b[49mrow a\nrow b\n"
+fails += check("window with an extra SGR reset on the first visible row matches the visible capture",
+               ot._same_visible(win, vis))
+fails += check("a real text difference still does not match",
+               not ot._same_visible("older row\nrow X\nrow b\n", vis))
 
 sys.exit(1 if fails else 0)
 PYEOF

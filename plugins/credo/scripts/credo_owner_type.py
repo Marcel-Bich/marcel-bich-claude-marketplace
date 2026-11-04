@@ -510,9 +510,12 @@ def scrollback_rows():
 
 
 def _same_visible(window, visible):
-    """True when the window (scrollback plus visible area) ends with the visible capture."""
-    w = [r.rstrip() for r in (window or "").rstrip("\n").split("\n")]
-    v = [r.rstrip() for r in (visible or "").rstrip("\n").split("\n")]
+    """True when the window (scrollback plus visible area) ends with the visible capture. Compared
+    without escape sequences: in the window capture tmux carries the colour state of the row above
+    into the first visible row (an extra SGR reset), so the raw rows can differ while the text is
+    the same."""
+    w = [guard.strip_ansi(r).rstrip() for r in (window or "").rstrip("\n").split("\n")]
+    v = [guard.strip_ansi(r).rstrip() for r in (visible or "").rstrip("\n").split("\n")]
     return len(v) <= len(w) and w[len(w) - len(v):] == v
 
 

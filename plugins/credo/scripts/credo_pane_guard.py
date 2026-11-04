@@ -42,7 +42,7 @@ import time
 import unicodedata
 
 RULE_CHARS = set("─━╭╮╰╯")
-MARKERS = ("❯", ">")
+MARKERS = ("❯", ">", "!")  # "!" = Claude Code bash mode (a message starting with "!")
 # Spinner frames of the Claude Code busy line ("✻ Brewing<U+2026> (12s · ↓ 300 tokens)").
 # "●" is deliberately absent: it prefixes normal transcript messages.
 SPINNER_LINE_RE = re.compile(
