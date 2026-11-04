@@ -560,5 +560,86 @@ check "perm no digest: stdout empty" "" "$out"
 check "perm no digest: cut still marked" true "$(jqf '.cut')"
 check "perm no digest: sha256 omitted" false "$(jqf 'has("sha256")')"
 
+# --- blocker text: full block (credo item #162) ---------------------------------
+echo "== blocker text: full block"
+# blockq <index> <jq expr>: the expression on the blocker event at that index (raw, no newline)
+blockq() {
+    jq -s -j --argjson i "$1" "[.[] | select(.type == \"blocker\")] | .[\$i] | $2" "$OUTF" 2>/dev/null
+}
+
+new_case
+reply="$(printf 'Summary\n\nBlocker: the deploy key is missing\nThe upload step fails.\nAdd the key, then rerun.')"
+run "blocker: multi-line block" stop "$(stop_payload "$reply" "")"
+check "blocker: text is the Blocker line plus the lines below" \
+    "$(printf 'the deploy key is missing\nThe upload step fails.\nAdd the key, then rerun.')" "$(blockq 0 '.text')"
+check "blocker: text starts without the prefix, the summary is not included" false \
+    "$(blockq 0 '.text | startswith("Summary")')"
+check "blocker: short block has no cut" false "$(blockq 0 'has("cut")')"
+check "blocker: event keys unchanged plus text" "cwd,session_id,text,ts,type" "$(blockq 0 'keys | join(",")')"
+
+new_case
+reply="$(printf 'Blocker: the rank is open\nTwo options exist.\n### %s Q4) Which rank?\nA or B?\n## Other\nNot in the block' "$Q")"
+run "blocker: ends at a code heading" stop "$(stop_payload "$reply" "")"
+check "blocker: block stops before the question code" \
+    "$(printf 'the rank is open\nTwo options exist.')" "$(blockq 0 '.text')"
+
+new_case
+reply="$(printf 'Blocker: the key is missing\nDetail one\n## Next steps\nDo this later')"
+run "blocker: ends at a markdown heading" stop "$(stop_payload "$reply" "")"
+check "blocker: block stops before a markdown heading" \
+    "$(printf 'the key is missing\nDetail one')" "$(blockq 0 '.text')"
+
+new_case
+reply="$(printf 'Blocker: first problem\nfirst detail\n\nBlocker: second problem\nsecond detail')"
+run "blocker: two blockers" stop "$(stop_payload "$reply" "")"
+check "blocker: two blockers, two events" 2 "$(count)"
+check "blocker: first event has its own block" "$(printf 'first problem\nfirst detail')" "$(blockq 0 '.text')"
+check "blocker: second event has its own block" "$(printf 'second problem\nsecond detail')" "$(blockq 1 '.text')"
+
+new_case
+reply="$(printf 'Blocker: first problem\nBlocker: second problem')"
+run "blocker: two adjacent blockers" stop "$(stop_payload "$reply" "")"
+check "blocker: adjacent blocker line ends the block" "first problem" "$(blockq 0 '.text')"
+check "blocker: adjacent second blocker has its own event" "second problem" "$(blockq 1 '.text')"
+
+new_case
+reply="$(printf 'Blocker: the script fails\n%sbash\n# not a heading\nmake check\n%s\nEnd of the reply' "$FENCE" "$FENCE")"
+run "blocker: fenced comment is text" stop "$(stop_payload "$reply" "")"
+check "blocker: fenced block kept whole" \
+    "$(printf 'the script fails\n%sbash\n# not a heading\nmake check\n%s\nEnd of the reply' "$FENCE" "$FENCE")" "$(blockq 0 '.text')"
+
+new_case
+run "blocker: none with following lines" stop "$(stop_payload "$(printf 'Blocker: none\nsome status text')" "")"
+check "blocker: none stays silent" 0 "$(count)"
+
+new_case
+line_long="$(printf 'a%.0s' $(seq 1 1500))"
+run "blocker: 1500-character line" stop "$(stop_payload "Blocker: $line_long" "")"
+check "blocker: a line over 1000 characters is no longer cut" 1500 "$(blockq 0 '.text | length')"
+check "blocker: no cut flag below 4000 characters" false "$(blockq 0 'has("cut")')"
+
+new_case
+long_body="$(printf 'word %.0s' $(seq 1 1000))"
+reply="$(printf 'Blocker: long context\n%s' "$long_body")"
+run "blocker: over 4000 characters" stop "$(stop_payload "$reply" "")"
+check "blocker: cut true when shortened" true "$(blockq 0 '.cut')"
+check "blocker: capped at 4000 characters" true "$(blockq 0 '(.text | length) <= 4000')"
+check "blocker: cut between words" true "$(blockq 0 '.text | endswith("word")')"
+check "blocker: starts with the Blocker line" true "$(blockq 0 '.text | startswith("long context\nword")')"
+
+new_case
+reply="$(printf 'Blocker: the key is missing\nSet TOKEN=abc123 first.\nThen go.')"
+run "blocker: secret in the block" stop "$(stop_payload "$reply" "")"
+check "blocker: secret masked inside the block" \
+    "$(printf 'the key is missing\nSet TOKEN=*** first.\nThen go.')" "$(blockq 0 '.text')"
+check "blocker: raw secret never sent" 0 "$(grep -c 'abc123' "$OUTF")"
+
+new_case
+filler="$(printf 'word %.0s' $(seq 1 798))"
+reply="$(printf 'Blocker: long\n%sghp_0123456789abcdefghij0123' "$filler")"
+run "blocker: cut at a token" stop "$(stop_payload "$reply" "")"
+check "blocker: edge cut marked" true "$(blockq 0 '.cut')"
+check "blocker: partial token prefix not sent" 0 "$(grep -c 'ghp_0' "$OUTF")"
+
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]
