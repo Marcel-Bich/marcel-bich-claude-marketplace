@@ -1201,7 +1201,9 @@ def main(argv):
             depth = -int(args[args.index("-S") + 1])
             lines = (st.get("history", []) + above)[-depth:] + lines
             if glitch:
-                lines[-1] = "* Thinking (2s)"
+                # default: a row inside the input box changes (its bottom border); glitch_footer:
+                # only the footer row below the box animates (background tasks, timers)
+                lines[-1 if st.get("glitch_footer") else -2] = "* Thinking (2s)"
         if "-N" in args:
             # real tmux pads every row to the pane width (110 columns here) with -N
             lines = [ln.ljust(PANE_WIDTH) for ln in lines]
@@ -1392,6 +1394,7 @@ SCEN = {
     # item 160: the pane changes once between the reads after the paste (a spinner row)
     "paste_glitch": base(glitch_after_paste=True),
     "paste_glitch_persist": base(glitch_after_paste=True, glitch_reads=4),
+    "footer_anim": base(glitch_after_paste=True, glitch_reads=50, glitch_footer=True),
     # item 160: a dialog opens after the paste and is dismissed before the take-back read. Captures
     # count every capture-pane call: 2 for the read before the paste, 2 per check (5 checks), then
     # the take-back read starts with its exact capture (13th), which must already show the box.
@@ -1599,6 +1602,10 @@ check "the pane keeps changing over every re-read: exit 0" "0" "$RC"
 check "the pane keeps changing over every re-read: submitted once" "['glitch long']" "$(st 's.get("submitted")')"
 check "the pane keeps changing over every re-read: logged as pane-changed, then clear" "1" \
     "$(grep -c 'result=delivered checks=pane-changed,clear' "$LOGF")"
+scenario footer_anim
+run_cli send --session "$SID" --text "footer moves"
+check "a footer below the input box animates on every read: exit 0" "0" "$RC"
+check "a footer below the input box animates on every read: submitted" "['footer moves']" "$(st 's.get("submitted")')"
 scenario dialog_closes
 run_cli send --session "$SID" --text "held text"
 check "a recognised dialog after the paste, dismissed before the take back: exit 1" "1" "$RC"

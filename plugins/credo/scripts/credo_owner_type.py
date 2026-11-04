@@ -533,10 +533,20 @@ def _same_visible(window, visible):
     """True when the window (scrollback plus visible area) ends with the visible capture. Compared
     without escape sequences: in the window capture tmux carries the colour state of the row above
     into the first visible row (an extra SGR reset), so the raw rows can differ while the text is
-    the same."""
+    the same. When the visible capture shows an input box, only the box rows are compared: the rows
+    around it (spinner, background-task footer, timers) can redraw on every read and would
+    otherwise never match. Without an input box every visible row is compared (fail closed)."""
+    raw = (visible or "").rstrip("\n").split("\n")
     w = [guard.strip_ansi(r).rstrip() for r in (window or "").rstrip("\n").split("\n")]
-    v = [guard.strip_ansi(r).rstrip() for r in (visible or "").rstrip("\n").split("\n")]
-    return len(v) <= len(w) and w[len(w) - len(v):] == v
+    v = [guard.strip_ansi(r).rstrip() for r in raw]
+    if len(v) > len(w):
+        return False
+    tail = w[len(w) - len(v):]
+    box = guard.find_input_box(raw)
+    if box:
+        top, bottom = box
+        return tail[top:bottom + 1] == v[top:bottom + 1]
+    return tail == v
 
 
 def read_pane(t):

@@ -6,6 +6,12 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.84
 
+#### v0.84.50
+
+##### Fixed
+
+- owner-type: a footer, spinner or timer that redraws around the input box no longer makes every send fail with pane-changed; while an input box is shown only its rows must agree between the two captures.
+
 #### v0.84.49
 
 ##### Added
