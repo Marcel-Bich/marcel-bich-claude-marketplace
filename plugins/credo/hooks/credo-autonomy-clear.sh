@@ -221,6 +221,19 @@ case "$prompt" in
         ;;
 esac
 
+# A message delivered from a remote app (credo-owner-type send, prefix "[remote chat <id>]",
+# possibly wrapped by Claude Code as <pasted_content ...> when pasted) never changes the
+# autonomy state: owner order "nie pausieren wenn was von der app kommt"; the prior state
+# (active or already paused) stays. Prefix match only.
+remote_head=$(printf '%s' "$prompt" | sed -e '1{/^[[:space:]]*<pasted_content[^>]*>[[:space:]]*$/d;}' \
+    -e 's/^[[:space:]]*<pasted_content[^>]*>[[:space:]]*//' | sed -n '/./{p;q;}')
+case "$remote_head" in
+    "[remote chat "*"]"*)
+        emit_self_wake
+        exit 0
+        ;;
+esac
+
 if [ -z "$SCRIPT_DIR" ] || [ ! -f "$SCRIPT_DIR/credo-autonomy-lib.sh" ]; then
     echo "credo-autonomy-clear: credo-autonomy-lib.sh not found; autonomy state untouched" >&2
     exit 1
