@@ -514,7 +514,15 @@ check "perm: sha256 is the digest of the full command" \
 
 run "perm: short command" permission "$(perm_payload Bash '{"command":"make test"}')"
 check "perm: short command has no cut" false "$(jqf 'has("cut")')"
-check "perm: short command has no sha256" false "$(jqf 'has("sha256")')"
+check "perm: short command has sha256 of the full command" \
+    "$(printf '%s' 'make test' | sha256sum | awk '{print $1}')" "$(jqf '.sha256')"
+check "perm: unmasked short command has no masked flag" false "$(jqf 'has("masked")')"
+
+secret_cmd='curl -H "Authorization: Bearer abcdefghij0123456789abcdefghij0123" https://example.invalid'
+run "perm: masked command" permission "$(perm_payload Bash "$(jq -n --arg c "$secret_cmd" '{command: $c}')")"
+check "perm: masked command is flagged" true "$(jqf '.masked')"
+check "perm: masked command sha256 is of the unmasked command" \
+    "$(printf '%s' "$secret_cmd" | sha256sum | awk '{print $1}')" "$(jqf '.sha256')"
 
 new_case
 perm_same="$(perm_payload Bash "$(jq -n --arg c "$long_cmd" '{command: $c}')")"

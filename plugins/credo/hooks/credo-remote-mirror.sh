@@ -6,7 +6,7 @@
 # sink call, to the command configured as remote.mirror_command:
 #   ask         PreToolUse AskUserQuestion: the Ask-box questions and their options
 #   permission  PermissionRequest: a permission dialog (tool name and a summary, cut at 2000
-#               characters; a cut summary carries cut and sha256 of the full command)
+#               characters; cut ones carry cut; every one carries sha256 of the full unmasked command, masked when the masking changed it)
 #   stop        Stop: question codes (heading "### Q-emoji Qn) topic"), test blocks
 #               marked "[blocking]" (heading "### T-emoji Tn) topic [blocking]"), lines
 #               "Blocker: <text>", and the reply to a message that started with
@@ -201,8 +201,8 @@ permission_lines() {
                             | join("|") | @base64)),
            window: $w,
            event: ($base + origin + {type: "permission", tool_name: $tn, summary: $sum}
-                   + (if $cut then {cut: true} + (if $sha == "" then {} else {sha256: $sha} end)
-                      else {} end))}
+                   + (if $cut then {cut: true} else {} end)
+                   + (if $sha == "" then {} else {sha256: $sha} end))}
     ' 2>/dev/null
 }
 

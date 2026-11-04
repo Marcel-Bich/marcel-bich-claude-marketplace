@@ -40,5 +40,9 @@ def ids: ["type", "session_id", "ts", "tool_use_id", "chat_id", "agent_type", "a
 
 .event // empty
 | . as $ev
-| (with_entries(select(.key as $k | ids | index($k) | not)) | scrub)
-  + ($ev | with_entries(select(.key as $k | ids | index($k))))
+| ((with_entries(select(.key as $k | ids | index($k) | not)) | scrub)
+   + ($ev | with_entries(select(.key as $k | ids | index($k)))))
+# a permission summary changed by the masking is flagged, so a sink knows the shown text is
+# not the exact command (it binds the exact command by sha256 instead)
+| if ($ev.type == "permission" and has("summary") and .summary != $ev.summary)
+  then . + {masked: true} else . end
