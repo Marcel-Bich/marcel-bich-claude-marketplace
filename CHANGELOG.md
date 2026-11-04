@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.44
+
+###### Fixed
+
+- Type-as-owner: after the paste the pane is checked up to five times, 0.5 s apart, before Enter. A spinner row or another transient pane change no longer stops a message before it is submitted. Only a recognised dialog on the last check holds back Enter, and the own text is taken back out of the input field when that is safe. Each stop has its own code (`dialog-after-paste`, `pane-changed`, `unknown-state`, `input-not-visible`) in the result and the log.
+
 ##### v0.84.43
 
 ###### Changed
