@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.49
+
+###### Added
+
+- Remote mirror: the final reply to a raw slash command is sent as `command_reply` (`command`, `text` up to 8000 characters with `cut`, `prompt_ts`). Skill bodies (isMeta entries) no longer count as the owner prompt.
+
 ##### v0.84.48
 
 ###### Added

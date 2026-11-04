@@ -699,5 +699,52 @@ reply="$(printf 'Use TOKEN=abc123 here.\n### %s Q2) Ok?\nbody' "$Q")"
 run "context: secret masked" stop "$(stop_payload "$reply" "")"
 check "context: raw secret never sent" 0 "$(grep -c 'abc123' "$OUTF")"
 
+# --- command replies: the answer to a raw slash command (credo item #166) ---------
+echo "== command replies"
+tr_meta() { jq -cn --arg u "$1" --arg t "$2" '{type: "user", uuid: $u, isMeta: true, timestamp: "2000-01-01T00:00:01Z", message: {role: "user", content: [{type: "text", text: $t}]}}' >> "$TR"; }
+tr_cmd() { jq -cn --arg u "$1" --arg t "$2" '{type: "user", uuid: $u, timestamp: "2000-01-01T00:00:00Z", message: {role: "user", content: $t}}' >> "$TR"; }
+cmdq() { jq -s -j "[.[] | select(.type == \"command_reply\")] | .[0] | $1" "$OUTF" 2>/dev/null; }
+
+new_case
+tr_cmd u-c1 "$(printf '<command-message>credo:review</command-message>\n<command-name>/credo:review</command-name>\n<command-args>now</command-args>')"
+tr_meta u-c2 "Base directory for this skill: /x. Skill body with TOKEN=abc123 text."
+tr_tool a-c1
+tr_result u-c3
+tr_text a-c2 "Review done, nothing found."
+run "command: skill command with a meta body" stop "$(stop_payload "Review done, nothing found." "$TR")"
+check "command: one event" 1 "$(count)"
+check "command: type" command_reply "$(cmdq '.type')"
+check "command: name with plugin prefix" "/credo:review" "$(cmdq '.command')"
+check "command: text is the final reply" "Review done, nothing found." "$(cmdq '.text')"
+check "command: prompt timestamp" "2000-01-01T00:00:00Z" "$(cmdq '.prompt_ts')"
+check "command: no cut on a short reply" false "$(cmdq 'has("cut")')"
+check "command: skill body never sent" 0 "$(grep -c 'abc123' "$OUTF")"
+
+run "command: same turn stopped again" stop "$(stop_payload "Review done, nothing found." "$TR")"
+check "command: answered once" 1 "$(count)"
+
+new_case
+tr_cmd u-d1 "$(printf '<command-name>/foo</command-name>\n<command-message>foo</command-message>')"
+run "command: not answered yet" stop "$(stop_payload "" "$TR")"
+check "command: no event without a reply after it" 0 "$(count)"
+tr_text a-d1 "$(printf 'word %.0s' $(seq 1 2000))"
+run "command: long reply" stop "$(stop_payload "" "$TR")"
+check "command: plain name" "/foo" "$(cmdq '.command')"
+check "command: cut on a long reply" true "$(cmdq '.cut')"
+check "command: capped at 8000" true "$(cmdq '(.text | length) <= 8000')"
+
+new_case
+tr_prompt u-e1 "[remote chat c-9] /status please"
+tr_text a-e1 "Status ok."
+run "command: remote chat prompt" stop "$(stop_payload "Status ok." "$TR")"
+check "command: a remote chat prompt stays a remote_reply" remote_reply "$(jqf '.type')"
+check "command: no command_reply for it" 0 "$(grep -c command_reply "$OUTF")"
+
+new_case
+tr_prompt u-f1 "plain prompt"
+tr_text a-f1 "plain answer"
+run "command: normal prompt" stop "$(stop_payload "plain answer" "$TR")"
+check "command: a normal prompt is not mirrored" 0 "$(count)"
+
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]

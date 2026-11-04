@@ -222,7 +222,7 @@ transcript_summary() {
                      else "" end;
         def has_text: (.message.content | type) == "array"
                       and ([.message.content[] | select(.type == "text")] | length) > 0;
-        def owner_prompt: .type == "user"
+        def owner_prompt: .type == "user" and (.isMeta != true)
                           and ((.message.content | type) == "string"
                                or ((.message.content | type) == "array"
                                    and ([.message.content[] | select(.type == "tool_result")] | length == 0)));
@@ -237,7 +237,13 @@ transcript_summary() {
               and $p != null and $a != null and $a > $p
            then ($ptext | capture("^\\[remote chat (?<id>[A-Za-z0-9._-]{1,64})\\]") | .id)
            else "" end) as $chat
-        | {text: $text, chat: $chat,
+        # a raw slash command (typed from the app without prefix): its name, when answered
+        | (if ($ptext | test("<command-name>/[^\\s<]{1,64}</command-name>"))
+              and $p != null and $a != null and $a > $p
+           then "/" + ($ptext | capture("<command-name>/(?<n>[^\\s<]{1,64})</command-name>") | .n)
+           else "" end) as $cmd
+        | {text: $text, chat: $chat, command: $cmd,
+           prompt_ts: (if $p == null then "" else ($e[$p].timestamp // "") end),
            prompt_key: (if $p == null then "" else ($e[$p].uuid // ("line" + ($p | tostring))) end)}
     ' 2>/dev/null
 }
@@ -250,7 +256,7 @@ transcript_summary() {
 # A blocker event carries its Blocker line (without the prefix, as before) and the lines below
 # it the same way, up to the next markdown heading (any level) or the next Blocker line.
 stop_lines() {
-    printf '%s' "$1" | jq -R -s -c --argjson base "$BASE" --arg chat "$2" --arg pkey "$3" "$JQ_CAP_DEF"'
+    printf '%s' "$1" | jq -R -s -c --argjson base "$BASE" --arg chat "$2" --arg pkey "$3" --arg cmd "${4:-}" --arg pts "${5:-}" "$JQ_CAP_DEF"'
         def clean: sub("[ \t\r]+$"; "");
         def noneish: ascii_downcase as $d
                      | ["", "none", "no", "keine", "nein", "-", "n/a"] | map(. == $d) | any;
@@ -316,13 +322,20 @@ stop_lines() {
                     event: ($base + {type: "remote_reply", chat_id: $chat,
                                      text: ($text | .[0:8000])})}]
              end)
+          + (if $chat != "" or $cmd == "" or ($text | trimws) == "" then []
+             else [{key: ("command:" + $cmd + ":" + $pkey), window: 0,
+                    event: ($base + {type: "command_reply", command: $cmd,
+                                     text: ($text | trimws | capped(8000))}
+                            + (if ($text | trimws | length) > 8000 then {cut: true} else {} end)
+                            + (if $pts != "" then {prompt_ts: $pts} else {} end))}]
+             end)
         )[]
     ' 2>/dev/null
 }
 
 # stop_events: the final reply text from last_assistant_message (else from the transcript)
 stop_events() {
-    local text="" tpath tsum chat="" pkey=""
+    local text="" tpath tsum chat="" pkey="" cmd="" pts=""
     text="$(printf '%s' "$INPUT" | jq -r '.last_assistant_message // empty' 2>/dev/null)"
     tpath="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)"
     if [ -n "$tpath" ] && [ -f "$tpath" ]; then
@@ -331,10 +344,12 @@ stop_events() {
             [ -n "$text" ] || text="$(printf '%s' "$tsum" | jq -r '.text // empty' 2>/dev/null)"
             chat="$(printf '%s' "$tsum" | jq -r '.chat // empty' 2>/dev/null)"
             pkey="$(printf '%s' "$tsum" | jq -r '.prompt_key // empty' 2>/dev/null)"
+            cmd="$(printf '%s' "$tsum" | jq -r '.command // empty' 2>/dev/null)"
+            pts="$(printf '%s' "$tsum" | jq -r '.prompt_ts // empty' 2>/dev/null)"
         fi
     fi
     [ -n "$text" ] || return 0
-    stop_lines "$text" "$chat" "$pkey"
+    stop_lines "$text" "$chat" "$pkey" "$cmd" "$pts"
 }
 
 main() {
