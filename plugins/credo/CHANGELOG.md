@@ -6,6 +6,12 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.84
 
+#### v0.84.52
+
+##### Changed
+
+- owner-type tests: direct unit tests for the input-box comparison (footer around the box ignored, box rows compared, a dialog without a box compared in full).
+
 #### v0.84.51
 
 ##### Fixed

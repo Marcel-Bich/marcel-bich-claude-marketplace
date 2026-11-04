@@ -744,6 +744,28 @@ def free_aborts():
 t("highlight: a free-text piece is not typed while the highlight is off the Type row",
   val(free_aborts) is True)
 
+# _same_visible box branch (item 169): with an input box only its rows must agree
+def boxed(row, footer):
+    return ["● Working.", "", "✻ Calculating… (%s)" % footer, "", RULE, P + " " + row, RULE,
+            "  ⏵⏵ 2 background tasks · %s" % footer]
+
+
+def sv(window_rows, visible_rows):
+    return o._same_visible("\n".join(["old history row"] + window_rows), "\n".join(visible_rows))
+
+
+t("same_visible: box rows equal, spinner and footer around the box differ -> same",
+  sv(boxed("draft", "3s"), boxed("draft", "4s")) is True)
+t("same_visible: a row inside the input box differs -> changed",
+  sv(boxed("draft", "3s"), boxed("draft2", "3s")) is False)
+t("same_visible: the box border row differs -> changed",
+  sv(boxed("draft", "3s")[:6] + ["* Thinking (2s)"] + boxed("draft", "3s")[7:], boxed("draft", "3s")) is False)
+anim = [x.replace("● Working on it.", "● Working on it. (5s)") for x in ASK_EN]
+t("same_visible: a dialog without an input box has no box", g.find_input_box(ASK_EN) is None)
+t("same_visible: an animating dialog without an input box -> changed (every row compared)",
+  sv(ASK_EN, anim) is False)
+t("same_visible: an unchanged dialog without an input box -> same", sv(ASK_EN, ASK_EN) is True)
+
 print("\n".join(res))
 PYEOF
 unit_out="$("$PY" "$TMP/unit.py" "$GUARD" "$MODULE" 2>&1)"; unit_rc=$?
