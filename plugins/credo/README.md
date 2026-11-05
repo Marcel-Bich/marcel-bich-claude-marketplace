@@ -342,12 +342,13 @@ On by default (opt-out). The credo config key `reminder` (global `~/.claude/cred
 reminder:
   enabled: true                # false switches the whole reminder off
   text: ""                     # optional one-line override of the built-in text
-  active: {turns: 10}          # every 10 real user turns in active mode
-  passive: {turns: 10}
+  active: {turns: 20}          # every 20 real user turns in active mode
+  passive: {turns: 20}
   autonomous: {minutes: 60}    # every 60 min in autonomous mode (the user is away, no turns)
+  paused: {turns: 20}          # autonomous with keep-alive paused (owner present): turns only
 ```
 
-Off switches, in any user config layer: `enabled: false` turns the whole reminder off; under a mode, `turns: 0` and `minutes: 0` (or the mode set to `off`) turn that mode off. Each key merges with the defaults one by one, so `autonomous: {turns: 5}` keeps the default 60 minutes; set `minutes: 0` as well to leave only the turns trigger.
+Off switches, in any user config layer: `enabled: false` turns the whole reminder off; under a mode, `turns: 0` and `minutes: 0` (or the mode set to `off`) turn that mode off; `paused: {turns: 0}` turns the reminder off while autonomy is paused. Each key merges with the defaults one by one, so `autonomous: {turns: 5}` keeps the default 60 minutes; set `minutes: 0` as well to leave only the turns trigger.
 
 Each reminder is one full turn for the agent (it re-reads the rules, the items, the logs and the handoff), so it costs tokens; autonomous mode can send up to 24 per day per session. `/credo:setup` asks once about the reminder and states this cost. The first reminder of each session carries one extra line that names the switch; later reminders do not.
 

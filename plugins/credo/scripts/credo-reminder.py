@@ -8,9 +8,10 @@ ON without any user config:
 
     reminder:
       enabled: true                # false switches the whole reminder off
-      active: {turns: 10}          # every 10 real user turns, active mode
-      passive: {turns: 10}
+      active: {turns: 20}          # every 20 real user turns, active mode
+      passive: {turns: 20}
       autonomous: {minutes: 60}    # every 60 min, autonomous mode (no turns while away)
+      paused: {turns: 20}          # autonomous with keep-alive paused: every 20 turns, no time
       text: ""                     # optional one-line override of the built-in text
 
 A mode with neither key (or set to off, or with both keys 0) is off. A mode may set turns
@@ -23,8 +24,8 @@ no worker starts.
 Arming - every real user turn of a session is counted (UserPromptSubmit, hook
 hooks/credo-reminder.sh turn). The 10th one arms the session for good; the state is on
 disk per session id, so it survives a compact and a resume (same session id). Arming sets
-the reference point: the first reminder comes 10 turns or 60 minutes after it. In autonomous mode with the
-keep-alive paused (the owner is present) only turns count, never minutes. Not counted:
+the reference point: the first reminder comes 20 turns or 60 minutes after it. In autonomous mode with the
+keep-alive paused (the owner is present) only turns count (reminder.paused.turns), never minutes. Not counted:
 injected reminders (prefix "[credo-reminder]"), a bare ".", the credo automated prompts
 (self-wake dot, autonomy wake marker, task and system notifications, cross-session messages
 and notices) and blank prompts.
@@ -107,6 +108,9 @@ DEFAULT_TEXT = ("Check yourself against what we agreed: re-read the credo rules,
                 "drifted, fix it now and continue as agreed.")
 MODE_NAMES = ("active", "passive", "autonomous")
 ARM_TURNS = 10
+# autonomous mode with the keep-alive paused (owner present): turns only, this default when
+# reminder.paused is not set (reminder.paused.turns: 0 switches the paused reminder off)
+PAUSED_TURNS = 20
 # appended, once per session, to the first reminder that is sent (one line, as typed)
 NOTICE = ("Note (first reminder of this session): the periodic reminder is on by default. To "
           "switch it off, set reminder.enabled: false in your credo config, or set "
@@ -174,7 +178,23 @@ def parse_triggers(data):
         turns, minutes = _pos_int(spec.get("turns")), _pos_float(spec.get("minutes"))
         if turns or minutes:
             out[mode] = {"turns": turns, "minutes": minutes}
+    paused = data.get("paused")
+    if out.get("autonomous") and isinstance(paused, dict) and "turns" in paused:
+        # only next to an autonomous trigger (alone it would start an idle worker); kept even
+        # when 0: an explicit 0 switches the paused reminder off
+        out["paused"] = {"turns": _pos_int(paused.get("turns")), "minutes": None}
     return out
+
+
+def effective_trigger(triggers, mode, paused):
+    """The trigger for the current mode. In autonomous mode with the keep-alive paused (the
+    owner is present) only turns count: reminder.paused.turns, else PAUSED_TURNS, as long as
+    the autonomous mode is on at all. None = no reminder now."""
+    trig = triggers.get(mode) if mode in MODE_NAMES else None
+    if mode == "autonomous" and paused and trig:
+        trig = triggers.get("paused") or {"turns": PAUSED_TURNS, "minutes": None}
+        return trig if trig.get("turns") else None
+    return trig
 
 
 def reminder_prompt(raw_text):
@@ -576,10 +596,8 @@ def worker(plan_path):
             triggers, text = cfg
             wait_for_owner(pane)
             mode = current_mode(plan)
-            trig = triggers.get(mode) if mode else None
-            if trig and mode == "autonomous" and autonomy_paused(plan):
-                # autonomous mode with keep-alive paused (owner present): turns only, no time
-                trig = {"turns": trig.get("turns") or ARM_TURNS, "minutes": None}
+            trig = effective_trigger(triggers, mode,
+                                     mode == "autonomous" and autonomy_paused(plan))
             if trig and due_now(plan, trig):
                 attempt(pane, plan, text, mode, trig)
             time.sleep(pane.tim["poll"])

@@ -974,13 +974,13 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" source reminder.enabled
 ```
 
 Explain in 2-3 lines. The periodic reminder is on by default: in tmux, a quality prompt is
-typed into the session's own pane every 10 real user turns (active and passive mode) or every
-60 minutes (autonomous mode). Each reminder is one full turn for Claude (it re-reads the rules,
+typed into the session's own pane every 20 real user turns (active and passive mode, and
+autonomous mode while the keep-alive is paused) or every 60 minutes (autonomous mode). Each reminder is one full turn for Claude (it re-reads the rules,
 the open items, the logs and the handoff), so it costs tokens; an unattended autonomous run can
 send up to 24 per day per session. Then ask via AskUserQuestion:
 
 ```
-Keep the periodic reminder (on, every 10 turns and every 60 minutes in autonomous mode)?
+Keep the periodic reminder (on, every 20 turns and every 60 minutes in autonomous mode)?
 
 - Keep the defaults (Recommended) - on, each reminder costs one full turn
 - Change the intervals - I will ask for the new values

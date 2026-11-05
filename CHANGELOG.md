@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.54
+
+###### Changed
+
+- Reminder: every 20 real user turns by default (was 10) in active and passive mode and in autonomous mode with the keep-alive paused; the paused interval is configurable as `reminder.paused.turns` (0 = off).
+
 ##### v0.84.53
 
 ###### Fixed

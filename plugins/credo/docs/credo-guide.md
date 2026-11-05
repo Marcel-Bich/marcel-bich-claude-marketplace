@@ -74,13 +74,14 @@ In Claude Code builds with mods support, `hooks/band.tsx` draws a band above the
 ```yaml
 reminder:
   enabled: true                # false switches the whole reminder off
-  active: {turns: 10}          # every 10 real user turns since the last reminder
-  passive: {turns: 10}
+  active: {turns: 20}          # every 20 real user turns since the last reminder
+  passive: {turns: 20}
   autonomous: {minutes: 60}    # every 60 min since the last reminder
+  paused: {turns: 20}          # autonomous with keep-alive paused (owner present): turns only, 0 = off
   text: ""                     # one-line override of the built-in text after the marker
 ```
 
-- On by default: active and passive mode every 10 real user turns, autonomous mode every 60 minutes. Each reminder is one full turn for the agent (it re-reads the rules, the items, the logs and the handoff), so it costs tokens; autonomous mode can send up to 24 per day per session. `/credo:setup` asks once about the reminder and states this cost.
+- On by default: active and passive mode every 20 real user turns, autonomous mode every 60 minutes, autonomous mode with the keep-alive paused every 20 turns (`paused.turns`). Each reminder is one full turn for the agent (it re-reads the rules, the items, the logs and the handoff), so it costs tokens; autonomous mode can send up to 24 per day per session. `/credo:setup` asks once about the reminder and states this cost.
 - Off switches, in any user config layer (the highest layer that sets the key wins): `enabled: false` turns the whole reminder off; under a mode, `turns: 0` and `minutes: 0`, or the mode set to `off`, turn that mode off. Each key merges with the defaults one by one: `autonomous: {turns: 5}` keeps the default `minutes: 60`, so add `minutes: 0` to leave only the turns trigger.
 - Trigger rules: `turns` and `minutes` may both be set (whichever comes first); a mode without a key, or with both keys 0, is off.
 - Arming: every real user turn is counted. The 10th one arms the session for good (state per session id in `<configdir>/credo/reminder-<session-id>.json`, so compact and resume keep it). Arming is the reference point, so the first reminder comes 10 turns or 60 minutes after it.

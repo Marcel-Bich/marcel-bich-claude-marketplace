@@ -143,6 +143,20 @@ assert m.parse_triggers({"active": {"turns": 0, "minutes": 0}, "autonomous": {"m
     "passive": {"turns": 10, "minutes": None}}
 assert m.parse_triggers({"active": "off", "passive": {"turns": 10}}) == {
     "passive": {"turns": 10, "minutes": None}}
+# paused autonomy (owner present): reminder.paused.turns, default 20, 0 = off
+t_all = m.parse_triggers({"active": {"turns": 20}, "autonomous": {"minutes": 60}, "paused": {"turns": 7}})
+assert t_all["paused"] == {"turns": 7, "minutes": None}
+assert m.effective_trigger(t_all, "autonomous", True) == {"turns": 7, "minutes": None}
+assert m.effective_trigger(t_all, "autonomous", False) == {"turns": None, "minutes": 60.0}
+assert m.effective_trigger(t_all, "active", False) == {"turns": 20, "minutes": None}
+t_def = m.parse_triggers({"autonomous": {"minutes": 60}})
+assert "paused" not in t_def
+assert m.effective_trigger(t_def, "autonomous", True) == {"turns": 20, "minutes": None}
+t_off = m.parse_triggers({"autonomous": {"minutes": 60}, "paused": {"turns": 0}})
+assert m.effective_trigger(t_off, "autonomous", True) is None
+assert m.parse_triggers({"paused": {"turns": 5}}) == {}
+assert m.effective_trigger({}, "autonomous", True) is None
+assert m.effective_trigger(t_all, None, False) is None
 assert m.parse_triggers({"active": None, "autonomous": {"minutes": 60}}) == {
     "autonomous": {"turns": None, "minutes": 60.0}}
 assert m.NOTICE.startswith("Note (first reminder of this session): the periodic reminder is on by default.")
@@ -358,8 +372,8 @@ state_eq() { [ "$(state_of "$1" "$2")" = "$3" ]; }
 # --- on by default: no user config -> the builtin template's defaults apply -----------
 # (the global layer is empty here, so the builtin template is the only layer)
 DEF_JSON="$(bash "$SCRIPT_DIR/credo-config.sh" get reminder)"
-printf '%s' "$DEF_JSON" | jq -e '.enabled == true and .active.turns == 10 and .passive.turns == 10 and .autonomous.minutes == 60' >/dev/null
-ok "builtin defaults: enabled, active and passive every 10 turns, autonomous every 60 minutes" "$?"
+printf '%s' "$DEF_JSON" | jq -e '.enabled == true and .active.turns == 20 and .passive.turns == 20 and .autonomous.minutes == 60 and .paused.turns == 20' >/dev/null
+ok "builtin defaults: enabled, active and passive every 20 turns, autonomous every 60 minutes, paused every 20 turns" "$?"
 SID_B="aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
 start_target "$TMP/t1.pid" TMUX=/tmp/fake-sock,1,0 TMUX_PANE=%5
 TGT="$(cat "$TMP/t1.pid")"; export FAKE_PANE_PIDFILE="$TMP/t1.pid"
@@ -371,8 +385,8 @@ hook turn "$SID_B" "the tenth real message"
 check "default on: the 10th turn arms the session" "true" "$(state_of "$SID_B" armed)"
 wait_for 25 alive_worker "$SID_B"; ok "default on: worker running after arming" "$?"
 check "default on: nothing typed right after arming" "0" "$(n_typed)"
-for i in $(seq 11 20); do hook turn "$SID_B" "user message $i"; done
-wait_for 40 subs_ge 1; ok "default on: first reminder 10 turns after arming" "$?"
+for i in $(seq 11 30); do hook turn "$SID_B" "user message $i"; done
+wait_for 40 subs_ge 1; ok "default on: first reminder 20 turns after arming" "$?"
 ok "default on: first reminder is the default prompt plus the notice" "$([ "$(head -1 "$FAKE_SUBMITS")" = "$DEF $NOTICE" ] && echo 0 || echo 1)"
 stop_worker "$SID_B"
 reset_fake() { : > "$FAKE_SUBMITS"; : > "$FAKE_BUF"; : > "$FAKE_TMUX_LOG"; : > "$FAKE_BUFLOG"; }
