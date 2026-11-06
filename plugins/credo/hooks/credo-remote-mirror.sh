@@ -117,12 +117,23 @@ run_sink() {
     return 0
 }
 
-# mirror_send <command> <event json>: background by default, so the hook returns at once
+# redact_send <command> <candidate line>: every string of the event is masked first
+# (credo-remote-mirror-redact.jq); a failing redaction prints nothing, so nothing is sent
+# (fail-closed)
+redact_send() {
+    local ev
+    ev="$(printf '%s' "$2" | jq -c -f "$HOOK_DIR/credo-remote-mirror-redact.jq" 2>/dev/null)"
+    [ -n "$ev" ] && run_sink "$1" "$ev"
+    return 0
+}
+
+# mirror_send <command> <candidate line>: masking and sending run in the background by
+# default, so the hook returns at once (masking a long reply of up to 1 MiB can take seconds)
 mirror_send() {
     if [ "${CREDO_REMOTE_MIRROR_SYNC:-}" = 1 ]; then
-        run_sink "$1" "$2"
+        redact_send "$1" "$2"
     else
-        ( run_sink "$1" "$2" ) >/dev/null 2>&1 </dev/null &
+        ( redact_send "$1" "$2" ) >/dev/null 2>&1 </dev/null &
     fi
     return 0
 }
@@ -130,16 +141,15 @@ mirror_send() {
 # dispatch <line>: one {key, window, event} candidate; a key sent already is skipped,
 # a new key is marked, and an event (not null) is sent
 dispatch() {
-    local line="$1" key window ev
+    local line="$1" key window
     key="$(printf '%s' "$line" | jq -r '.key // empty' 2>/dev/null)"
     [ -n "$key" ] || return 0
     window="$(printf '%s' "$line" | jq -r '.window // 0' 2>/dev/null)"
     mirror_seen "$key" "$window" && return 0
     mirror_mark "$key"
-    # every string of the event is masked first (credo-remote-mirror-redact.jq); a failing
-    # redaction prints nothing, so nothing is sent (fail-closed)
-    ev="$(printf '%s' "$line" | jq -c -f "$HOOK_DIR/credo-remote-mirror-redact.jq" 2>/dev/null)"
-    [ -n "$ev" ] && mirror_send "$CMD" "$ev"
+    # an event of null (a code seen in an Ask box) only marks the key
+    [ "$(printf '%s' "$line" | jq -r '.event == null' 2>/dev/null)" = false ] || return 0
+    mirror_send "$CMD" "$line"
     return 0
 }
 
@@ -156,6 +166,17 @@ JQ_CAP_DEF='def trimws: sub("^\\s+"; "") | sub("\\s+\\z"; "");
 def capped($n): if length <= $n then . else (.[0:$n] | sub("[^ \t\n]*\\z"; "") | trimws) as $b
                 | if $b != "" then $b
                   else (.[0:$n] | sub("[A-Za-z0-9+_=/.-]*\\z"; "") | trimws) end end;
+# mbcapped: a remote chat reply up to 1 MiB (1048576 UTF-8 bytes, owner decision). A longer
+# one is never cut silently: it is shortened at a word boundary and ends with a visible
+# marker "[truncated: N of M characters, limit 1 MiB]"; .cut tells the caller.
+def mbcapped: 1048576 as $lim
+    | if utf8bytelength <= $lim then {text: ., cut: false}
+      else . as $all | ($all | length) as $m
+      | ((($lim - 256) * $m / ($all | utf8bytelength)) | floor)
+      | until(. as $k | ($all | .[0:$k] | utf8bytelength) <= $lim - 256; (. * 0.95 | floor))
+      | . as $k | ($all | capped($k)) as $b
+      | {text: ($b + "\n\n[truncated: \($b | length) of \($m) characters, limit 1 MiB]"),
+         cut: true} end;
 def tailcapped($n): if length <= $n then . else .[(length - $n):] as $t
                     | (if ($t | test("\n")) then ($t | sub("^[^\n]*\n"; ""))
                        else ($t | sub("^[^ \t\n]*"; "")) end | trimws) as $b
@@ -332,13 +353,14 @@ stop_lines() {
           + (if $chat == "" or ($text | length) == 0 then []
              else [{key: ("reply:" + $chat + ":" + $pkey), window: 0,
                     event: ($base + {type: "remote_reply", chat_id: $chat,
-                                     text: ($text | .[0:8000])})}]
+                                     text: ($text | mbcapped.text)}
+                            + (if ($text | mbcapped.cut) then {cut: true} else {} end))}]
              end)
           + (if $chat != "" or $cmd == "" or ($text | trimws) == "" then []
              else [{key: ("command:" + $cmd + ":" + $pkey), window: 0,
                     event: ($base + {type: "command_reply", command: $cmd,
-                                     text: ($text | trimws | capped(8000))}
-                            + (if ($text | trimws | length) > 8000 then {cut: true} else {} end)
+                                     text: ($text | trimws | mbcapped.text)}
+                            + (if ($text | trimws | mbcapped.cut) then {cut: true} else {} end)
                             + (if $pts != "" then {prompt_ts: $pts} else {} end))}]
              end)
         )[]

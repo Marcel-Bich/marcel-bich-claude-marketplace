@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.55
+
+###### Changed
+
+- Remote mirror: remote chat and slash-command replies are sent whole up to 1 MiB (was 8000 characters, cut silently); a longer reply ends with a visible "[truncated: N of M characters, limit 1 MiB]" marker and `cut: true`. Masking runs in the background and handles long texts in blocks.
+
 ##### v0.84.54
 
 ###### Changed

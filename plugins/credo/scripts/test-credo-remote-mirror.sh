@@ -742,8 +742,8 @@ check "command: no event without a reply after it" 0 "$(count)"
 tr_text a-d1 "$(printf 'word %.0s' $(seq 1 2000))"
 run "command: long reply" stop "$(stop_payload "" "$TR")"
 check "command: plain name" "/foo" "$(cmdq '.command')"
-check "command: cut on a long reply" true "$(cmdq '.cut')"
-check "command: capped at 8000" true "$(cmdq '(.text | length) <= 8000')"
+check "command: a 10000-character reply is sent whole, trimmed (limit 1 MiB)" 9999 "$(cmdq '.text | length')"
+check "command: no cut below 1 MiB" false "$(cmdq 'has("cut")')"
 
 new_case
 tr_prompt u-e1 "[remote chat c-9] /status please"
@@ -773,6 +773,36 @@ run "legacy: letter test blocking" stop "$(stop_payload "$(printf '### %s B) Smo
 check "legacy: letter test does not collide with the letter question" 3 "$(count)"
 run "legacy: two letters are no code" stop "$(stop_payload "$(printf '### %s AB) nope\nx' "$Q")" "")"
 check "legacy: only single letters" 3 "$(count)"
+
+# --- remote chat texts up to 1 MiB, visible marker above (credo item #173) ----------
+echo "== remote 1 MiB"
+big_payload() { # file with a stop payload whose final reply has the given number of 10-byte lines
+    python3 -I - "$1" "$SID" "$CWD" "$TR" > "$TMP/big.json" <<'PY'
+import json, sys
+n, sid, cwd, tr = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+text = "".join("line %04d\n" % (i % 10000) for i in range(n)) + "THE END"
+print(json.dumps({"session_id": sid, "cwd": cwd, "hook_event_name": "Stop",
+                  "last_assistant_message": text, "transcript_path": tr}))
+PY
+}
+new_case
+tr_prompt u-g1 "[remote chat c-big] long one please"
+tr_text a-g1 "placeholder"
+big_payload 50000
+run "remote: 500 KB reply" stop "$(cat "$TMP/big.json")"
+check "remote: a 500 KB reply is sent whole" true "$(jqf '.text | endswith("THE END")')"
+check "remote: no cut flag below 1 MiB" false "$(jqf 'has("cut")')"
+
+new_case
+tr_prompt u-g2 "[remote chat c-big] longer please"
+tr_text a-g2 "placeholder"
+big_payload 120000
+run "remote: 1.2 MB reply" stop "$(cat "$TMP/big.json")"
+check "remote: over 1 MiB marked cut" true "$(jqf '.cut')"
+check "remote: over 1 MiB ends with a visible marker" true \
+    "$(jqf '.text | test("\\[truncated: [0-9]+ of 1200007 characters, limit 1 MiB\\]$")')"
+check "remote: over 1 MiB stays within 1 MiB" true "$(jqf '(.text | utf8bytelength) <= 1048576')"
+check "remote: over 1 MiB keeps the start" true "$(jqf '.text | startswith("line 0000\nline 0001")')"
 
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]

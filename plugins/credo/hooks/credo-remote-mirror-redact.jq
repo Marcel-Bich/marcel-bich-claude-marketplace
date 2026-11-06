@@ -30,7 +30,15 @@ def redact:
   | gsub("\\b(?:ghp|gho|ghu|ghs|ghr|github_pat|xox[abprs]|sk)[-_][A-Za-z0-9_-]{12,}"; "***")
   | gsub("(?=[A-Za-z0-9+_=-]*[0-9])(?=[A-Za-z0-9+_=-]*[A-Za-z])[A-Za-z0-9+_=-]{32,}"; "***");
 
-def scrub: walk(if type == "string" then redact else . end);
+# a long string (a remote chat reply of up to 1 MiB) is masked in blocks of 200 lines: jq 1.6
+# gsub slows down with the number of matches times the string length, so a whole-string pass
+# over a long text with many matches would take minutes, and one pass per line costs too many
+# calls. Short strings keep the whole-string pass (a key and its value split over two lines
+# are masked there, in a long one only inside the same block).
+def blocks: split("\n") as $l | [range(0; $l | length; 200) as $i | $l[$i:($i + 200)] | join("\n")];
+def scrub: walk(if type == "string"
+                then (if length > 20000 then (blocks | map(redact) | join("\n")) else redact end)
+                else . end);
 
 # Identifier fields the sink needs to route an event are never masked (a session id is a
 # UUID and would otherwise hit rule 8). They are set by the hook, not by free text. sha256 is
