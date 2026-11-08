@@ -166,17 +166,12 @@ JQ_CAP_DEF='def trimws: sub("^\\s+"; "") | sub("\\s+\\z"; "");
 def capped($n): if length <= $n then . else (.[0:$n] | sub("[^ \t\n]*\\z"; "") | trimws) as $b
                 | if $b != "" then $b
                   else (.[0:$n] | sub("[A-Za-z0-9+_=/.-]*\\z"; "") | trimws) end end;
-# mbcapped: a remote chat reply up to 1 MiB (1048576 UTF-8 bytes, owner decision). A longer
-# one is never cut silently: it is shortened at a word boundary and ends with a visible
-# marker "[truncated: N of M characters, limit 1 MiB]"; .cut tells the caller.
-def mbcapped: 1048576 as $lim
-    | if utf8bytelength <= $lim then {text: ., cut: false}
-      else . as $all | ($all | length) as $m
-      | ((($lim - 256) * $m / ($all | utf8bytelength)) | floor)
-      | until(. as $k | ($all | .[0:$k] | utf8bytelength) <= $lim - 256; (. * 0.95 | floor))
-      | . as $k | ($all | capped($k)) as $b
-      | {text: ($b + "\n\n[truncated: \($b | length) of \($m) characters, limit 1 MiB]"),
-         cut: true} end;
+# replyfields: a remote chat reply is never cut (owner decision): up to 1048576 characters it
+# is sent whole as text; a longer one is refused visibly instead - no text, too_long: true,
+# its length and the limit (the receiving side reports it as too_long).
+def replyfields: 1048576 as $lim
+    | if length <= $lim then {text: .}
+      else {text: "", too_long: true, length: length, limit: $lim} end;
 def tailcapped($n): if length <= $n then . else .[(length - $n):] as $t
                     | (if ($t | test("\n")) then ($t | sub("^[^\n]*\n"; ""))
                        else ($t | sub("^[^ \t\n]*"; "")) end | trimws) as $b
@@ -214,7 +209,9 @@ ask_lines() {
                questions: [$qs[] | {question: (.question // ""), header: (.header // ""),
                    multiSelect: (.multiSelect // false),
                    options: [(.options // [])[] | {label: (.label // ""),
-                                                   description: (.description // "")}]}]})},
+                                                   description: (.description // "")}
+                                                  + (if (.preview // "") != ""
+                                                     then {preview: .preview} else {} end)]}]})},
           ([$all | match("\u2753 (Q[0-9]+)\\)"; "g") | .captures[0].string] | unique[]
            | {key: ., window: 0, event: null})
     ' 2>/dev/null
@@ -245,9 +242,20 @@ permission_lines() {
 
 # transcript_summary <path>: the final assistant text, and the chat id of the last owner
 # prompt when that prompt started with "[remote chat <id>]" and was answered after it.
-# Only the tail of the transcript is read (long sessions stay cheap).
-transcript_summary() {
-    tail -c 4194304 -- "$1" 2>/dev/null | jq -R -s -c '
+# Only the tail of the transcript is read (long sessions stay cheap); its first, possibly cut
+# line is dropped. The lines are read as JSON, not raw: jq 1.6 -R -s breaks multibyte
+# characters of long input apart. The text comes back as a JSON string.
+transcript_tail() {
+    local size
+    size="$(wc -c < "$1" 2>/dev/null || echo 0)"
+    if [ "${size:-0}" -gt 4194304 ]; then
+        tail -c 4194304 -- "$1" 2>/dev/null | tail -n +2
+    else
+        cat -- "$1" 2>/dev/null
+    fi
+}
+# TS_PROG: the summary program over the array of transcript entries
+TS_PROG='
         def text_of: if type == "string" then .
                      elif type == "array" then [.[] | select(.type? == "text") | .text] | join("\n")
                      else "" end;
@@ -257,7 +265,7 @@ transcript_summary() {
                           and ((.message.content | type) == "string"
                                or ((.message.content | type) == "array"
                                    and ([.message.content[] | select(.type == "tool_result")] | length == 0)));
-        [split("\n")[] | fromjson?] as $e
+        . as $e
         | ([range(0; $e | length) | select($e[.] | owner_prompt)] | last) as $p
         | ([range(0; $e | length) | select($e[.].type == "assistant" and ($e[.] | has_text))] | last) as $a
         | (if $a == null then "" else ($e[$a].message.content | text_of) end) as $text
@@ -276,10 +284,18 @@ transcript_summary() {
         | {text: $text, chat: $chat, command: $cmd,
            prompt_ts: (if $p == null then "" else ($e[$p].timestamp // "") end),
            prompt_key: (if $p == null then "" else ($e[$p].uuid // ("line" + ($p | tostring))) end)}
-    ' 2>/dev/null
+'
+transcript_summary() {
+    local out
+    out="$(transcript_tail "$1" | jq -c -s "$TS_PROG" 2>/dev/null)"
+    # a broken line (one being written) fails the JSON read: fall back to the line-wise raw
+    # read, which skips broken lines (multibyte characters of very long lines may suffer there)
+    [ -n "$out" ] || out="$(transcript_tail "$1" | jq -R -s -c '[split("\n")[] | fromjson?]' 2>/dev/null \
+        | jq -c "$TS_PROG" 2>/dev/null)"
+    printf '%s' "$out"
 }
 
-# stop_lines <text> <chat> <prompt key>: candidates from the final reply text. A question or
+# stop_lines <text as a JSON string> <chat> <prompt key>: candidates from the final reply text. A question or
 # test code event carries its block as "text": the lines below its heading up to the next code
 # heading (Q-emoji, T-emoji or V-emoji), the next markdown heading of the same or a higher
 # level, or the end of the reply; trimmed and capped at 4000 characters (cut when shortened).
@@ -287,7 +303,7 @@ transcript_summary() {
 # A blocker event carries its Blocker line (without the prefix, as before) and the lines below
 # it the same way, up to the next markdown heading (any level) or the next Blocker line.
 stop_lines() {
-    printf '%s' "$1" | jq -R -s -c --argjson base "$BASE" --arg chat "$2" --arg pkey "$3" --arg cmd "${4:-}" --arg pts "${5:-}" "$JQ_CAP_DEF"'
+    printf '%s' "$1" | jq -c --argjson base "$BASE" --arg chat "$2" --arg pkey "$3" --arg cmd "${4:-}" --arg pts "${5:-}" "$JQ_CAP_DEF"'
         def clean: sub("[ \t\r]+$"; "");
         def noneish: ascii_downcase as $d
                      | ["", "none", "no", "keine", "nein", "-", "n/a"] | map(. == $d) | any;
@@ -353,14 +369,14 @@ stop_lines() {
           + (if $chat == "" or ($text | length) == 0 then []
              else [{key: ("reply:" + $chat + ":" + $pkey), window: 0,
                     event: ($base + {type: "remote_reply", chat_id: $chat,
-                                     text: ($text | mbcapped.text)}
-                            + (if ($text | mbcapped.cut) then {cut: true} else {} end))}]
+}
+                            + ($text | replyfields))}]
              end)
           + (if $chat != "" or $cmd == "" or ($text | trimws) == "" then []
              else [{key: ("command:" + $cmd + ":" + $pkey), window: 0,
                     event: ($base + {type: "command_reply", command: $cmd,
-                                     text: ($text | trimws | mbcapped.text)}
-                            + (if ($text | trimws | mbcapped.cut) then {cut: true} else {} end)
+}
+                            + ($text | trimws | replyfields)
                             + (if $pts != "" then {prompt_ts: $pts} else {} end))}]
              end)
         )[]
@@ -370,19 +386,21 @@ stop_lines() {
 # stop_events: the final reply text from last_assistant_message (else from the transcript)
 stop_events() {
     local text="" tpath tsum chat="" pkey="" cmd="" pts=""
-    text="$(printf '%s' "$INPUT" | jq -r '.last_assistant_message // empty' 2>/dev/null)"
+    # the text stays a JSON string (jq 1.6 -R breaks multibyte characters of long raw input)
+    text="$(printf '%s' "$INPUT" | jq -c '.last_assistant_message // "" | strings' 2>/dev/null)"
     tpath="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)"
     if [ -n "$tpath" ] && [ -f "$tpath" ]; then
         tsum="$(transcript_summary "$tpath")"
         if [ -n "$tsum" ]; then
-            [ -n "$text" ] || text="$(printf '%s' "$tsum" | jq -r '.text // empty' 2>/dev/null)"
+            [ -n "$text" ] && [ "$text" != '""' ] \
+                || text="$(printf '%s' "$tsum" | jq -c '.text // "" | strings' 2>/dev/null)"
             chat="$(printf '%s' "$tsum" | jq -r '.chat // empty' 2>/dev/null)"
             pkey="$(printf '%s' "$tsum" | jq -r '.prompt_key // empty' 2>/dev/null)"
             cmd="$(printf '%s' "$tsum" | jq -r '.command // empty' 2>/dev/null)"
             pts="$(printf '%s' "$tsum" | jq -r '.prompt_ts // empty' 2>/dev/null)"
         fi
     fi
-    [ -n "$text" ] || return 0
+    [ -n "$text" ] && [ "$text" != '""' ] || return 0
     stop_lines "$text" "$chat" "$pkey" "$cmd" "$pts"
 }
 

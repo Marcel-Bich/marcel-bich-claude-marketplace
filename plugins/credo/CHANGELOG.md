@@ -6,6 +6,14 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.84
 
+#### v0.84.56
+
+##### Fixed
+
+- Remote mirror: remote chat and slash-command replies are never cut; up to 1048576 characters they are sent whole, a longer one is refused visibly (`too_long`, `length`, `limit`, no text).
+- Remote mirror: Ask options carry their `preview`.
+- Remote mirror: long replies with umlauts or other multibyte characters were partly garbled (jq 1.6 raw input); the reply and the transcript are now read as JSON.
+
 #### v0.84.55
 
 ##### Changed

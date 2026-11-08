@@ -798,11 +798,56 @@ tr_prompt u-g2 "[remote chat c-big] longer please"
 tr_text a-g2 "placeholder"
 big_payload 120000
 run "remote: 1.2 MB reply" stop "$(cat "$TMP/big.json")"
-check "remote: over 1 MiB marked cut" true "$(jqf '.cut')"
-check "remote: over 1 MiB ends with a visible marker" true \
-    "$(jqf '.text | test("\\[truncated: [0-9]+ of 1200007 characters, limit 1 MiB\\]$")')"
-check "remote: over 1 MiB stays within 1 MiB" true "$(jqf '(.text | utf8bytelength) <= 1048576')"
-check "remote: over 1 MiB keeps the start" true "$(jqf '.text | startswith("line 0000\nline 0001")')"
+check "remote: over the limit refused visibly (too_long)" true "$(jqf '.too_long')"
+check "remote: over the limit sends no text" "" "$(jqf '.text')"
+check "remote: over the limit carries its length in characters" 1200007 "$(jqf '.length')"
+check "remote: over the limit carries the limit" 1048576 "$(jqf '.limit')"
+check "remote: never cut" false "$(jqf 'has("cut")')"
+
+new_case
+tr_prompt u-g3 "[remote chat c-big] multibyte please"
+tr_text a-g3 "placeholder"
+python3 -I - "$SID" "$CWD" "$TR" > "$TMP/big.json" <<'PY'
+import json, sys
+sid, cwd, tr = sys.argv[1], sys.argv[2], sys.argv[3]
+text = "\u00e4" * 1048576
+print(json.dumps({"session_id": sid, "cwd": cwd, "hook_event_name": "Stop",
+                  "last_assistant_message": text, "transcript_path": tr}))
+PY
+run "remote: 1048576 multibyte characters" stop "$(cat "$TMP/big.json")"
+check "remote: the limit counts characters, not bytes (2 MiB of UTF-8 sent whole)" 1048576 "$(jqf '.text | length')"
+check "remote: at the limit no too_long" false "$(jqf 'has("too_long")')"
+
+# --- Ask option preview (credo item #175) -----------------------------------------
+echo "== ask preview"
+new_case
+pv_payload="$(jq -n --arg s "$SID" --arg c "$CWD" '{
+    session_id: $s, cwd: $c, hook_event_name: "PreToolUse",
+    tool_name: "AskUserQuestion", tool_use_id: "toolu_pv",
+    tool_input: {questions: [{question: "Layout?", header: "Layout", multiSelect: false,
+        options: [{label: "A", description: "left", preview: "+--+\n|A |\n+--+"},
+                  {label: "B", description: "right"}]}]}}')"
+run "ask: options with a preview" ask "$pv_payload"
+check "ask: preview passed on" '"+--+\n|A |\n+--+"' "$(jqf '.questions[0].options[0].preview | @json')"
+check "ask: an option without preview has no preview key" false "$(jqf '.questions[0].options[1] | has("preview")')"
+
+# --- transcript read as JSON, broken line fallback (credo item #175) --------------
+echo "== transcript json read"
+new_case
+tr_prompt u-h1 "[remote chat c-h] umlauts?"
+printf '%s\n' '{"type":"assistant","broken' >> "$TR"
+tr_text a-h1 "Grüße, alles läuft."
+run "transcript: a broken line in between" stop "$(stop_payload "" "$TR")"
+check "transcript: broken line skipped, reply still sent" remote_reply "$(jqf '.type')"
+check "transcript: umlauts intact" "Grüße, alles läuft." "$(jqf '.text')"
+
+new_case
+tr_prompt u-h2 "[remote chat c-h] long umlauts?"
+long_uml="$(python3 -I -c "print('Größe ' * 15000, end='')")"
+tr_text a-h2 "$long_uml"
+run "transcript: long multibyte reply from the transcript" stop "$(stop_payload "" "$TR")"
+check "transcript: long multibyte reply has no replacement characters" 0 "$(jqf '.text | [scan("�")] | length')"
+check "transcript: long multibyte reply length kept" 90000 "$(jqf '.text | length')"
 
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]
