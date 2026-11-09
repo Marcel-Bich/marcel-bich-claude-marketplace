@@ -151,8 +151,7 @@ whole body plus the requirements log so a stale head does not make you re-ask wh
 already clarified (read/build-gate, credo `items` skill).
 
 Text before an Ask call stays visible: when explanation text comes right before an Ask-tool call in
-the same turn, first write that text, then make one trivial tool call (a buffer, e.g. a read of a
-known file), then call the Ask tool. Without the buffer the TUI hides the text behind the Ask dialog.
+the same turn, first write that text, then make exactly one Bash call `echo ok` (the buffer: it must print a visible line, so nothing else replaces it - no Read, no Agent spawn, no other tool, no command without output), then call the Ask tool. Without the buffer the TUI hides the text behind the Ask dialog.
 
 Opt-in setting `dont_ask_twice` (default false, `credo-config.sh get dont_ask_twice`). When
 it is true, before any question search the requirement logs, the items, the handoff and

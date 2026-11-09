@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.57
+
+###### Changed
+
+- Ask buffer rule: the buffer between explanation text and an Ask call is exactly one Bash `echo ok`; no Read, Agent spawn, other tool or command without output replaces it (only a call with visible output keeps the text visible).
+
 ##### v0.84.56
 
 ###### Fixed
