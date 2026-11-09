@@ -5,7 +5,11 @@
 # EVERY agent start, in every mode, and always looks at CPU and RAM:
 #   CPU busy = 1-minute load per CPU (/proc/loadavg first value divided by nproc)
 #   RAM used = (MemTotal - MemAvailable) / MemTotal (/proc/meminfo)
-# When either is at resources.max_busy_percent or more it answers "wait:<reason>".
+#   host     = under WSL also the Windows host (the owner's machine; the WSL VM is only a
+#              part of it): RAM (total - available) / total and the CPU load in percent,
+#              read in one powershell.exe call
+# CPU (WSL or host) at resources.max_busy_percent or more, or RAM (WSL or host) at
+# resources.max_ram_percent or more answers "wait:<reason>".
 # Free disk on the target drive is checked too: the item's disk_gb plus the
 # reserve must fit (see --disk-gb and --path below).
 # On "wait" the caller starts no new agent and re-checks when the next running
@@ -22,7 +26,8 @@
 #
 # Thresholds (credo config cascade, read via credo-config.sh get; builtin
 # defaults apply when a key is absent or not a number):
-#   resources.max_busy_percent   90   wait when CPU busy or RAM used is at this percent or more
+#   resources.max_busy_percent   94   wait when CPU busy (WSL or Windows host) is at this percent or more
+#   resources.max_ram_percent    80   wait when RAM used (WSL or Windows host) is at this percent or more
 #   resources.disk_reserve_gb    3    free disk that must stay after the item's disk_gb
 #
 # Fail-safe: an unreadable /proc or df value never blocks - that part is not
@@ -32,6 +37,8 @@
 #   CREDO_PROC_MEMINFO  meminfo file (default /proc/meminfo)
 #   CREDO_PROC_LOADAVG  loadavg file (default /proc/loadavg)
 #   CREDO_NPROC         CPU count (default: nproc)
+#   CREDO_HOST_MEM      host as "<total bytes> <available bytes> [<cpu load %>]" instead of powershell.exe;
+#                       "off" skips the host check (default: queried only under WSL)
 #   CREDO_DISK_AVAIL_KB free KB on the target drive (default: df of --path; set but
 #                       empty = unreadable)
 #
@@ -84,7 +91,8 @@ cfg() {
     fi
 }
 
-MAX_BUSY="$(norm "$(cfg max_busy_percent 90)")"
+MAX_BUSY="$(norm "$(cfg max_busy_percent 94)")"
+MAX_RAM="$(norm "$(cfg max_ram_percent 80)")"
 DISK_RESERVE="$(norm "$(cfg disk_reserve_gb 3)")"
 
 STATUS="ok"
@@ -96,6 +104,8 @@ LPC=""
 CPU_PCT=""
 MEM_GB=""
 RAM_PCT=""
+HOST_RAM_PCT=""
+HOST_CPU_PCT=""
 DISK_FREE_GB=""
 reasons=()
 
@@ -105,8 +115,8 @@ emit() {
             "$STATUS" "$REASON" "$CHECKED" "$MAX_BUSY"
         printf '"cpu_busy_percent":%s,"load1":%s,"nproc":%s,"load_per_cpu":%s,' \
             "${CPU_PCT:-null}" "${LOAD1:-null}" "${NCPU:-null}" "${LPC:-null}"
-        printf '"ram_used_percent":%s,"mem_available_gb":%s,' \
-            "${RAM_PCT:-null}" "${MEM_GB:-null}"
+        printf '"ram_used_percent":%s,"mem_available_gb":%s,"host_ram_used_percent":%s,"max_ram_percent":%s,"host_cpu_percent":%s,' \
+            "${RAM_PCT:-null}" "${MEM_GB:-null}" "${HOST_RAM_PCT:-null}" "$MAX_RAM" "${HOST_CPU_PCT:-null}"
         printf '"disk_free_gb":%s,"disk_need_gb":%s,"disk_reserve_gb":%s}\n' \
             "${DISK_FREE_GB:-null}" "${DISK_NEED:-null}" "$DISK_RESERVE"
     elif [ "$STATUS" = "ok" ]; then
@@ -149,8 +159,44 @@ check_ram() {
     CHECKED=true
     MEM_GB="$(awk -v k="$avail" 'BEGIN { printf "%.2f", k / 1048576 }')"
     RAM_PCT="$(awk -v t="$total" -v a="$avail" 'BEGIN { u = (t - a) * 100 / t; if (u < 0) u = 0; printf "%.1f", u }')"
-    if at_or_over "$RAM_PCT" "$MAX_BUSY"; then
-        reasons+=("RAM used ${RAM_PCT}% >= ${MAX_BUSY}%")
+    if at_or_over "$RAM_PCT" "$MAX_RAM"; then
+        reasons+=("RAM used ${RAM_PCT}% >= ${MAX_RAM}%")
+    fi
+}
+
+# the Windows host behind WSL: its RAM is the owner's RAM (the WSL VM is only a part of it)
+host_mem() {
+    if [ -n "${CREDO_HOST_MEM+x}" ]; then
+        printf '%s' "$CREDO_HOST_MEM"
+        return 0
+    fi
+    grep -qi microsoft /proc/version 2>/dev/null || return 0
+    command -v powershell.exe >/dev/null 2>&1 || return 0
+    timeout 15 powershell.exe -NoProfile -NonInteractive -Command \
+        'Add-Type -AssemblyName Microsoft.VisualBasic; $c = New-Object Microsoft.VisualBasic.Devices.ComputerInfo; $l = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average; "$($c.TotalPhysicalMemory) $($c.AvailablePhysicalMemory) $l"' \
+        2>/dev/null | tr -d '\r' | head -n 1
+}
+
+check_host_ram() {
+    local line total avail cpu
+    line="$(host_mem || true)"
+    [ -n "$line" ] && [ "$line" != off ] || return 0
+    read -r total avail cpu <<<"$line"
+    if [[ "${cpu:-}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        CHECKED=true
+        HOST_CPU_PCT="$(norm "$cpu")"
+        if at_or_over "$HOST_CPU_PCT" "$MAX_BUSY"; then
+            reasons+=("host CPU busy ${HOST_CPU_PCT}% >= ${MAX_BUSY}%")
+        fi
+    fi
+    if ! [[ "$total" =~ ^[0-9]+$ ]] || ! [[ "$avail" =~ ^[0-9]+$ ]] || [ "$total" -eq 0 ]; then
+        echo "credo-resource-check: cannot read the host RAM - host RAM not checked" >&2
+        return 0
+    fi
+    CHECKED=true
+    HOST_RAM_PCT="$(awk -v t="$total" -v a="$avail" 'BEGIN { u = (t - a) * 100 / t; if (u < 0) u = 0; printf "%.1f", u }')"
+    if at_or_over "$HOST_RAM_PCT" "$MAX_RAM"; then
+        reasons+=("host RAM used ${HOST_RAM_PCT}% >= ${MAX_RAM}%")
     fi
 }
 
@@ -183,6 +229,7 @@ check_disk() {
 
 check_cpu
 check_ram
+check_host_ram
 check_disk
 
 if [ "${#reasons[@]}" -gt 0 ]; then

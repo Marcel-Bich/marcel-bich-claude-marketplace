@@ -217,9 +217,10 @@ Before every agent start, in every session mode, run
 <target>` when the item has `disk_gb`, see "Disk space" below). It prints `ok` (exit 0) or
 `wait:<reason>` (exit 5).
 
-- It checks CPU (the 1-minute load per CPU) and RAM (the used share) against
-  `resources.max_busy_percent` (credo config, default 90). At 90 % or more on either value
-  it answers `wait`. There is no agent-count gate. The check runs before every start,
+- It checks CPU (the 1-minute load per CPU) against `resources.max_busy_percent` (credo
+  config, default 94) and RAM (the used share) against `resources.max_ram_percent` (default
+  80). Under WSL it also checks the Windows host's RAM and CPU load, since that is the
+  owner's machine. At a limit or above it answers `wait`. There is no agent-count gate. The check runs before every start,
   however many agents are running.
 - On `wait`: start no new agent. Re-check when the next running agent finishes (its
   completion notification) - no polling loop, no sleep loop.

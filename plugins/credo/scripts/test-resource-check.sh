@@ -30,6 +30,8 @@ load() { printf '%s 1.00 1.00 1/100 12345\n' "$1" > "$TMP/loadavg"; }
 export CREDO_PROC_MEMINFO="$TMP/meminfo" CREDO_PROC_LOADAVG="$TMP/loadavg" CREDO_NPROC=8
 # free disk on the target drive in KB: 100 GB unless a test sets it (empty = unreadable)
 export CREDO_DISK_AVAIL_KB=104857600
+# no real host query in tests (a WSL machine would add its live Windows RAM and CPU)
+export CREDO_HOST_MEM=off
 
 # healthy machine: RAM 50 % used, CPU 50 % busy
 mem 5000000; load 4.0
@@ -38,32 +40,32 @@ check "healthy ok" "ok/0" "$out/$rc"
 out="$("$SUT" --json)"; rc=$?
 check "healthy json" "ok resources ok True/0" "$(printf '%s' "$out" | jq_py 'd["status"], d["reason"], d["checked"]')/$rc"
 
-# RAM at the default threshold (90 %) waits, just below it passes
-mem 1000000
+# RAM at the default threshold (80 %) waits, just below it passes
+mem 2000000
 out="$("$SUT")"; rc=$?
-check "RAM at 90 percent waits" "wait:RAM used 90.0% >= 90%/5" "$out/$rc"
-mem 1010000
+check "RAM at 80 percent waits" "wait:RAM used 80.0% >= 80%/5" "$out/$rc"
+mem 2010000
 out="$("$SUT")"; rc=$?
-check "RAM at 89.9 percent ok" "ok/0" "$out/$rc"
+check "RAM at 79.9 percent ok" "ok/0" "$out/$rc"
 
-# CPU at the default threshold (load 7.2 on 8 CPUs = 90 %) waits, just below passes
-mem 5000000; load 7.2
+# CPU at the default threshold (load 7.52 on 8 CPUs = 94 %) waits, just below passes
+mem 5000000; load 7.52
 out="$("$SUT")"; rc=$?
-check "CPU at 90 percent waits" "wait:CPU busy 90.0% >= 90%/5" "$out/$rc"
-load 7.12
+check "CPU at 94 percent waits" "wait:CPU busy 94.0% >= 94%/5" "$out/$rc"
+load 7.44
 out="$("$SUT")"; rc=$?
-check "CPU at 89 percent ok" "ok/0" "$out/$rc"
+check "CPU at 93 percent ok" "ok/0" "$out/$rc"
 
 # both over the threshold: two reasons in one wait line (CPU first)
 mem 500000; load 16.0
 out="$("$SUT")"; rc=$?
-check "CPU and RAM reasons" "wait:CPU busy 200.0% >= 90%; RAM used 95.0% >= 90%/5" "$out/$rc"
+check "CPU and RAM reasons" "wait:CPU busy 200.0% >= 94%; RAM used 95.0% >= 80%/5" "$out/$rc"
 
-# JSON on wait: percentages, threshold and raw readings
+# JSON on wait: percentages, thresholds and raw readings
 out="$("$SUT" --json)"; rc=$?
 check "json exit" 5 "$rc"
-check "json fields" "wait True 90 200.0 95.0 16.0 8 2.0 0.48" \
-    "$(printf '%s' "$out" | jq_py '" ".join(str(x) for x in (d["status"], d["checked"], d["max_busy_percent"], d["cpu_busy_percent"], d["ram_used_percent"], d["load1"], d["nproc"], d["load_per_cpu"], d["mem_available_gb"]))')"
+check "json fields" "wait True 94 80 200.0 95.0 16.0 8 2.0 0.48" \
+    "$(printf '%s' "$out" | jq_py '" ".join(str(x) for x in (d["status"], d["checked"], d["max_busy_percent"], d["max_ram_percent"], d["cpu_busy_percent"], d["ram_used_percent"], d["load1"], d["nproc"], d["load_per_cpu"], d["mem_available_gb"]))')"
 check "json drops the removed gate keys" "[]" \
     "$(printf '%s' "$out" | jq_py 'sorted(k for k in ("running", "heavy", "gate_from_agents", "min_free_ram_gb", "max_load_per_cpu") if k in d)')"
 
@@ -71,27 +73,49 @@ check "json drops the removed gate keys" "[]" \
 printf 'resources:\n  gate_from_agents: 99\n  min_free_ram_gb: 0\n  max_load_per_cpu: 100\n' > "$CREDO_PROJECT"
 mem 500000; load 1.0
 out="$("$SUT")"; rc=$?
-check "old gate keys ignored, RAM still checked" "wait:RAM used 95.0% >= 90%/5" "$out/$rc"
+check "old gate keys ignored, RAM still checked" "wait:RAM used 95.0% >= 80%/5" "$out/$rc"
 mem 5000000; load 16.0
 out="$("$SUT")"; rc=$?
-check "old gate keys ignored, CPU still checked" "wait:CPU busy 200.0% >= 90%/5" "$out/$rc"
+check "old gate keys ignored, CPU still checked" "wait:CPU busy 200.0% >= 94%/5" "$out/$rc"
 printf '' > "$CREDO_PROJECT"
 
-# threshold from the config cascade (project layer)
+# thresholds from the config cascade (project layer): CPU and RAM separately
 printf 'resources:\n  max_busy_percent: 60\n' > "$CREDO_PROJECT"
+mem 5000000; load 5.6
+out="$("$SUT")"; rc=$?
+check "config CPU threshold 60 applied" "wait:CPU busy 70.0% >= 60%/5" "$out/$rc"
+printf 'resources:\n  max_ram_percent: 60\n' > "$CREDO_PROJECT"
 mem 3000000; load 1.0
 out="$("$SUT")"; rc=$?
-check "config threshold 60 applied" "wait:RAM used 70.0% >= 60%/5" "$out/$rc"
-printf 'resources:\n  max_busy_percent: 95\n' > "$CREDO_PROJECT"
+check "config RAM threshold 60 applied" "wait:RAM used 70.0% >= 60%/5" "$out/$rc"
+printf 'resources:\n  max_busy_percent: 95\n  max_ram_percent: 95\n' > "$CREDO_PROJECT"
 mem 1000000; load 7.2
 out="$("$SUT")"; rc=$?
-check "config threshold 95 lets 90 percent pass" "ok/0" "$out/$rc"
-printf 'resources:\n  max_busy_percent: lots\n' > "$CREDO_PROJECT"
+check "config thresholds 95 let 90 percent pass" "ok/0" "$out/$rc"
+printf 'resources:\n  max_busy_percent: lots\n  max_ram_percent: lots\n' > "$CREDO_PROJECT"
+mem 1000000; load 7.6
 out="$("$SUT")"; rc=$?
-check "invalid threshold falls back to 90" "wait:CPU busy 90.0% >= 90%; RAM used 90.0% >= 90%/5" "$out/$rc"
-printf 'resources:\n  max_busy_percent: 095\n' > "$CREDO_PROJECT"
+check "invalid thresholds fall back to 94 and 80" "wait:CPU busy 95.0% >= 94%; RAM used 90.0% >= 80%/5" "$out/$rc"
+printf 'resources:\n  max_busy_percent: 095\n  max_ram_percent: 095\n' > "$CREDO_PROJECT"
+mem 1000000; load 7.2
 out="$("$SUT" --json)"; rc=$?
-check "leading zero threshold json" "ok 95/0" "$(printf '%s' "$out" | jq_py 'd["status"], d["max_busy_percent"]')/$rc"
+check "leading zero threshold json" "ok 95 95/0" "$(printf '%s' "$out" | jq_py 'd["status"], d["max_busy_percent"], d["max_ram_percent"]')/$rc"
+printf '' > "$CREDO_PROJECT"
+
+# the Windows host behind WSL (CREDO_HOST_MEM fakes the powershell reading)
+mem 5000000; load 1.0
+out="$(CREDO_HOST_MEM="1000 150 10" "$SUT")"; rc=$?
+check "host RAM at 85 percent waits" "wait:host RAM used 85.0% >= 80%/5" "$out/$rc"
+out="$(CREDO_HOST_MEM="1000 300 95" "$SUT")"; rc=$?
+check "host CPU at 95 percent waits" "wait:host CPU busy 95% >= 94%/5" "$out/$rc"
+out="$(CREDO_HOST_MEM="1000 300 50" "$SUT")"; rc=$?
+check "host at 70 percent RAM and 50 percent CPU ok" "ok/0" "$out/$rc"
+out="$(CREDO_HOST_MEM="1000 300" "$SUT")"; rc=$?
+check "host without a CPU value checks RAM only" "ok/0" "$out/$rc"
+out="$(CREDO_HOST_MEM="garbage" "$SUT" 2>/dev/null)"; rc=$?
+check "unreadable host never blocks" "ok/0" "$out/$rc"
+out="$(CREDO_HOST_MEM="1000 150 10" "$SUT" --json)"; rc=$?
+check "host json fields" "85.0 10" "$(printf '%s' "$out" | jq_py 'd["host_ram_used_percent"], d["host_cpu_percent"]')"
 printf '' > "$CREDO_PROJECT"
 mem 5000000; load 4.0
 
@@ -128,7 +152,7 @@ check "decimal disk_gb 2.5 with 5 GB free waits" "wait:low free disk 5.00 GB < 5
 # RAM and disk reasons together, in one wait line
 mem 500000
 out="$(CREDO_DISK_AVAIL_KB=2097152 "$SUT")"; rc=$?
-check "ram and disk reasons" "wait:RAM used 95.0% >= 90%; low free disk 2.00 GB < 3 GB reserve/5" "$out/$rc"
+check "ram and disk reasons" "wait:RAM used 95.0% >= 80%; low free disk 2.00 GB < 3 GB reserve/5" "$out/$rc"
 mem 5000000
 
 # config: reserve from the project layer, invalid value falls back to 3

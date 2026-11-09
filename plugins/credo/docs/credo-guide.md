@@ -136,7 +136,7 @@ The builtin template holds universal defaults only:
 - `budget.*`: the 5-hour soft/hard band, the work-hours 09:00 guard reserve, task-sizing bands, and the day-by-day cap schedule
 - `budget_failsafe`: absolute caps used if an explicit order is lost to a compact
 - `builders.min_per_area`: 2, `builders.max_per_area`: 4 - writing builders in parallel per independent area (read-only agents have no fixed limit)
-- `resources.max_busy_percent`: 90 - before every agent start the CPU load per CPU and the used RAM share are checked; at or above this value no new agent starts (`resources.disk_reserve_gb`: 3 is the free disk kept back)
+- `resources.max_busy_percent`: 94 and `resources.max_ram_percent`: 80 - before every agent start the CPU load and the used RAM share are checked (under WSL also the Windows host); at or above a limit no new agent starts (`resources.disk_reserve_gb`: 3 is the free disk kept back)
 - `release.auto`: false, `release.fallback_fragments`: 15, `release.fallback_days`: 7 - automatic release when no GO item is buildable and changelog fragments exist; `/credo:setup` and the migration ask once and write the answer to the project config
 - `dont_ask_twice`: false - opt-in, see the Ask discipline in section 4
 

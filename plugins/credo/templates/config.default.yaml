@@ -249,13 +249,14 @@ budget_failsafe:
 
 # --- resource gate for parallel subagents (scripts/credo-resource-check.sh) ---
 # Before EVERY agent start (every mode) the check looks at CPU and RAM: the 1-min
-# load per CPU and the used RAM share. At max_busy_percent or more it answers "wait"
-# and no new agent starts. Free disk is checked at every start too: the item's
+# load per CPU (max_busy_percent) and the used RAM share (max_ram_percent; under WSL
+# also the Windows host RAM). At the limit it answers "wait" and no new agent starts. Free disk is checked at every start too: the item's
 # disk_gb plus disk_reserve_gb must fit on the target drive (an item without disk_gb
 # needs only the reserve). The rules live in the credo orchestration skill; only
 # thresholds live here.
 resources:
-  max_busy_percent: 90
+  max_busy_percent: 94         # CPU: wait at this load share or more (WSL load and, under WSL, the Windows host)
+  max_ram_percent: 80          # RAM: wait at this used share or more (WSL VM and, under WSL, the Windows host)
   disk_reserve_gb: 3
 
 # --- builders per independent area (credo orchestration skill) ----------------

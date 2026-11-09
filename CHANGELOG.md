@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.58
+
+###### Changed
+
+- Resource gate: RAM has its own limit `resources.max_ram_percent` (default 80); the CPU limit `resources.max_busy_percent` is now 94. Under WSL the gate also reads the Windows host's RAM and CPU load, so no new agent starts while the owner's machine is at a limit.
+
 ##### v0.84.57
 
 ###### Changed

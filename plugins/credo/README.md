@@ -126,7 +126,7 @@ Config is YAML, merged lowest to highest:
 builtin (templates/config.default.yaml) < global (~/.claude/credo/config) < profile ($CLAUDE_CONFIG_DIR/credo/config) < project (.credo/config)
 ```
 
-The builtin template ships universal, safe-for-everyone defaults (viewports 320/768/1440, timing windows, the compact thresholds 80/92, the budget schedule, wakeup offsets, 2-4 writing builders per independent area, the 90 % CPU/RAM resource gate, release.auto off, dont_ask_twice off). On first need the global config is created from this template. Personal and environment-specific fields (ntfy topic, commit-identity hint, WSL reachability, living-docs list) are intentionally left empty and are filled just-in-time by the skill that needs them, with permission per change. `/credo:setup` is an optional way to pre-initialize this.
+The builtin template ships universal, safe-for-everyone defaults (viewports 320/768/1440, timing windows, the compact thresholds 80/92, the budget schedule, wakeup offsets, 2-4 writing builders per independent area, the resource gate (CPU 94 %, RAM 80 %), release.auto off, dont_ask_twice off). On first need the global config is created from this template. Personal and environment-specific fields (ntfy topic, commit-identity hint, WSL reachability, living-docs list) are intentionally left empty and are filled just-in-time by the skill that needs them, with permission per change. `/credo:setup` is an optional way to pre-initialize this.
 
 The **profile layer** sits between global and project: `$CLAUDE_CONFIG_DIR/credo/config` (for example `~/.claude-private/credo/config`) lets a second Claude Code profile override the shared global per key, while every key it does not set still falls back to global. It is optional and never auto-created; for the default profile it equals global and is skipped. Session state (modes, decisions, project pins) and the autonomy flags likewise follow the active profile, so two profiles run side by side without sharing state.
 
@@ -395,7 +395,7 @@ Tests: `scripts/test-credo-preset.sh` (helper, validation, config layering, Sess
 Parallel subagents are wanted: writing builders run 2 to 4 per independent area by default (`builders.min_per_area`, `builders.max_per_area`), and read-only agents have no fixed limit. Two things limit them:
 
 - **File overlap.** An item may carry the optional frontmatter `touches:` - a list of paths or globs it will likely edit, set by the plan / clarify agent at the latest at GO. It is guidance: the main agent re-checks it right before spawning builders and updates it when files moved. `scripts/credo-touches-check.sh [--json] <id> <id> ...` prints overlapping item pairs (glob-aware, conservative) and lists items without `touches:` as `unknown` (exit 0 no overlap, 3 overlap, 4 no project, 1 bad args). Overlapping items run sequentially; `unknown` items are classified by the main agent, parallel by default. Read-only work (research, clarify) stays freely parallel.
-- **Resource gate.** `scripts/credo-resource-check.sh [--disk-gb G] [--path P] [--json]` runs before every agent start in every mode and prints `ok` (exit 0) or `wait:<reason>` (exit 5). It compares the 1-minute load per CPU and the used RAM share against `resources.max_busy_percent` (default 90); at or above it no new agent starts. Free disk is checked at every start too: `--disk-gb G` (the item's `disk_gb`; absent = reserve only) plus `resources.disk_reserve_gb` must fit on the drive of `--path`. Unreadable values never block. On `wait` no new agent starts; the main agent re-checks when the next agent finishes (no polling loop).
+- **Resource gate.** `scripts/credo-resource-check.sh [--disk-gb G] [--path P] [--json]` runs before every agent start in every mode and prints `ok` (exit 0) or `wait:<reason>` (exit 5). It compares the 1-minute load per CPU against `resources.max_busy_percent` (default 94) and the used RAM share against `resources.max_ram_percent` (default 80); under WSL it also reads the Windows host's RAM and CPU load (one `powershell.exe` call), since that is the owner's machine. At or above a limit no new agent starts. Free disk is checked at every start too: `--disk-gb G` (the item's `disk_gb`; absent = reserve only) plus `resources.disk_reserve_gb` must fit on the drive of `--path`. Unreadable values never block. On `wait` no new agent starts; the main agent re-checks when the next agent finishes (no polling loop).
 - **Heavy items.** `heavy: true` (model or benchmark tests, large downloads) never runs in parallel to another heavy item.
 - **Disk space.** An item may carry `disk_gb: <GB>`. The start checks `--disk-gb <GB>` plus the reserve on the target drive (`--path`), at every start. Not enough free space: the item stays in `2_go` and is retried later. Autonomous mode sends one ntfy "waiting for disk space" per item.
 
@@ -403,7 +403,8 @@ Config keys (defaults in the builtin template):
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `resources.max_busy_percent` | `90` | no new agent at or above this CPU load per CPU or used RAM share (percent) |
+| `resources.max_busy_percent` | `94` | no new agent at or above this CPU load (WSL load per CPU, and the Windows host under WSL), percent |
+| `resources.max_ram_percent` | `80` | no new agent at or above this used RAM share (WSL, and the Windows host under WSL), percent |
 | `resources.disk_reserve_gb` | `3` | free disk that must stay after an item's `disk_gb` |
 | `resources.disk_reserve_gb` | `3` | free disk (GB) that must stay after an item's `disk_gb` |
 
