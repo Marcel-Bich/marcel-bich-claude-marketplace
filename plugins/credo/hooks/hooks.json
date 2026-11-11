@@ -1,5 +1,7 @@
 {
-  "modules": ["./band.tsx"],
+  "modules": [
+    "./band.tsx"
+  ],
   "hooks": {
     "PreToolUse": [
       {
@@ -8,6 +10,16 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-paused-wake-guard.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-ask-buffer-guard.sh",
             "timeout": 5
           }
         ]

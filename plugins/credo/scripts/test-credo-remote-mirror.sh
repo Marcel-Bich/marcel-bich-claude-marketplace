@@ -125,7 +125,7 @@ check "template carries the remote.mirror_command key" 1 \
 check "hooks.json parses" 0 "$(jq -e . "$HOOKS_JSON" >/dev/null 2>&1; echo $?)"
 check "PreToolUse AskUserQuestion wired to ask" \
     '${CLAUDE_PLUGIN_ROOT}/hooks/credo-remote-mirror.sh ask' \
-    "$(jq -r '.hooks.PreToolUse[] | select(.matcher == "AskUserQuestion") | .hooks[0].command' "$HOOKS_JSON")"
+    "$(jq -r '.hooks.PreToolUse[] | select(.matcher == "AskUserQuestion") | .hooks[].command | select(endswith("credo-remote-mirror.sh ask"))' "$HOOKS_JSON")"
 check "PermissionRequest wired to permission" \
     '${CLAUDE_PLUGIN_ROOT}/hooks/credo-remote-mirror.sh permission' \
     "$(jq -r '.hooks.PermissionRequest[0].hooks[0].command' "$HOOKS_JSON")"

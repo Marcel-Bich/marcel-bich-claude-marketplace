@@ -104,7 +104,7 @@ logs, the items, the handoff and earlier Ask answers before any question; an ear
 approval counts as the user's answer and is not asked again.
 
 Text before an Ask call stays visible: when explanation text comes right before an Ask-tool call in
-the same turn, first write that text, then make exactly one Bash call `echo ok` (the buffer: it must print a visible line, so nothing else replaces it - no Read, no Agent spawn, no other tool, no command without output), then call the Ask tool. Without the buffer the TUI hides the text behind the Ask dialog.
+the same turn, first write that text, then make one separate Bash call whose ENTIRE command is `echo ok` (the buffer: never appended to or bundled with another command, and nothing else replaces it - no Read, no Agent spawn, no other tool, no command without output; a hook blocks an Ask call right after a Bash call that merely ends in echo ok), then call the Ask tool. Without the buffer the TUI hides the text behind the Ask dialog.
 
 ### Gently prefer older items first
 

@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.61
+
+###### Fixed
+
+- Ask buffer rule: the buffer is one separate Bash call whose entire command is `echo ok`, never appended to another command. A new PreToolUse hook on AskUserQuestion denies an Ask call right after a Bash call that only ends in `echo ok`.
+
 ##### v0.84.60
 
 ###### Changed
