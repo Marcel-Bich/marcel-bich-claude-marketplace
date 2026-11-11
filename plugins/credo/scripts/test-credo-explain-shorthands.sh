@@ -87,5 +87,24 @@ in_file "psalm: ?? topic line" '`??` - ' "$PLUGIN_DIR/commands/psalm.md"
 in_file "psalm: ? topic line" '`?` - ' "$PLUGIN_DIR/commands/psalm.md"
 in_file "changelog: released shorthand entry" 'applies to the part right before it' "$PLUGIN_DIR/CHANGELOG.md"
 
+# Ask rules survive a cut session-start context (credo item #178): they lead the context and
+# come back on every prompt in the modes that may ask
+has "session start: the context starts with the Ask rules" '[credo-ask]' "$(printf '%s' "$LEGEND" | head -c 11)"
+has "session start: Ask rules name echo ok" 'exactly one Bash call `echo ok`' "$(printf '%s' "$LEGEND" | head -c 600)"
+has "session start: Ask rules name the question code" 'credo-code-next.sh Q' "$(printf '%s' "$LEGEND" | head -c 600)"
+INJ="$PLUGIN_DIR/hooks/session-mode-inject.sh"
+mkdir -p "$TMP/modes"
+none_ctx="$(printf '{"session_id":"s-none"}' | CREDO_SESSION_MODES_DIR="$TMP/modes" bash "$INJ" | jq -r '.hookSpecificOutput.additionalContext // ""')"
+has "prompt, no mode: Ask rules" '[credo-ask]' "$none_ctx"
+printf 'active\n' > "$TMP/modes/s-act"
+act_ctx="$(printf '{"session_id":"s-act"}' | CREDO_SESSION_MODES_DIR="$TMP/modes" bash "$INJ" | jq -r '.hookSpecificOutput.additionalContext // ""')"
+has "prompt, active: Ask rules" '[credo-ask]' "$act_ctx"
+printf 'passive\n' > "$TMP/modes/s-pas"
+pas_ctx="$(printf '{"session_id":"s-pas"}' | CREDO_SESSION_MODES_DIR="$TMP/modes" bash "$INJ" | jq -r '.hookSpecificOutput.additionalContext // ""')"
+has "prompt, passive: Ask rules" '[credo-ask]' "$pas_ctx"
+printf 'autonomous\n' > "$TMP/modes/s-aut"
+aut_ctx="$(printf '{"session_id":"s-aut"}' | CREDO_SESSION_MODES_DIR="$TMP/modes" CLAUDE_CONFIG_DIR="$TMP/cfg" bash "$INJ" | jq -r '.hookSpecificOutput.additionalContext // ""')"
+if printf '%s' "$aut_ctx" | grep -qF '[credo-ask]'; then FAIL=$((FAIL + 1)); echo "FAIL prompt, autonomous: no Ask rules (it never asks)"; else PASS=$((PASS + 1)); fi
+
 echo "explain shorthands: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

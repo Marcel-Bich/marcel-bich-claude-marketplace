@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.59
+
+###### Fixed
+
+- Ask-tool rules (one `echo ok` before an Ask call after text, a ❓ Qn code with heading, the open-codes footer) now lead the session-start context and are re-injected on every prompt with no mode, active or passive mode, so a session-start context too large to stay inline can no longer drop them. They also state that they win over the question format of other skills.
+
 ##### v0.84.58
 
 ###### Changed

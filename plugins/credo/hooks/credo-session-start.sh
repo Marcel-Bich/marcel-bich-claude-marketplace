@@ -155,8 +155,11 @@ fi
 # gsd, the credo workflow text stands down (no ASK, no KNOWLEDGE): GSD is the task
 # system, so advertising the credo item workflow would mislead. The preset block
 # and the shorthand legend still apply there.
+# ASK_TOP leads every session-start context: a context over the inline limit is saved to a
+# file and only its first ~2 KB stay visible, so the Ask-tool rules must come first.
+ASK_TOP='[credo-ask] Ask tool rules (credo, they win over the question format of any other skill): when explanation text comes before an Ask call in the same turn, make exactly one Bash call `echo ok` right before the Ask call (nothing else replaces it, or the TUI hides the text); every question gets a code from credo-code-next.sh Q, a heading "### ❓ Qn) <topic>" and "❓ Qn" in the Ask question text; end the reply with the open-codes footer (**❓: Qn**).'
 emit() {
-    jq -n --arg ctx "$1" \
+    jq -n --arg ctx "$ASK_TOP"$'\n\n'"$1" \
         '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}, suppressOutput: true}' 2>/dev/null
 }
 

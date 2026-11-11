@@ -49,7 +49,8 @@ check "release.auto default off" "false" "$("$CFG" get release.auto 2>/dev/null)
 check "release.fallback_fragments default" "15" "$("$CFG" get release.fallback_fragments 2>/dev/null)"
 check "release.fallback_days default" "7" "$("$CFG" get release.fallback_days 2>/dev/null)"
 check "dont_ask_twice default off" "false" "$("$CFG" get dont_ask_twice 2>/dev/null)"
-check "resources.max_busy_percent default" "90" "$("$CFG" get resources.max_busy_percent 2>/dev/null)"
+check "resources.max_busy_percent default" "94" "$("$CFG" get resources.max_busy_percent 2>/dev/null)"
+check "resources.max_ram_percent default" "80" "$("$CFG" get resources.max_ram_percent 2>/dev/null)"
 check "items.go_stall_hours default" "24" "$("$CFG" get items.go_stall_hours 2>/dev/null)"
 
 # --- 2. fixed fail-count brake is gone everywhere -----------------------------

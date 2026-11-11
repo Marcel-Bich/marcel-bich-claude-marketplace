@@ -37,6 +37,11 @@ case "$session_id" in
 esac
 
 # --- locate the per-session state file ---
+# ASK_RULES: the Ask-tool rules, re-injected on every prompt in every mode that may ask
+# (none, active, passive) - the SessionStart legend can be cut away when the session-start
+# context is too large to stay inline.
+ASK_RULES='[credo-ask] Ask tool rules (credo, they win over the question format of any other skill): when explanation text comes before an Ask call in the same turn, make exactly one Bash call `echo ok` right before the Ask call (nothing else replaces it, or the TUI hides the text); every question gets a code from credo-code-next.sh Q, a heading "### ❓ Qn) <topic>" and "❓ Qn" in the Ask question text; end the reply with the open-codes footer (**❓: Qn**).'
+
 STATE_DIR="${CREDO_SESSION_MODES_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-modes}"
 state_file="$STATE_DIR/$session_id"
 
@@ -65,7 +70,7 @@ if [[ ! -f "$state_file" ]]; then
         dir_decision="${dir_decision//[[:space:]]/}"
         [[ "$dir_decision" == "declined" ]] && exit 0
     fi
-    boot="[credo] No session mode set (default: normal collaboration). To hand off unattended or full-autonomy work you can enter autonomous mode with /credo:session-autonomous (or /credo:session-active | /credo:session-passive)."
+    boot="[credo] No session mode set (default: normal collaboration). To hand off unattended or full-autonomy work you can enter autonomous mode with /credo:session-autonomous (or /credo:session-active | /credo:session-passive). $ASK_RULES"
     jq -n --arg ctx "$boot" \
         '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $ctx}, suppressOutput: true}' 2>/dev/null
     exit 0
@@ -94,6 +99,7 @@ case "$mode" in
 esac
 
 status="[credo-mode] ${mode} (session ${session_id}) - ${rules}"
+case "$mode" in active|passive) status="$status $ASK_RULES" ;; esac
 
 # --- durable suspend-on-idle directive (survives compaction) ---------------
 # If an explicit suspend-on-idle directive is set for THIS session, re-inject it
