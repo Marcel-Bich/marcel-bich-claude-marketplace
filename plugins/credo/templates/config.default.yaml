@@ -357,6 +357,10 @@ peer:
 # (a repository must not point session events at a command of its own).
 remote:
   mirror_command: ""
+  # questions, tests, blockers and permission prompts are mirrored only while the owner is
+  # likely away: the session runs autonomously (not paused), or the owner typed nothing in
+  # it for this many minutes; 0 = always mirror. Replies to the app are always mirrored.
+  mirror_idle_minutes: 10
 
 # --- self-restart plugin update allowlist (/credo:self-restart run --update) --
 # Which plugins `run --update` may update before the session restarts. A mapping

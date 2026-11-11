@@ -141,9 +141,18 @@ mirror_send() {
 # dispatch <line>: one {key, window, event} candidate; a key sent already is skipped,
 # a new key is marked, and an event (not null) is sent
 dispatch() {
-    local line="$1" key window
+    local line="$1" key window etype
     key="$(printf '%s' "$line" | jq -r '.key // empty' 2>/dev/null)"
     [ -n "$key" ] || return 0
+    # the owner at the PC answers there: questions, tests, blockers and permission prompts are
+    # not mirrored then (replies to the app are, see owner_present)
+    if [ "$OWNER_PRESENT" = 1 ]; then
+        etype="$(printf '%s' "$line" | jq -r '.event.type // empty' 2>/dev/null)"
+        case "$etype" in
+            remote_reply|command_reply) ;;
+            *) return 0 ;;
+        esac
+    fi
     window="$(printf '%s' "$line" | jq -r '.window // 0' 2>/dev/null)"
     mirror_seen "$key" "$window" && return 0
     mirror_mark "$key"
@@ -404,6 +413,55 @@ stop_events() {
     stop_lines "$text" "$chat" "$pkey" "$cmd" "$pts"
 }
 
+# idle_minutes: remote.mirror_idle_minutes (default 10; 0 = always mirror). The env
+# CREDO_REMOTE_MIRROR_IDLE_MINUTES overrides it (tests).
+idle_minutes() {
+    local v="${CREDO_REMOTE_MIRROR_IDLE_MINUTES:-}"
+    if [ -z "$v" ] && [ -f "$SCRIPTS/credo-config.sh" ]; then
+        v="$(CREDO_PROJECT=/dev/null CREDO_SKIP_ENSURE=1 bash "$SCRIPTS/credo-config.sh" \
+            get remote.mirror_idle_minutes 2>/dev/null)"
+    fi
+    case "$v" in ""|*[!0-9]*) v=10 ;; esac
+    printf '%s' "$v"
+}
+
+# LAST_OWNER_PROG: epoch of the last prompt the owner typed at the PC (not a peer message, a
+# remote chat message, a notification, a skill body, an automated credo prompt or a
+# /reload-plugins, /reload-skills or /compact that credo types itself), or null
+LAST_OWNER_PROG='def text_of: if type == "string" then .
+                     elif type == "array" then [.[] | select(.type? == "text") | .text] | join("\n")
+                     else "" end;
+    [ .[] | select(.type == "user" and (.isMeta != true) and (.timestamp // "") != "")
+      | select((.message.content | type) == "string"
+               or ((.message.content | type) == "array"
+                   and ([.message.content[] | select(.type == "tool_result")] | length == 0)))
+      | {ts: .timestamp, t: (.message.content | text_of | sub("^\\s*<pasted_content[^>]*>\\s*"; ""))}
+      | select((.t | test("^\\s*(<cross-session-message|\\[Cross-session|\\[remote chat |<task-notification>|\\[SYSTEM NOTIFICATION|\\[credo-|\\[CREDO-|<local-command|<command-name>/(reload-plugins|reload-skills|compact)<)")) | not)
+      | select((.t | gsub("\\s"; "")) != "." and (.t | gsub("\\s"; "")) != "")
+      | .ts ] | last
+    | if . == null then null else (sub("\\.[0-9]+"; "") | fromdateiso8601) end'
+
+# owner_present: 0 when the owner is likely at the PC - the session is not running
+# autonomously (or its autonomy is paused) and the owner typed a prompt there within the
+# last remote.mirror_idle_minutes. Anything unreadable counts as away, so the mirror keeps
+# working as before.
+owner_present() {
+    local mins tpath cfgdir last now
+    mins="$(idle_minutes)"
+    [ "$mins" -gt 0 ] || return 1
+    cfgdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+    if [ "$(tr -d '[:space:]' < "$cfgdir/credo/session-modes/$SID" 2>/dev/null)" = autonomous ] \
+        && [ ! -f "$cfgdir/credo/autonomy/$SID/paused" ]; then
+        return 1
+    fi
+    tpath="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)"
+    [ -n "$tpath" ] && [ -f "$tpath" ] || return 1
+    last="$(transcript_tail "$tpath" | jq -s "$LAST_OWNER_PROG" 2>/dev/null)"
+    case "$last" in ""|null|*[!0-9]*) return 1 ;; esac
+    now="$(date +%s)"
+    [ $((now - last)) -lt $((mins * 60)) ]
+}
+
 main() {
     case "$MODE" in
         ask|permission|stop) ;;
@@ -421,6 +479,8 @@ main() {
     cwd_in="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)"
     BASE="$(jq -n -c --arg s "$SID" --arg c "$cwd_in" \
         --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{session_id: $s, cwd: $c, ts: $t}')"
+    OWNER_PRESENT=0
+    owner_present && OWNER_PRESENT=1
     PERM_WINDOW="${CREDO_REMOTE_MIRROR_PERM_WINDOW:-600}"
     case "$PERM_WINDOW" in
         ""|*[!0-9]*) PERM_WINDOW=600 ;;

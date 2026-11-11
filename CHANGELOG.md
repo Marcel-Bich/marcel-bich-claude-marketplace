@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.60
+
+###### Changed
+
+- Remote mirror: Ask questions, permission prompts, question and test codes and blockers are mirrored only while the owner is likely away (autonomous, not paused, or no own prompt in the session for `remote.mirror_idle_minutes`, default 10; 0 = always). Replies to the app are always mirrored. Stops a notification for every Ask call while the owner sits at the PC.
+
 ##### v0.84.59
 
 ###### Fixed

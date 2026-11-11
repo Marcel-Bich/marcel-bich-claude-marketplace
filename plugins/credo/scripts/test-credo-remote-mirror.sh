@@ -849,5 +849,64 @@ run "transcript: long multibyte reply from the transcript" stop "$(stop_payload 
 check "transcript: long multibyte reply has no replacement characters" 0 "$(jqf '.text | [scan("�")] | length')"
 check "transcript: long multibyte reply length kept" 90000 "$(jqf '.text | length')"
 
+# --- owner at the PC: no questions/permissions mirrored (credo item #179) ----------
+echo "== owner present"
+tr_owner() { # uuid, text, seconds ago
+    jq -cn --arg u "$1" --arg t "$2" --arg ts "$(date -u -d "@$(( $(date +%s) - $3 ))" +%Y-%m-%dT%H:%M:%S.000Z)" \
+        '{type: "user", uuid: $u, timestamp: $ts, message: {role: "user", content: $t}}' >> "$TR"
+}
+ask_tr_payload() { # tool_use_id
+    jq -n --arg s "$SID" --arg c "$CWD" --arg id "$1" --arg tr "$TR" '{
+        session_id: $s, cwd: $c, hook_event_name: "PreToolUse", transcript_path: $tr,
+        tool_name: "AskUserQuestion", tool_use_id: $id,
+        tool_input: {questions: [{question: "Pick?", header: "Pick", multiSelect: false,
+            options: [{label: "a", description: "x"}, {label: "b", description: "y"}]}]}}'
+}
+new_case
+tr_owner u-o1 "please do x" 60
+run "present: ask one minute after an owner prompt" ask "$(ask_tr_payload toolu_p1)"
+check "present: ask not mirrored" 0 "$(count)"
+run "present: permission one minute after an owner prompt" permission "$(jq -n --arg s "$SID" --arg c "$CWD" --arg tr "$TR" '{session_id: $s, cwd: $c, hook_event_name: "PermissionRequest", transcript_path: $tr, tool_name: "Bash", tool_input: {command: "ls -la"}, permission_mode: "default"}')"
+check "present: permission not mirrored" 0 "$(count)"
+run "present: question code" stop "$(jq -n --arg s "$SID" --arg c "$CWD" --arg tr "$TR" --arg m "$(printf '### %s Q8) Ship?\nA or B?' "$Q")" '{session_id: $s, cwd: $c, hook_event_name: "Stop", transcript_path: $tr, last_assistant_message: $m}')"
+check "present: question code not mirrored" 0 "$(count)"
+
+new_case
+tr_owner u-o2 "please do y" 1200
+run "away: ask 20 minutes after the last owner prompt" ask "$(ask_tr_payload toolu_p2)"
+check "away: ask mirrored" 1 "$(count)"
+
+new_case
+tr_owner u-o3 "please do z" 1200
+tr_owner u-o4 "$(printf '<cross-session-message from="x">peer text</cross-session-message>')" 30
+tr_owner u-o5 "[remote chat c-1] from the app" 20
+tr_owner u-o6 "$(printf '<command-name>/reload-skills</command-name>')" 10
+tr_owner u-o7 "." 5
+run "away: peer, app, reload and dot prompts do not count as the owner at the PC" ask "$(ask_tr_payload toolu_p3)"
+check "away: ask mirrored despite recent automated prompts" 1 "$(count)"
+
+new_case
+tr_owner u-o8 "please do w" 60
+CREDO_REMOTE_MIRROR_IDLE_MINUTES=0 run "idle 0: always mirror" ask "$(ask_tr_payload toolu_p4)"
+check "idle 0: ask mirrored even with the owner present" 1 "$(count)"
+
+new_case
+tr_owner u-o9 "please do v" 60
+mkdir -p "$CFG_ROOT/credo/session-modes"
+printf 'autonomous\n' > "$CFG_ROOT/credo/session-modes/$SID"
+run "autonomous: mirror" ask "$(ask_tr_payload toolu_p5)"
+check "autonomous (not paused): ask mirrored" 1 "$(count)"
+mkdir -p "$CFG_ROOT/credo/autonomy/$SID"; : > "$CFG_ROOT/credo/autonomy/$SID/paused"
+run "autonomous paused: owner present" ask "$(ask_tr_payload toolu_p6)"
+check "autonomous paused with a recent owner prompt: not mirrored" 1 "$(count)"
+rm -f "$CFG_ROOT/credo/session-modes/$SID" "$CFG_ROOT/credo/autonomy/$SID/paused"
+
+new_case
+tr_owner u-o10 "local prompt at the PC" 120
+tr_owner u-o11 "[remote chat c-5] status?" 30
+tr_text a-o1 "All fine."
+run "present: remote reply still mirrored" stop "$(stop_payload "All fine." "$TR")"
+check "present: the reply to the app is mirrored while the owner is at the PC" remote_reply "$(jqf '.type')"
+
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]
