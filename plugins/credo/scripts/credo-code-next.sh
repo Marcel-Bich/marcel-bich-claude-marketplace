@@ -19,12 +19,13 @@
 # the type in these files:
 #   <CREDO_DIR>/process/requirements/*.md   (direct files)
 #   <CREDO_DIR>/process/handoffs/**/*.md    (recursive, includes handoffs/archive/)
-# A code is an ERE match of \bX[0-9]{1,12}\b with X = T, Q or V, case-sensitive.
-# Both sides need a word boundary: "### <question emoji> Q382)", "Q390:" and
-# "**<question emoji>: Q4, #177**" match; "xQ900", "Q900x", "CT50", "q902", a 13-digit number and item ids such as
-# "#903" (no letter) do not. A quarter label such as "Q1" also matches: that only
-# raises the floor and skips a number, it never repeats one. When the floor is above
-# the counter, the counter is reconciled up and a warning goes to stderr.
+# Only a code in its own heading counts - the form in which a project issues its codes:
+# a markdown heading (## to ####), its emoji (one or two), a space, then X<n>) with X = T, Q
+# or V, e.g. "### <question emoji> Q382) topic" or "### <veto emoji x2> V5) Veto possible".
+# A mere mention ("answer Q390:", "see the other repo's Q398", a footer "**<emoji>: Q4**")
+# never counts, so a code of another project or session quoted in the logs cannot push
+# this project's counter. When the floor is above the counter, the counter is reconciled
+# up with a warning on stderr; a jump of more than 50 gets a louder warning.
 #
 # Target resolution: credo-config.sh resolve-project, the resolver credo-id-next
 # uses (explicit CREDO_DIR, then session pin, then the cwd project). A hub or a cwd
@@ -112,8 +113,8 @@ floor_of() {
             if [ -d "$HANDOFF_DIR" ]; then
                 find "$HANDOFF_DIR" -type f -name '*.md' -print0
             fi
-        } | xargs -0 -r grep -ohE "\\b${type}[0-9]{1,12}\\b" 2>/dev/null \
-            | sed "s/^${type}//" | sort -n | tail -n 1
+        } | xargs -0 -r grep -ohE "^#{2,4} [^ [:alnum:]]{1,16} ${type}[0-9]{1,12}\\)" 2>/dev/null \
+            | sed -E "s/.* ${type}([0-9]+)\\)\$/\\1/" | sort -n | tail -n 1
     )" || true
     printf '%d' "$((10#${found:-0}))"
 }
@@ -132,6 +133,10 @@ base="$counter"
 if [ "$floor" -gt "$base" ]; then
     printf 'credo-code-next: counter (%s) for %s was behind existing codes (max %s); reconciled to %s.\n' \
         "$counter" "$TYPE" "$floor" "$((floor + 1))" >&2
+    if [ $((floor - counter)) -gt 50 ]; then
+        printf 'credo-code-next: WARNING: that is a jump of %s numbers - check the %s headings in .credo/process (requirements, handoffs) for a code that is not this project'"'"'s own.\n' \
+            "$((floor - counter))" "$TYPE" >&2
+    fi
     base="$floor"
 fi
 

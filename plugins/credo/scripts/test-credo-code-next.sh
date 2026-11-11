@@ -45,12 +45,15 @@ new_credo() { # name
     printf '%s\n' "$dir"
 }
 
-# Highest codes in the floor fixture: Q 401, T 12, V 5 (Q 390 and Q 382 below it).
+# Highest HEADED codes in the floor fixture: Q 401, T 12, V 5 (Q 382 headed below it).
+# Mentions without a heading (Q390, Q900, T99, V40) never count (item #181).
 fixture_floor() { # credo_dir
     printf '%s\n' "### $QMARK Q382) fixture question" 'answer Q390: option two' \
         "**$QMARK: Q4, #177** and item #903 and #904 (item ids are no codes)" \
+        "see the other repo's Q900 and its T99 and V40" \
         > "$1/process/requirements/req-fixture.md"
-    printf '%s\n' 'open Q401' "**$VETO: V5** and T12" > "$1/process/handoffs/archive/handoff-fixture.md"
+    printf '%s\n' "### $QMARK Q401) open question" "### $VETO$VETO V5) Veto possible: x $VETO$VETO" \
+        "#### 🧪 T12) a test [blocking]" "**$VETO: V5** and T12" > "$1/process/handoffs/archive/handoff-fixture.md"
 }
 
 # Tokens that must NOT count as codes: glued letters, lower case, item ids, too long.
@@ -111,6 +114,24 @@ run_sut T
 check "floor: T continues above T12 from handoffs/archive" "13" "$OUT"
 run_sut V
 check "floor: V continues above V5 from a veto footer" "6" "$OUT"
+
+# --- 3b. a foreign code mentioned in the logs does not push the counter (item #181) ---
+export CREDO_DIR="$(new_credo foreign)"
+printf 'T 0\nQ 5\nV 1\n' > "$CREDO_DIR/code-counters"
+printf '%s\n' "see the other repo's Q398 and its V3" "**$QMARK: Q398**" > "$CREDO_DIR/process/requirements/req-foreign.md"
+run_sut Q
+check "foreign: a mentioned Q398 of another project does not raise Q (6)" "6" "$OUT"
+check "foreign: no reconcile warning" "" "$ERR"
+run_sut V
+check "foreign: a mentioned V3 does not raise V (2)" "2" "$OUT"
+
+# --- 3c. a large reconcile jump warns loudly --------------------------------------
+export CREDO_DIR="$(new_credo jump)"
+printf 'T 0\nQ 5\nV 0\n' > "$CREDO_DIR/code-counters"
+printf '%s\n' "### $QMARK Q120) own question" > "$CREDO_DIR/process/requirements/req-jump.md"
+run_sut Q
+check "jump: a headed Q120 still reconciles (121)" "121" "$OUT"
+has "jump: a jump over 50 warns loudly" "WARNING: that is a jump of 115 numbers" "$ERR"
 
 # --- 4. the regex ignores glued, lower-case, item-id and over-long tokens ------
 export CREDO_DIR="$(new_credo noise)"

@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.62
+
+###### Fixed
+
+- credo-code-next.sh: the floor counts only codes in their own heading ("### ❓ Q12)"), so a code of another project or session mentioned in the requirements log or handoff no longer pushes this project's counter; a reconcile jump of more than 50 warns loudly.
+
 ##### v0.84.61
 
 ###### Fixed
