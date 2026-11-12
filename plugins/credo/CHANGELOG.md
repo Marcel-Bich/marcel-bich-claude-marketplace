@@ -6,6 +6,12 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.84
 
+#### v0.84.63
+
+##### Changed
+
+- Ask rule (owner decision): with current models, text after a tool call in the same turn reaches the owner only as a one-line summary. An explanation before an Ask call is now the first text of the turn (then credo-code-next.sh, a separate `echo ok`, the Ask call); when a tool call is needed first, the turn ends with the explanation and the question as text. The Ask guard hook denies an Ask call after any other tool call in its turn.
+
 #### v0.84.62
 
 ##### Fixed

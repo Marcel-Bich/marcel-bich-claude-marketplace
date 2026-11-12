@@ -44,8 +44,8 @@ has "legend: markers inside a message" 'each "?", "??" or "???" applies to the p
 has "legend: the longest ending wins" 'The longest ending wins ("???" before "??" before "?")' "$LEGEND"
 has "legend: normal question ending with ? gets the short format" 'A normal question ending with "?" (e.g. "is xyz so bad?") gets the "?" depth and format' "$LEGEND"
 has "legend: clean structure at every level" 'never crammed into a single line' "$LEGEND"
-has "legend: text before Ask stays visible (buffer)" 'first write that text, then make one separate Bash call whose ENTIRE command is `echo ok`' "$LEGEND"
-has "legend: Ask buffer reason" 'hides the text behind the Ask dialog' "$LEGEND"
+has "legend: text before Ask stays visible (first text of the turn)" 'write it as the first text of the turn, before any tool call' "$LEGEND"
+has "legend: Ask visibility reason" 'reaches the owner only as a one-line' "$LEGEND"
 
 # --- templates/shorthands.json (band cheatsheet) ----------------------------
 SH="$PLUGIN_DIR/templates/shorthands.json"
@@ -74,7 +74,7 @@ in_file "explain command: medium and short levels" 'medium' "$PLUGIN_DIR/command
 # --- session skills: text before an Ask call -------------------------------
 for s in session-active session-passive; do
     in_file "$s: buffer rule" 'whose ENTIRE command is `echo ok`' "$PLUGIN_DIR/skills/$s/SKILL.md"
-    in_file "$s: buffer reason" 'hides the text behind the Ask dialog' "$PLUGIN_DIR/skills/$s/SKILL.md"
+    in_file "$s: Ask visibility reason" 'reaches the owner only as a one-line' "$PLUGIN_DIR/skills/$s/SKILL.md"
 done
 
 # --- band hint list, docs, changelog fragment -------------------------------

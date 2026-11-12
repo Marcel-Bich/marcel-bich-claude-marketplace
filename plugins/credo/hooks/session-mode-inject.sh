@@ -40,7 +40,7 @@ esac
 # ASK_RULES: the Ask-tool rules, re-injected on every prompt in every mode that may ask
 # (none, active, passive) - the SessionStart legend can be cut away when the session-start
 # context is too large to stay inline.
-ASK_RULES='[credo-ask] Ask tool rules (credo, they win over the question format of any other skill): when explanation text comes before an Ask call in the same turn, make one separate Bash call whose ENTIRE command is `echo ok` right before the Ask call (never appended to another command; nothing else replaces it, or the TUI hides the text); every question gets a code from credo-code-next.sh Q, a heading "### ❓ Qn) <topic>" and "❓ Qn" in the Ask question text; end the reply with the open-codes footer (**❓: Qn**).'
+ASK_RULES='[credo-ask] Ask tool rules (credo, they win over the question format of any other skill): text that follows a tool call in the same turn reaches the owner only as a one-line summary. So an explanation before an Ask call is the FIRST text of the turn (no tool call before it), then credo-code-next.sh Q (the code goes into the Ask question text as "❓ Qn"), then one separate Bash call whose ENTIRE command is `echo ok`, then the Ask call. If a tool call is needed first, END the turn with the explanation and "### ❓ Qn) <topic>" as text instead (the owner answers "Qn: ..." in chat); a hook denies an Ask call after other tool calls. End the reply with the open-codes footer (**❓: Qn**).'
 
 STATE_DIR="${CREDO_SESSION_MODES_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-modes}"
 state_file="$STATE_DIR/$session_id"

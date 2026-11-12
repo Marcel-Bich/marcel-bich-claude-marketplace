@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Tests for hooks/credo-ask-buffer-guard.sh (credo item #180): an Ask call right after a Bash
-# call that only ENDS in `echo ok` is denied; a separate `echo ok`, other tools and an Ask
-# without any preceding tool call pass.
+# Tests for hooks/credo-ask-buffer-guard.sh (credo items #180, #182, owner decision Q398): an
+# Ask call may only follow credo-code-next.sh and one separate `echo ok` in its turn; any other
+# earlier tool call of the turn (also a bundled `...; echo ok`) denies it.
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$SCRIPT_DIR/../hooks/credo-ask-buffer-guard.sh"
@@ -28,25 +28,27 @@ decision() { # the hook's decision for an Ask call: deny or allow
 reset() { : > "$TR"; prompt "hello"; text "Here is the background."; }
 
 reset; bash_call "echo ok"
-check "separate echo ok passes" allow "$(decision)"
+check "a separate echo ok before the Ask passes" allow "$(decision)"
 reset; bash_call "  echo ok  "
-check "separate echo ok with spaces passes" allow "$(decision)"
-reset; bash_call "credo-code-next.sh Q; tspace remote ask x | grep ok; echo ok"
-check "echo ok appended to another command is denied" deny "$(decision)"
-reset; bash_call "echo ok && ls"
-check "echo ok followed by more work is denied" deny "$(decision)"
-reset; bash_call "credo-code-next.sh Q"
-check "other Bash call without echo ok is not this guard's business" allow "$(decision)"
-reset; read_call
-check "a Read before the Ask passes (no echo ok bundling)" allow "$(decision)"
+check "a separate echo ok with spaces passes" allow "$(decision)"
+reset; bash_call 'C=$(ls -d x/*/ | tail -1); ${C}scripts/credo-code-next.sh Q'; bash_call "echo ok"
+check "code reservation, then echo ok, then Ask passes" allow "$(decision)"
 reset
 check "no tool call in the turn passes" allow "$(decision)"
-reset; bash_call "x; echo ok"; prompt "new owner prompt"; text "More text."
-check "a bundled call of an earlier turn does not count" allow "$(decision)"
-reset; bash_call "x; echo ok"; ask_written
-check "the Ask call itself already in the transcript is skipped" deny "$(decision)"
-reset; bash_call "x; echo ok"; bash_call "echo ok"
-check "a separate echo ok after a bundled one passes" allow "$(decision)"
+reset; bash_call "credo-code-next.sh Q; tspace remote ask x | grep ok; echo ok"
+check "echo ok bundled with other work is denied" deny "$(decision)"
+reset; bash_call "echo ok && ls"
+check "echo ok followed by more work is denied" deny "$(decision)"
+reset; read_call; bash_call "echo ok"
+check "a Read earlier in the turn denies the Ask (text after it is only a summary)" deny "$(decision)"
+reset; bash_call "git status"
+check "any other Bash call earlier in the turn denies the Ask" deny "$(decision)"
+reset; read_call; prompt "new owner prompt"; text "More text."
+check "a tool call of an earlier turn does not count" allow "$(decision)"
+reset; ask_written
+check "the Ask call itself already in the transcript is skipped" allow "$(decision)"
+reset; read_call; ask_written
+check "a Read plus the Ask itself in the transcript still denies" deny "$(decision)"
 out="$(printf 'not json' | bash "$HOOK")"
 check "bad input fails open" "" "$out"
 

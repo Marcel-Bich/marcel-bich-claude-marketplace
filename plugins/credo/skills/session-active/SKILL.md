@@ -150,8 +150,7 @@ raising an Ask about an existing item, apply the CLARIFY-FIRST precondition abov
 whole body plus the requirements log so a stale head does not make you re-ask what is
 already clarified (read/build-gate, credo `items` skill).
 
-Text before an Ask call stays visible: when explanation text comes right before an Ask-tool call in
-the same turn, first write that text, then make one separate Bash call whose ENTIRE command is `echo ok` (the buffer: never appended to or bundled with another command, and nothing else replaces it - no Read, no Agent spawn, no other tool, no command without output; a hook blocks an Ask call right after a Bash call that merely ends in echo ok), then call the Ask tool. Without the buffer the TUI hides the text behind the Ask dialog.
+Text before an Ask call stays visible only as the FIRST text of a turn: with the current models, text that follows a tool call in the same turn reaches the owner only as a one-line summary ("· summary"), and nothing can bring the original back. So (1) when the explanation needs no tool call first, write it as the first text of the turn, before any tool call; then get the code with credo-code-next.sh Q (its number goes into the Ask question text as "❓ Qn"), then make one separate Bash call whose ENTIRE command is `echo ok` (never appended to another command; kept in case the summary behaviour goes away again), then call the Ask tool. (2) When a tool call is needed first (check a file, run a command), do it, then END the turn with the explanation and the question "### ❓ Qn) <topic>" as text, and the owner answers "Qn: ..." in chat - no Ask call in that turn. A hook denies an Ask call after any other tool call in the same turn (only credo-code-next.sh and `echo ok` may come before it).
 
 Opt-in setting `dont_ask_twice` (default false, `credo-config.sh get dont_ask_twice`). When
 it is true, before any question search the requirement logs, the items, the handoff and
