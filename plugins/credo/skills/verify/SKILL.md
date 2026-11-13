@@ -94,15 +94,18 @@ pins pile up old browsers under `~/.cache/ms-playwright`.
   is not used, never do it. Note it as a proposal for the owner and carry on with the
   installed version.
 - **(b) Unreferenced revisions are pruned automatically.** Once a day the SessionStart
-  maintenance runs `credo-cleanup.py playwright-prune`: it finds every
-  `playwright-core/browsers.json` on disk (also `~/.npm/_npx`, global and pnpm installs, plus
-  Playwright's own `.links`) and removes the revision directories under
-  `~/.cache/ms-playwright` (or `PLAYWRIGHT_BROWSERS_PATH`) that none of them names. It only
+  maintenance runs `credo-cleanup.py playwright-prune`: it finds every Playwright installation
+  on disk (any `browsers.json`: Node `playwright-core` also in `~/.npm/_npx`, global and pnpm
+  installs, the Python and .NET driver package, the Java driver jar, plus Playwright's own
+  `.links`) and removes the revision directories under `~/.cache/ms-playwright` (or
+  `PLAYWRIGHT_BROWSERS_PATH` when it holds `.links`) that none of them names and no running
+  process uses. It only
   deletes and never downloads or installs anything. A project that still needs a removed
   revision gets it back only when a user (or an agent with consent) runs its install. It
   never touches `mcp-chrome-*` or any directory that is not a known browser-revision name,
-  keeps revisions installed less than 2 hours ago, and prunes nothing when the search did
-  not finish or found no installation.
+  keeps revisions installed less than 2 hours ago, and prunes nothing when anything is
+  unclear (search not finished, an unreadable directory, a malformed Playwright
+  `browsers.json` or jar, `/proc` unreadable, no installation found).
 
 ## Flaky tests and speed
 

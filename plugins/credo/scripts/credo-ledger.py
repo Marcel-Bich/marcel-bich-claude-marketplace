@@ -57,11 +57,17 @@ def disabled():
 # --------------------------------------------------------------------------- guards
 
 
+WRITE_CMD_RE = re.compile(r"(>|\btee\b|\b(cp|mv|rm|rmdir|unlink|truncate|dd|install|ln|shred|"
+                          r"rsync|touch|chmod|chown)\b|\bsed\s+(-[a-zA-Z]*i|--in-place)|\bpython3?\b|"
+                          r"\bperl\b|\bnode\b|\bruby\b)")
+
+
 def protected_forms():
-    """Text forms of the hook-only paths as they may appear in a command."""
+    """Text forms of the hook-only paths as they may appear in a command: the ledger dir and the
+    keep list (the cleanup log beside the ledger stays readable)."""
     h = L.home()
     forms = set()
-    for p in (L.state_dir(), L.keep_list_path()):
+    for p in (os.path.join(L.state_dir(), "ledger"), L.keep_list_path()):
         forms.add(p)
         if L.is_under(p, h):
             rest = p[len(h):]
@@ -114,12 +120,17 @@ def guard(data):
         cmd = ti.get("command")
         if not isinstance(cmd, str):
             return None
+        # A guard against mistakes, not against the same user on purpose: string building,
+        # python -c or a script written first all get past a text check (documented). Only a
+        # command that names the ledger / keep list AND writes or deletes is denied.
         hit = [f for f in protected_forms() if f in cmd]
         # cd into the state tree plus a relative path (best effort)
-        if not hit and ".local/state" in cmd and re.search(r"(^|[\s/'\"])cleanup(/|[\s'\"]|$)", cmd):
-            hit = [".local/state ... cleanup"]
-        if not hit and ".local/share" in cmd and "keep-list" in cmd:
-            hit = [".local/share ... keep-list"]
+        if not hit and ".local/state" in cmd and re.search(r"(^|[\s/'\"])cleanup/ledger", cmd):
+            hit = [".local/state ... cleanup/ledger"]
+        if not hit and ".local/share" in cmd and "keep-list.json" in cmd:
+            hit = [".local/share ... keep-list.json"]
+        if hit and not WRITE_CMD_RE.search(cmd):
+            hit = []
         for f in hit:
             return ("the command names the provenance ledger or the keep list (%s), which only "
                     "credo hooks and credo-cleanup.py write; use credo-cleanup.py report to read "
@@ -333,9 +344,8 @@ def scan_root(root, t0, t1, home_mode=False):
 
 
 def temp_scan_roots(cwd):
-    env = os.environ.get("CREDO_CLEANUP_ROOTS")
-    if env is not None:
-        return [os.path.realpath(r) for r in env.split(":") if r]
+    if L.ov("roots") is not None:
+        return [os.path.realpath(r) for r in L.ov("roots")]
     roots = ["/tmp", "/dev/shm"]
     top, linked = L.git_top(os.path.realpath(cwd)) if cwd else (None, False)
     if top:
@@ -427,12 +437,12 @@ def post(data):
     for root in temp_scan_roots(cwd):
         recs += build_records(scan_root(root, t0, t1), sid, tool, cmd, "temp", agent_id, windows, cwd)
     L.append_ledger(sid, recs)
-    home_root = os.environ.get("CREDO_CLEANUP_HOME_ROOT", L.home())
+    home_root = L.ov("home_root", L.home())
     if home_root == "none" or not home_root:
         return
     job = {"sid": sid, "t0": t0, "t1": t1, "cmd": cmd[:20000], "agent_id": agent_id, "cwd": cwd,
            "root": home_root, "windows": windows}
-    if os.environ.get("CREDO_CLEANUP_SYNC") == "1":
+    if L.ov("sync"):
         home_scan_job(job)
         return
     jd = os.path.join(L.state_dir(), "jobs")
@@ -473,24 +483,30 @@ def session_start(data):
     sid = data.get("session_id") or ""
     if not L.valid_sid(sid):
         return
-    cfg = L.local_config() if os.environ.get("CREDO_CLEANUP_NO_CONFIG") != "1" else {}
+    cfg = L.local_config(timeout=3)  # well inside the 10 s hook timeout
     flag = os.path.join(L.state_dir(), "disabled")
     L.ensure_dir(L.state_dir())
+    if cfg is None:
+        # fail open: no TMPDIR export, no maintenance this time; the hooks keep recording
+        L.log("session-start: local config not readable within 3 s, no TMPDIR export")
+        return
     if cfg.get("enabled") is False:
         open(flag, "a").close()
         return
     if os.path.exists(flag):
         os.unlink(flag)
-    base = os.path.abspath(os.environ.get("CREDO_TMP_BASE") or "/tmp/credo-tmp-%d" % os.getuid())
+    base = L.tmp_base()
     if not os.path.lexists(base):
         os.makedirs(base, mode=0o700, exist_ok=True)
         os.chmod(base, 0o700)
-    st = os.lstat(base)
-    if os.path.islink(base) or st.st_uid != os.getuid() or (st.st_mode & 0o077):
+    if not L.private_dir(base):
         L.log("session-start: %s is not a private dir of this user, no session TMPDIR" % base)
         return
     stmp = L.session_tmp(sid)
     os.makedirs(stmp, mode=0o700, exist_ok=True)
+    if not L.private_dir(stmp):
+        L.log("session-start: %s is not a private dir of this user, no session TMPDIR" % stmp)
+        return
     helper = os.path.join(HERE, "credo-cleanup.py")
     envf = os.environ.get("CLAUDE_ENV_FILE")
     lines = ["export CREDO_CLEANUP=%s" % shell_quote(helper)]
@@ -511,15 +527,17 @@ def session_start(data):
             wrote = True
         except OSError as exc:
             L.log("session-start: cannot write CLAUDE_ENV_FILE: %s" % exc)
-    if os.environ.get("CREDO_CLEANUP_NO_MAINTENANCE") != "1":
+    if not L.ov("no_maintenance"):
         L.detach([sys.executable, "-I", helper, "maintenance", "--cwd", data.get("cwd") or os.getcwd()],
                  os.path.join(L.state_dir(), "maintenance.log"))
     if wrote or envf is None:
         sys.stdout.write(
-            "[credo-cleanup] Own temp dir of this session: %s%s. Delete what this session or its "
-            "subagents created, without a prompt, only through: python3 %s own-rm <path>... "
-            "(ledger-verified; write the helper path literally, never rm -rf outside the cwd); see what "
-            "is yours: python3 %s report\n" % (stmp, " (exported as $TMPDIR)" if wrote else "", helper, helper))
+            "[credo-cleanup] Own temp dir of this session: %s%s. Put throwaway output there. Delete "
+            "own leftovers without a prompt only through: python3 %s own-rm <path>... (only inside "
+            "this TMPDIR or the session scratchpad, files the Write tool created in a temp dir, or "
+            "ignored build output of your own worktree; everything else is report-only; never rm -rf "
+            "outside the cwd). What the session left: python3 %s report\n"
+            % (stmp, " (exported as $TMPDIR)" if wrote else "", helper, helper))
 
 
 def shell_quote(s):

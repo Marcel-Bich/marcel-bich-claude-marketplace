@@ -29,6 +29,7 @@ import fcntl
 import glob
 import json
 import os
+import pwd
 import re
 import stat
 import subprocess
@@ -36,26 +37,40 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+# Claude Code session ids are UUIDs; nothing else is accepted, so an id can never name or escape
+# a directory (no "..", no "/", no ordinary folder names)
+SID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+# Test-only configuration. Runtime code never reads paths or switches of the cleanup from the
+# environment (an env prefix on a helper call must not widen what it may delete). The test suite
+# fills this dict through a shim it generates in its own fixture dir; nothing else sets it.
+OVERRIDES = {}
+
+
+def ov(key, default=None):
+    return OVERRIDES.get(key, default)
+
 
 # --------------------------------------------------------------------------- paths
 
 
 def home():
-    return os.path.realpath(os.path.expanduser("~"))
+    """The user's home from the password database (not $HOME, which a command can prefix)."""
+    h = ov("home")
+    if not h:
+        try:
+            h = pwd.getpwuid(os.getuid()).pw_dir
+        except KeyError:
+            h = os.path.expanduser("~")
+    return os.path.realpath(h)
 
 
 def state_dir():
-    d = os.environ.get("CREDO_CLEANUP_STATE")
-    if not d:
-        base = os.environ.get("XDG_STATE_HOME") or os.path.join(home(), ".local", "state")
-        d = os.path.join(base, "credo", "cleanup")
-    return os.path.realpath(os.path.expanduser(d))
+    return os.path.realpath(ov("state") or os.path.join(home(), ".local", "state", "credo", "cleanup"))
 
 
 def keep_root():
-    d = os.environ.get("CREDO_KEEP_ROOT") or os.path.join(home(), ".local", "share", "credo", "keep")
-    return os.path.realpath(os.path.expanduser(d))
+    return os.path.realpath(ov("keep_root") or os.path.join(home(), ".local", "share", "credo", "keep"))
 
 
 def keep_list_path():
@@ -63,8 +78,12 @@ def keep_list_path():
 
 
 def tmp_base():
-    d = os.environ.get("CREDO_TMP_BASE") or "/tmp/credo-tmp-%d" % os.getuid()
-    return os.path.realpath(d)
+    """The session tmp base (absolute, NOT resolved: private_dir checks it is no symlink)."""
+    return os.path.abspath(ov("tmp_base") or "/tmp/credo-tmp-%d" % os.getuid())
+
+
+def scratch_base():
+    return os.path.abspath(ov("scratch_base") or "/tmp/claude-%d" % os.getuid())
 
 
 def session_tmp(sid):
@@ -73,6 +92,20 @@ def session_tmp(sid):
 
 def valid_sid(sid):
     return bool(sid) and bool(SID_RE.match(sid))
+
+
+def private_dir(path, mode_0700=True):
+    """True when path (not resolved) is a real directory of this user, no symlink, and (with
+    mode_0700) not accessible to anybody else."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+        return False
+    if mode_0700 and stat.S_IMODE(st.st_mode) & 0o077:
+        return False
+    return os.path.realpath(path) == path
 
 
 def ledger_path(sid):
@@ -117,7 +150,7 @@ def _statx_fn():
     global _libc, _statx_ok
     if _statx_ok is None:
         _statx_ok = False
-        if os.environ.get("CREDO_CLEANUP_NO_BTIME") == "1":
+        if ov("no_btime"):
             return None
         try:
             _libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
@@ -269,9 +302,8 @@ def profile_dirs():
     for d in glob.glob(os.path.join(home(), ".claude*")):
         if os.path.isdir(d):
             dirs.add(os.path.realpath(d))
-    extra = os.environ.get("CREDO_CLEANUP_PROFILES")
-    if extra is not None:  # tests: only these
-        dirs = {os.path.realpath(p) for p in extra.split(":") if p}
+    if ov("profiles") is not None:  # tests: only these
+        dirs = {os.path.realpath(p) for p in ov("profiles")}
     return sorted(dirs)
 
 
@@ -307,9 +339,10 @@ def running_sessions():
 # --------------------------------------------------------------------------- config
 
 
-def local_config():
+def local_config(timeout=3):
     """The cleanup block of the LOCAL config only (global + profile layer, never the project
-    layer, which may be versioned). {} when unreadable."""
+    layer, which may be versioned). None when it cannot be read within timeout seconds: callers
+    then skip what needs it (no TMPDIR export; own-rm refuses, since the keep list is unknown)."""
     script = os.path.join(HERE, "credo-config.sh")
     env = dict(os.environ)
     env["CREDO_PROJECT"] = os.path.join(state_dir(), "no-project-layer")
@@ -317,13 +350,15 @@ def local_config():
     env.setdefault("CLAUDE_PLUGIN_ROOT", os.path.dirname(HERE))
     try:
         out = subprocess.run(["bash", script, "get", "cleanup"], env=env, capture_output=True,
-                             text=True, timeout=20)
+                             text=True, timeout=timeout)
         if out.returncode == 0:
             val = json.loads(out.stdout or "{}")
             return val if isinstance(val, dict) else {}
+        if out.returncode == 3:  # key absent: defaults
+            return {}
     except (OSError, ValueError, subprocess.SubprocessError):
         pass
-    return {}
+    return None
 
 
 # --------------------------------------------------------------------------- path rules
@@ -407,7 +442,7 @@ def mount_points():
     if _MOUNTS is None:
         mounts = set()
         try:
-            src = os.environ.get("CREDO_CLEANUP_MOUNTINFO") or "/proc/self/mountinfo"  # tests: a fixture
+            src = ov("mountinfo") or "/proc/self/mountinfo"
             with open(src, encoding="utf-8", errors="replace") as fh:
                 for line in fh:
                     parts = line.split()
@@ -470,11 +505,14 @@ def hard_refusal(p, cfg_keep_paths=()):
 
 def temp_roots():
     roots = ["/tmp", "/var/tmp", "/dev/shm", tmp_base()]
-    roots += [os.path.realpath(r) for r in (os.environ.get("CREDO_CLEANUP_TEMP_ROOTS") or "").split(":") if r]
+    roots += [os.path.realpath(r) for r in ov("temp_roots", [])]
     return roots
 
 
 def in_temp_root(p):
+    """Below a temp root and not inside the home (a home under /tmp never counts as temp)."""
+    if is_under(p, home()):
+        return False
     return any(p != r and is_under(p, r) for r in temp_roots())
 
 
@@ -652,12 +690,16 @@ def session_bound_roots(sid):
     """Directories bound to the session by their name: the session TMPDIR and the Claude Code
     scratchpad of this session id. Their children are owned; the roots themselves are not deleted
     by own-rm."""
-    roots = [session_tmp(sid)]
-    pattern = "/tmp/claude-%d/*/%s/scratchpad" % (os.getuid(), sid)
-    extra = os.environ.get("CREDO_CLEANUP_SCRATCH_GLOB")
-    if extra:
-        pattern = extra.replace("{sid}", sid)
-    roots += [os.path.realpath(p) for p in glob.glob(pattern)]
+    if not valid_sid(sid):
+        return []
+    roots = []
+    if private_dir(tmp_base()) and private_dir(session_tmp(sid)):
+        roots.append(session_tmp(sid))
+    sb = scratch_base()
+    if private_dir(sb, mode_0700=False):
+        for pad in glob.glob(os.path.join(glob.escape(sb), "*", sid, "scratchpad")):
+            if private_dir(pad, mode_0700=False):  # no symlink anywhere on the way (realpath == path)
+                roots.append(pad)
     return roots
 
 
@@ -671,6 +713,53 @@ def same_birth(e, path):
     return cur is not None and abs(cur - rec) < 0.01
 
 
+_TRANSCRIPTS = {}
+
+
+def transcript_files(sid):
+    files = []
+    for prof in profile_dirs():
+        base = os.path.join(glob.escape(prof), "projects", "*")
+        files += glob.glob(os.path.join(base, sid + ".jsonl"))
+        files += glob.glob(os.path.join(base, sid, "subagents", "*.jsonl"))
+    return files
+
+
+def transcript_wrote(sid, path):
+    """True when a transcript of this session (main agent or subagent) holds a Write/Edit tool
+    call whose file_path is path or lies below it. A ledger line alone (which a mistaken command
+    could produce) is never enough: the tool call must be in the session's own transcript."""
+    esc = json.dumps(path)[1:-1].encode("utf-8")
+    needles = (b'"file_path":"' + esc + b'"', b'"file_path":"' + esc + b"/")
+    for f in transcript_files(sid):
+        data = _TRANSCRIPTS.get(f)
+        if data is None:
+            try:
+                with open(f, "rb") as fh:
+                    data = fh.read()
+            except OSError:
+                data = b""
+            _TRANSCRIPTS[f] = data
+        if any(n in data for n in needles):
+            return True
+    return False
+
+
+def not_deletable_entry(p, e, sid=None):
+    """Report-only reason for a ledger entry that may never be deleted without a prompt: only an
+    entry the Write/Edit tool created, inside a temp root (not in the home, not in a worktrees
+    dir) is deletable. What the birth-time scan of a Bash call found may have been created by the
+    owner or another program during the call, so it is only reported."""
+    if e.get("evidence") != "write":
+        return ("report only: found by the birth-time scan of a Bash call (%s evidence); another "
+                "process may have created it - the owner decides" % e.get("evidence"))
+    if not in_temp_root(p):
+        return "report only: outside the temp roots (home, worktrees dir or elsewhere)"
+    if sid is not None and not transcript_wrote(sid, p):
+        return "report only: no Write/Edit call for it in this session's transcript"
+    return None
+
+
 def owned_entry(p, st, entries, sid):
     """(ok, entry_or_None, reason, since). p is a real target path, st its lstat. since is the
     birth time every inode below the target must have at least (provenance start), or None
@@ -682,6 +771,9 @@ def owned_entry(p, st, entries, sid):
     if e is not None:
         if e.get("dev") != st.st_dev or e.get("ino") != st.st_ino or not same_birth(e, p):
             return False, e, "replaced since it was recorded (dev/inode/birth differ)", None
+        why = not_deletable_entry(p, e, sid)
+        if why:
+            return False, e, why, None
         return True, e, "ledger entry", e.get("btime")
     # below a ledger directory entry whose inode still matches
     best = None
@@ -700,6 +792,9 @@ def owned_entry(p, st, entries, sid):
     if (est.st_dev != e.get("dev") or est.st_ino != e.get("ino") or not stat.S_ISDIR(est.st_mode)
             or not same_birth(e, ep)):
         return False, e, "its recorded parent %s was replaced" % ep, None
+    why = not_deletable_entry(ep, e, sid)
+    if why:
+        return False, e, why, None
     return True, e, "below ledger entry %s" % ep, e.get("btime")
 
 

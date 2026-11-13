@@ -14,12 +14,12 @@ temp roots. Every removal, refusal and failure is logged; nothing ever asks or b
 refused path is reported and the agent carries on.
 
 Usage (the session id comes from $CLAUDE_CODE_SESSION_ID):
-  credo-cleanup.py own-rm <path>... [--dry-run] [--superseded "<newer owner decision>"]
+  credo-cleanup.py own-rm <path>... [--dry-run]
   credo-cleanup.py keep <path> <name> --reason "<owner quote>" [--item N] [--licence "<note>"]
                    [--project NAME]
   credo-cleanup.py report [--all] [--json]
   credo-cleanup.py purge [--dry-run] [--now] [--except <path>]...  done-gate: own temp entries
-  credo-cleanup.py item-close                                  clear idle entries of $TMPDIR
+  credo-cleanup.py item-close                                  list $TMPDIR entries (report only)
   credo-cleanup.py sweep                                       sessions that no longer run
   credo-cleanup.py worktrees [dir]                             merged removed, unmerged reported
   credo-cleanup.py caches                                      size caps from the local config
@@ -41,18 +41,21 @@ import stat
 import subprocess
 import sys
 import time
+import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import credo_cleanup_lib as L  # noqa: E402
 
 IDLE_MINUTES_DEFAULT = 30
+EXPLICIT_IDLE_S = 120          # explicit own-rm: nothing changed in the tree for 2 minutes
+ITEM_CLOSE_BUDGET_S = 60       # item-close: overall time budget, then skip and log
 DAY = 86400
 
 
 def session_id():
-    sid = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CREDO_SESSION_ID") or ""
-    return sid if L.valid_sid(sid) else ""
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
+    return sid if L.valid_sid(sid) else ""  # a UUID only: it can never name or escape a dir
 
 
 def out(line):
@@ -108,8 +111,28 @@ class Target:
         self.info = info or L.TreeInfo()
 
 
-def check_target(raw, sid, entries, cfg_keep, keep_items, superseded):
-    """Every check that decides whether raw may be removed (explicit own-rm level)."""
+def own_worktree_output(p, st):
+    """(ok, since, reason) for ignored build output inside the linked (hydra) worktree the helper
+    runs in: p lies inside that worktree (not the worktree itself), git ignores it and tracks
+    nothing below it. since = the worktree's birth, so older (moved-in) content is refused."""
+    top, linked = L.git_top(os.path.realpath(os.getcwd()))
+    if not top or not linked or p == top or not L.is_under(p, top):
+        return False, None, None
+    rel = os.path.relpath(p, top)
+    if rel == ".git" or rel.startswith(".git/") or rel == ".credo" or rel.startswith(".credo/"):
+        return False, None, None
+    try:
+        r = subprocess.run(["git", "-C", top, "check-ignore", "-q", "--", rel], capture_output=True,
+                           timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return False, None, "git check-ignore failed"
+    if r.returncode != 0:
+        return False, None, None
+    return True, L.birth_time(top), None
+
+
+def check_target(raw, sid, entries, cfg, keep_items):
+    """Every check that decides whether raw may be removed without a prompt."""
     p = L.real_target(raw)
     if p is None:
         return Target(raw, None, "not a removable path")
@@ -118,33 +141,35 @@ def check_target(raw, sid, entries, cfg_keep, keep_items, superseded):
     except OSError:
         return Target(p)
     t = Target(p, st)
-    reason = L.hard_refusal(p, cfg_keep)
+    if cfg is None:
+        t.reason = "the local config could not be read in time: keep list unknown, nothing deleted"
+        return t
+    reason = L.hard_refusal(p, cfg.get("keep_paths") or [])
     if reason:
         t.reason = reason
         return t
     kept = keep_entry_for(p, keep_items)
     if kept is not None:
-        if not superseded and not item_archived(kept):
-            t.reason = ("kept on owner request (%s); remove only with --superseded \"<newer owner "
-                        "decision>\" or after item %s is archived" % (kept.get("reason"), kept.get("item")))
+        # the keep list only ever protects: a kept result is never deleted by an agent
+        t.reason = ("kept on owner request (%s, item %s): report only - the owner may release it "
+                    "(delete it by hand and drop the keep-list entry)" % (kept.get("reason"), kept.get("item")))
+        return t
+    if not sid:
+        t.reason = "no session id ($CLAUDE_CODE_SESSION_ID) - cannot check the ledger"
+        return t
+    ok, entry, why, since = L.owned_entry(p, st, entries, sid)
+    if not ok:
+        wt_ok, wt_since, wt_why = own_worktree_output(p, st)
+        if not wt_ok:
+            t.reason = wt_why or why
             return t
-        t.since = False  # the owner-approved keep entry: no provenance re-check of its content
-        reason, t.info = L.inspect_tree_structure(p, st)
-    else:
-        if not sid:
-            t.reason = "no session id ($CLAUDE_CODE_SESSION_ID) - cannot check the ledger"
-            return t
-        ok, entry, why, since = L.owned_entry(p, st, entries, sid)
-        if not ok:
-            t.reason = why
-            return t
-        if entry is not None and entry.get("evidence") == "window" and entry.get("ambiguous"):
-            t.reason = ("born while other sessions were running tool calls (%s); not provably "
-                        "this session's" % ", ".join(entry["ambiguous"]))
-            return t
-        t.since = since
-        # the whole tree must be this session's work: born after the entry, never older content
-        reason, t.info = L.inspect_tree(p, st, since)
+        since = wt_since
+    elif entry is not None and entry.get("evidence") == "window" and entry.get("ambiguous"):
+        t.reason = "report only: born while other sessions ran tool calls"
+        return t
+    t.since = since
+    # the whole tree must be this session's work: born after the entry, never older content
+    reason, t.info = L.inspect_tree(p, st, since)
     if reason:
         t.reason = reason
         return t
@@ -154,12 +179,13 @@ def check_target(raw, sid, entries, cfg_keep, keep_items, superseded):
 
 
 def auto_refusal(t, idle_s):
-    """Extra checks of the automatic paths (item-close, purge, sweep): they are strictly more
-    conservative than an explicit own-rm and only report when in doubt."""
+    """Checks against deleting something still in use, for every delete (explicit own-rm with a
+    2-minute idle time, purge and sweep with 30 minutes): no socket/fifo/device in the tree, no
+    change anywhere in the tree within idle_s, no process with its cwd or an open file inside."""
     if t.info.special:
         return "holds a socket, fifo or device (%s): may belong to a running process" % t.info.special
     if time.time() - t.info.newest < idle_s:
-        return "changed in the last %d minutes (deepest change counts): may be in use" % (idle_s // 60)
+        return "changed in the last %ds (deepest change counts): may be in use" % idle_s
     pid = L.held_open(t.p)
     if pid == "unknown":
         return "open-file check did not finish: may be in use"
@@ -168,27 +194,26 @@ def auto_refusal(t, idle_s):
     return None
 
 
-def own_rm(paths, dry=False, superseded=None, quiet_refusals=False, auto_idle_s=None):
-    """Remove the paths that pass check_target (and auto_refusal when auto_idle_s is given)."""
+def own_rm(paths, dry=False, quiet_refusals=False, idle_s=EXPLICIT_IDLE_S):
+    """Remove the paths that pass check_target and auto_refusal (socket/fifo, open files, idle)."""
     sid = session_id()
     entries = L.load_ledger(sid) if sid else {}
     cfg = L.local_config()
-    cfg_keep = cfg.get("keep_paths") or []
     keep_items = load_keep()
     removed, refused, failed = [], [], []
+    if idle_s == EXPLICIT_IDLE_S:
+        idle_s = L.ov("explicit_idle_s", idle_s)
     for raw in paths:
-        t = check_target(raw, sid, entries, cfg_keep, keep_items, superseded)
+        t = check_target(raw, sid, entries, cfg, keep_items)
         p = t.p
         if t.st is None and t.reason is None:
             out("gone %s" % p)
-            if sid and p in entries:
-                L.append_ledger(sid, [{"event": "removed", "path": p, "ts": L.iso()}])
             continue
         reason = t.reason
-        if not reason and auto_idle_s is not None:
-            reason = auto_refusal(t, auto_idle_s)
+        if not reason:
+            reason = auto_refusal(t, idle_s)
             if reason:
-                reason = "reported, not deleted: " + reason
+                reason = "report only: " + reason
         if reason:
             refused.append(p)
             L.log("refused %s (session %s): %s" % (p, sid or "-", reason))
@@ -209,11 +234,6 @@ def own_rm(paths, dry=False, superseded=None, quiet_refusals=False, auto_idle_s=
         out("removed %s" % p)
         if sid:
             L.append_ledger(sid, [{"event": "removed", "path": p, "ts": L.iso()}])
-        kept = keep_entry_for(p, keep_items)
-        if kept is not None and kept.get("path") == p:
-            keep_items = [k for k in keep_items if k is not kept]
-            save_keep(keep_items)
-            L.log("keep entry dropped %s: %s" % (p, superseded or "item archived"))
     return removed, refused, failed
 
 
@@ -232,7 +252,7 @@ def keep(args):
     name = re.sub(r"[^A-Za-z0-9._-]", "-", args.name).strip(".-") or "kept"
     entries = L.load_ledger(sid) if sid else {}
     cfg = L.local_config()
-    t = check_target(args.path, sid, entries, cfg.get("keep_paths") or [], load_keep(), None)
+    t = check_target(args.path, sid, entries, cfg, load_keep())
     p, st, reason = t.p, t.st, t.reason
     if st is None:
         out("refused %s: does not exist" % p)
@@ -319,7 +339,7 @@ def report(args):
 
 
 def idle_seconds():
-    return float(os.environ.get("CREDO_CLEANUP_IDLE_MINUTES", IDLE_MINUTES_DEFAULT)) * 60
+    return float(L.ov("idle_minutes", IDLE_MINUTES_DEFAULT)) * 60
 
 
 def excepted(p, excepts):
@@ -327,11 +347,11 @@ def excepted(p, excepts):
 
 
 def purge(args):
-    """Done-gate. Automatic, so stricter than own-rm: only entries the Write/Edit tool created in a
-    temp root and the children of the session TMPDIR are removed, each only when its whole tree
-    is provably this session's (birth checks), idle for 30 minutes (deepest change; --now drops
-    only this idle rule), free of sockets/fifos and not in use by a process. Everything else is
-    listed for an explicit own-rm or the owner."""
+    """Done-gate. Removes only entries the Write/Edit tool created in a temp root, each with every
+    check of own-rm and an idle time of 30 minutes (--now: the 2 minutes of own-rm). Everything
+    else is listed: Bash-recorded entries (report only), entries outside the temp roots, and the
+    children of the session TMPDIR (shared with parallel subagents; own-rm them by name, or the
+    sweep removes them once the session has ended)."""
     sid = session_id()
     if not sid:
         out("refused purge: no session id ($CLAUDE_CODE_SESSION_ID)")
@@ -344,62 +364,61 @@ def purge(args):
         if excepted(p, excepts):
             listed.append((p, "excepted (result)"))
             continue
-        if not L.in_temp_root(p):
-            listed.append((p, "outside the temp roots: own-rm if it is not a result"))
-            continue
-        if e.get("evidence") != "write":
-            listed.append((p, "recorded from a Bash call (%s evidence): own-rm if it is yours"
-                           % e.get("evidence")))
+        why = L.not_deletable_entry(p, e, sid)
+        if why:
+            listed.append((p, why))
             continue
         targets.append(p)
     stmp = L.session_tmp(sid)
-    if os.path.isdir(stmp) and not os.path.islink(stmp):
+    if L.private_dir(stmp):
         for n in sorted(os.listdir(stmp)):
             q = os.path.join(stmp, n)
-            if excepted(q, excepts):
-                listed.append((q, "excepted (result)"))
-                continue
-            targets.append(q)
-    own_rm(targets, dry=args.dry_run, auto_idle_s=0 if args.now else idle_seconds())
+            listed.append((q, "excepted (result)" if excepted(q, excepts) else
+                           "session TMPDIR, shared with parallel subagents: own-rm it by name if it is "
+                           "yours, else the sweep removes it after the session ended"))
+    own_rm(targets, dry=args.dry_run, idle_s=EXPLICIT_IDLE_S if args.now else idle_seconds())
     for p, why in listed:
         out("listed %s: %s" % (p, why))
 
 
 def item_close(args):
-    """Clear children of the session TMPDIR that pass every automatic check (whole tree own,
-    deepest change older than 30 minutes, no socket/fifo, not in use). The dir itself stays: the
-    session and its parallel subagents go on. Refusals are only logged."""
+    """Report only. Parallel subagents of the session share its TMPDIR, so closing one item may
+    not delete there; this lists the children that would qualify, and the sweep removes them once
+    the session no longer runs. One overall time budget; over it the rest is skipped and logged."""
     sid = session_id()
     if not sid:
         return
     stmp = L.session_tmp(sid)
-    if os.path.islink(stmp):
+    if not L.private_dir(stmp):
         return
+    t_end = time.time() + L.ov("item_close_budget_s", ITEM_CLOSE_BUDGET_S)
     try:
-        names = os.listdir(stmp)
+        names = sorted(os.listdir(stmp))
     except OSError:
         return
-    targets = [os.path.join(stmp, n) for n in names]
-    if targets:
-        own_rm(targets, quiet_refusals=True, auto_idle_s=idle_seconds())
+    for i, n in enumerate(names):
+        if time.time() > t_end:
+            L.log("item-close: time budget used up, %d entries not checked" % (len(names) - i))
+            out("skipped %d entries: time budget used up" % (len(names) - i))
+            return
+        q = os.path.join(stmp, n)
+        out("listed %s: session TMPDIR, removed by the sweep after the session ended (or own-rm it "
+            "by name)" % q)
 
 
 # --------------------------------------------------------------------------- sweep
 
 
-UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+UUID_RE = L.SID_RE
 
 
 def private_base():
     """The session tmp base when it is safe to sweep: not a symlink (checked unresolved), a
     directory owned by this user with mode 0700. Else None (reported)."""
-    raw = os.path.abspath(os.environ.get("CREDO_TMP_BASE") or "/tmp/credo-tmp-%d" % os.getuid())
-    try:
-        st = os.lstat(raw)
-    except OSError:
+    raw = L.tmp_base()
+    if not os.path.lexists(raw):
         return None
-    if (stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid()
-            or stat.S_IMODE(st.st_mode) != 0o700):
+    if not L.private_dir(raw):
         out("refused sweep: %s is not a private dir of this user (symlink, owner or mode)" % raw)
         L.log("sweep refused: %s is not a private dir of this user" % raw)
         return None
@@ -409,7 +428,7 @@ def private_base():
     return raw
 
 
-def sweep_session_dir(d, idle_s):
+def sweep_session_dir(d, idle_s, keep_paths):
     """Remove the children of a dead session's tmp dir that are provably its own (born after the
     dir, no older content, no repository/worktree/mount, nothing in use, idle), then the dir
     itself when it is empty. Anything else stays and is reported."""
@@ -420,7 +439,7 @@ def sweep_session_dir(d, idle_s):
             st = os.lstat(c)
         except OSError:
             continue
-        reason = L.hard_refusal(c)
+        reason = L.hard_refusal(c, keep_paths)
         info = L.TreeInfo()
         if not reason:
             reason, info = L.inspect_tree(c, st, since)
@@ -447,7 +466,10 @@ def sweep_session_dir(d, idle_s):
 def sweep(args):
     live = L.running_sessions()
     now = time.time()
-    base = private_base()
+    cfg = L.local_config()
+    base = private_base() if cfg is not None else None
+    if cfg is None:
+        out("refused sweep: the local config could not be read in time (keep list unknown)")
     names = []
     if base:
         try:
@@ -467,7 +489,7 @@ def sweep(args):
         if L.hard_refusal(p):
             continue
         try:
-            sweep_session_dir(p, idle_seconds())
+            sweep_session_dir(p, idle_seconds(), cfg.get("keep_paths") or [])
         except OSError as exc:
             L.log("sweep failed %s: %s" % (p, exc))
     # stale marks and jobs of sessions that no longer run
@@ -589,7 +611,6 @@ def rescue_credo(args):
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copy2(src, dst)
             out("rescued %s" % rel)
-            L.log("rescued stray worktree file %s -> %s" % (src, dst))
         except OSError as exc:
             out("conflict %s: copy failed: %s" % (rel, exc))
             conflicts += 1
@@ -600,7 +621,7 @@ def rescue_credo(args):
 
 
 def caches(args):
-    caps = (L.local_config().get("cache_caps") or {})
+    caps = ((L.local_config() or {}).get("cache_caps") or {})
     if not isinstance(caps, dict):
         return
     for path, cap_mb in sorted(caps.items()):
@@ -631,18 +652,52 @@ SKIP_NAMES = {".git", "_cacache", "proc"}
 
 
 def pw_cache_dir(args):
+    """The browser cache: --cache, else PLAYWRIGHT_BROWSERS_PATH only when it looks like a
+    Playwright cache (has the .links marker dir), else ~/.cache/ms-playwright. None = unclear."""
     if args.cache:
         return os.path.realpath(args.cache)
     env = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
     if env and env != "0":
-        return os.path.realpath(os.path.expanduser(env))
+        d = os.path.realpath(os.path.expanduser(env))
+        return d if os.path.isdir(os.path.join(d, ".links")) else None
     return os.path.join(L.home(), ".cache", "ms-playwright")
 
 
-def find_browsers_json(roots, limit_s):
-    """(set of browsers.json paths, complete?) below the roots (no symlink follow, one file system
-    per root, ~/.claude*/projects and git internals skipped)."""
-    found = set()
+def default_search_roots():
+    roots = [L.home()]
+    for pat in ("/usr/lib/node_modules", "/usr/local/lib/node_modules", "/opt/homebrew/lib/node_modules",
+                "/usr/lib/python3*", "/usr/local/lib/python3*", "/opt/*/lib/python3*"):
+        roots += glob.glob(pat)
+    return roots
+
+
+class Unclear(Exception):
+    """Something about the installations is not certain: prune nothing."""
+
+
+def parse_browsers(data, where):
+    """Revision dir names of one browsers.json document; Unclear when it is malformed."""
+    names = set()
+    browsers = data.get("browsers") if isinstance(data, dict) else None
+    if not isinstance(browsers, list):
+        raise Unclear("%s has no browsers list" % where)
+    for b in browsers:
+        if not isinstance(b, dict) or not b.get("name") or not b.get("revision"):
+            raise Unclear("%s has a malformed browser entry" % where)
+        name = str(b["name"]).replace("-", "_")
+        revs = [b.get("revision")] + list((b.get("revisionOverrides") or {}).values())
+        for r in revs:
+            if r:
+                names.add("%s-%s" % (name, r))
+    return names
+
+
+def find_installations(roots, limit_s, cache):
+    """Revision dir names every Playwright installation below the roots names: any browsers.json
+    (Node playwright-core, the Python and .NET driver package, ...) and browsers.json inside
+    Playwright jars (Java driver bundle). Raises Unclear on a timeout, an unreadable directory, a
+    browsers.json in a Playwright path that does not parse, or a jar that cannot be read."""
+    refs, files = set(), []
     t_end = time.time() + limit_s
     for root in roots:
         try:
@@ -652,80 +707,106 @@ def find_browsers_json(roots, limit_s):
         stack = [root]
         while stack:
             if time.time() > t_end:
-                return found, False
+                raise Unclear("the search did not finish in %ss" % limit_s)
             d = stack.pop()
             try:
                 it = list(os.scandir(d))
             except OSError as exc:
-                L.log("playwright search: %s unreadable (%s), search incomplete" % (d, exc.strerror or exc))
-                return found, False
+                raise Unclear("%s unreadable (%s)" % (d, exc.strerror or exc))
             for de in it:
                 if de.name in SKIP_NAMES:
                     continue
                 try:
                     st = de.stat(follow_symlinks=False)
                 except OSError as exc:
-                    L.log("playwright search: %s unreadable (%s), search incomplete" % (de.path, exc.strerror or exc))
-                    return found, False
+                    raise Unclear("%s unreadable (%s)" % (de.path, exc.strerror or exc))
                 if stat.S_ISDIR(st.st_mode):
-                    if st.st_dev != rst.st_dev or de.path in L.mount_points():
+                    if st.st_dev != rst.st_dev or de.path in L.mount_points() or de.path == cache:
                         continue
                     if de.name == "projects" and os.path.basename(d).startswith(".claude"):
                         continue
-                    if de.name == "ms-playwright" and os.path.basename(d) == ".cache":
-                        continue
                     stack.append(de.path)
-                elif de.name == "browsers.json" and os.path.basename(d) == "playwright-core":
-                    found.add(de.path)
-    return found, True
+                elif not stat.S_ISREG(st.st_mode):
+                    continue
+                elif de.name == "browsers.json":
+                    try:
+                        with open(de.path, encoding="utf-8") as fh:
+                            data = json.load(fh)
+                        refs |= parse_browsers(data, de.path)
+                        files.append(de.path)
+                    except (OSError, ValueError, Unclear) as exc:
+                        if "playwright" in de.path.lower():
+                            raise Unclear("%s: %s" % (de.path, exc))
+                elif de.name.endswith(".jar") and ("playwright" in de.name.lower() or "driver-bundle" in de.name.lower()):
+                    try:
+                        with zipfile.ZipFile(de.path) as z:
+                            for zn in z.namelist():
+                                if zn.endswith("browsers.json"):
+                                    refs |= parse_browsers(json.loads(z.read(zn).decode("utf-8")),
+                                                           de.path + "!" + zn)
+                                    files.append(de.path + "!" + zn)
+                    except (OSError, ValueError, zipfile.BadZipFile, Unclear) as exc:
+                        raise Unclear("%s: %s" % (de.path, exc))
+    return refs, files
 
 
-def referenced_dirs(files):
-    names = set()
-    for f in files:
+def revisions_in_use(cache):
+    """Revision dir names a running process uses (its executable or a command-line argument lies
+    below cache/<rev>). Raises Unclear when /proc cannot be listed."""
+    used = set()
+    try:
+        pids = [n for n in os.listdir("/proc") if n.isdigit()]
+    except OSError as exc:
+        raise Unclear("/proc unreadable (%s)" % exc)
+    prefix = cache.rstrip("/") + "/"
+    for pid in pids:
+        texts = []
         try:
-            with open(f, encoding="utf-8") as fh:
-                data = json.load(fh)
-        except (OSError, ValueError):
-            continue
-        for b in data.get("browsers") or []:
-            name = str(b.get("name") or "").replace("-", "_")
-            if not name:
-                continue
-            revs = [b.get("revision")] + list((b.get("revisionOverrides") or {}).values())
-            for r in revs:
-                if r:
-                    names.add("%s-%s" % (name, r))
-    return names
+            with open("/proc/%s/cmdline" % pid, "rb") as fh:
+                texts += fh.read().decode("utf-8", "replace").split("\0")
+        except OSError:
+            pass
+        try:
+            texts.append(os.readlink("/proc/%s/exe" % pid))
+        except OSError:
+            pass
+        for t in texts:
+            i = t.find(prefix)
+            if i >= 0:
+                used.add(t[i + len(prefix):].split("/")[0])
+    return used
 
 
 def playwright_prune(args):
+    """Delete browser revision dirs that no installation names and no process uses. Never
+    installs or downloads anything; anything unclear prunes nothing."""
     cache = pw_cache_dir(args)
+    if cache is None:
+        out("playwright prune skipped: PLAYWRIGHT_BROWSERS_PATH does not look like a Playwright cache")
+        return
     if not os.path.isdir(cache):
         out("playwright cache %s: none" % cache)
         return
-    roots = args.search or [L.home(), "/usr/lib/node_modules", "/usr/local/lib/node_modules",
-                            "/opt/homebrew/lib/node_modules"]
-    files, complete = find_browsers_json([os.path.realpath(r) for r in roots], args.time_limit)
-    # playwright's own install markers: .links/<hash> holds a package dir path
-    for lf in glob.glob(os.path.join(cache, ".links", "*")):
-        try:
+    roots = args.search or default_search_roots()
+    try:
+        refs, files = find_installations([os.path.realpath(r) for r in roots], args.time_limit, cache)
+        # playwright's own install markers: .links/<hash> holds a package dir path
+        for lf in glob.glob(os.path.join(cache, ".links", "*")):
             with open(lf, encoding="utf-8") as fh:
                 pkg = fh.read().strip()
-        except OSError:
-            continue
-        bj = os.path.join(pkg, "browsers.json")
-        if pkg and os.path.isfile(bj):
-            files.add(bj)
-    if not complete:
-        out("playwright prune skipped: the search for installations did not finish (time limit %ss or an "
-            "unreadable directory); nothing is pruned on an incomplete search" % args.time_limit)
-        L.log("playwright prune skipped: search incomplete")
+            bj = os.path.join(pkg, "browsers.json")
+            if pkg and os.path.isfile(bj):
+                with open(bj, encoding="utf-8") as fh:
+                    refs |= parse_browsers(json.load(fh), bj)
+                files.append(bj)
+        used = revisions_in_use(cache)
+    except (Unclear, OSError, ValueError) as exc:
+        out("playwright prune skipped: %s; nothing is pruned when anything is unclear" % exc)
+        L.log("playwright prune skipped: %s" % exc)
         return
     if not files:
-        out("playwright prune skipped: no playwright-core installation found (nothing is pruned blind)")
+        out("playwright prune skipped: no Playwright installation found (nothing is pruned blind)")
         return
-    refs = referenced_dirs(files)
     for f in sorted(files):
         out("installation %s" % f)
     now = time.time()
@@ -741,6 +822,9 @@ def playwright_prune(args):
             continue
         if n in refs:
             out("referenced %s" % n)
+            continue
+        if n in used:
+            out("in-use %s (a running process uses it, kept)" % n)
             continue
         if now - st.st_mtime < 2 * 3600:
             out("young %s (installed less than 2h ago, kept)" % n)
@@ -810,7 +894,6 @@ def main():
     s = sub.add_parser("own-rm")
     s.add_argument("paths", nargs="+")
     s.add_argument("--dry-run", action="store_true")
-    s.add_argument("--superseded")
     s = sub.add_parser("keep")
     s.add_argument("path")
     s.add_argument("name")
@@ -843,10 +926,7 @@ def main():
     args = ap.parse_args()
     try:
         if args.cmd == "own-rm":
-            if args.superseded is not None and not args.superseded.strip():
-                out("refused: --superseded needs the newer owner decision as text")
-                return 0
-            own_rm(args.paths, args.dry_run, args.superseded)
+            own_rm(args.paths, args.dry_run)
         elif args.cmd == "keep":
             keep(args)
         elif args.cmd == "report":

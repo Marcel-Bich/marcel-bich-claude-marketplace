@@ -735,14 +735,16 @@ An item may move into `2_done/` ONLY when ALL of these hold. This gate is hard.
    the work created and the item does not need as its result (scratchpad content, temp
    exports, test runs, downloaded throwaway data, worktrees no longer needed). Run
    `credo-cleanup.py purge [--except <result path>]...` (removes only Write-created temp
-   entries and session TMPDIR children that pass every automatic check, lists the rest;
-   `--now` drops the 30-minute idle rule when no subagent of the session runs in parallel), then `credo-cleanup.py own-rm <path>...` for listed
+   entries confirmed by the transcript and idle for 30 minutes; `--now` uses the 2 minutes of
+   own-rm when no subagent of the session runs in parallel; it lists the session TMPDIR and
+   everything else), then `credo-cleanup.py own-rm <path>...` for listed
    entries that are yours and not a result. Results the owner wants to keep go through
    `credo-cleanup.py keep`. Never `~/.claude*/` (session transcripts stay forever) and never
    project data the owner keeps. A refusal or a failed delete is NOT a blocker and is never
    asked about. List the paths in the item's History or the run report and move on (credo
-   `safety`, "own leftovers through the cleanup helper"). The move itself clears idle
-   entries of the session TMPDIR (`item-close`).
+   `safety`, "own leftovers through the cleanup helper"). The move itself only lists the
+   session TMPDIR (`item-close`, report only: parallel subagents share it); the sweep removes
+   it after the session ended.
 
 The parent's DoD is all-or-nothing over its BUILDABLE criteria ONLY. A
 "measure-then-user-decide" point (a user-only decision that arises only after a measurement

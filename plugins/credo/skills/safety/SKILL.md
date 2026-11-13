@@ -95,27 +95,35 @@ there) - leave it in place and list it in the end-of-run report for the user. A 
 whose cleanup was blocked by a delete guard reports the path; the main agent then checks
 and removes it.
 
-Carve-out - own leftovers through the cleanup helper (provenance ledger, #174): anything this
-session or one of its subagents (same session id) provably created may be removed without
-asking, in every mode, but ONLY through `python3 <credo>/scripts/credo-cleanup.py own-rm
-<literal path>...` (the SessionStart line names the full helper path; write it literally, a
-command word read from a variable counts as unknown to the delete guards). Never `rm -rf`
-outside the cwd for this. The helper is not a bypass of the protection above. Credo hooks write
-a per-session ledger of what each tool call created (birth time after the call's time mark,
-Write/Edit of a new file), tool calls that try to write that ledger are denied, and the helper
-removes a path only when the ledger names it (or a directory above it) with the same
-device, inode and birth time, and only when every inode in its tree was born after that entry
-with a modification time not older than its birth (moved-in or extracted content is reported,
-never deleted). It refuses whatever the ledger says: `/`, the home and its parents, every path
-under `~/.claude*/` and `$CLAUDE_CONFIG_DIR`, mount points, linked worktrees, repositories
-outside the temp roots, git-tracked files, the owner keep list (`cleanup.keep_paths` in the
-LOCAL config), entries born while another session was running a tool call without the command
-naming them, and symlink targets (a link is unlinked, never followed). A refusal or failure is
-a report line, never a blocker. Note the path for the owner and carry on. `credo-cleanup.py
-report` lists what is yours; `keep <path> <name> --reason "<owner quote>"` moves a result the
-owner wants to keep to `~/.local/share/credo/keep/<project>/<name>/` (local keep list, item,
-licence note); such an entry is removed only with `--superseded "<newer owner decision>"` or
-once its item is archived.
+Carve-out - own leftovers through the cleanup helper (#174): without asking, in every mode,
+an agent may delete ONLY through `python3 <credo>/scripts/credo-cleanup.py own-rm <literal
+path>...` (the SessionStart line names the full helper path; never `rm -rf` outside the cwd for
+this), and the helper deletes only in three places:
+
+- inside the session TMPDIR (`/tmp/credo-tmp-<uid>/<session id>/`, a private 0700 dir) and the
+  Claude Code scratchpad of the session (path derived from the session id, never from an
+  environment variable);
+- files and directories the Write/Edit tool created in a temp dir (`/tmp`, `/var/tmp`,
+  `/dev/shm`), when the hook ledger recorded them AND the session's own transcript holds that
+  Write/Edit call;
+- ignored build output inside the linked worktree the agent works in (git ignores it, nothing
+  below it is tracked).
+
+Everything else is report-only, also for an explicit own-rm: what the birth-time scan of a Bash
+call found (the owner or another program may have created it during the call), entries in the
+home or a worktrees dir, and results on the keep list (`keep <path> <name> --reason "<owner
+quote>"` moves a result to `~/.local/share/credo/keep/<project>/<name>/`; only the owner removes
+a kept result, by hand). Even inside the three places the helper refuses `/`, the home and its
+parents, `~/.claude*/**` and `$CLAUDE_CONFIG_DIR`, mount points (bind mounts included), linked
+worktrees, repositories outside the temp roots, git-tracked files, `cleanup.keep_paths` of the
+LOCAL config, any tree with content born before the entry or with a modification time older than
+its birth (moved in, extracted, copied with preserved times), a socket or fifo, a process with
+its cwd or an open file inside, and a change within the last 2 minutes. Symlinks are unlinked,
+never followed. A refusal or failure is a report line, never a blocker: note the path for the
+owner and carry on. `credo-cleanup.py report` lists what the ledger recorded. The ledger guard
+(tool calls that write the ledger or the keep list are denied) protects against mistakes, not
+against the same user on purpose (string building or a script gets past a text check); the
+deletion rules above therefore never rely on the ledger alone.
 
 Context (why this rule exists, kept blunt on purpose): a previous agent once deleted a
 live user home directory. This rule exists so that never happens again.
