@@ -179,13 +179,19 @@ def own_worktree_output(p, st, entries):
         d = os.path.dirname(d)
     rel = os.path.relpath(p, top)
     try:
-        r = subprocess.run(["git", "-C", top, "check-ignore", "-v", "--", rel], capture_output=True,
-                           text=True, timeout=20)
+        q = subprocess.run(["git", "-C", top, "check-ignore", "-q", "--", rel], capture_output=True,
+                           timeout=20)
+        r = subprocess.run(["git", "-C", top, "check-ignore", "-v", "-z", "--stdin"],
+                           input=os.fsencode(rel) + b"\0", capture_output=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
         return False, None, "report only: git check-ignore failed"
-    if r.returncode != 0 or ":" not in r.stdout:
+    fields = r.stdout.decode("utf-8", "surrogateescape").split("\0")
+    # both must hold: -q says ignored, and the deciding rule (-v) is no negation ("!pattern")
+    if q.returncode != 0 or r.returncode != 0 or len(fields) < 4 or not fields[0]:
         return False, None, "report only: not ignored by git"
-    source = r.stdout.split(":", 1)[0]
+    source, pattern = fields[0], fields[2]
+    if pattern.startswith("!"):
+        return False, None, "report only: the deciding rule %s:%s re-includes it (%s)" % (source, fields[1], pattern)
     src_abs = os.path.normpath(os.path.join(top, source))
     if os.path.basename(source) != ".gitignore" or not L.is_under(src_abs, top):
         return False, None, "report only: ignored only by %s, not by a tracked .gitignore" % source
@@ -911,7 +917,15 @@ def playwright_prune(args):
     try:
         refs, files = find_installations([os.path.realpath(r) for r in roots], args.time_limit, cache)
         # playwright's own install markers: .links/<hash> holds a package dir path
-        for lf in glob.glob(os.path.join(cache, ".links", "*")):
+        links_dir = os.path.join(cache, ".links")
+        try:
+            link_names = sorted(os.listdir(links_dir))
+        except FileNotFoundError:
+            link_names = []
+        except OSError as exc:  # unreadable: the installations it names are unknown
+            raise Unclear("%s unreadable (%s)" % (links_dir, exc.strerror or exc))
+        for name in link_names:
+            lf = os.path.join(links_dir, name)
             with open(lf, encoding="utf-8") as fh:
                 pkg = fh.read().strip()
             if not pkg:
@@ -920,6 +934,9 @@ def playwright_prune(args):
             try:
                 bst = os.stat(bj)
             except FileNotFoundError:
+                # gone for good, or only on a drive that is not mounted right now?
+                if L.on_unavailable_mount(os.path.abspath(pkg)):
+                    raise Unclear("%s lies on a drive or mount that is not available" % pkg)
                 continue  # the package was removed: a stale link
             except OSError as exc:  # EIO, ENOTCONN, a drive that is down: unclear
                 raise Unclear("%s unreachable (%s)" % (bj, exc.strerror or exc))

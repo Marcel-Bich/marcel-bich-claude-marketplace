@@ -296,14 +296,28 @@ def make_record(path, st, tool, evidence, kind, agent_id=None, ambiguous=None, b
 # --------------------------------------------------------------------------- sessions
 
 
-def profile_dirs():
-    dirs = set()
+def trusted_config_dir():
+    """$CLAUDE_CONFIG_DIR only when it is a real directory of this user directly in the
+    password-database home, named .claude*, and no symlink; else None (ignored)."""
     cfg = os.environ.get("CLAUDE_CONFIG_DIR")
+    if not cfg:
+        return None
+    p = os.path.abspath(os.path.expanduser(cfg))
+    if os.path.dirname(p) != home() or not os.path.basename(p).startswith(".claude"):
+        return None
+    return p if private_dir(p, mode_0700=False) else None
+
+
+def profile_dirs():
+    """Profile dirs used to bind a session id and to find its transcripts: ~/.claude* of the
+    password-database home (plus a trusted $CLAUDE_CONFIG_DIR, see trusted_config_dir)."""
+    dirs = set()
+    cfg = trusted_config_dir()
     if cfg:
-        dirs.add(os.path.realpath(os.path.expanduser(cfg)))
-    for d in glob.glob(os.path.join(home(), ".claude*")):
-        if os.path.isdir(d):
-            dirs.add(os.path.realpath(d))
+        dirs.add(cfg)
+    for d in glob.glob(os.path.join(glob.escape(home()), ".claude*")):
+        if private_dir(d, mode_0700=False):  # a real dir, no symlink to somewhere else
+            dirs.add(d)
     if ov("profiles") is not None:  # tests: only these
         dirs = {os.path.realpath(p) for p in ov("profiles")}
     return sorted(dirs)
@@ -495,6 +509,29 @@ def mount_points():
             pass
         _MOUNTS = mounts
     return _MOUNTS
+
+
+def fstab_mounts():
+    """Mount points configured in /etc/fstab (field 2)."""
+    out = set()
+    try:
+        with open(ov("fstab") or "/etc/fstab", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) >= 2 and not parts[0].startswith("#") and parts[1].startswith("/"):
+                    out.add(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), parts[1]))
+    except OSError:
+        pass
+    return out
+
+
+def on_unavailable_mount(p):
+    """True when p lies under /mnt or /media, or under an fstab mount point that is not mounted
+    right now: a missing path there may only be unreachable, not gone."""
+    if is_under(p, "/mnt") or is_under(p, "/media"):
+        return True
+    mounted = mount_points()
+    return any(m != "/" and is_under(p, m) and m not in mounted for m in fstab_mounts())
 
 
 def mount_at_or_below(p):

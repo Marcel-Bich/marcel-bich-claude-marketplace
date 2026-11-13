@@ -472,6 +472,13 @@ check "CLAUDE.md kept" yes "$(exists "$MW/CLAUDE.md")"
 contains "single files are report-only" "only known build-output directories" "$o"
 o="$(cd "$MW" && helper own-rm "$MW/dist")"
 contains "dir ignored only by info/exclude refused" "not by a tracked .gitignore" "$o"
+# a negation rule (!node_modules/) in a tracked .gitignore re-includes the dir: not ignored
+mkdir -p "$MW/neg"; printf '!node_modules/\n' > "$MW/neg/.gitignore"
+git -C "$MW" add neg/.gitignore && git -C "$MW" commit -q -m neg
+mkdir -p "$MW/neg/node_modules"; echo f > "$MW/neg/node_modules/f"
+o="$(cd "$MW" && helper own-rm "$MW/neg/node_modules")"
+contains "negated (re-included) dir refused" "refused $MW/neg/node_modules" "$o"
+check "negated dir kept" yes "$(exists "$MW/neg/node_modules/f")"
 mkdir -p "$W/build/out"; echo bin > "$W/build/out/app"
 o="$(cd "$W" && helper own-rm "$W/build")"
 contains "worktree not created by this session refused" "does not show it created this worktree" "$o"
@@ -582,6 +589,40 @@ printf '%s' "$TMP/linkpkg/locked" > "$PC/.links/abc"; chmod 000 "$TMP/linkpkg"
 o="$(helper playwright-prune --cache "$PC" --search "$S/proj")"
 chmod 700 "$TMP/linkpkg"
 contains "unreachable .links target: nothing pruned" "nothing is pruned when anything is unclear" "$o"
+
+# .links unreadable, or a target on a drive that is not mounted: unclear, nothing pruned
+chmod 000 "$PC/.links"
+o="$(helper playwright-prune --cache "$PC" --search "$S/proj")"
+chmod 700 "$PC/.links"
+contains "unreadable .links: nothing pruned" "nothing is pruned when anything is unclear" "$o"
+rm -f "$PC/.links/abc"
+printf '%s' "/mnt/credo-test-absent/pkg" > "$PC/.links/mnt1"
+o="$(helper playwright-prune --cache "$PC" --search "$S/proj")"
+contains "missing target under /mnt: unclear" "not available" "$o"
+rm -f "$PC/.links/mnt1"
+printf 'nas:/share %s cifs noauto 0 0\n' "$TMP/nasmnt" > "$TMP/fstab"
+printf '%s' "$TMP/nasmnt/proj/node_modules/playwright-core" > "$PC/.links/nas1"
+o="$(CREDO_TEST_OV_EXTRA="{\"fstab\": \"$TMP/fstab\"}" helper playwright-prune --cache "$PC" --search "$S/proj")"
+contains "missing target on an unmounted fstab mount: unclear" "not available" "$o"
+rm -f "$PC/.links/nas1"
+printf '%s' "$TMP/gone-pkg" > "$PC/.links/gone1"
+o="$(helper playwright-prune --cache "$PC" --search "$S/proj")"
+contains "a really removed package is a stale link" "installation $S/proj/node_modules/playwright-core/browsers.json" "$o"
+rm -f "$PC/.links/gone1"
+
+# CLAUDE_CONFIG_DIR is used for profiles only when it is a real .claude* dir of the home
+mkdir -p "$TMP/elsewhere/.claude-z" "$FH/.claude-ok"; ln -s "$TMP/elsewhere/.claude-z" "$FH/.claude-lnk"
+o="$(python3 -I -c '
+import os, sys
+sys.path.insert(0, sys.argv[1]); import credo_cleanup_lib as L
+L.OVERRIDES["home"] = sys.argv[2]
+res = []
+for cfg in (sys.argv[3], sys.argv[4], sys.argv[5]):
+    os.environ["CLAUDE_CONFIG_DIR"] = cfg
+    res.append("in" if cfg in L.profile_dirs() else "out")
+print(" ".join(res))
+' "$SCRIPT_DIR" "$FH" "$TMP/elsewhere/.claude-z" "$FH/.claude-lnk" "$FH/.claude-ok")"
+check "CLAUDE_CONFIG_DIR: outside the home ignored, symlink ignored, real home dir used" "out out in" "$o"
 
 # N4: worktree in use by an open file (not cwd), and the background busy check
 M2="$TMP/repo3"

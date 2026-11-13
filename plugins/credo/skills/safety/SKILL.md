@@ -109,7 +109,8 @@ this), and the helper deletes only in three places:
   and whatever lands in it later, is report-only);
 - known build-output directories (`node_modules`, `dist`, `build`, `out`, `coverage`, `.next`,
   `.nuxt`, `.turbo`, `.cache`, `target`, `__pycache__`, `.pytest_cache`, `.mypy_cache`,
-  `playwright-report`, `test-results`, `.venv`) ignored by a tracked `.gitignore` inside the
+  `playwright-report`, `test-results`, `.venv`) ignored by a tracked `.gitignore` (no negation
+  rule re-including it) inside the
   hydra worktree (below `<repo>-worktrees/`) the agent works in and that this session's ledger
   shows it created; never single files, dotfiles outside that list, submodules or paths ignored
   only through `.git/info/exclude`.
