@@ -2,10 +2,11 @@
 description: credo - Start, stop, or check the LAN peer relay (cross-machine peer messaging, no cloud)
 arguments:
   - name: action
-    description: setup | init | bind | unbind | networks | netinfo | token | whoami | check | pairs | pair-reset | disconnect-all | start | restart | stop | trust | trust-router | network-hint | profiles | status (default status). init takes peer IPs, bind takes --name/--group/--label/--allow/--adapter/--subnet, trust-router takes --profile <name> [--refuse], pair-reset takes a peer (slot host:port, id or machine), disconnect-all takes --dry-run | --yes | --full, trust takes list | add <peer> <caption> | remove <peer> [<caption>], profiles takes list (default) | set <name>... | add <name> | all.
+    description: setup | win-bridge | init | bind | unbind | networks | netinfo | token | whoami | check | pairs | pair-reset | disconnect-all | start | restart | stop | trust | trust-router | network-hint | profiles | status (default status). init takes peer IPs, bind takes --name/--group/--label/--allow/--adapter/--subnet, trust-router takes --profile <name> [--refuse], pair-reset takes a peer (slot host:port, id or machine), disconnect-all takes --dry-run | --yes | --full, trust takes list | add <peer> <caption> | remove <peer> [<caption>], profiles takes list (default) | set <name>... | add <name> | all. win-bridge takes status (default) | start | stop (WSL <-> Windows bridge, see Windows sessions).
     required: false
 allowed-tools:
   - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py:*)
+  - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py:*)
   - Bash(cat:*)
   - Bash(grep:*)
   - Bash(wslpath:*)
@@ -703,6 +704,121 @@ the user's own tasks.
   processes can read the trust key: trust a peer only as far as that machine and both
   user accounts are trusted.
 
+## Windows sessions (WSL bridge, native Windows relay)
+
+Native Windows Claude Code registers its sessions in `%USERPROFILE%\.claude\sessions`
+and its inboxes are named pipes (`\\.\pipe\LOCAL\cc-msg-<32 hex>`). WSL sessions and
+Windows sessions of one machine therefore never see each other on their own.
+
+| From \ To | WSL (same machine) | Windows (same machine) | Other machine |
+|---|---|---|---|
+| WSL session | Claude Code | WSL bridge | LAN relay |
+| Windows session | WSL bridge | Claude Code | WSL bridge + LAN relay, or the native Windows relay on a machine without WSL |
+| Other machine | LAN relay | LAN relay + WSL bridge, or native Windows relay | - |
+
+### WSL bridge (automatic)
+
+`scripts/credo-win-bridge.py` (WSL) with `scripts/credo-win-bridge.ps1` and
+`scripts/credo-win-common.ps1` (Windows PowerShell 5.1, started over WSL interop from the
+plugin dir; nothing is installed on Windows).
+
+- **Start.** The `credo-win-bridge-autostart.sh` SessionStart hook runs
+  `credo-win-bridge.py ensure` detached under WSL. `ensure` starts the daemon when it is
+  switched on and `powershell.exe` is usable, leaves a current or newer daemon alone,
+  replaces an older one after a plugin update and stops a running one when switched off.
+  One daemon per WSL distro (a lock in `~/.local/state/credo/win-bridge/`, where its log,
+  state and holder sockets live). It does not need the LAN relay or its config.
+- **Windows sessions in WSL.** Every live Windows session (pid alive with its recorded
+  creation time) gets a holder subprocess with a unix socket and a mirror descriptor in
+  every local profile's `sessions/` (holder pid and `/proc` procStart, pidDomain copied
+  from a live local session, marker `credoWinBridge`), named
+  `` `Claude Code`--`Windows`--`<host>`--`<user>`--`.claude`--`<name>`+sid-short ``. What a
+  WSL session writes into it goes to the PowerShell half, which reads the target's key
+  file (`<pid>.<sha256 of the lowercased pipe path>.key`) on Windows and writes the auth
+  line `{"type":"auth","token":"..."}` plus the message into the target pipe.
+- **WSL sessions on Windows.** Every live WSL session of every profile, and every
+  LAN-relay mirror, gets a Windows-side mirror: a holder process (`waitfor.exe` on a
+  random signal), a named pipe served by the PowerShell half, a descriptor (procStart =
+  holder creation time as FILETIME, pidDomain copied from a live Windows session, marker
+  `credoWinBridge`, owner pid) and its OWN key file with a random token. Every connection
+  must start with the auth line carrying that token (constant-time check), which is
+  stripped; the rest is written into the WSL inbox by the holder that stands for the
+  Windows sender, so the receiver sees a writer registered with the reply socket.
+- **Replies.** The reply address of a message (the frame's `from` and the envelope's
+  `from=`) names an inbox the other side cannot reach; it is swapped for the sender's
+  mirror on the receiving side. Every other byte is forwarded unchanged.
+- **LAN.** The LAN relay treats bridge mirrors as local sessions: it publishes each
+  Windows session once, under its Windows name with the profile `windows/.claude`, and a
+  deliver for it reaches the Windows session through the bridge. LAN-relay mirrors are
+  offered on Windows, so Windows sessions reach LAN peers too. A roster entry whose id is
+  a bridged Windows session is never mirrored back.
+- **Status and control.**
+  ```bash
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" status   # switch, daemon, mirrored sessions
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" ensure   # start (what the hook runs)
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" stop     # stop; removes every mirror on both sides
+  ```
+  `/credo:peer-lan win-bridge [status|start|stop]` runs these.
+- **Off switch.** `peer.win_bridge.enabled: false` in the credo config (global or profile
+  layer; a project `.credo/config` is ignored for this key) or `CREDO_WIN_BRIDGE=0`. A
+  running daemon notices within a minute and stops, removing its mirrors.
+- **Cleanup.** Only files carrying the `credoWinBridge` marker are removed (on Windows
+  only those whose recorded owner is this run or a dead process), only our own sockets,
+  and only our own holders (pid + creation time + image name). If the PowerShell half is
+  killed hard, a watchdog process removes its mirrors; a later start removes any leftover.
+
+### Native Windows relay (no WSL)
+
+`scripts/credo-peer-lan-win.ps1` (with `credo-win-common.ps1`) lets a Windows-only machine
+join the LAN peer network: it publishes its sessions, mirrors the sessions of its peers
+into `%USERPROFILE%\.claude\sessions` (marker `credoPeerLan`, own key files) and delivers
+into local pipes with the auth line.
+
+- **Protocol.** The same wire format as the Python relay (line-based JSON, `{"body": ...}`
+  or `{"mac": ..., "body": ...}` with the shared token, HMAC-SHA256), as an UNPAIRED relay:
+  its link hello carries no pairing fields, so a Python relay accepts it token-only as
+  long as that address is not bound to a paired peer (then run `pair-reset <laptop
+  ip:port>` there once). No trusted-peer markers. Envelopes are built like the Python
+  relay's (framing line, never a `from-mode`, bodies with envelope delimiters rejected).
+- **Connection.** It opens one outbound link to each configured peer and keeps it up
+  (hello, ack, pings, reconnect with backoff); rosters and delivers flow both ways over
+  it, so neither admin rights nor a firewall rule are needed. Optional `"listen": true`
+  also accepts inbound connections on `listen_port` (then allow the port once in the
+  Windows firewall).
+- **Fail-closed.** It only talks while the current network matches a network bound by
+  `-Action Init` (router MAC + subnet of the default route); peers and `allow` entries must
+  be private IPv4 addresses or CIDRs no broader than /8; outbound only to configured
+  peers; inbound (listen mode) only from peers and allow entries. Loopback peers need no
+  bound network.
+- **Install on the Windows machine** (a normal PowerShell, no admin), in the plugin's
+  `scripts` folder (`%USERPROFILE%\.claude\plugins\cache\...\credo\<version>\scripts`):
+  ```powershell
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\credo-peer-lan-win.ps1 -Action Init -Peers 192.168.1.42 -Machine laptop-1
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\credo-peer-lan-win.ps1 -Action Token     # optional, same token as the peers
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\credo-peer-lan-win.ps1 -Action Install
+  ```
+  `Init` writes `%USERPROFILE%\.claude\credo\peer-lan-win.json` and binds the current
+  network (run it on the trusted network; run it again on another trusted network to bind
+  that one too). `Install` copies the two scripts to `%LOCALAPPDATA%\credo\peer-lan-win\`
+  and registers a per-user scheduled task `credo-peer-lan-win` that runs the relay hidden
+  at logon, and starts it now. `-Action Status` shows config (never the token), network,
+  task and running state; `-Action Stop` stops it (mirrors are removed); `-Action
+  Uninstall` removes the task and the copy (the config stays). Log:
+  `%LOCALAPPDATA%\credo\peer-lan-win.log`. Re-run `Install` after a plugin update.
+- **On each peer machine** add the Windows machine once, inside its bound network:
+  `credo-peer-lan.py init <windows ip>` (and the same token if one is set). For a WSL peer
+  the Windows machine dials the peer's Windows host IP, which the WSL portproxy forwards.
+
+### Security note
+
+Session tokens never leave their machine: the bridge reads a Windows key file only on
+Windows and writes the token only into the target pipe; nothing token-bearing is printed,
+logged, sent over the stdio channel or over the LAN, and an auth line arriving from WSL is
+dropped. Mirror tokens are random per mirror and per run. The WSL user gains send rights
+to the sessions of the same Windows user, and the Windows user to the WSL sessions (the
+same trust as that user running `wsl.exe`); each receiving session still applies its own
+consent gate. Switch the bridge off where that is not wanted.
+
 ## Upgrading from <= 0.71
 
 The relay stays DISABLED on the LAN until you run `bind` on each machine while connected
@@ -772,6 +888,16 @@ reported as FAILED, never as a silent exit 0.
      still report 0.
 
 - **setup** - run the Setup flow above (interactive, Ask tool).
+
+- **win-bridge** `[status | start | stop]` - the WSL <-> Windows bridge (see Windows
+  sessions above; default status):
+  ```bash
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" status
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" ensure   # start
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" stop
+  ```
+  `start` does nothing when the bridge is switched off (`peer.win_bridge.enabled`,
+  `CREDO_WIN_BRIDGE`) or outside WSL; say so instead of retrying.
 
 - **profiles** `[list | set <name>... | add <name> | all]` - which Claude Code profiles the
   one relay serves (Setup flow step 2). `list` (default) prints the machine config and
