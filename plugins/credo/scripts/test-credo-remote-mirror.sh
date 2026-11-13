@@ -375,6 +375,9 @@ redact_case "normal: mkdir -p" "mkdir -p build/out" "mkdir -p build/out"
 redact_case "normal: path" "ls -la /work/acme-task/src" "ls -la /work/acme-task/src"
 redact_case "normal: short commit" "git show f237bbd" "git show f237bbd"
 redact_case "normal: long word without digits" "echo supercalifragilisticexpialidociousxyz" "echo supercalifragilisticexpialidociousxyz"
+redact_case "NAME = value with spaces" "API_SECRET = hunter2 make deploy" "API_SECRET = *** make deploy"
+redact_case "password = value with spaces" "echo password = hunter2" "echo password = ***"
+redact_case "normal: spaced assignment of a plain name" "make VERSION = 1.2 build" "make VERSION = 1.2 build"
 run "redact: ask question" ask "$(ask_payload toolu_X1 'Use TOKEN=abc123 for the run?')"
 check "redact: ask question masked" "Use TOKEN=*** for the run?" "$(jqf '.questions[0].question')"
 new_case
@@ -388,6 +391,7 @@ check "redact: remote reply masked" "Done. Authorization: Bearer *** is set." "$
 echo "== session legend names the markers"
 check "legend: Blocker marker named" 1 "$(grep -c -F 'starts its line with "Blocker:"' "$SESSION_START")"
 check "legend: [blocking] marker named" 1 "$(grep -c -F '"[blocking]" in its heading' "$SESSION_START")"
+check "legend: blocker text is the Blocker line and the lines below it" 1 "$(grep -c -F 'the lines below it' "$SESSION_START")"
 
 echo "== robustness"
 new_case
@@ -647,6 +651,65 @@ blong="$(printf 'a%.0s' $(seq 1 3968))/"
 run "blocker: whitespace-free run at the cut" stop "$(stop_payload "Blocker: $blong$hexsec" "")"
 check "blocker: no partial secret at a whitespace-free cut" 0 "$(grep -c '0123456789abcdef' "$OUTF")"
 check "blocker: cut flagged at a whitespace-free cut" true "$(blockq 0 '.cut')"
+
+# --- leftovers of the mirror (credo item #163) -----------------------------------
+echo "== mirror leftovers: PEM bodies, fenced Blocker lines"
+new_case
+reply="$(printf 'Blocker: the key was pasted\n-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAabc123\nQWxhZGRpbjpvcGVuIHNlc2FtZQ==\n-----END RSA PRIVATE KEY-----\nSend a new one.')"
+run "pem: key in a blocker" stop "$(stop_payload "$reply" "")"
+check "pem: BEGIN and END lines kept, body replaced by ***" \
+    "$(printf 'the key was pasted\n-----BEGIN RSA PRIVATE KEY-----\n***\n-----END RSA PRIVATE KEY-----\nSend a new one.')" "$(blockq 0 '.text')"
+check "pem: raw key body never sent" 0 "$(grep -c -e 'MIIEpAIB' -e 'QWxhZGRp' "$OUTF")"
+
+new_case
+reply="$(printf 'Blocker: the key was cut\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU')"
+run "pem: unterminated key" stop "$(stop_payload "$reply" "")"
+check "pem: body without END masked to the end" \
+    "$(printf 'the key was cut\n-----BEGIN OPENSSH PRIVATE KEY-----\n***')" "$(blockq 0 '.text')"
+check "pem: raw unterminated body never sent" 0 "$(grep -c 'b3BlbnNzaC' "$OUTF")"
+
+new_case
+fl="$(printf 'x%.0s' $(seq 1 100))"
+filler="$(for i in $(seq 1 198); do printf 'filler %03d %s\n' "$i" "$fl"; done)"
+reply="$(printf '%s\n-----BEGIN RSA PRIVATE KEY-----\nQWxhZGRpbjpvcGVuIHNlc2FtZQ==\nc2VzYW1lLWFnYWluLWhlcmUtb2s=\n-----END RSA PRIVATE KEY-----\nDone.' "$filler")"
+tr_prompt u-pl1 "[remote chat c-9] status?"
+tr_text a-pl1 "$reply"
+run "pem: long reply, key across a 200-line block" stop "$(stop_payload "" "$TR")"
+check "pem: long reply sent" remote_reply "$(jqf '.type')"
+check "pem: key bodies in a long reply never sent" 0 "$(grep -c -e 'QWxhZGRp' -e 'c2VzYW1l' "$OUTF")"
+
+new_case
+reply="$(printf 'Example of the format:\n%stext\nBlocker: the deploy key is missing\n%s\nDone.' "$FENCE" "$FENCE")"
+run "fenced blocker: only in a code block" stop "$(stop_payload "$reply" "")"
+check "fenced blocker: a Blocker line in a code block sends nothing" 0 "$(count)"
+
+new_case
+TILDES='~~~'
+reply="$(printf 'Example:\n%stext\nBlocker: sample wording\n%s\n\nBlocker: the deploy key is missing\nAdd the key, then rerun.' "$TILDES" "$TILDES")"
+run "fenced blocker: tilde fence before the real one" stop "$(stop_payload "$reply" "")"
+check "fenced blocker: one event, the real one" 1 "$(count)"
+check "fenced blocker: the real block is sent whole" \
+    "$(printf 'the deploy key is missing\nAdd the key, then rerun.')" "$(blockq 0 '.text')"
+
+new_case
+reply="$(printf 'Example:\n%stext\nBlocker: the deploy key is missing\n%s\n\nBlocker: the deploy key is missing\nAdd the key, then rerun.' "$FENCE" "$FENCE")"
+run "fenced blocker: same text in a code block and outside" stop "$(stop_payload "$reply" "")"
+check "fenced blocker: one event for the same text" 1 "$(count)"
+check "fenced blocker: the outside block is the one sent" \
+    "$(printf 'the deploy key is missing\nAdd the key, then rerun.')" "$(blockq 0 '.text')"
+
+new_case
+reply="$(printf 'Blocker: the first problem\nline a\n%stext\nBlocker: inside the fence\n%s\nline b' "$FENCE" "$FENCE")"
+run "fenced blocker: inside a real block" stop "$(stop_payload "$reply" "")"
+check "fenced blocker: one event, the block keeps the fenced line" 1 "$(count)"
+check "fenced blocker: block runs through the fence" \
+    "$(printf 'the first problem\nline a\n%stext\nBlocker: inside the fence\n%s\nline b' "$FENCE" "$FENCE")" "$(blockq 0 '.text')"
+
+new_case
+tr_prompt u-e1 "a prompt at the PC"
+tr_text a-e1 "All fine."
+err="$(printf '%s' "$(stop_payload "All fine." "$TR")" | bash "$HOOK" stop 2>&1 >/dev/null)"
+check "owner present: no shell error without a session-mode file" "" "$err"
 
 # --- question context: the reply text above the heading (credo item #165) ------------
 echo "== question context"

@@ -40,7 +40,10 @@ PY="$(command -v python3 || true)"
 if [ -z "$PY" ]; then echo "SKIP: python3 not found"; exit 0; fi
 if [ ! -f "$CHECK" ]; then echo "FAIL: $CHECK missing"; exit 1; fi
 
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/cpc.XXXXXX")"
+# The fixture tree holds live AF_UNIX sockets, and their paths are limited to 107 bytes. A long
+# TMPDIR (a per-project scratch directory, for example) would make every bind fail, so the
+# tree always lives directly under /tmp.
+TMP="$(mktemp -d /tmp/cpc.XXXXXX)"
 PIDS=""
 cleanup() {
     for p in $PIDS; do kill -KILL "$p" 2>/dev/null || true; done

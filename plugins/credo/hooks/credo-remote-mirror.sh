@@ -308,7 +308,7 @@ transcript_summary() {
 # test code event carries its block as "text": the lines below its heading up to the next code
 # heading (Q-emoji, T-emoji or V-emoji), the next markdown heading of the same or a higher
 # level, or the end of the reply; trimmed and capped at 4000 characters (cut when shortened).
-# Lines inside a fenced code block are never headings and never end a block.
+# Lines inside a fenced code block are never headings, never end a block and never start a blocker.
 # A blocker event carries its Blocker line (without the prefix, as before) and the lines below
 # it the same way, up to the next markdown heading (any level) or the next Blocker line.
 stop_lines() {
@@ -367,7 +367,7 @@ stop_lines() {
               | {key: (if (.code | length) == 1 then "legacy-t:" + .code + ":" + (.topic | @base64) else .code end),
                  window: 0, event: ($base + ev("test_blocking"; .code; .topic; $b))} ]
           + [ range(0; $n) as $i
-              | $ls[$i] | select(isblk)
+              | $ls[$i] | select(isblk and ($fenced[$i] | not))
               | capture("^(> )?(\\*\\*)?Blocker(\\*\\*)?:(\\*\\*)?[ \t]*(?<text>.*)$")
               | (.text | clean) as $first
               | select($first | noneish | not)
@@ -450,7 +450,7 @@ owner_present() {
     mins="$(idle_minutes)"
     [ "$mins" -gt 0 ] || return 1
     cfgdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-    if [ "$(tr -d '[:space:]' < "$cfgdir/credo/session-modes/$SID" 2>/dev/null)" = autonomous ] \
+    if [ "$(tr -d '[:space:]' 2>/dev/null < "$cfgdir/credo/session-modes/$SID")" = autonomous ] \
         && [ ! -f "$cfgdir/credo/autonomy/$SID/paused" ]; then
         return 1
     fi

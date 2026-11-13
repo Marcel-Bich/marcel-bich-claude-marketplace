@@ -7,22 +7,30 @@
 # Fail-closed: a jq error prints nothing, and the hook then sends nothing.
 #
 # Rules, applied in this order:
-#   1. auth headers and cookies: Authorization / X-API-Key / Cookie ... value
-#   2. Bearer tokens: "Bearer <token>"
-#   3. NAME=value or "password: value" where NAME holds token, secret, password, passwd, pwd,
-#      api key, credential
-#   4. --password / --passwd / --pass / --token / --secret / --api-key with a space value
-#   5. -p password of a database or ssh client (mysql, psql, sshpass, mongo, redis-cli ...)
-#   6. user:password@host in URLs
-#   7. provider token prefixes (ghp_, github_pat_, xox*-, sk-)
-#   8. runs of 32 or more letters, digits and + _ = - that hold both a letter and a digit
+#   1. PEM private key bodies. The lines between a "-----BEGIN ... PRIVATE KEY-----" line and
+#      its END line become "***"; the BEGIN and END lines stay. Without an END line the body
+#      is masked to the end of the text.
+#   2. auth headers and cookies: Authorization / X-API-Key / Cookie ... value
+#   3. Bearer tokens: "Bearer <token>"
+#   4. NAME=value, NAME = value or "password: value" where NAME holds token, secret, password,
+#      passwd, pwd, api key, credential, private key
+#   5. --password / --passwd / --pass / --token / --secret / --api-key with a space value
+#   6. -p password of a database or ssh client (mysql, psql, sshpass, mongo, redis-cli ...)
+#   7. user:password@host in URLs
+#   8. provider token prefixes (ghp_, github_pat_, xox*-, sk-)
+#   9. runs of 32 or more letters, digits and + _ = - that hold both a letter and a digit
 #      (hex hashes, base64 secrets; plain words, paths and short hashes are left alone)
 # Masked parts become "***"; the surrounding text stays readable.
 
+# pem runs on a whole string first (see scrub), so a key cut by a block boundary is still masked.
+def pem:
+  gsub("(?i)(?<b>-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----)[\\s\\S]*?(?:(?<e>-----END [A-Z0-9 ]*PRIVATE KEY-----)|\\z)"; "\(.b)\n***\(if .e == null then "" else "\n" + .e end)");
+
 def redact:
-  gsub("(?i)(?<p>authorization|x-api-key|api[-_]?key|cookie)(?<s>\\s*[:=]\\s*(?:bearer\\s+|basic\\s+|token\\s+)?)[^\\s\"']+"; "\(.p)\(.s)***")
+  pem
+  | gsub("(?i)(?<p>authorization|x-api-key|api[-_]?key|cookie)(?<s>\\s*[:=]\\s*(?:bearer\\s+|basic\\s+|token\\s+)?)[^\\s\"']+"; "\(.p)\(.s)***")
   | gsub("(?i)(?<p>\\bbearer\\s+)[A-Za-z0-9._~+/=-]+"; "\(.p)***")
-  | gsub("(?i)(?<p>[a-z0-9_.-]*(token|secret|passw(or)?d|passwd|pwd|apikey|api[_-]key|credential|private[_-]?key)[a-z0-9_.-]*=)[^\\s\"']+"; "\(.p)***")
+  | gsub("(?i)(?<p>[a-z0-9_.-]*(token|secret|passw(or)?d|passwd|pwd|apikey|api[_-]key|credential|private[_-]?key)[a-z0-9_.-]*\\s*=\\s*)[^\\s\"']+"; "\(.p)***")
   | gsub("(?i)(?<p>\\b(token|secret|passw(or)?d|passwd|api[_-]key)\\s*:\\s*)(?!\\*)[^\\s\"']+"; "\(.p)***")
   | gsub("(?i)(?<p>--?(password|passwd|pass|token|secret|api-?key)\\s+)(?!-)[^\\s\"']+"; "\(.p)***")
   | gsub("(?i)(?<p>\\b(mysql|mariadb|mysqldump|psql|sshpass|mongosh?|redis-cli)\\b[^|;&\\n]*?\\s-p\\s?)(?!-)[^\\s\"']+"; "\(.p)***")
@@ -37,7 +45,7 @@ def redact:
 # are masked there, in a long one only inside the same block).
 def blocks: split("\n") as $l | [range(0; $l | length; 200) as $i | $l[$i:($i + 200)] | join("\n")];
 def scrub: walk(if type == "string"
-                then (if length > 20000 then (blocks | map(redact) | join("\n")) else redact end)
+                then (if length > 20000 then (pem | blocks | map(redact) | join("\n")) else redact end)
                 else . end);
 
 # Identifier fields the sink needs to route an event are never masked (a session id is a
