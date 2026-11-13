@@ -1,25 +1,26 @@
 """credo_cleanup_lib.py - shared code of the provenance ledger (credo-ledger.py, the hooks)
 and the cleanup helper (credo-cleanup.py).
 
-Idea: an agent may remove, without a prompt, exactly what its own session provably created.
-The proof is a per-session ledger that only hooks write: a PreToolUse hook sets a time mark,
-the PostToolUse hook records every entry born after the mark in the watched roots (birth time
-via statx), and Write/Edit record a file (or the topmost new directory) that did not exist
-before. Each entry keeps dev+inode, so a path that was replaced later is not "ours" any more.
-Subagents run under the session id of their main agent, so the main agent inherits their
-entries. The helper deletes only ledger entries (or paths below a ledger directory entry) and
-refuses a hard denylist whatever the ledger says.
+Idea: in doubt, report, never delete. Hooks record per session what each tool call created (a
+PreToolUse time mark, then every entry born after it in the watched roots via statx birth time,
+and a file or topmost new directory a Write/Edit call created). Subagents share the session id.
+The ledger is a report: the helper deletes without a prompt only inside the session TMPDIR and
+scratchpad (named by the session id), Write/Edit-created temp entries that the session's own
+transcript confirms, and ignored build output of the worktree it runs in; every delete re-checks
+the whole tree (birth times, modification times, mounts, repositories, processes, idle time) and
+refuses a hard denylist. No path or switch of this code comes from the environment (the home is
+read from the password database); tests set OVERRIDES through their own shim.
 
 Layout (all local, never versioned):
-  state dir   $CREDO_CLEANUP_STATE, else ${XDG_STATE_HOME:-~/.local/state}/credo/cleanup
+  state dir   ~/.local/state/credo/cleanup
     ledger/<session_id>.jsonl   append-only records and events (removed, moved)
     marks/<session_id>/<t0>_<tool_use_id>   time marks of running tool calls
     windows.log                 closed tool-call windows of all sessions (ambiguity check)
     jobs/                       background scan jobs
     cleanup.log                 every removal, refusal and failure
     stamps/                     once-per-day / once-per-hour markers
-  keep dir    $CREDO_KEEP_ROOT, else ~/.local/share/credo/keep  (keep-list.json inside)
-  session tmp $CREDO_TMP_BASE, else /tmp/credo-tmp-<uid>; one dir per session id
+  keep dir    ~/.local/share/credo/keep  (keep-list.json inside)
+  session tmp /tmp/credo-tmp-<uid> (private, 0700); one dir per session id (a UUID)
 
 Everything here fails soft: callers catch exceptions; a hook never blocks on an error.
 """
