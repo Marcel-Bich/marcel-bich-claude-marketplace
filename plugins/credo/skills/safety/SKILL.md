@@ -104,7 +104,9 @@ outside the cwd for this. The helper is not a bypass of the protection above. Cr
 a per-session ledger of what each tool call created (birth time after the call's time mark,
 Write/Edit of a new file), tool calls that try to write that ledger are denied, and the helper
 removes a path only when the ledger names it (or a directory above it) with the same
-device+inode. It refuses whatever the ledger says: `/`, the home and its parents, every path
+device, inode and birth time, and only when every inode in its tree was born after that entry
+with a modification time not older than its birth (moved-in or extracted content is reported,
+never deleted). It refuses whatever the ledger says: `/`, the home and its parents, every path
 under `~/.claude*/` and `$CLAUDE_CONFIG_DIR`, mount points, linked worktrees, repositories
 outside the temp roots, git-tracked files, the owner keep list (`cleanup.keep_paths` in the
 LOCAL config), entries born while another session was running a tool call without the command

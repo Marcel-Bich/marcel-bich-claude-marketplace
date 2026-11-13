@@ -128,13 +128,15 @@ def _statx_fn():
     return _libc.statx if _statx_ok else None
 
 
-def birth_time(path):
-    """Birth time of path (no symlink follow) in seconds, or None when unknown."""
+def birth_time(path, dir_fd=None):
+    """Birth time of path (relative to dir_fd when given; no symlink follow) in seconds, or None
+    when unknown."""
     fn = _statx_fn()
     if fn is None:
         return None
     buf = ctypes.create_string_buffer(256)
-    rc = fn(_AT_FDCWD, os.fsencode(path), _AT_SYMLINK_NOFOLLOW, _STATX_BTIME, buf)
+    rc = fn(_AT_FDCWD if dir_fd is None else dir_fd, os.fsencode(path), _AT_SYMLINK_NOFOLLOW,
+            _STATX_BTIME, buf)
     if rc != 0:
         return None
     mask = int.from_bytes(buf.raw[0:4], "little")
@@ -396,6 +398,38 @@ def in_claude_profile(p):
     return any(is_under(p, r) for r in claude_profile_roots())
 
 
+_MOUNTS = None
+
+
+def mount_points():
+    """All mount points from /proc/self/mountinfo (same-device bind mounts included)."""
+    global _MOUNTS
+    if _MOUNTS is None:
+        mounts = set()
+        try:
+            src = os.environ.get("CREDO_CLEANUP_MOUNTINFO") or "/proc/self/mountinfo"  # tests: a fixture
+            with open(src, encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    parts = line.split()
+                    if len(parts) > 4:
+                        mp = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), parts[4])
+                        mounts.add(mp)
+        except OSError:
+            pass
+        _MOUNTS = mounts
+    return _MOUNTS
+
+
+def mount_at_or_below(p):
+    """A mount point at p or anywhere below it, else None."""
+    for m in mount_points():
+        if m != "/" and is_under(m, p):
+            return m
+    if os.path.isdir(p) and not os.path.islink(p) and os.path.ismount(p):
+        return p
+    return None
+
+
 SYSTEM_DENY = ["/", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64", "/mnt", "/media",
                "/opt", "/proc", "/root", "/run", "/sbin", "/srv", "/sys", "/usr", "/var", "/tmp",
                "/var/tmp", "/dev/shm", "/snap"]
@@ -421,8 +455,10 @@ def hard_refusal(p, cfg_keep_paths=()):
         st = os.lstat(p)
     except OSError:
         st = None
-    if st is not None and stat.S_ISDIR(st.st_mode) and os.path.ismount(p):
-        return "a mount point"
+    if st is not None and stat.S_ISDIR(st.st_mode):
+        m = mount_at_or_below(p)
+        if m:
+            return "a mount point at or below it (%s)" % m
     for k in cfg_keep_paths or ():
         if not isinstance(k, str) or not k.strip():
             continue
@@ -454,38 +490,144 @@ def _git_refusal(d, git_entry):
     return None
 
 
-def tree_refusal(p, st, limit_s=30.0):
-    """Walk the tree below directory p (no symlink follow) and return a refusal reason for a
-    mount point, a linked worktree, a repository outside the temp roots or one with linked
-    worktrees anywhere inside; None when the whole tree may go."""
+class TreeInfo:
+    def __init__(self):
+        self.newest = 0.0      # newest mtime/ctime of any inode
+        self.special = None    # first socket / fifo / device found
+        self.count = 0
+
+
+SLACK = 2.0  # seconds of clock/rounding slack between a parent's and a child's birth
+
+
+def foreign_inode(st, bt, since):
+    """Reason when an inode cannot be this session's work: no birth time, born before the
+    provenance start (pre-existing data moved in on the same file system), or a modification
+    time older than its own birth (moved across file systems, extracted, copied with preserved
+    times). None when it may be own."""
+    if bt is None:
+        return "birth time unknown"
+    if since is None:
+        return "no recorded provenance start"
+    if bt < since - SLACK:
+        return "older than the session's entry (pre-existing data moved in)"
+    if st.st_mtime < bt - SLACK and not stat.S_ISLNK(st.st_mode):
+        return "modification time older than its birth (moved across file systems or extracted)"
+    return None
+
+
+def inspect_tree(p, st, since, limit_s=30.0):
+    """Walk p (no symlink follow) and return (reason, TreeInfo). reason is set when p or anything
+    below it is foreign (see foreign_inode), a mount point, a linked worktree, a repository outside
+    the temp roots or with linked worktrees, or when the walk did not finish in time (an
+    incomplete walk proves nothing: refuse)."""
+    info = TreeInfo()
+    t_end = now() + limit_s
+    m = mount_at_or_below(p) if stat.S_ISDIR(st.st_mode) else None
+    if m:
+        return "a mount point at or below it (%s)" % m, info
+    stack = [(p, st)]
+    while stack:
+        if now() > t_end:
+            return "tree too large to check in %.0fs (refused, nothing deleted)" % limit_s, info
+        path, pst = stack.pop()
+        info.count += 1
+        info.newest = max(info.newest, pst.st_mtime, pst.st_ctime)
+        if not (stat.S_ISDIR(pst.st_mode) or stat.S_ISREG(pst.st_mode) or stat.S_ISLNK(pst.st_mode)):
+            info.special = info.special or path
+        why = foreign_inode(pst, birth_time(path), since)
+        if why:
+            return "%s: %s" % (path, why), info
+        if not stat.S_ISDIR(pst.st_mode):
+            continue
+        if pst.st_dev != st.st_dev:
+            return "%s is another file system" % path, info
+        g = os.path.join(path, ".git")
+        if os.path.lexists(g):
+            reason = _git_refusal(path, g)
+            if reason:
+                return reason, info
+        try:
+            it = list(os.scandir(path))
+        except OSError as exc:
+            return "%s cannot be read (%s)" % (path, exc.strerror or exc), info
+        for de in it:
+            try:
+                cst = de.stat(follow_symlinks=False)
+            except OSError as exc:
+                return "%s cannot be read (%s)" % (de.path, exc.strerror or exc), info
+            stack.append((de.path, cst))
+    return None, info
+
+
+def inspect_tree_structure(p, st, limit_s=30.0):
+    """inspect_tree without the provenance (birth) checks: mounts, worktrees, repositories."""
+    info = TreeInfo()
     if not stat.S_ISDIR(st.st_mode):
-        return None
+        return None, info
+    m = mount_at_or_below(p)
+    if m:
+        return "a mount point at or below it (%s)" % m, info
     t_end = now() + limit_s
     stack = [p]
     while stack:
         if now() > t_end:
-            return "tree too large to check in time (checked for %.0fs)" % limit_s
+            return "tree too large to check in %.0fs (refused, nothing deleted)" % limit_s, info
         d = stack.pop()
         g = os.path.join(d, ".git")
         if os.path.lexists(g):
             reason = _git_refusal(d, g)
             if reason:
-                return reason
+                return reason, info
         try:
             it = list(os.scandir(d))
-        except OSError:
-            continue
+        except OSError as exc:
+            return "%s cannot be read (%s)" % (d, exc.strerror or exc), info
         for de in it:
             try:
                 cst = de.stat(follow_symlinks=False)
             except OSError:
-                continue
+                return "%s cannot be read" % de.path, info
+            info.newest = max(info.newest, cst.st_mtime, cst.st_ctime)
             if stat.S_ISDIR(cst.st_mode):
-                if cst.st_dev != st.st_dev or os.path.ismount(de.path):
-                    return "%s is a mount point / other file system inside" % de.path
-                if de.name == ".git":
-                    continue
-                stack.append(de.path)
+                if cst.st_dev != st.st_dev:
+                    return "%s is another file system" % de.path, info
+                if de.name != ".git":
+                    stack.append(de.path)
+            elif not (stat.S_ISREG(cst.st_mode) or stat.S_ISLNK(cst.st_mode)):
+                info.special = info.special or de.path
+    return None, info
+
+
+def held_open(p, limit_s=5.0):
+    """A pid whose cwd or an open file lies at or below p (from /proc; only readable processes),
+    'unknown' when the scan did not finish, else None."""
+    t_end = now() + limit_s
+    try:
+        pids = [n for n in os.listdir("/proc") if n.isdigit()]
+    except OSError:
+        return None
+    me = str(os.getpid())
+    for pid in pids:
+        if pid == me:
+            continue
+        if now() > t_end:
+            return "unknown"
+        base = "/proc/" + pid
+        links = [base + "/cwd"]
+        try:
+            links += [base + "/fd/" + f for f in os.listdir(base + "/fd")]
+        except OSError:
+            pass
+        for ln in links:
+            try:
+                target = os.readlink(ln)
+            except OSError:
+                continue
+            if target.endswith(" (deleted)"):
+                target = target[:-10]
+            if is_under(target, p):
+                return pid
     return None
 
 
@@ -501,7 +643,8 @@ def git_tracked(p):
     except (OSError, subprocess.SubprocessError):
         return True  # unsure: treat as tracked (refuse)
     if out.returncode != 0:
-        return False
+        # only "not a git repository" proves nothing is tracked; any other error refuses
+        return b"not a git repository" not in out.stderr.lower()
     return bool(out.stdout.strip(b"\0"))
 
 
@@ -518,16 +661,28 @@ def session_bound_roots(sid):
     return roots
 
 
+def same_birth(e, path):
+    """False when the entry recorded a birth time and the path now has a different one (inode
+    reuse: the path was deleted and something new got the same inode number)."""
+    rec = e.get("btime")
+    if rec is None:
+        return True
+    cur = birth_time(path)
+    return cur is not None and abs(cur - rec) < 0.01
+
+
 def owned_entry(p, st, entries, sid):
-    """(ok, entry_or_None, reason). p is a real target path, st its lstat."""
+    """(ok, entry_or_None, reason, since). p is a real target path, st its lstat. since is the
+    birth time every inode below the target must have at least (provenance start), or None
+    when unknown (then no directory content can be proven own)."""
     for root in session_bound_roots(sid):
         if p != root and is_under(p, root):
-            return True, None, "session-bound (%s)" % root
+            return True, None, "session-bound (%s)" % root, birth_time(root)
     e = entries.get(p)
     if e is not None:
-        if e.get("dev") != st.st_dev or e.get("ino") != st.st_ino:
-            return False, e, "replaced since it was recorded (dev/inode differ)"
-        return True, e, "ledger entry"
+        if e.get("dev") != st.st_dev or e.get("ino") != st.st_ino or not same_birth(e, p):
+            return False, e, "replaced since it was recorded (dev/inode/birth differ)", None
+        return True, e, "ledger entry", e.get("btime")
     # below a ledger directory entry whose inode still matches
     best = None
     for ep, e in entries.items():
@@ -536,60 +691,129 @@ def owned_entry(p, st, entries, sid):
         if best is None or len(ep) > len(best[0]):
             best = (ep, e)
     if best is None:
-        return False, None, "not created by this session (not in its ledger)"
+        return False, None, "not created by this session (not in its ledger)", None
     ep, e = best
     try:
         est = os.lstat(ep)
     except OSError:
-        return False, e, "its recorded parent %s is gone" % ep
-    if est.st_dev != e.get("dev") or est.st_ino != e.get("ino") or not stat.S_ISDIR(est.st_mode):
-        return False, e, "its recorded parent %s was replaced" % ep
-    return True, e, "below ledger entry %s" % ep
+        return False, e, "its recorded parent %s is gone" % ep, None
+    if (est.st_dev != e.get("dev") or est.st_ino != e.get("ino") or not stat.S_ISDIR(est.st_mode)
+            or not same_birth(e, ep)):
+        return False, e, "its recorded parent %s was replaced" % ep, None
+    return True, e, "below ledger entry %s" % ep, e.get("btime")
 
 
 # --------------------------------------------------------------------------- delete
 
 
-def safe_rmtree(path, top_dev, errors):
-    """Delete a directory tree without following symlinks and without crossing into another
-    file system (a mount inside is left alone and reported)."""
+_DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+
+
+def open_dir_nofollow(path):
+    """fd of directory path, opened component by component without following any symlink."""
+    fd = os.open("/", _DIR_FLAGS)
     try:
-        it = list(os.scandir(path))
+        for comp in [c for c in path.split("/") if c]:
+            nfd = os.open(comp, _DIR_FLAGS, dir_fd=fd)
+            os.close(fd)
+            fd = nfd
+    except OSError:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _rm_contents(fd, path, top_dev, since, errors):
+    """Delete everything inside the open directory fd (path is only for messages and the mount
+    check). Every inode is checked again right before its removal; a foreign one stays."""
+    try:
+        names = [de.name for de in os.scandir(fd)]
     except OSError as exc:
         errors.append("%s: %s" % (path, exc.strerror or exc))
         return
-    for de in it:
+    for name in names:
+        cpath = os.path.join(path, name)
         try:
-            st = de.stat(follow_symlinks=False)
+            st = os.stat(name, dir_fd=fd, follow_symlinks=False)
         except OSError as exc:
-            errors.append("%s: %s" % (de.path, exc.strerror or exc))
+            errors.append("%s: %s" % (cpath, exc.strerror or exc))
             continue
-        if stat.S_ISDIR(st.st_mode):
-            if st.st_dev != top_dev or os.path.ismount(de.path):
-                errors.append("%s: other file system inside, left alone" % de.path)
+        if since is not False:
+            why = foreign_inode(st, birth_time(name, dir_fd=fd), since)
+            if why:
+                errors.append("%s: %s, left alone" % (cpath, why))
                 continue
-            safe_rmtree(de.path, top_dev, errors)
+        if stat.S_ISDIR(st.st_mode):
+            if st.st_dev != top_dev or cpath in mount_points():
+                errors.append("%s: other file system inside, left alone" % cpath)
+                continue
+            try:
+                cfd = os.open(name, _DIR_FLAGS, dir_fd=fd)
+            except OSError as exc:
+                errors.append("%s: %s" % (cpath, exc.strerror or exc))
+                continue
+            try:
+                cst = os.fstat(cfd)
+                if (cst.st_dev, cst.st_ino) != (st.st_dev, st.st_ino):
+                    errors.append("%s: changed during the delete, left alone" % cpath)
+                    continue
+                _rm_contents(cfd, cpath, top_dev, since, errors)
+            finally:
+                os.close(cfd)
+            try:
+                os.rmdir(name, dir_fd=fd)
+            except OSError as exc:
+                errors.append("%s: %s" % (cpath, exc.strerror or exc))
         else:
             try:
-                os.unlink(de.path)
+                os.unlink(name, dir_fd=fd)
             except OSError as exc:
-                errors.append("%s: %s" % (de.path, exc.strerror or exc))
-    try:
-        os.rmdir(path)
-    except OSError as exc:
-        errors.append("%s: %s" % (path, exc.strerror or exc))
+                errors.append("%s: %s" % (cpath, exc.strerror or exc))
 
 
-def delete_path(p, st):
-    """Remove p (lstat st). Returns a list of error strings (empty = removed)."""
+def delete_path(p, st, since=False):
+    """Remove p, which must still be the inode st (dev+ino) that was checked. Works on file
+    descriptors opened without following symlinks, so a path component swapped for a symlink
+    after the check fails instead of redirecting the delete. since: the provenance start that
+    every inode is checked against again right before its removal (False = no birth check,
+    for owner-approved keep entries). Returns error strings (empty = removed)."""
     errors = []
-    if stat.S_ISDIR(st.st_mode):
-        safe_rmtree(p, st.st_dev, errors)
-    else:
+    parent, name = os.path.split(p)
+    try:
+        pfd = open_dir_nofollow(parent)
+    except OSError as exc:
+        return ["%s: parent cannot be opened without following links (%s)" % (p, exc.strerror or exc)]
+    try:
         try:
-            os.unlink(p)
+            cur = os.stat(name, dir_fd=pfd, follow_symlinks=False)
         except OSError as exc:
-            errors.append("%s: %s" % (p, exc.strerror or exc))
+            return ["%s: %s" % (p, exc.strerror or exc)]
+        if (cur.st_dev, cur.st_ino) != (st.st_dev, st.st_ino):
+            return ["%s: replaced since the check, left alone" % p]
+        if stat.S_ISDIR(cur.st_mode):
+            try:
+                fd = os.open(name, _DIR_FLAGS, dir_fd=pfd)
+            except OSError as exc:
+                return ["%s: %s" % (p, exc.strerror or exc)]
+            try:
+                fst = os.fstat(fd)
+                if (fst.st_dev, fst.st_ino) != (st.st_dev, st.st_ino):
+                    return ["%s: replaced since the check, left alone" % p]
+                _rm_contents(fd, p, st.st_dev, since, errors)
+            finally:
+                os.close(fd)
+            if not errors:
+                try:
+                    os.rmdir(name, dir_fd=pfd)
+                except OSError as exc:
+                    errors.append("%s: %s" % (p, exc.strerror or exc))
+        else:
+            try:
+                os.unlink(name, dir_fd=pfd)
+            except OSError as exc:
+                errors.append("%s: %s" % (p, exc.strerror or exc))
+    finally:
+        os.close(pfd)
     return errors
 
 

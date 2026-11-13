@@ -57,6 +57,10 @@ export CLAUDE_CODE_SESSION_ID="sess-a"
 R="$TMP/roots/t"
 mkdir -p "$HOME/.claude-x" "$R" "$TMP/cfg" "$TMP/dsession" "$TMP/scratch/sess-a/scratchpad"
 printf 'cleanup:\n  keep_paths:\n    - %s\n' "$R/keepme" > "$CREDO_GLOBAL"
+# pre-existing user data for the review regressions (born before every session entry)
+mkdir -p "$HOME/userdata" "$HOME/proj/config"
+echo precious > "$HOME/userdata/thesis.txt"; echo secret-cfg > "$HOME/proj/config/app.yml"
+sleep 2.5
 
 N=0
 hook() { # mode tool json-tool-input [session]
@@ -176,16 +180,22 @@ contains "kept entry refused without superseded" "kept on owner request" "$o"
 o="$(rm_own "$CREDO_KEEP_ROOT/acme/onnx-v2" --superseded "owner: export no longer needed")"
 contains "kept entry removed with superseded" "removed $CREDO_KEEP_ROOT/acme/onnx-v2" "$o"
 
-# --- 9. purge (done-gate) ------------------------------------------------------------
+# --- 9. purge (done-gate): only Write-created temp entries and TMPDIR children ---------
 run_call "mkdir $R/scratch-run"
 run_call "python3 -c 'import os; os.mkdir(\"$R/\" + \"anon\" + \"1\")'"
+N=$((N + 1))
+hook pre Write "{\"file_path\":\"$R/wrote/out.txt\"}" >/dev/null
+mkdir -p "$R/wrote"; echo x > "$R/wrote/out.txt"
+hook post Write "{\"file_path\":\"$R/wrote/out.txt\"}"
 o="$(python3 -I "$HELPER" purge)"
-contains "purge lists a fresh entry (parallel subagents)" "listed $R/scratch-run: changed recently" "$o"
-check "fresh entry kept by plain purge" yes "$(exists "$R/scratch-run")"
+contains "purge reports a fresh Write entry (parallel subagents)" "refused $R/wrote: reported, not deleted: changed in the last" "$o"
+check "fresh entry kept by plain purge" yes "$(exists "$R/wrote")"
+contains "purge only lists command-evidence entries (M1)" "listed $R/scratch-run: recorded from a Bash call (command evidence)" "$o"
 o="$(python3 -I "$HELPER" purge --now)"
-contains "purge --now removes confirmed temp entry" "removed $R/scratch-run" "$o"
+contains "purge --now removes the Write entry" "removed $R/wrote" "$o"
 contains "purge lists window-only entry" "listed $R/anon1" "$o"
 check "window-only entry kept by purge" yes "$(exists "$R/anon1")"
+check "command-evidence entry kept by purge" yes "$(exists "$R/scratch-run")"
 
 # --- 10. session TMPDIR, item-close, sweep -----------------------------------------
 ENVF="$TMP/envfile"; : > "$ENVF"
@@ -193,18 +203,22 @@ printf '{"session_id":"sess-a","cwd":"%s","source":"startup"}' "$R" | CLAUDE_ENV
 contains "TMPDIR exported" "export TMPDIR='$CREDO_TMP_BASE/sess-a'" "$(cat "$ENVF")"
 contains "helper exported" "export CREDO_CLEANUP=" "$(cat "$ENVF")"
 check "session tmp exists" yes "$(exists "$CREDO_TMP_BASE/sess-a")"
-mkdir "$CREDO_TMP_BASE/sess-a/old" "$CREDO_TMP_BASE/sess-a/fresh"
-touch -d '2 hours ago' "$CREDO_TMP_BASE/sess-a/old"
+check "session tmp base is private" 700 "$(stat -c %a "$CREDO_TMP_BASE")"
+ST="$CREDO_TMP_BASE/sess-a"
+mkdir "$ST/old" "$ST/fresh"; echo x > "$ST/old/f"
 python3 -I "$HELPER" item-close >/dev/null
-check "item-close removes idle entry" no "$(exists "$CREDO_TMP_BASE/sess-a/old")"
-check "item-close keeps fresh entry" yes "$(exists "$CREDO_TMP_BASE/sess-a/fresh")"
-check "item-close keeps the dir" yes "$(exists "$CREDO_TMP_BASE/sess-a")"
-mkdir -p "$CREDO_TMP_BASE/sess-dead/x" "$CLAUDE_CONFIG_DIR/sessions"
+check "item-close keeps a fresh entry" yes "$(exists "$ST/fresh")"
+CREDO_CLEANUP_IDLE_MINUTES=0 python3 -I "$HELPER" item-close >/dev/null
+check "item-close removes an idle own entry" no "$(exists "$ST/old")"
+check "item-close keeps the dir" yes "$(exists "$ST")"
+mkdir -p "$CLAUDE_CONFIG_DIR/sessions"
 printf '{"pid":%s,"sessionId":"sess-a"}' "$$" > "$CLAUDE_CONFIG_DIR/sessions/$$.json"
-touch -d '1 hour ago' "$CREDO_TMP_BASE/sess-dead" "$CREDO_TMP_BASE/sess-a"
-python3 -I "$HELPER" sweep >/dev/null
-check "sweep removes dead session tmp" no "$(exists "$CREDO_TMP_BASE/sess-dead")"
-check "sweep keeps live session tmp" yes "$(exists "$CREDO_TMP_BASE/sess-a")"
+DEAD="$CREDO_TMP_BASE/11111111-2222-3333-4444-555555555555"
+mkdir -p "$DEAD/x"; echo y > "$DEAD/x/f"
+touch -d '1 hour ago' "$DEAD"
+CREDO_CLEANUP_IDLE_MINUTES=0 python3 -I "$HELPER" sweep >/dev/null
+check "sweep removes a dead session tmp" no "$(exists "$DEAD")"
+check "sweep keeps the live session tmp" yes "$(exists "$ST")"
 mkdir "$TMP/scratch/sess-a/scratchpad/rel-clone"
 o="$(rm_own "$TMP/scratch/sess-a/scratchpad/rel-clone")"
 contains "scratchpad child is session-bound" "removed $TMP/scratch/sess-a/scratchpad/rel-clone" "$o"
@@ -264,6 +278,163 @@ o="$(python3 -I "$HELPER" playwright-prune --cache "$PC" --search "$TMP/empty-se
 contains "no installation found: nothing pruned" "nothing is pruned blind" "$o"
 check "kept when no installation found" yes "$(exists "$PC/chromium-1000")"
 check "helper never runs an installer" 0 "$(cat "$HELPER" "$LEDGER" | grep -c -E '"(npx|npm|pnpm|yarn|pip|pip3|apt|apt-get)"')"
+
+# --- 14. review regressions -------------------------------------------------------------
+export CREDO_CLEANUP_IDLE_MINUTES=0
+# B1: pre-existing data moved into the session TMPDIR, then item-close / own-rm
+mv "$HOME/userdata" "$ST/"
+python3 -I "$HELPER" item-close >/dev/null
+check "B1 item-close keeps data moved into TMPDIR" yes "$(exists "$ST/userdata/thesis.txt")"
+o="$(rm_own "$ST/userdata")"
+contains "B1 own-rm refuses data moved into TMPDIR" "pre-existing data moved in" "$o"
+# B1: pre-existing tree moved into an own ledger dir
+run_call "mkdir $R/bk"
+mv "$HOME/proj/config" "$R/bk/"
+o="$(rm_own "$R/bk")"
+contains "B1 own dir holding moved-in data refused" "pre-existing data moved in" "$o"
+o="$(rm_own "$R/bk/config")"
+contains "B1 moved-in subdir refused" "refused $R/bk/config" "$o"
+check "B1 moved-in data kept" yes "$(exists "$R/bk/config/app.yml")"
+# B1: content with a modification time older than its birth (cross-fs mv, tar x, cp -p)
+run_call "mkdir $R/extracted"
+echo old > "$R/extracted/f"; touch -d '3 days ago' "$R/extracted/f"
+o="$(rm_own "$R/extracted")"
+contains "B1 mtime older than birth refused" "modification time older than its birth" "$o"
+# B2: dead session TMPDIR holding a linked worktree with unmerged work
+mkdir -p "$TMP/repo2" && git -C "$TMP/repo2" init -q && git -C "$TMP/repo2" commit -q --allow-empty -m init
+DEAD2="$CREDO_TMP_BASE/22222222-2222-3333-4444-555555555555"
+mkdir -p "$DEAD2" "$DEAD2/junk"
+git -C "$TMP/repo2" worktree add -q -b wip "$DEAD2/wt"
+echo work > "$DEAD2/wt/new.txt"; git -C "$DEAD2/wt" add new.txt; git -C "$DEAD2/wt" commit -q -m wip
+touch -d '1 hour ago' "$DEAD2"
+o="$(python3 -I "$HELPER" sweep)"
+check "B2 sweep keeps a linked worktree" yes "$(exists "$DEAD2/wt/new.txt")"
+contains "B2 sweep reports it" "kept $DEAD2/wt" "$o"
+check "B2 sweep still removes own junk next to it" no "$(exists "$DEAD2/junk")"
+# minor: a tmp base that is no private dir is never swept; ordinary names are never swept
+mkdir -p "$TMP/fakebase/Documents" "$TMP/fakebase/33333333-2222-3333-4444-555555555555"
+echo x > "$TMP/fakebase/Documents/a"
+o="$(CREDO_TMP_BASE="$TMP/fakebase" python3 -I "$HELPER" sweep)"
+contains "sweep refuses a non-private base" "not a private dir" "$o"
+chmod 700 "$TMP/fakebase"
+touch -d '1 hour ago' "$TMP/fakebase/Documents"
+CREDO_TMP_BASE="$TMP/fakebase" python3 -I "$HELPER" sweep >/dev/null
+check "sweep never touches non-session names" yes "$(exists "$TMP/fakebase/Documents/a")"
+ln -s "$TMP/fakebase" "$TMP/linkbase"
+o="$(CREDO_TMP_BASE="$TMP/linkbase" python3 -I "$HELPER" sweep)"
+contains "sweep refuses a symlinked base" "not a private dir" "$o"
+# M1: a foreign file whose name is a substring / plain word of the command
+run_call "npm test || true" 2>/dev/null
+mkdir -p "$R/t2"
+N=$((N + 1)); cj='{"command":"npm run test"}'
+printf '{"session_id":"sess-a","tool_name":"Bash","tool_use_id":"tu%s","cwd":"/elsewhere","tool_input":%s}' "$N" "$cj" | python3 -I "$LEDGER" pre
+echo foreign > "$R/test"
+printf '{"session_id":"sess-a","tool_name":"Bash","tool_use_id":"tu%s","cwd":"/elsewhere","tool_input":%s}' "$N" "$cj" | python3 -I "$LEDGER" post
+contains "M1 a plain word is no command evidence" '"evidence": "window"' "$(grep "\"$R/test\"" "$CREDO_CLEANUP_STATE/ledger/sess-a.jsonl")"
+o="$(python3 -I "$HELPER" purge --now)"
+check "M1 purge keeps the foreign file" yes "$(exists "$R/test")"
+N=$((N + 1))
+cj="$(python3 -c 'import json,sys; print(json.dumps({"command": sys.argv[1]}))' "cd $R && mkdir rel1")"
+printf '{"session_id":"sess-a","tool_name":"Bash","tool_use_id":"tu%s","cwd":"/elsewhere","tool_input":%s}' "$N" "$cj" | python3 -I "$LEDGER" pre
+mkdir "$R/rel1"
+printf '{"session_id":"sess-a","tool_name":"Bash","tool_use_id":"tu%s","cwd":"/elsewhere","tool_input":%s}' "$N" "$cj" | python3 -I "$LEDGER" post
+contains "M1 relative token resolves only against the call cwd" '"evidence": "window"' "$(grep "\"$R/rel1\"" "$CREDO_CLEANUP_STATE/ledger/sess-a.jsonl")"
+# M2: --except of a result inside a TMPDIR subdir
+mkdir -p "$ST/build/result"; echo r > "$ST/build/result/model.bin"
+o="$(python3 -I "$HELPER" purge --now --except "$ST/build/result")"
+check "M2 result inside a TMPDIR subdir survives purge" yes "$(exists "$ST/build/result/model.bin")"
+contains "M2 parent of the result is listed" "listed $ST/build: excepted" "$o"
+# M3: a path swapped for a symlink after the check is not followed
+mkdir -p "$TMP/victim"; echo v > "$TMP/victim/keep.txt"
+mkdir "$ST/swap"; echo s > "$ST/swap/f"
+o="$(python3 -I -c '
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import credo_cleanup_lib as L
+p = sys.argv[2]
+st = os.lstat(p)
+os.rename(p, p + ".old")
+os.symlink(sys.argv[3], p)
+print(L.delete_path(p, st, False))
+' "$SCRIPT_DIR" "$ST/swap" "$TMP/victim")"
+contains "M3 swapped path refused" "replaced since the check" "$o"
+check "M3 symlink target untouched" yes "$(exists "$TMP/victim/keep.txt")"
+o="$(python3 -I -c '
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import credo_cleanup_lib as L
+p = sys.argv[2]
+os.makedirs(p + "/sub")
+st = os.lstat(p)
+os.rename(p, p + ".moved")
+os.symlink(sys.argv[3], p)
+print(L.delete_path(sys.argv[2] + "/sub", os.lstat(p + ".moved/sub"), False))
+' "$SCRIPT_DIR" "$ST/swap2" "$TMP/victim")"
+contains "M3 swapped parent component refused" "without following links" "$o"
+check "M3 victim still there" yes "$(exists "$TMP/victim/keep.txt")"
+# M4: deep fresh change, socket, process inside -> item-close keeps
+unset CREDO_CLEANUP_IDLE_MINUTES
+mkdir -p "$ST/deep/a/b"; echo live > "$ST/deep/a/b/work.txt"
+CREDO_CLEANUP_IDLE_MINUTES=1 python3 -I "$HELPER" item-close >/dev/null
+check "M4 deep fresh change keeps the entry" yes "$(exists "$ST/deep/a/b/work.txt")"
+export CREDO_CLEANUP_IDLE_MINUTES=0
+mkdir -p "$ST/sockdir"
+python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' "$ST/sockdir/daemon.sock"
+python3 -I "$HELPER" item-close >/dev/null
+check "M4 dir with a socket kept" yes "$(exists "$ST/sockdir/daemon.sock")"
+mkdir -p "$ST/busy"
+( cd "$ST/busy" && exec sleep 30 ) &
+BUSY=$!
+sleep 0.3
+python3 -I "$HELPER" item-close >/dev/null
+check "M4 dir with a live process inside kept" yes "$(exists "$ST/busy")"
+kill "$BUSY" 2>/dev/null; wait "$BUSY" 2>/dev/null
+# M5: a mount point (also same-device bind mount) at or below the target refuses
+MI="$TMP/mountinfo"
+printf '36 25 8:1 / / rw - ext4 /dev/sda rw\n90 36 8:1 /x %s rw - ext4 /dev/sda rw\n' "$ST/bound/inner" > "$MI"
+mkdir -p "$ST/bound/inner"
+o="$(CREDO_CLEANUP_MOUNTINFO="$MI" rm_own "$ST/bound")"
+contains "M5 bind mount below the target refused" "mount point at or below it" "$o"
+check "M5 bound dir kept" yes "$(exists "$ST/bound/inner")"
+mkdir -p "$HOME/gdrive"
+printf '36 25 8:1 / / rw - ext4 /dev/sda rw\n91 36 0:99 / %s rw - fuse.rclone gd rw\n' "$HOME/gdrive" > "$MI"
+CREDO_CLEANUP_MOUNTINFO="$MI" run_call "mkdir $HOME/gdrive/newdir"
+check "home scan never enters a mount (FUSE)" 0 "$(grep -c 'gdrive' "$CREDO_CLEANUP_STATE/ledger/sess-a.jsonl")"
+# minor: inode reuse (same dev+ino, other birth time) refused
+echo user > "$R/reuse.log"
+python3 -I -c '
+import json, os, sys
+p = sys.argv[1]; st = os.lstat(p)
+rec = {"event": "record", "path": p, "dev": st.st_dev, "ino": st.st_ino, "type": "file",
+       "btime": 1.0, "evidence": "command", "root_kind": "temp"}
+open(sys.argv[2], "a").write(json.dumps(rec) + "\n")
+' "$R/reuse.log" "$CREDO_CLEANUP_STATE/ledger/sess-a.jsonl"
+o="$(rm_own "$R/reuse.log")"
+contains "inode reuse (other birth time) refused" "replaced since it was recorded" "$o"
+# minor: git error other than "not a git repository" refuses (fails closed)
+run_call "git init -q $R/clone1 && echo a > $R/clone1/a.txt"
+git -C "$R/clone1" add a.txt; echo garbage > "$R/clone1/.git/index"
+o="$(rm_own "$R/clone1/a.txt")"
+contains "git error fails closed" "tracked by git" "$o"
+# minor: Playwright search with an unreadable dir prunes nothing
+PC2="$TMP/pwcache2"; S2="$TMP/pwsearch2"
+mkdir -p "$PC2/chromium-1100" "$S2/proj/node_modules/playwright-core" "$S2/locked"
+echo '{"browsers":[{"name":"chromium","revision":"1200"}]}' > "$S2/proj/node_modules/playwright-core/browsers.json"
+touch -d '1 day ago' "$PC2/chromium-1100"; chmod 000 "$S2/locked"
+o="$(python3 -I "$HELPER" playwright-prune --cache "$PC2" --search "$S2")"
+chmod 700 "$S2/locked"
+contains "playwright: unreadable dir = incomplete" "nothing is pruned on an incomplete search" "$o"
+check "playwright: nothing pruned when incomplete" yes "$(exists "$PC2/chromium-1100")"
+# minor: rescue-credo never resurrects an item that lives under another status folder
+mkdir -p "$M/.credo/items/2_done"; echo done > "$M/.credo/items/2_done/77-x.md"
+mkdir -p "$W/.credo/items/1_todo/2_go"; echo stale > "$W/.credo/items/1_todo/2_go/77-x.md"
+o="$(python3 -I "$HELPER" rescue-credo "$W")"
+contains "rescue: item under another status folder reported" "conflict .credo/items/1_todo/2_go/77-x.md: the item lives under another status folder" "$o"
+check "rescue: stale status copy not created" no "$(exists "$M/.credo/items/1_todo/2_go/77-x.md")"
+# minor: ledger guard catches cd + relative forms
+o="$(hook pre Bash '{"command":"cd ~/.local/state/credo && echo {} >> cleanup/ledger/sess-a.jsonl"}')"
+contains "guard: cd + relative ledger write denied" '"permissionDecision": "deny"' "$o"
+unset CREDO_CLEANUP_IDLE_MINUTES
 
 # --- 13. disabled switch ------------------------------------------------------------------
 o="$(CREDO_LEDGER=0 hook pre Write "{\"file_path\":\"$CREDO_CLEANUP_STATE/ledger/x.jsonl\"}")"

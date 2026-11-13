@@ -734,9 +734,9 @@ An item may move into `2_done/` ONLY when ALL of these hold. This gate is hard.
 7. **Own leftovers cleaned up (never a blocker)** - before the move, remove the artifacts
    the work created and the item does not need as its result (scratchpad content, temp
    exports, test runs, downloaded throwaway data, worktrees no longer needed). Run
-   `credo-cleanup.py purge [--except <result path>]...` (removes this session's confirmed
-   temp entries idle for 30 minutes and lists the rest; `--now` also takes fresh ones when
-   no subagent of the session runs in parallel), then `credo-cleanup.py own-rm <path>...` for listed
+   `credo-cleanup.py purge [--except <result path>]...` (removes only Write-created temp
+   entries and session TMPDIR children that pass every automatic check, lists the rest;
+   `--now` drops the 30-minute idle rule when no subagent of the session runs in parallel), then `credo-cleanup.py own-rm <path>...` for listed
    entries that are yours and not a result. Results the owner wants to keep go through
    `credo-cleanup.py keep`. Never `~/.claude*/` (session transcripts stay forever) and never
    project data the owner keeps. A refusal or a failed delete is NOT a blocker and is never

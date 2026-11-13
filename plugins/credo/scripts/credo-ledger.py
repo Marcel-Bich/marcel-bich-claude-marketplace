@@ -30,6 +30,7 @@ CREDO_LEDGER=0 or the local config key cleanup.enabled: false.
 import json
 import os
 import re
+import shlex
 import sys
 import time
 
@@ -113,11 +114,16 @@ def guard(data):
         cmd = ti.get("command")
         if not isinstance(cmd, str):
             return None
-        for f in protected_forms():
-            if f in cmd:
-                return ("the command names the provenance ledger or the keep list (%s), which only "
-                        "credo hooks and credo-cleanup.py write; use credo-cleanup.py report to read "
-                        "it" % f)
+        hit = [f for f in protected_forms() if f in cmd]
+        # cd into the state tree plus a relative path (best effort)
+        if not hit and ".local/state" in cmd and re.search(r"(^|[\s/'\"])cleanup(/|[\s'\"]|$)", cmd):
+            hit = [".local/state ... cleanup"]
+        if not hit and ".local/share" in cmd and "keep-list" in cmd:
+            hit = [".local/share ... keep-list"]
+        for f in hit:
+            return ("the command names the provenance ledger or the keep list (%s), which only "
+                    "credo hooks and credo-cleanup.py write; use credo-cleanup.py report to read "
+                    "it" % f)
         for m in REDIR_RE.finditer(cmd):
             target = os.path.join(cwd, os.path.expanduser(m.group(1)))
             sugg = credo_worktree_violation(target)
@@ -285,9 +291,11 @@ def scan_root(root, t0, t1, home_mode=False):
         return bt, (bt is not None and t0 <= bt <= t1 + 1)
 
     try:
+        root_dev = os.lstat(root).st_dev
         top = list(os.scandir(root))
     except OSError:
         return found
+    mounts = L.mount_points()
     for de in top:
         if excluded(de.path) or (home_mode and de.name.startswith(".claude")):
             continue
@@ -295,7 +303,7 @@ def scan_root(root, t0, t1, home_mode=False):
             st = de.stat(follow_symlinks=False)
         except OSError:
             continue
-        if st.st_uid != uid:
+        if st.st_uid != uid or st.st_dev != root_dev or de.path in mounts:
             continue
         bt, new = born(de.path, st)
         if new:
@@ -316,7 +324,7 @@ def scan_root(root, t0, t1, home_mode=False):
                 kst = k.stat(follow_symlinks=False)
             except OSError:
                 continue
-            if kst.st_uid != uid:
+            if kst.st_uid != uid or kst.st_dev != root_dev or k.path in mounts:
                 continue
             kbt, knew = born(k.path, kst)
             if knew:
@@ -341,12 +349,35 @@ def temp_scan_roots(cwd):
     return roots
 
 
-def evidence_for(path, cmd):
+def command_tokens(cmd):
+    try:
+        toks = shlex.split(cmd, comments=False, posix=True)
+    except ValueError:
+        toks = cmd.split()
+    out = []
+    for t in toks:
+        t = t.lstrip("<>&|;(0123456789") if re.match(r"^[0-9]*[<>]", t) else t
+        t = t.rstrip(";&|)")
+        if t:
+            out.append(t)
+    return out
+
+
+def evidence_for(path, cmd, cwd=""):
+    """"command" only when a whole shell token of the command is the full path (absolute, or
+    relative to the call's cwd); a name that merely appears inside the text is no evidence."""
     if not cmd:
         return "window"
-    name = os.path.basename(path)
-    if path in cmd or (len(name) >= 4 and name in cmd):
-        return "command"
+    for t in command_tokens(cmd):
+        if "$" in t or "`" in t:
+            continue
+        cand = os.path.expanduser(t)
+        if not os.path.isabs(cand):
+            if not cwd:
+                continue
+            cand = os.path.join(cwd, cand)
+        if os.path.normpath(cand).rstrip("/") == path.rstrip("/"):
+            return "command"
     return "window"
 
 
@@ -356,10 +387,10 @@ def ambiguous_for(btime, windows):
     return sorted({s for s, a, b in windows if a <= btime <= b})
 
 
-def build_records(found, sid, tool, cmd, kind, agent_id, windows):
+def build_records(found, sid, tool, cmd, kind, agent_id, windows, cwd=""):
     recs = []
     for path, st, bt in found:
-        ev = evidence_for(path, cmd)
+        ev = evidence_for(path, cmd, cwd)
         amb = ambiguous_for(bt, windows) if ev == "window" else []
         recs.append(L.make_record(path, st, tool, ev, kind, agent_id, amb, bt))
     return recs
@@ -394,12 +425,12 @@ def post(data):
     windows = other_windows(sid, t1)
     recs = []
     for root in temp_scan_roots(cwd):
-        recs += build_records(scan_root(root, t0, t1), sid, tool, cmd, "temp", agent_id, windows)
+        recs += build_records(scan_root(root, t0, t1), sid, tool, cmd, "temp", agent_id, windows, cwd)
     L.append_ledger(sid, recs)
     home_root = os.environ.get("CREDO_CLEANUP_HOME_ROOT", L.home())
     if home_root == "none" or not home_root:
         return
-    job = {"sid": sid, "t0": t0, "t1": t1, "cmd": cmd[:20000], "agent_id": agent_id,
+    job = {"sid": sid, "t0": t0, "t1": t1, "cmd": cmd[:20000], "agent_id": agent_id, "cwd": cwd,
            "root": home_root, "windows": windows}
     if os.environ.get("CREDO_CLEANUP_SYNC") == "1":
         home_scan_job(job)
@@ -418,7 +449,8 @@ def home_scan_job(job):
     # temp roots inside the home are scanned already
     found = [f for f in found if not any(L.is_under(f[0], r) for r in temp_scan_roots(""))]
     recs = build_records(found, job["sid"], "Bash", job.get("cmd") or "", "home",
-                         job.get("agent_id"), [tuple(w) for w in job.get("windows") or []])
+                         job.get("agent_id"), [tuple(w) for w in job.get("windows") or []],
+                         job.get("cwd") or "")
     L.append_ledger(job["sid"], recs)
 
 
@@ -449,10 +481,12 @@ def session_start(data):
         return
     if os.path.exists(flag):
         os.unlink(flag)
-    base = L.tmp_base()
-    os.makedirs(base, mode=0o700, exist_ok=True)
+    base = os.path.abspath(os.environ.get("CREDO_TMP_BASE") or "/tmp/credo-tmp-%d" % os.getuid())
+    if not os.path.lexists(base):
+        os.makedirs(base, mode=0o700, exist_ok=True)
+        os.chmod(base, 0o700)
     st = os.lstat(base)
-    if os.path.islink(base) or st.st_uid != os.getuid():
+    if os.path.islink(base) or st.st_uid != os.getuid() or (st.st_mode & 0o077):
         L.log("session-start: %s is not a private dir of this user, no session TMPDIR" % base)
         return
     stmp = L.session_tmp(sid)

@@ -99,41 +99,77 @@ def item_archived(it):
 # --------------------------------------------------------------------------- own-rm
 
 
+class Target:
+    """Result of check_target: the real path, its lstat (None = gone), the refusal reason (None =
+    may go), the provenance start for the delete-time re-check, and the tree facts."""
+
+    def __init__(self, p, st=None, reason=None, since=False, info=None):
+        self.p, self.st, self.reason, self.since = p, st, reason, since
+        self.info = info or L.TreeInfo()
+
+
 def check_target(raw, sid, entries, cfg_keep, keep_items, superseded):
-    """(p, st, None) when p may be removed, else (p, st, reason). st None when gone."""
+    """Every check that decides whether raw may be removed (explicit own-rm level)."""
     p = L.real_target(raw)
     if p is None:
-        return raw, None, "not a removable path"
+        return Target(raw, None, "not a removable path")
     try:
         st = os.lstat(p)
     except OSError:
-        return p, None, None
+        return Target(p)
+    t = Target(p, st)
     reason = L.hard_refusal(p, cfg_keep)
     if reason:
-        return p, st, reason
+        t.reason = reason
+        return t
     kept = keep_entry_for(p, keep_items)
     if kept is not None:
         if not superseded and not item_archived(kept):
-            return p, st, ("kept on owner request (%s); remove only with --superseded \"<newer owner "
-                           "decision>\" or after item %s is archived" % (kept.get("reason"), kept.get("item")))
+            t.reason = ("kept on owner request (%s); remove only with --superseded \"<newer owner "
+                        "decision>\" or after item %s is archived" % (kept.get("reason"), kept.get("item")))
+            return t
+        t.since = False  # the owner-approved keep entry: no provenance re-check of its content
+        reason, t.info = L.inspect_tree_structure(p, st)
     else:
         if not sid:
-            return p, st, "no session id ($CLAUDE_CODE_SESSION_ID) - cannot check the ledger"
-        ok, entry, why = L.owned_entry(p, st, entries, sid)
+            t.reason = "no session id ($CLAUDE_CODE_SESSION_ID) - cannot check the ledger"
+            return t
+        ok, entry, why, since = L.owned_entry(p, st, entries, sid)
         if not ok:
-            return p, st, why
+            t.reason = why
+            return t
         if entry is not None and entry.get("evidence") == "window" and entry.get("ambiguous"):
-            return p, st, ("born while other sessions were running tool calls (%s); not provably "
-                           "this session's" % ", ".join(entry["ambiguous"]))
-    if L.git_tracked(p):
-        return p, st, "tracked by git (use git rm, not the cleanup helper)"
-    reason = L.tree_refusal(p, st)
+            t.reason = ("born while other sessions were running tool calls (%s); not provably "
+                        "this session's" % ", ".join(entry["ambiguous"]))
+            return t
+        t.since = since
+        # the whole tree must be this session's work: born after the entry, never older content
+        reason, t.info = L.inspect_tree(p, st, since)
     if reason:
-        return p, st, reason
-    return p, st, None
+        t.reason = reason
+        return t
+    if L.git_tracked(p):
+        t.reason = "tracked by git (use git rm, not the cleanup helper)"
+    return t
 
 
-def own_rm(paths, dry=False, superseded=None, quiet_refusals=False):
+def auto_refusal(t, idle_s):
+    """Extra checks of the automatic paths (item-close, purge, sweep): they are strictly more
+    conservative than an explicit own-rm and only report when in doubt."""
+    if t.info.special:
+        return "holds a socket, fifo or device (%s): may belong to a running process" % t.info.special
+    if time.time() - t.info.newest < idle_s:
+        return "changed in the last %d minutes (deepest change counts): may be in use" % (idle_s // 60)
+    pid = L.held_open(t.p)
+    if pid == "unknown":
+        return "open-file check did not finish: may be in use"
+    if pid:
+        return "in use by process %s (cwd or open file inside)" % pid
+    return None
+
+
+def own_rm(paths, dry=False, superseded=None, quiet_refusals=False, auto_idle_s=None):
+    """Remove the paths that pass check_target (and auto_refusal when auto_idle_s is given)."""
     sid = session_id()
     entries = L.load_ledger(sid) if sid else {}
     cfg = L.local_config()
@@ -141,12 +177,18 @@ def own_rm(paths, dry=False, superseded=None, quiet_refusals=False):
     keep_items = load_keep()
     removed, refused, failed = [], [], []
     for raw in paths:
-        p, st, reason = check_target(raw, sid, entries, cfg_keep, keep_items, superseded)
-        if st is None and reason is None:
+        t = check_target(raw, sid, entries, cfg_keep, keep_items, superseded)
+        p = t.p
+        if t.st is None and t.reason is None:
             out("gone %s" % p)
             if sid and p in entries:
                 L.append_ledger(sid, [{"event": "removed", "path": p, "ts": L.iso()}])
             continue
+        reason = t.reason
+        if not reason and auto_idle_s is not None:
+            reason = auto_refusal(t, auto_idle_s)
+            if reason:
+                reason = "reported, not deleted: " + reason
         if reason:
             refused.append(p)
             L.log("refused %s (session %s): %s" % (p, sid or "-", reason))
@@ -156,7 +198,7 @@ def own_rm(paths, dry=False, superseded=None, quiet_refusals=False):
         if dry:
             out("would-remove %s" % p)
             continue
-        errs = L.delete_path(p, st)
+        errs = L.delete_path(p, t.st, t.since)
         if errs:
             failed.append(p)
             L.log("failed %s (session %s): %s" % (p, sid or "-", "; ".join(errs[:5])))
@@ -190,7 +232,8 @@ def keep(args):
     name = re.sub(r"[^A-Za-z0-9._-]", "-", args.name).strip(".-") or "kept"
     entries = L.load_ledger(sid) if sid else {}
     cfg = L.local_config()
-    p, st, reason = check_target(args.path, sid, entries, cfg.get("keep_paths") or [], load_keep(), None)
+    t = check_target(args.path, sid, entries, cfg.get("keep_paths") or [], load_keep(), None)
+    p, st, reason = t.p, t.st, t.reason
     if st is None:
         out("refused %s: does not exist" % p)
         return
@@ -218,7 +261,7 @@ def keep(args):
         except OSError as exc:
             out("failed %s: %s" % (p, exc))
             return
-        errs = L.delete_path(p, st)
+        errs = L.delete_path(p, st, t.since)
         if errs:
             out("copied %s -> %s, source not removed: %s" % (p, dest, "; ".join(errs[:3])))
     nst = os.lstat(dest_dir)
@@ -275,106 +318,158 @@ def report(args):
         out("kept %s item=%s reason=%s" % (k.get("path"), k.get("item"), k.get("reason")))
 
 
+def idle_seconds():
+    return float(os.environ.get("CREDO_CLEANUP_IDLE_MINUTES", IDLE_MINUTES_DEFAULT)) * 60
+
+
+def excepted(p, excepts):
+    return any(L.is_under(p, x) or L.is_under(x, p) for x in excepts)
+
+
 def purge(args):
-    """Done-gate: remove this session's temp-class entries that have direct evidence (command
-    text, Write tool), are not excluded and were idle for 30 minutes (--now: also fresh ones,
-    when no subagent runs in parallel); list everything else for an explicit own-rm."""
+    """Done-gate. Automatic, so stricter than own-rm: only entries the Write/Edit tool created in a
+    temp root and the children of the session TMPDIR are removed, each only when its whole tree
+    is provably this session's (birth checks), idle for 30 minutes (deepest change; --now drops
+    only this idle rule), free of sockets/fifos and not in use by a process. Everything else is
+    listed for an explicit own-rm or the owner."""
     sid = session_id()
     if not sid:
         out("refused purge: no session id ($CLAUDE_CODE_SESSION_ID)")
         return
     excepts = [L.real_target(e) or e for e in args.excepts or []]
-    idle = float(os.environ.get("CREDO_CLEANUP_IDLE_MINUTES", IDLE_MINUTES_DEFAULT)) * 60
     targets, listed = [], []
-
-    def recent(path):
-        # parallel subagents share the session id: a fresh entry may be another one's work in progress
-        try:
-            return time.time() - os.lstat(path).st_mtime < idle
-        except OSError:
-            return False
-
     for p, e in sorted(L.load_ledger(sid).items()):
-        if entry_status(p, e) != "present":
+        if entry_status(p, e) != "present" or e.get("kept"):
             continue
-        if any(L.is_under(p, x) or L.is_under(x, p) for x in excepts):
+        if excepted(p, excepts):
             listed.append((p, "excepted (result)"))
             continue
-        if e.get("kept"):
-            continue
         if not L.in_temp_root(p):
-            listed.append((p, "outside the temp roots: remove with own-rm if it is not a result"))
+            listed.append((p, "outside the temp roots: own-rm if it is not a result"))
             continue
-        if e.get("evidence") == "window":
-            listed.append((p, "only born during a tool call (no command evidence): own-rm if it is yours"))
-            continue
-        if recent(p) and not args.now:
-            listed.append((p, "changed recently, may be a running subagent's: own-rm if it is yours"))
+        if e.get("evidence") != "write":
+            listed.append((p, "recorded from a Bash call (%s evidence): own-rm if it is yours"
+                           % e.get("evidence")))
             continue
         targets.append(p)
     stmp = L.session_tmp(sid)
-    if os.path.isdir(stmp):
+    if os.path.isdir(stmp) and not os.path.islink(stmp):
         for n in sorted(os.listdir(stmp)):
             q = os.path.join(stmp, n)
-            if any(L.is_under(q, x) for x in excepts):
-                continue
-            if recent(q) and not args.now:
-                listed.append((q, "changed recently, may be a running subagent's: own-rm if it is yours"))
+            if excepted(q, excepts):
+                listed.append((q, "excepted (result)"))
                 continue
             targets.append(q)
-    own_rm(targets, dry=args.dry_run)
+    own_rm(targets, dry=args.dry_run, auto_idle_s=0 if args.now else idle_seconds())
     for p, why in listed:
         out("listed %s: %s" % (p, why))
 
 
 def item_close(args):
-    """Clear entries of the session TMPDIR that were idle for a while. The dir itself stays (the
-    session goes on; parallel subagents share it, hence the idle time)."""
+    """Clear children of the session TMPDIR that pass every automatic check (whole tree own,
+    deepest change older than 30 minutes, no socket/fifo, not in use). The dir itself stays: the
+    session and its parallel subagents go on. Refusals are only logged."""
     sid = session_id()
     if not sid:
         return
     stmp = L.session_tmp(sid)
+    if os.path.islink(stmp):
+        return
     try:
         names = os.listdir(stmp)
     except OSError:
         return
-    idle = float(os.environ.get("CREDO_CLEANUP_IDLE_MINUTES", IDLE_MINUTES_DEFAULT)) * 60
-    old = []
-    for n in names:
-        p = os.path.join(stmp, n)
-        try:
-            if time.time() - os.lstat(p).st_mtime >= idle:
-                old.append(p)
-        except OSError:
-            continue
-    if old:
-        own_rm(old, quiet_refusals=True)
+    targets = [os.path.join(stmp, n) for n in names]
+    if targets:
+        own_rm(targets, quiet_refusals=True, auto_idle_s=idle_seconds())
 
 
 # --------------------------------------------------------------------------- sweep
 
 
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def private_base():
+    """The session tmp base when it is safe to sweep: not a symlink (checked unresolved), a
+    directory owned by this user with mode 0700. Else None (reported)."""
+    raw = os.path.abspath(os.environ.get("CREDO_TMP_BASE") or "/tmp/credo-tmp-%d" % os.getuid())
+    try:
+        st = os.lstat(raw)
+    except OSError:
+        return None
+    if (stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid()
+            or stat.S_IMODE(st.st_mode) != 0o700):
+        out("refused sweep: %s is not a private dir of this user (symlink, owner or mode)" % raw)
+        L.log("sweep refused: %s is not a private dir of this user" % raw)
+        return None
+    if L.hard_refusal(raw):
+        out("refused sweep: %s: %s" % (raw, L.hard_refusal(raw)))
+        return None
+    return raw
+
+
+def sweep_session_dir(d, idle_s):
+    """Remove the children of a dead session's tmp dir that are provably its own (born after the
+    dir, no older content, no repository/worktree/mount, nothing in use, idle), then the dir
+    itself when it is empty. Anything else stays and is reported."""
+    since = L.birth_time(d)
+    for n in sorted(os.listdir(d)):
+        c = os.path.join(d, n)
+        try:
+            st = os.lstat(c)
+        except OSError:
+            continue
+        reason = L.hard_refusal(c)
+        info = L.TreeInfo()
+        if not reason:
+            reason, info = L.inspect_tree(c, st, since)
+        if not reason and L.git_tracked(c):
+            reason = "tracked by git"
+        if not reason:
+            reason = auto_refusal(Target(c, st, None, since, info), idle_s)
+        if reason:
+            out("kept %s: %s" % (c, reason))
+            L.log("sweep kept %s: %s" % (c, reason))
+            continue
+        errs = L.delete_path(c, st, since)
+        out(("removed %s" % c) if not errs else ("failed %s: %s" % (c, "; ".join(errs[:3]))))
+        L.log(("swept %s" % c) if not errs else ("sweep failed %s: %s" % (c, "; ".join(errs[:3]))))
+    try:
+        if not os.listdir(d):
+            os.rmdir(d)
+            out("removed %s" % d)
+            L.log("swept session tmp %s" % d)
+    except OSError:
+        pass
+
+
 def sweep(args):
     live = L.running_sessions()
-    base = L.tmp_base()
     now = time.time()
-    try:
-        names = os.listdir(base)
-    except OSError:
-        names = []
+    base = private_base()
+    names = []
+    if base:
+        try:
+            names = os.listdir(base)
+        except OSError:
+            names = []
     for n in names:
         p = os.path.join(base, n)
-        if not L.valid_sid(n) or n in live:
-            continue
+        if not UUID_RE.match(n) or n in live:
+            continue  # only session-id-shaped names of sessions that no longer run
         try:
             st = os.lstat(p)
         except OSError:
             continue
         if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or now - st.st_mtime < 600:
             continue
-        errs = L.delete_path(p, st)
-        L.log(("swept session tmp %s" % p) if not errs else ("sweep failed %s: %s" % (p, "; ".join(errs[:3]))))
-        out(("removed %s" % p) if not errs else ("failed %s: %s" % (p, "; ".join(errs[:3]))))
+        if L.hard_refusal(p):
+            continue
+        try:
+            sweep_session_dir(p, idle_seconds())
+        except OSError as exc:
+            L.log("sweep failed %s: %s" % (p, exc))
     # stale marks and jobs of sessions that no longer run
     for d in glob.glob(os.path.join(L.state_dir(), "marks", "*")):
         sid = os.path.basename(d)
@@ -457,9 +552,19 @@ def rescue_credo(args):
         out("conflict %s: git failed: %s" % (wc, exc))
         return 3
     conflicts = 0
+    main_items = {}
+    for f in glob.glob(os.path.join(main, ".credo", "items", "**", "*.md"), recursive=True):
+        main_items.setdefault(os.path.basename(f), []).append(os.path.relpath(f, main))
     for rel in rels:
         src = os.path.join(wt, rel)
         dst = os.path.join(main, rel)
+        if rel.startswith(".credo/items/") and not os.path.lexists(dst):
+            elsewhere = [m for m in main_items.get(os.path.basename(rel), []) if m != rel]
+            if elsewhere:
+                out("conflict %s: the item lives under another status folder in main (%s), not copied"
+                    % (rel, ", ".join(elsewhere)))
+                conflicts += 1
+                continue
         if os.path.islink(src) or not os.path.isfile(src):
             out("conflict %s: not a regular file" % rel)
             conflicts += 1
@@ -551,17 +656,19 @@ def find_browsers_json(roots, limit_s):
             d = stack.pop()
             try:
                 it = list(os.scandir(d))
-            except OSError:
-                continue
+            except OSError as exc:
+                L.log("playwright search: %s unreadable (%s), search incomplete" % (d, exc.strerror or exc))
+                return found, False
             for de in it:
                 if de.name in SKIP_NAMES:
                     continue
                 try:
                     st = de.stat(follow_symlinks=False)
-                except OSError:
-                    continue
+                except OSError as exc:
+                    L.log("playwright search: %s unreadable (%s), search incomplete" % (de.path, exc.strerror or exc))
+                    return found, False
                 if stat.S_ISDIR(st.st_mode):
-                    if st.st_dev != rst.st_dev:
+                    if st.st_dev != rst.st_dev or de.path in L.mount_points():
                         continue
                     if de.name == "projects" and os.path.basename(d).startswith(".claude"):
                         continue
@@ -611,7 +718,8 @@ def playwright_prune(args):
         if pkg and os.path.isfile(bj):
             files.add(bj)
     if not complete:
-        out("playwright prune skipped: the search for installations did not finish in %ss" % args.time_limit)
+        out("playwright prune skipped: the search for installations did not finish (time limit %ss or an "
+            "unreadable directory); nothing is pruned on an incomplete search" % args.time_limit)
         L.log("playwright prune skipped: search incomplete")
         return
     if not files:
