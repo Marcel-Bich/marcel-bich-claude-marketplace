@@ -143,6 +143,12 @@ MARK = "credoPeerLan"
 META_KEY = "credoPeerMeta"
 META_FIELDS = ("mode", "role", "model", "effort", "credo", "project")
 MARK_FROM = "credoPeerLanFrom"
+# descriptors of native Windows sessions mirrored into WSL by credo-win-bridge.py: real
+# local sessions for this relay (published to LAN peers, reachable by delivers); their
+# Windows name and the profile label the roster shows for them
+WIN_MARK = "credoWinBridge"
+WIN_NAME_KEY = "credoWinName"
+WIN_PROFILE = "windows/" + ".claude"
 DEFAULT_PORT = 48610
 DEFAULT_ROSTER_INTERVAL = 5.0
 DEFAULT_MACHINE_TIMEOUT = 30.0
@@ -6267,6 +6273,7 @@ class Daemon(object):
         sessions, names = [], {}
         # one name order for everything credo shows: caption, kitty, tmux, short id
         snap = session_name.Snapshot()
+        win_seen = set()
         for sess_dir in profile_sessions_dirs():
             profile = profiles.profile_name(os.path.dirname(sess_dir))
             for d in read_local_sessions(sess_dir):
@@ -6276,6 +6283,16 @@ class Daemon(object):
                     "status": d.get("status", "idle"),
                     "profile": profile,
                 }
+                if d.get(WIN_MARK):
+                    # a native Windows session of this machine, mirrored by the WSL bridge
+                    # (credo-win-bridge.py) into every profile: published once, under its
+                    # own Windows name and the WIN_PROFILE label
+                    if entry["sessionId"] in win_seen:
+                        continue
+                    win_seen.add(entry["sessionId"])
+                    entry["name"] = (session_name.clean(d.get(WIN_NAME_KEY), session_name.NAME_MAX)
+                                     or sid_short(entry["sessionId"]))
+                    entry["profile"] = WIN_PROFILE
                 if pub_meta:
                     entry["meta"] = roster_meta(sess_dir, d, pub_project)
                 sessions.append(entry)

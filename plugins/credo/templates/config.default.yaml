@@ -344,6 +344,16 @@ reminder:
 peer:
   trust_guard:
     quiet: true
+  # WSL <-> native Windows peer bridge (scripts/credo-win-bridge.py, /credo:peer-lan
+  # "Windows sessions"). Under WSL with Windows interop, the native Windows Claude Code
+  # sessions of the same Windows user appear in ListAgents of WSL sessions and can be
+  # messaged, and the WSL sessions (plus LAN peers) appear on Windows. The SessionStart
+  # hook starts it. Security: the WSL user gains send rights to the Windows user's
+  # sessions and the reverse; session tokens never leave their side. false = off (a
+  # running bridge stops within a minute). Env CREDO_WIN_BRIDGE (0/1) overrides. Read
+  # from the builtin, global and profile layers only - a project .credo/config is ignored.
+  win_bridge:
+    enabled: true
 
 # --- remote mirror (hooks/credo-remote-mirror.sh) ---------------------------------
 # Off by default (empty). When set, credo's hooks forward ONLY the events that need the

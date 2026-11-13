@@ -51,6 +51,7 @@ PY="$(command -v python3 2>/dev/null || true)"
 
 MARK='credoPeerBridge'
 LAN_MARK='credoPeerLan'
+WIN_MARK='credoWinBridge'   # credo-win-bridge.py mirrors, written into every profile itself
 pid_alive() { kill -0 "$1" 2>/dev/null; }
 
 # Marker check: the marker must be a real top-level JSON key, not just a byte
@@ -119,6 +120,7 @@ for sib_cfg in "$HOME"/.claude*/; do
     [ -f "$src" ] || continue
     is_ours "$src" && continue              # loop-safety: never bridge a bridged copy
     has_marker "$src" "$LAN_MARK" && continue  # never bridge a credo-peer-lan descriptor
+    has_marker "$src" "$WIN_MARK" && continue  # never bridge a credo-win-bridge descriptor
     pid="$(basename "$src" .json)"
     printf '%s' "$pid" | grep -Eq '^[0-9]+$' || continue
     pid_alive "$pid" || continue
