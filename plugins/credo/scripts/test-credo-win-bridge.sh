@@ -152,7 +152,7 @@ check("rewrite_lines: unknown sender unchanged", wb.rewrite_lines(raw, lambda a:
 check("frame_from", wb.frame_from(raw) == "/tmp/cc-socks-1000/11.sock")
 
 # Windows list parsing
-good = {"pid": 4242, "sessionId": "sid-1", "messagingSocketPath": P, "name": "wsl-recovery",
+good = {"pid": 4242, "sessionId": "sid-1", "messagingSocketPath": P, "name": "acme-win",
         "pidDomain": "win32:box-1", "updatedAt": 5}
 items = [good,
          dict(good, sessionId="sid-2", credoWinBridge=True),
@@ -163,11 +163,11 @@ items = [good,
          dict(good, updatedAt=1, name="older")]
 parsed = wb.parse_win_sessions(items)
 check("parse_win_sessions keeps only real Claude pipes, newest per id",
-      [d["sessionId"] for d in parsed] == ["sid-1"] and parsed[0]["name"] == "wsl-recovery", parsed)
+      [d["sessionId"] for d in parsed] == ["sid-1"] and parsed[0]["name"] == "acme-win", parsed)
 check("win_host from pidDomain", wb.win_host(good) == "box-1")
 name = wb.win_mirror_name(good, "alice")
 check("win mirror name follows the LAN convention",
-      name.startswith("`Claude Code`--`Windows`--`box-1`--`alice`--`.claude`--`wsl-recovery`+"), name)
+      name.startswith("`Claude Code`--`Windows`--`box-1`--`alice`--`.claude`--`acme-win`+"), name)
 
 # switch
 check("switch default on", wb.switch_value(None, None) is True)
@@ -216,7 +216,7 @@ check("template_for picks the live real session", tpl is not None and tpl["sessi
 d = wb.build_wsl_descriptor(good, 4242, "777", tpl, "/tmp/wb-a.sock", name, 99)
 check("descriptor: holder pid/procStart, pidDomain from template, marker",
       d["pid"] == 4242 and d["procStart"] == "777" and d["pidDomain"] == dom and d["credoWinBridge"] is True
-      and d["messagingSocketPath"] == "/tmp/wb-a.sock" and d["credoWinName"] == "wsl-recovery"
+      and d["messagingSocketPath"] == "/tmp/wb-a.sock" and d["credoWinName"] == "acme-win"
       and "credoPeerLan" not in d and "credoPeerBridge" not in d)
 removed = wb.prune_own_descriptors([sd1, sd2])
 check("prune removes only our marker", [os.path.basename(p) for p in removed] == ["999999.json"]
@@ -260,7 +260,7 @@ def serve():
             data += ch
         got.append(data); c.close()
 threading.Thread(target=serve, daemon=True).start()
-win = {"pid": 4321, "sessionId": "win-sid-1", "name": "wsl-recovery", "pidDomain": "win32:box-1", "status": "idle"}
+win = {"pid": 4321, "sessionId": "win-sid-1", "name": "acme-win", "pidDomain": "win32:box-1", "status": "idle"}
 tpl = {"pidDomain": ns_domain(), "version": "2.1.323"}
 for sd in (sd1, sd2):   # the bridge writes one descriptor per profile, same holder pid
     d = wb.build_wsl_descriptor(win, me, lan.proc_start(me), tpl, inbox, wb.win_mirror_name(win, "alice"), 1)
@@ -269,7 +269,7 @@ daemon = lan.Daemon({"this_machine": "box-b", "peers": ["127.0.0.1:41001"], "lis
 ros = [e for e in daemon._roster_sessions() if e["sessionId"] == "win-sid-1"]
 check("LAN roster: Windows mirror published once", len(ros) == 1, ros)
 check("LAN roster: under its Windows name and the windows profile label",
-      ros and ros[0]["name"] == "wsl-recovery" and ros[0]["profile"] == "windows/.claude", ros)
+      ros and ros[0]["name"] == "acme-win" and ros[0]["profile"] == "windows/.claude", ros)
 sock = lan.deliver_local(lan.profile_sessions_dirs(), "win-sid-1", "peer-x", "hello windows", None)
 for _ in range(50):
     if got: break
@@ -400,7 +400,7 @@ real = {"pid": me, "sessionId": "wsl-1", "procStart": wb.lan().proc_start(me), "
         "messagingSocketPath": inbox, "name": "bugs", "nameSource": "user", "status": "idle", "version": "2.1.323"}
 json.dump(real, open(os.path.join(sd1, "%d.json" % me), "w"))
 WP = "\\\\.\\pipe\\LOCAL\\cc-msg-" + "b" * 32
-json.dump([{"pid": 4321, "sessionId": "win-1", "messagingSocketPath": WP, "name": "wsl-recovery",
+json.dump([{"pid": 4321, "sessionId": "win-1", "messagingSocketPath": WP, "name": "acme-win",
             "pidDomain": "win32:box-1", "status": "idle"}], open(wins, "w"))
 
 d = wb.Daemon([sys.executable, os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "fakeps.py")],
@@ -421,7 +421,7 @@ m = mirrors(sd1)[0][1]
 check("mirror pid is a live holder with real procStart",
       wb.lan().proc_start(m["pid"]) == m["procStart"] and m["pid"] != me and m["sessionId"] == "win-1")
 check("mirror pidDomain copied from the live session", m["pidDomain"] == real["pidDomain"])
-check("mirror names the Windows session", "`wsl-recovery`+" in m["name"] and m["name"].startswith("`Claude Code`--`Windows`--`box-1`--`alice`"))
+check("mirror names the Windows session", "`acme-win`+" in m["name"] and m["name"].startswith("`Claude Code`--`Windows`--`box-1`--`alice`"))
 check("WSL session published", wait(lambda: "wsl-1" in d.mirror_pipe))
 
 # WSL -> Windows: write into the holder socket like a Claude Code sender
@@ -447,7 +447,7 @@ check("reply address swapped for the Windows mirror pipe", sent["from"] == "uds:
 
 # Windows -> WSL: the PowerShell half reports a verified message for wsl-1
 wframe = {"msgV": 1, "msg_id": "x2", "type": "user", "priority": "next", "from": "uds:" + WP,
-          "message": {"role": "user", "content": "<cross-session-message from=\"uds:%s\" from-name=\"wsl-recovery\">\npong\n</cross-session-message>" % WP.replace("\\", "\\\\")}}
+          "message": {"role": "user", "content": "<cross-session-message from=\"uds:%s\" from-name=\"acme-win\">\npong\n</cross-session-message>" % WP.replace("\\", "\\\\")}}
 wl = json.dumps(frame and wframe).encode() + b"\n"
 with open(inject, "a") as fh:
     fh.write(json.dumps({"op": "msg", "key": "wsl-1", "data": base64.b64encode(wl).decode()}) + "\n")
@@ -466,7 +466,7 @@ check("message for an unknown key dropped", len(got) == 1)
 json.dump([], open(wins, "w"))
 check("vanished Windows session removed", wait(lambda: not mirrors(sd1) and not mirrors(sd2)))
 check("its socket removed", wait(lambda: not [n for n in os.listdir(wb.sock_dir()) if n.startswith("wb-")]))
-json.dump([{"pid": 4321, "sessionId": "win-1", "messagingSocketPath": WP, "name": "wsl-recovery",
+json.dump([{"pid": 4321, "sessionId": "win-1", "messagingSocketPath": WP, "name": "acme-win",
             "pidDomain": "win32:box-1"}], open(wins, "w"))
 check("and comes back", wait(lambda: len(mirrors(sd1)) == 1))
 hp = mirrors(sd1)[0][1]["pid"]
@@ -562,7 +562,7 @@ if ($Role -eq 'Inbox') {
     $ft = [string]$me.StartTime.ToFileTimeUtc()
     $d = [ordered]@{ pid = $PID; sessionId = 'win-sess-1'; cwd = 'C:\Users\alice'; startedAt = 1; procStart = $ft; version = '2.1.323';
                      peerProtocol = 1; kind = 'interactive'; entrypoint = 'cli'; pidDomain = (Get-CredoPidDomain $Dir);
-                     messagingSocketPath = $path; name = 'wsl-recovery'; nameSource = 'user'; status = 'idle'; updatedAt = 1 }
+                     messagingSocketPath = $path; name = 'acme-win'; nameSource = 'user'; status = 'idle'; updatedAt = 1 }
     [IO.File]::WriteAllText((Join-Path $Dir (Get-CredoKeyFileName $PID $path)), ('{"peerToken":"' + $Token + '","procStartFt":"' + $ft + '","pidDomain":"x"}'))
     [IO.File]::WriteAllText((Join-Path $Dir ('{0}.json' -f $PID)), ($d | ConvertTo-Json -Compress))
     $deadline = [DateTime]::UtcNow.AddSeconds(150)
@@ -589,7 +589,7 @@ if ($Role -eq 'Send') {
     $tok = if ($Token) { $Token } else { Find-CredoToken $Dir $mpid $mpath }
     $c = New-Object IO.Pipes.NamedPipeClientStream('.', (Get-CredoPipeName $mpath), [IO.Pipes.PipeDirection]::InOut)
     $c.Connect(5000)
-    $msg = '{"msgV":1,"msg_id":"w1","type":"user","message":{"role":"user","content":"<cross-session-message from=\"uds:' + $FromPipe.Replace('\', '\\') + '\" from-name=\"wsl-recovery\">\n' + $Body + '\n</cross-session-message>"},"priority":"next","from":"uds:' + $FromPipe.Replace('\', '\\') + '"}'
+    $msg = '{"msgV":1,"msg_id":"w1","type":"user","message":{"role":"user","content":"<cross-session-message from=\"uds:' + $FromPipe.Replace('\', '\\') + '\" from-name=\"acme-win\">\n' + $Body + '\n</cross-session-message>"},"priority":"next","from":"uds:' + $FromPipe.Replace('\', '\\') + '"}'
     $b = (New-CredoAuthLineBytes $tok) + $script:Utf8.GetBytes($msg + "`n")
     $c.Write($b, 0, $b.Length); $c.Flush(); Start-Sleep -Milliseconds 300; $c.Dispose()
     'SENT'
@@ -649,7 +649,7 @@ def win_files():
 try:
     check("real PS: Windows session mirrored into WSL", wait(lambda: len(mirrors()) == 1))
     m = mirrors()[0] if mirrors() else {}
-    check("real PS: mirror describes the fake Windows session", m.get("sessionId") == "win-sess-1" and "`wsl-recovery`+" in m.get("name", ""))
+    check("real PS: mirror describes the fake Windows session", m.get("sessionId") == "win-sess-1" and "`acme-win`+" in m.get("name", ""))
     check("real PS: WSL session mirrored on Windows", wait(lambda: "wsl-sess-1" in d.mirror_pipe))
     mp = d.mirror_pipe.get("wsl-sess-1", "")
     wm = [f for f in win_files() if f.endswith(".json")]
@@ -857,7 +857,7 @@ def win_mirror():
 try:
     check("relay: Python relay mirrors the Windows session", wait(lambda: py_mirror() is not None))
     pm = py_mirror() or {}
-    check("relay: mirror name from the Windows roster", "`laptop-1`" in pm.get("name", "") and "`wsl-recovery`+" in pm.get("name", ""), pm.get("name"))
+    check("relay: mirror name from the Windows roster", "`laptop-1`" in pm.get("name", "") and "`acme-win`+" in pm.get("name", ""), pm.get("name"))
     check("relay: PowerShell relay mirrors the Linux session", wait(lambda: win_mirror() is not None))
     wm = win_mirror() or {}
     check("relay: Windows mirror name follows the LAN convention", "`box-a`" in wm.get("name", "") and "`bugs`+" in wm.get("name", ""), wm.get("name"))
