@@ -293,6 +293,23 @@ dont_ask_twice: false
 optimize:
   idle_days: 7
 
+# --- agent temp cleanup (provenance ledger, credo-cleanup.py, #174) ----------
+# Hooks record what a session (and its subagents) creates; the agent removes its own
+# leftovers without a prompt through credo-cleanup.py own-rm (ledger-verified). Read from
+# the LOCAL layers only (global ~/.claude/credo/config and the profile layer), never from a
+# project .credo/config, so keep paths and cache paths are never versioned.
+#   enabled         false -> the ledger hooks record nothing (SessionStart reads it)
+#   session_tmpdir  false -> no per-session TMPDIR export (the dir is still created)
+#   keep_paths      paths the helper never removes, ledger or not (owner keep list);
+#                   ~/.claude*/** is always protected and need not be listed
+#   cache_caps      {"<cache dir>": <MB>}: size cap per shared cache; over the cap is
+#                   reported (credo-cleanup.py caches), never deleted per session
+cleanup:
+  enabled: true
+  session_tmpdir: true
+  keep_paths: []
+  cache_caps: {}
+
 # --- GO stall check (credo-go-stall.sh, the autonomous idle path) ------------
 # A GO item in 2_go is listed as stalled when neither its file nor its last History line
 # shows progress for this many hours. The listing is read-only; every listed item is then

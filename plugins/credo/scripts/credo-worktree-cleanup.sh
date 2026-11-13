@@ -64,8 +64,22 @@
 # A lossless worktree gets the same removal; right before it the lossless check and the live-process
 # check run again, so a worktree that changed, or got a process inside, since the first check is kept.
 #
+# Stray .credo files (#174). .credo/ belongs to the main checkout; a linked worktree only has a
+# symlink to it. When a worktree has a REAL .credo directory, its untracked (also ignored) files
+# are rescued into the main checkout first (credo-cleanup.py rescue-credo: copy, never overwrite).
+# A file that differs from the main checkout's copy, or a main checkout without .credo, is a
+# conflict: it is reported on stderr and the file stays a change (an untracked or ignored real
+# .credo file), so the change classification below keeps the worktree as an owner question. A
+# rescued file has its counterpart in the main checkout afterwards, so it can count as lossless.
+# --dry-run only reports what would be rescued.
+#
+# --details adds the content of a worktree that is kept as NOT merged to its reason: the commits
+# the base lacks (`git cherry`, "+" lines), the uncommitted changes (`git status --porcelain`
+# entries) and the size (du, best effort). Unmerged worktrees are never removed by this script;
+# forgotten work stays until the owner decides.
+#
 # Usage:
-#   credo-worktree-cleanup.sh [--dry-run] [--json] [--base <branch>] [--fresh-hours N]
+#   credo-worktree-cleanup.sh [--dry-run] [--json] [--details] [--base <branch>] [--fresh-hours N]
 #                             [--keep <path|branch>]... [--allow-lossless <path|branch>]... [dir]
 #   credo-worktree-cleanup.sh --list-locked [--json] [dir]
 #     --dry-run      list candidates and kept worktrees, remove nothing
@@ -104,6 +118,7 @@ set -euo pipefail
 die() { echo "credo-worktree-cleanup: $1" >&2; exit "${2:-1}"; }
 
 DRY=0
+DETAILS=0
 MODE="kv"
 BASE=""
 FRESH_HOURS=24
@@ -116,6 +131,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run|-n) DRY=1 ;;
         --json) MODE="json" ;;
+        --details) DETAILS=1 ;;
         --base) [ -n "${2:-}" ] || die "--base needs a branch"; BASE="$2"; shift ;;
         --fresh-hours)
             case "${2:-}" in ''|*[!0-9]*) die "--fresh-hours needs a whole number" ;; esac
@@ -448,6 +464,32 @@ process_inside() { # real-path -> 0 and FOUND_PID when a live process has its cw
     return 1
 }
 
+# Content of an unmerged worktree for the report (--details only): unique commits, uncommitted
+# changes, size. Every part is best effort; a failing part reads "?".
+unmerged_details() { # path branch
+    [ "$DETAILS" -eq 1 ] || return 0
+    local uniq dirty size
+    uniq="$(git -C "$MAIN" cherry "refs/heads/$BASE" "refs/heads/$2" 2>/dev/null | grep -c '^+' || true)"
+    dirty="$(git -C "$1" status --porcelain 2>/dev/null | wc -l | tr -d ' ' || echo '?')"
+    size="$(timeout 20 du -sm -- "$1" 2>/dev/null | cut -f1 || true)"
+    printf ' (unique_commits=%s uncommitted=%s size=%sMB, never removed automatically)' "${uniq:-?}" "${dirty:-?}" "${size:-?}"
+}
+
+# A real .credo directory in a linked worktree: rescue its untracked files into the main checkout
+# (credo-cleanup.py rescue-credo). Never fails; conflicts go to stderr and stay changes.
+rescue_stray_credo() { # path
+    RESCUE_WHY=""
+    [ -d "$1/.credo" ] && [ ! -L "$1/.credo" ] || return 0
+    local dry="" outp rc
+    if [ "$DRY" -eq 1 ]; then dry="--dry-run"; fi
+    rc=0
+    outp="$(python3 -I "$SCRIPT_DIR/credo-cleanup.py" rescue-credo $dry "$1" 2>&1)" || rc=$?
+    printf '%s\n' "$outp" | grep -E '^(rescued|would-rescue|conflict) ' \
+        | sed "s|^|credo-worktree-cleanup: $1: .credo |" >&2 || true
+    [ "$rc" -eq 0 ] || RESCUE_WHY="conflict"
+    return 0
+}
+
 evaluate() { # path branch locked prunable lock-reason
     local path="$1" branch="$2" locked="$3" prunable="$4" lock_reason="${5:-}" real keepit=0
     local merged=0 ask="" age cand="candidate" tail="clean"
@@ -476,7 +518,8 @@ evaluate() { # path branch locked prunable lock-reason
     if [ "$keepit" -eq 1 ]; then add kept "$path" "$branch" "keep requested (--keep)"; return; fi
     if [ -z "$branch" ]; then add kept "$path" "" "detached HEAD"; return; fi
     if [ "$branch" = "$BASE" ]; then add kept "$path" "$branch" "is the base branch"; return; fi
-    if [ "$merged" -eq 0 ]; then add kept "$path" "$branch" "not merged into $BASE"; return; fi
+    if [ "$merged" -eq 0 ]; then add kept "$path" "$branch" "not merged into $BASE$(unmerged_details "$path" "$branch")"; return; fi
+    rescue_stray_credo "$path"   # copies missing files only; a conflict keeps the worktree dirty below
     # From here on the worktree is merged. Whatever is still in it is the owner's call, never ours,
     # except lossless .credo changes: the owner setting decides whether the script removes them.
     classify_changes "$path"

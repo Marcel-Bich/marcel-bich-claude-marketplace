@@ -5,6 +5,8 @@
 # Usage: bash test-item-move.sh
 
 set -uo pipefail
+# the item-close temp cleanup (#174) runs for the session in CLAUDE_CODE_SESSION_ID: never the live one here
+unset CLAUDE_CODE_SESSION_ID CREDO_SESSION_ID
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUT="$SCRIPT_DIR/credo-item-move.sh"

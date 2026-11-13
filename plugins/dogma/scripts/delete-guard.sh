@@ -20,6 +20,11 @@
 # It also applies the setting-independent rules of the token, git-add and dependency
 # guards (each behind its own switch).
 #
+# credo's cleanup helper (credo-cleanup.py own-rm, #174) is not a delete command for this guard:
+# it deletes in Python and only paths its session's hook-written provenance ledger proves the
+# session created (same dev+inode), with its own hard denylist (/, the home, ~/.claude*, mounts,
+# repositories, the owner keep list). It is the sanctioned path for an agent's own temp output.
+#
 # Unlike file-protection.sh this guard does NOT read DOGMA-PERMISSIONS.md and has no
 # per-hook switch and no worktree exemption: it always applies. Only the master
 # switch CLAUDE_MB_DOGMA_ENABLED=false turns it off.

@@ -615,6 +615,11 @@ setting_rows "DGL_TMPV=$T/scratch; printf -v DGL_TMPV %s \"\$X\"; rm -f \"\$DGL_
 unset DGL_TMPV
 setting_rows "R=/home; rm -rf \"\$R\"" deny-hard deny-hard deny-hard
 setting_rows "rm -rf /home/alice" deny-hard deny-hard deny-hard
+# credo's ledger-verified cleanup helper (#174) is the sanctioned delete path for an agent's own
+# temp output: it decides itself (provenance ledger, hard denylist) and is never a delete finding
+setting_rows "python3 /opt/plugins/credo/scripts/credo-cleanup.py own-rm $FH/proj/sub/build /tmp/x" allow allow allow
+# ... but only under its literal path: a command word read from a variable is a run-time command word
+setting_rows "\"\$CREDO_CLEANUP\" own-rm /tmp/acme-task/out" allow ask deny
 [ -s "$PERM/d/TO-DELETE.md" ] && [ ! -e "$PERM/x/TO-DELETE.md" ] && [ ! -e "$PERM/q/TO-DELETE.md" ] \
     && PASS=$((PASS + 1)) || { FAIL=$((FAIL + 1)); echo "FAIL TO-DELETE.md only in the [ ] folder"; }
 

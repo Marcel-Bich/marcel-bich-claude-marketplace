@@ -75,7 +75,8 @@
 # (defensively, never failing the move) so items whose blockers are now delivered
 # return to their unblock_to target immediately.
 #
-# After a successful move to done, verified or archived, merged+clean worktrees are
+# After a successful move to done, verified or archived, the idle entries of the session TMPDIR
+# are cleared (credo-cleanup.py item-close, #174), and merged+clean worktrees are
 # cleaned up per the DOGMA-PERMISSIONS checkbox "clean up merged worktrees
 # automatically" ([x] remove, [?] or missing: list candidates and ask, [ ] nothing) via
 # credo-worktree-cleanup.sh - also defensive, never failing the move.
@@ -630,6 +631,19 @@ case "$TARGET" in
                     fi
                     ;;
             esac
+        fi
+        ;;
+esac
+
+# --- session temp cleanup at item close (#174) -----------------------------------
+# Closing an item clears the idle entries of this session's own TMPDIR
+# (credo-cleanup.py item-close: ledger-verified, entries idle for 30 minutes, the dir itself
+# stays because the session and its parallel subagents go on). Never fails the move, never asks.
+case "$TARGET" in
+    done|verified|3_verified|archived)
+        if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -f "$SCRIPT_DIR/credo-cleanup.py" ]; then
+            python3 -I "$SCRIPT_DIR/credo-cleanup.py" item-close 2>/dev/null \
+                | sed 's/^/credo-item-move: session temp cleanup: /' || true
         fi
         ;;
 esac

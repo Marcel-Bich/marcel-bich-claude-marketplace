@@ -80,6 +80,30 @@ Passing the applicable level in this chain is the condition for bringing an item
 `done`. Do not skip up the chain: a configured `verify.primary_test` is not satisfied by
 running Playwright instead.
 
+## Playwright version (newest installed, never installed by credo)
+
+Every Playwright version needs its own browser revision (250-600 MB each), so old lockfile
+pins pile up old browsers under `~/.cache/ms-playwright`.
+
+- **(a) Raise Playwright as its own step - only with consent.** When you work in a project
+  whose Playwright is older than the newest version, propose raising it (lockfile update,
+  then `npx playwright install` for the browsers) as a separate step with a test run. Green
+  -> keep it; red -> go back to the old version and report. Raising it changes the lockfile
+  and downloads browsers, so it IS an install. It needs the owner's explicit consent each
+  time (credo `safety`, no-autonomous-installs). In autonomous runs or wherever the Ask tool
+  is not used, never do it. Note it as a proposal for the owner and carry on with the
+  installed version.
+- **(b) Unreferenced revisions are pruned automatically.** Once a day the SessionStart
+  maintenance runs `credo-cleanup.py playwright-prune`: it finds every
+  `playwright-core/browsers.json` on disk (also `~/.npm/_npx`, global and pnpm installs, plus
+  Playwright's own `.links`) and removes the revision directories under
+  `~/.cache/ms-playwright` (or `PLAYWRIGHT_BROWSERS_PATH`) that none of them names. It only
+  deletes and never downloads or installs anything. A project that still needs a removed
+  revision gets it back only when a user (or an agent with consent) runs its install. It
+  never touches `mcp-chrome-*` or any directory that is not a known browser-revision name,
+  keeps revisions installed less than 2 hours ago, and prunes nothing when the search did
+  not finish or found no installation.
+
 ## Flaky tests and speed
 
 - A flaky test is a defect. Find the cause and fix it. Flaky tests are always fixed,

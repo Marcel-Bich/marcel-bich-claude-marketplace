@@ -95,6 +95,26 @@ there) - leave it in place and list it in the end-of-run report for the user. A 
 whose cleanup was blocked by a delete guard reports the path; the main agent then checks
 and removes it.
 
+Carve-out - own leftovers through the cleanup helper (provenance ledger, #174): anything this
+session or one of its subagents (same session id) provably created may be removed without
+asking, in every mode, but ONLY through `python3 <credo>/scripts/credo-cleanup.py own-rm
+<literal path>...` (the SessionStart line names the full helper path; write it literally, a
+command word read from a variable counts as unknown to the delete guards). Never `rm -rf`
+outside the cwd for this. The helper is not a bypass of the protection above. Credo hooks write
+a per-session ledger of what each tool call created (birth time after the call's time mark,
+Write/Edit of a new file), tool calls that try to write that ledger are denied, and the helper
+removes a path only when the ledger names it (or a directory above it) with the same
+device+inode. It refuses whatever the ledger says: `/`, the home and its parents, every path
+under `~/.claude*/` and `$CLAUDE_CONFIG_DIR`, mount points, linked worktrees, repositories
+outside the temp roots, git-tracked files, the owner keep list (`cleanup.keep_paths` in the
+LOCAL config), entries born while another session was running a tool call without the command
+naming them, and symlink targets (a link is unlinked, never followed). A refusal or failure is
+a report line, never a blocker. Note the path for the owner and carry on. `credo-cleanup.py
+report` lists what is yours; `keep <path> <name> --reason "<owner quote>"` moves a result the
+owner wants to keep to `~/.local/share/credo/keep/<project>/<name>/` (local keep list, item,
+licence note); such an entry is removed only with `--superseded "<newer owner decision>"` or
+once its item is archived.
+
 Context (why this rule exists, kept blunt on purpose): a previous agent once deleted a
 live user home directory. This rule exists so that never happens again.
 

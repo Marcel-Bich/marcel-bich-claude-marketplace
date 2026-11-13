@@ -731,6 +731,18 @@ An item may move into `2_done/` ONLY when ALL of these hold. This gate is hard.
    change affects and update it now.
 6. **Version bump as part of the DoD** - bump the version as part of completing the work,
    dogma-first (follow dogma's versioning if present), credo as fallback only.
+7. **Own leftovers cleaned up (never a blocker)** - before the move, remove the artifacts
+   the work created and the item does not need as its result (scratchpad content, temp
+   exports, test runs, downloaded throwaway data, worktrees no longer needed). Run
+   `credo-cleanup.py purge [--except <result path>]...` (removes this session's confirmed
+   temp entries idle for 30 minutes and lists the rest; `--now` also takes fresh ones when
+   no subagent of the session runs in parallel), then `credo-cleanup.py own-rm <path>...` for listed
+   entries that are yours and not a result. Results the owner wants to keep go through
+   `credo-cleanup.py keep`. Never `~/.claude*/` (session transcripts stay forever) and never
+   project data the owner keeps. A refusal or a failed delete is NOT a blocker and is never
+   asked about. List the paths in the item's History or the run report and move on (credo
+   `safety`, "own leftovers through the cleanup helper"). The move itself clears idle
+   entries of the session TMPDIR (`item-close`).
 
 The parent's DoD is all-or-nothing over its BUILDABLE criteria ONLY. A
 "measure-then-user-decide" point (a user-only decision that arises only after a measurement
