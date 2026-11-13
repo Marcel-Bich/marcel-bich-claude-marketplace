@@ -110,9 +110,27 @@ run_call() { # <bash command between pre and post> [session] [cwd]
     bash -c "$1"
     hook post Bash "$cj" "${2:-$SA}" "${3:-$R}"
 }
-tx_write() { # record a Write tool call for path in this session's transcript
-    python3 -c 'import json,sys; print(json.dumps({"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":sys.argv[1],"content":"x"}}]}}, separators=(",", ":")))' "$1" >> "$TX"
+TXN=0
+tx_call() { # <tool name> <path> <ok|error|rejected> : one tool_use plus its tool_result in the transcript
+    TXN=$((TXN + 1))
+    python3 -c '
+import json, sys
+name, path, how, n = sys.argv[1:5]
+use = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_" + n, "name": name,
+       "input": {"file_path": path, "content": "x"}}]}}
+res = {"type": "tool_result", "tool_use_id": "toolu_" + n, "content": "ok"}
+top = {"type": "user", "message": {"content": [res]}, "toolUseResult": {"type": "create", "filePath": path}}
+if how == "error":
+    res["is_error"] = True
+    top["toolUseResult"] = "Error: write failed"
+elif how == "rejected":
+    res["is_error"] = True
+    top["toolUseResult"] = "User rejected tool use"
+print(json.dumps(use, separators=(",", ":")))
+print(json.dumps(top, separators=(",", ":")))
+' "$1" "$2" "$3" "$TXN" >> "$TX"
 }
+tx_write() { tx_call Write "$1" ok; }
 write_call() { # <file path> : a Write tool call that creates the file (hooks + transcript)
     N=$((N + 1))
     hook pre Write "{\"file_path\":\"$1\"}" >/dev/null
@@ -120,6 +138,9 @@ write_call() { # <file path> : a Write tool call that creates the file (hooks + 
     hook post Write "{\"file_path\":\"$1\"}"
     tx_write "$1"
 }
+
+# the session SA belongs to this shell's process tree (its helper calls are descendants)
+printf '{"pid":%s,"sessionId":"%s"}' "$$" "$SA" > "$PROF/sessions/$$.json"
 
 # --- 0. session start: private base, TMPDIR export -----------------------------------------
 ENVF="$TMP/envfile"; : > "$ENVF"
@@ -136,7 +157,7 @@ check "non-UUID session id: no session dir" no "$(exists "$CTMP/Documents")"
 mkdir "$R/pre1"
 run_call "mkdir $R/own1 && echo x > $R/own1/f"
 o="$(helper own-rm "$R/own1")"
-contains "scan entry with command evidence is report-only" "refused $R/own1: report only: found by the birth-time scan" "$o"
+contains "scan entry with command evidence is report-only" "refused $R/own1: report only" "$o"
 check "scan entry kept" yes "$(exists "$R/own1/f")"
 o="$(helper own-rm "$R/pre1")"
 contains "pre-existing refused" "refused $R/pre1: not created by this session" "$o"
@@ -151,19 +172,52 @@ check "owner's new project kept" yes "$(exists "$FH/newproject")"
 check "owner's note kept" yes "$(exists "$FH/notes/plan.md")"
 contains "home scan recorded the new home dir (reported)" '"root_kind": "home"' "$(grep newproject "$LEDGER_FILE")"
 
-# --- 2. Write-created temp entries: deletable only with the transcript ------------------------
+# --- 2. Write-created temp files: only that single file, only with the transcript ------------
 write_call "$R/wrote/out.txt"
-contains "topmost new dir of a Write recorded" '"evidence": "write"' "$(grep "\"$R/wrote\"" "$LEDGER_FILE")"
+contains "the written file is recorded with write evidence" '"evidence": "write"' "$(grep "\"$R/wrote/out.txt\"" "$LEDGER_FILE")"
+contains "its new parent dir is only write-parent (report only)" '"evidence": "write-parent"' "$(grep "\"$R/wrote\"" "$LEDGER_FILE")"
 o="$(helper own-rm "$R/wrote")"
-contains "Write entry confirmed by the transcript removed" "removed $R/wrote" "$o"
+contains "dir created on the way by a Write is report-only" "refused $R/wrote" "$o"
+o="$(helper own-rm "$R/wrote/out.txt")"
+contains "the Write-created file (transcript-confirmed) removed" "removed $R/wrote/out.txt" "$o"
+# B1: a dir that a Write created owns nothing that lands in it later
+write_call "$R/verify/a.txt"
+echo other > "$R/verify/from-session-b.txt"; mkdir "$R/verify/owner"; echo o > "$R/verify/owner/notes"
+o="$(helper own-rm "$R/verify")"
+check "Write-created dir with foreign content kept" yes "$(exists "$R/verify/owner/notes")"
+o="$(helper own-rm "$R/verify/from-session-b.txt")"
+contains "file another process put into it refused" "not created by this session" "$o"
+# B2: post never records anything born before t0
+mkdir -p "$R/race/sub"; echo old > "$R/race/sub/f"
+sleep 0.05
+mkdir -p "$TMP/state/marks/$SA"
+python3 -c 'import json,sys,time; json.dump({"new": sys.argv[1], "file": sys.argv[2]}, open(sys.argv[3] + "/%.6f_tuRACE" % time.time(), "w"))' \
+    "$R/race" "$R/race/sub/f" "$TMP/state/marks/$SA"
+printf '{"session_id":"%s","tool_name":"Write","tool_use_id":"tuRACE","cwd":"%s","tool_input":{"file_path":"%s"}}' "$SA" "$R" "$R/race/sub/f" \
+    | python3 -I "$SHIM" "$OVJ" "$LEDGER" post
+check "nothing born before t0 is recorded" 0 "$(grep -c "$R/race" "$LEDGER_FILE")"
+# M1: the transcript must hold a successful write of exactly that file
 N=$((N + 1))
 hook pre Write "{\"file_path\":\"$R/notx.txt\"}" >/dev/null
 echo w > "$R/notx.txt"
 hook post Write "{\"file_path\":\"$R/notx.txt\"}"
 o="$(helper own-rm "$R/notx.txt")"
-contains "Write entry without transcript call is report-only" "no Write/Edit call for it in this session's transcript" "$o"
+contains "Write entry without transcript call is report-only" "no successful Write/Edit call for exactly this file" "$o"
+tx_call Read "$R/notx.txt" ok
+o="$(helper own-rm "$R/notx.txt")"
+contains "a Read call is no evidence" "no successful Write/Edit call" "$o"
+tx_call Write "$R/notx.txt" rejected
+tx_call Write "$R/notx.txt" error
+o="$(helper own-rm "$R/notx.txt")"
+contains "rejected or failed Writes are no evidence" "no successful Write/Edit call" "$o"
+tx_call Write "$R/notx.txt.bak" ok
+o="$(helper own-rm "$R/notx.txt")"
+contains "no prefix match" "no successful Write/Edit call" "$o"
+tx_call Edit "$R/notx.txt" ok
+o="$(helper own-rm "$R/notx.txt")"
+contains "a successful Edit of exactly the file counts" "removed $R/notx.txt" "$o"
 write_call "$FH/made-by-write/a.txt"
-o="$(helper own-rm "$FH/made-by-write")"
+o="$(helper own-rm "$FH/made-by-write/a.txt")"
 contains "Write entry in the home is report-only" "outside the temp roots" "$o"
 check "home Write entry kept" yes "$(exists "$FH/made-by-write/a.txt")"
 echo old > "$R/existing.txt"
@@ -180,10 +234,10 @@ import json, os, sys
 sys.path.insert(0, sys.argv[3]); import credo_cleanup_lib as L
 p = sys.argv[1]; st = os.lstat(p)
 open(sys.argv[2], "a").write(json.dumps({"event": "record", "path": p, "dev": st.st_dev, "ino": st.st_ino,
-    "type": "dir", "btime": L.birth_time(p), "evidence": "write", "root_kind": "write"}) + "\n")
-' "$R/owner-report" "$LEDGER_FILE" "$SCRIPT_DIR"
-o="$(helper own-rm "$R/owner-report")"
-contains "forged ledger line alone deletes nothing" "no Write/Edit call for it in this session's transcript" "$o"
+    "type": "file", "btime": L.birth_time(p), "evidence": "write", "root_kind": "write"}) + "\n")
+' "$R/owner-report/final.docx" "$LEDGER_FILE" "$SCRIPT_DIR"
+o="$(helper own-rm "$R/owner-report/final.docx")"
+contains "forged ledger line alone deletes nothing" "no successful Write/Edit call" "$o"
 check "forged-line target kept" yes "$(exists "$R/owner-report/final.docx")"
 # inode reuse: same dev+inode, other birth time
 write_call "$R/reuse.log"
@@ -197,9 +251,9 @@ open(sys.argv[2], "w").write("".join(json.dumps(r) + "\n" for r in lines))
 ' "$R/reuse.log" "$LEDGER_FILE"
 o="$(helper own-rm "$R/reuse.log")"
 contains "inode reuse (other birth time) refused" "replaced since it was recorded" "$o"
-write_call "$R/swapped/f"
-rm -r "$R/swapped"; mkdir "$R/swapped"
-o="$(helper own-rm "$R/swapped")"
+write_call "$R/swapped.txt"
+rm "$R/swapped.txt"; echo new > "$R/swapped.txt"
+o="$(helper own-rm "$R/swapped.txt")"
 contains "inode change refused" "replaced since it was recorded" "$o"
 
 # --- 3. session TMPDIR and scratchpad (session-bound) -----------------------------------------
@@ -224,6 +278,21 @@ contains "keep_paths refused" "owner's keep list" "$o"
 mkdir "$ST/nonuuid"
 o="$(CLAUDE_CODE_SESSION_ID=Documents helper own-rm "$ST/nonuuid")"
 contains "non-UUID session id refused" "no session id" "$o"
+
+# N1: the session id must belong to the caller's process tree
+SC="cccccccc-0000-4000-8000-000000000003"
+mkdir -p "$CTMP/$SB"; chmod 700 "$CTMP/$SB"; mkdir "$CTMP/$SB/their-run"
+( exec sleep 30 ) &
+OTHER=$!
+printf '{"pid":%s,"sessionId":"%s"}' "$OTHER" "$SB" > "$PROF/sessions/$OTHER.json"
+o="$(CLAUDE_CODE_SESSION_ID="$SB" helper own-rm "$CTMP/$SB/their-run")"
+contains "another live session's TMPDIR refused" "alive in another process tree" "$o"
+check "other session's run kept" yes "$(exists "$CTMP/$SB/their-run")"
+kill "$OTHER" 2>/dev/null; wait "$OTHER" 2>/dev/null
+rm -f "$PROF/sessions/$OTHER.json"
+mkdir -p "$CTMP/$SC"; chmod 700 "$CTMP/$SC"; mkdir "$CTMP/$SC/x"
+o="$(CLAUDE_CODE_SESSION_ID="$SC" helper own-rm "$CTMP/$SC/x")"
+contains "unbound session id is report-only" "cannot be bound to the calling process tree" "$o"
 
 # --- 4. env overrides are ignored (B1) ------------------------------------------------------
 o="$(CREDO_CLEANUP_SCRATCH_GLOB="$FH/Documents" CREDO_TMP_BASE="$FH" CREDO_CLEANUP_STATE="$TMP/fake" \
@@ -300,11 +369,13 @@ check "kept export still there" yes "$(exists "$TMP/keep/acme/onnx-v2/model.bin"
 write_call "$R/wrote2/out.txt"
 mkdir "$ST/build1"
 o="$(CREDO_TEST_OV_EXTRA='{"idle_minutes": 30}' helper purge)"
-contains "purge keeps a fresh Write entry (idle 30 min)" "refused $R/wrote2: report only: changed in the last" "$o"
-contains "purge lists scan entries" "listed $R/own1: report only: found by the birth-time scan" "$o"
+contains "purge keeps a fresh Write entry (idle 30 min)" "refused $R/wrote2/out.txt: report only: changed in the last" "$o"
+contains "purge lists the Write-parent dir" "listed $R/wrote2: report only" "$o"
+contains "purge lists scan entries" "listed $R/own1: report only: not a file the Write/Edit tool created" "$o"
 contains "purge lists TMPDIR children" "listed $ST/build1: session TMPDIR, shared with parallel subagents" "$o"
 o="$(helper purge --now)"
-contains "purge --now removes the confirmed Write entry" "removed $R/wrote2" "$o"
+contains "purge --now removes the confirmed Write file" "removed $R/wrote2/out.txt" "$o"
+check "purge keeps the Write-parent dir" yes "$(exists "$R/wrote2")"
 check "purge leaves TMPDIR children" yes "$(exists "$ST/build1")"
 check "purge leaves scan entries" yes "$(exists "$R/own1")"
 mkdir -p "$ST/bt/result"; echo r > "$ST/bt/result/model.bin"
@@ -362,34 +433,54 @@ printf '36 25 8:1 / / rw - ext4 /dev/sda rw\n90 36 8:1 /x %s rw - ext4 /dev/sda 
 mkdir -p "$ST/bound/inner"
 o="$(CREDO_TEST_OV_EXTRA="{\"mountinfo\": \"$MI\"}" helper own-rm "$ST/bound")"
 contains "bind mount below the target refused" "mount point at or below it" "$o"
-mkdir -p "$FH/gdrive"
-printf '36 25 8:1 / / rw - ext4 /dev/sda rw\n91 36 0:99 / %s rw - fuse.rclone gd rw\n' "$FH/gdrive" > "$MI"
-N=$((N + 1)); cj="$(cmdjson "mkdir $FH/gdrive/newdir")"
+mkdir -p "$FH/cloudmnt"
+printf '36 25 8:1 / / rw - ext4 /dev/sda rw\n91 36 0:99 / %s rw - fuse.example cm rw\n' "$FH/cloudmnt" > "$MI"
+N=$((N + 1)); cj="$(cmdjson "mkdir $FH/cloudmnt/newdir")"
 CREDO_TEST_OV_EXTRA="{\"mountinfo\": \"$MI\"}" hook pre Bash "$cj"
-mkdir "$FH/gdrive/newdir"
+mkdir "$FH/cloudmnt/newdir"
 CREDO_TEST_OV_EXTRA="{\"mountinfo\": \"$MI\"}" hook post Bash "$cj"
-check "home scan never enters a mount (FUSE)" 0 "$(grep -c 'gdrive' "$LEDGER_FILE")"
+check "home scan never enters a mount (FUSE)" 0 "$(grep -c 'cloudmnt' "$LEDGER_FILE")"
 # git error fails closed
 mkdir "$ST/clone1"; git init -q "$ST/clone1"; echo a > "$ST/clone1/a.txt"
 git -C "$ST/clone1" add a.txt; echo garbage > "$ST/clone1/.git/index"
 o="$(helper own-rm "$ST/clone1/a.txt")"
 contains "git error fails closed" "tracked by git" "$o"
 
-# --- 13. own worktree: ignored build output only -------------------------------------------------
+# --- 13. own worktree: only known build-output dirs of a worktree this session created --------
 M="$TMP/repo"
 git init -q -b main "$M"
 mkdir -p "$M/.credo/items"; echo "same" > "$M/.credo/items/a.md"; echo "main" > "$M/.credo/items/c.md"
-printf '.credo/\nbuild/\n' > "$M/.gitignore"
+printf '.credo/\nbuild/\nnode_modules/\n*.local.db\nsettings.local*\n' > "$M/.gitignore"
 git -C "$M" add .gitignore && git -C "$M" commit -q -m init
-git -C "$M" worktree add -q -b wt/un "$TMP/repo-worktrees/un"
+mkdir -p "$TMP/repo-worktrees"
+git -C "$M" worktree add -q -b wt/un "$TMP/repo-worktrees/un"     # NOT created by this session
 W="$TMP/repo-worktrees/un"
-mkdir -p "$W/build/out"; echo bin > "$W/build/out/app"; echo src > "$W/src.txt"
+WR="$TMP/repo-worktrees"
+CREDO_TEST_OV_EXTRA="{\"roots\": [\"$R\", \"$WR\"]}" run_call "git -C $M worktree add -q -b wt/mine $WR/mine"
+MW="$WR/mine"
+contains "worktree creation recorded" "\"$MW\"" "$(cat "$LEDGER_FILE")"
+mkdir -p "$MW/build/out" "$MW/web/node_modules/pkg" "$MW/dist"; echo bin > "$MW/build/out/app"; echo m > "$MW/web/node_modules/pkg/i.js"
+echo db > "$MW/x.local.db"; echo s > "$MW/settings.local.json"; echo c > "$MW/CLAUDE.md"
+echo "dist/" >> "$M/.git/info/exclude"; echo "CLAUDE.md" >> "$M/.git/info/exclude"
+o="$(cd "$MW" && helper own-rm "$MW/build" "$MW/web/node_modules")"
+contains "build/ of the own worktree removed" "removed $MW/build" "$o"
+contains "nested node_modules removed" "removed $MW/web/node_modules" "$o"
+o="$(cd "$MW" && helper own-rm "$MW/x.local.db" "$MW/settings.local.json" "$MW/CLAUDE.md")"
+check "*.local.db kept" yes "$(exists "$MW/x.local.db")"
+check "settings.local kept" yes "$(exists "$MW/settings.local.json")"
+check "CLAUDE.md kept" yes "$(exists "$MW/CLAUDE.md")"
+contains "single files are report-only" "only known build-output directories" "$o"
+o="$(cd "$MW" && helper own-rm "$MW/dist")"
+contains "dir ignored only by info/exclude refused" "not by a tracked .gitignore" "$o"
+mkdir -p "$W/build/out"; echo bin > "$W/build/out/app"
 o="$(cd "$W" && helper own-rm "$W/build")"
-contains "ignored build output in own worktree removed" "removed $W/build" "$o"
-o="$(cd "$W" && helper own-rm "$W/src.txt")"
-contains "untracked non-ignored worktree file refused" "refused $W/src.txt" "$o"
-o="$(cd "$R" && mkdir -p "$W/build" && helper own-rm "$W/build")"
-contains "build output of a worktree the helper does not run in refused" "refused $W/build" "$o"
+contains "worktree not created by this session refused" "does not show it created this worktree" "$o"
+check "other worktree's build kept" yes "$(exists "$W/build/out/app")"
+o="$(cd "$R" && helper own-rm "$MW/dist")"
+contains "worktree the helper does not run in refused" "refused $MW/dist" "$o"
+mkdir -p "$WR/subm/build"; printf 'gitdir: %s\n' "$M/.git/modules/subm" > "$WR/subm/.git"
+o="$(cd "$WR/subm" && helper own-rm "$WR/subm/build")"
+contains "submodule-style .git refused" "not a hydra worktree" "$o"
 
 # --- 14. worktrees: .credo guard, rescue, unmerged never removed --------------------------------
 echo work > "$W/f.txt"; git -C "$W" add f.txt; git -C "$W" commit -q -m unique
@@ -420,7 +511,6 @@ contains "linked worktree refused" "linked git worktree" "$o"
 check "linked worktree kept" yes "$(exists "$ST/wt2/.git")"
 
 # --- 15. sweep of dead sessions --------------------------------------------------------------
-printf '{"pid":%s,"sessionId":"%s"}' "$$" "$SA" > "$PROF/sessions/$$.json"
 DEAD="$CTMP/11111111-2222-4333-8444-555555555555"
 mkdir -p "$DEAD/x"; echo y > "$DEAD/x/f"
 git -C "$M" worktree add -q -b wip "$DEAD/wt"
@@ -484,6 +574,30 @@ o="$(helper playwright-prune --cache "$PC" --search "$S")"
 contains "malformed Playwright browsers.json: nothing pruned" "nothing is pruned when anything is unclear" "$o"
 check "kept while unclear" yes "$(exists "$PC/chromium-1000")"
 check "helper never runs an installer" 0 "$(cat "$HELPER" "$LEDGER" | grep -c -E '"(npx|npm|pnpm|yarn|pip|pip3|apt|apt-get)"')"
+
+# N2: a .links target that cannot be read (EIO, a drive that is down, no permission) is unclear
+echo '{"browsers":[{"name":"chromium","revision":"1200"}]}' > "$S/proj/node_modules/playwright-core/browsers.json"
+mkdir -p "$TMP/linkpkg/locked"; echo '{"browsers":[]}' > "$TMP/linkpkg/locked/browsers.json"
+printf '%s' "$TMP/linkpkg/locked" > "$PC/.links/abc"; chmod 000 "$TMP/linkpkg"
+o="$(helper playwright-prune --cache "$PC" --search "$S/proj")"
+chmod 700 "$TMP/linkpkg"
+contains "unreachable .links target: nothing pruned" "nothing is pruned when anything is unclear" "$o"
+
+# N4: worktree in use by an open file (not cwd), and the background busy check
+M2="$TMP/repo3"
+git init -q -b main "$M2"; git -C "$M2" commit -q --allow-empty -m init
+git -C "$M2" worktree add -q -b wt/m "$TMP/repo3-worktrees/m"
+echo w > "$TMP/repo3-worktrees/m/f.txt"; git -C "$TMP/repo3-worktrees/m" add f.txt; git -C "$TMP/repo3-worktrees/m" commit -q -m m
+git -C "$M2" merge -q --ff-only wt/m
+( cd "$TMP" && exec python3 -c 'import sys, time; f = open(sys.argv[1]); time.sleep(30)' "$TMP/repo3-worktrees/m/f.txt" ) &
+HOLD=$!
+sleep 0.5
+o="$(cd "$TMP" && bash "$WTC" --dry-run "$M2" 2>/dev/null)"
+kill "$HOLD" 2>/dev/null; wait "$HOLD" 2>/dev/null
+contains "open file inside keeps a merged worktree" "live process inside it" "$o"
+o="$(helper worktree-busy "$TMP/repo3-worktrees/m")"; rc=$?
+check "recent change: worktree busy" 0 "$rc"
+contains "busy reason names the change" "changed in the last 2h" "$o"
 
 # --- 17. disabled switch -------------------------------------------------------------------------
 o="$(CREDO_LEDGER=0 hook pre Write "{\"file_path\":\"$LEDGER_FILE\"}")"

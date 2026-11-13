@@ -78,8 +78,13 @@
 # entries) and the size (du, best effort). Unmerged worktrees are never removed by this script;
 # forgotten work stays until the owner decides.
 #
+# In use (#174). A worktree is kept when any live process has its cwd, its executable or an open
+# file inside it. --background (the unattended SessionStart run) also keeps it, as "possibly in
+# use", when any file in it changed in the last 2 hours, a live session's cwd lies inside it, or
+# a live session's ledger names a path inside it; when that check fails it is kept too.
+#
 # Usage:
-#   credo-worktree-cleanup.sh [--dry-run] [--json] [--details] [--base <branch>] [--fresh-hours N]
+#   credo-worktree-cleanup.sh [--dry-run] [--json] [--details] [--background] [--base <branch>] [--fresh-hours N]
 #                             [--keep <path|branch>]... [--allow-lossless <path|branch>]... [dir]
 #   credo-worktree-cleanup.sh --list-locked [--json] [dir]
 #     --dry-run      list candidates and kept worktrees, remove nothing
@@ -119,6 +124,7 @@ die() { echo "credo-worktree-cleanup: $1" >&2; exit "${2:-1}"; }
 
 DRY=0
 DETAILS=0
+BACKGROUND=0
 MODE="kv"
 BASE=""
 FRESH_HOURS=24
@@ -132,6 +138,7 @@ while [ $# -gt 0 ]; do
         --dry-run|-n) DRY=1 ;;
         --json) MODE="json" ;;
         --details) DETAILS=1 ;;
+        --background) BACKGROUND=1 ;;
         --base) [ -n "${2:-}" ] || die "--base needs a branch"; BASE="$2"; shift ;;
         --fresh-hours)
             case "${2:-}" in ''|*[!0-9]*) die "--fresh-hours needs a whole number" ;; esac
@@ -445,16 +452,31 @@ classify_changes() { # worktree-path
 # (readlink; an unreadable entry is skipped). Sets FOUND_PID when one matches.
 PROC_CWDS=""
 PROC_READ=0
-process_inside() { # real-path -> 0 and FOUND_PID when a live process has its cwd inside
-    local link pid cwd
+process_inside() { # real-path -> 0 and FOUND_PID when a live process has its cwd, exe or an open file inside
+    local pid cwd
     if [ "$PROC_READ" -eq 0 ]; then
         PROC_READ=1
-        for link in /proc/[0-9]*/cwd; do
-            [ -L "$link" ] || continue
-            cwd="$(readlink "$link" 2>/dev/null)" || continue
-            pid="${link#/proc/}"
-            PROC_CWDS+="${pid%/cwd}"$'\t'"$cwd"$'\n'
-        done
+        # one pass over /proc: cwd, exe and every open file descriptor of each readable process
+        PROC_CWDS="$(python3 -I -c '
+import os
+for pid in os.listdir("/proc"):
+    if not pid.isdigit():
+        continue
+    links = ["/proc/%s/cwd" % pid, "/proc/%s/exe" % pid]
+    try:
+        links += ["/proc/%s/fd/%s" % (pid, f) for f in os.listdir("/proc/%s/fd" % pid)]
+    except OSError:
+        pass
+    for ln in links:
+        try:
+            t = os.readlink(ln)
+        except OSError:
+            continue
+        if t.endswith(" (deleted)"):
+            t = t[:-10]
+        if t.startswith("/") and "\t" not in t and "\n" not in t:
+            print("%s\t%s" % (pid, t))
+' 2>/dev/null)"$'\n'
     fi
     while IFS=$'\t' read -r pid cwd; do
         case "$cwd" in
@@ -537,6 +559,15 @@ evaluate() { # path branch locked prunable lock-reason
     if process_inside "$real"; then
         add kept "$path" "$branch" "live process inside it (pid $FOUND_PID)$ask"
         return
+    fi
+    if [ "$BACKGROUND" -eq 1 ]; then
+        # unattended run (SessionStart): in doubt, skip - a recent change, a live session whose
+        # cwd is inside, or a live session's ledger naming it
+        local busy
+        if busy="$(python3 -I "$SCRIPT_DIR/credo-cleanup.py" worktree-busy "$real" 2>/dev/null)"; then
+            add kept "$path" "$branch" "possibly in use ($busy), skipped by the background run"
+            return
+        fi
     fi
     if [ "$(own_commit_entries "$branch")" -gt 0 ]; then
         if [ "$MERGED_HOW" = "rebased" ]; then

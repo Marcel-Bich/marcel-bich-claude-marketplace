@@ -111,23 +111,91 @@ class Target:
         self.info = info or L.TreeInfo()
 
 
-def own_worktree_output(p, st):
-    """(ok, since, reason) for ignored build output inside the linked (hydra) worktree the helper
-    runs in: p lies inside that worktree (not the worktree itself), git ignores it and tracks
-    nothing below it. since = the worktree's birth, so older (moved-in) content is refused."""
+BUILD_DIR_NAMES = {"node_modules", "dist", "build", "out", "coverage", ".next", ".nuxt", ".turbo",
+                   ".cache", "target", "__pycache__", ".pytest_cache", ".mypy_cache",
+                   "playwright-report", "test-results", ".venv"}
+
+
+def _hydra_worktree(top):
+    """Main checkout of top when top is a linked git worktree (not a submodule) below
+    <main>-worktrees/, else None."""
+    try:
+        with open(os.path.join(top, ".git"), encoding="utf-8") as fh:
+            line = fh.readline().strip()
+    except OSError:
+        return None
+    if not line.startswith("gitdir:"):
+        return None
+    gd = line[7:].strip()
+    gd = os.path.realpath(gd if os.path.isabs(gd) else os.path.join(top, gd))
+    if os.path.basename(os.path.dirname(gd)) != "worktrees":
+        return None  # a submodule (.git/modules/...) or anything else
+    main = L.main_checkout_of(top)
+    if not main or not L.is_under(top, main.rstrip("/") + "-worktrees") or top == main.rstrip("/") + "-worktrees":
+        return None
+    return main
+
+
+def _created_by_session(top, main, entries):
+    """True when this session's ledger recorded the creation of the worktree dir (or of its
+    parent dir inside <main>-worktrees) with the same dev+inode+birth and no ambiguity."""
+    root = main.rstrip("/") + "-worktrees"
+    d = top
+    while L.is_under(d, root) and d != root:
+        e = entries.get(d)
+        if e is not None and not e.get("ambiguous"):
+            try:
+                st = os.lstat(d)
+            except OSError:
+                return False
+            if st.st_dev == e.get("dev") and st.st_ino == e.get("ino") and L.same_birth(e, d):
+                return True
+        d = os.path.dirname(d)
+    return False
+
+
+def own_worktree_output(p, st, entries):
+    """(ok, since, reason) for regenerable build output inside the hydra worktree the helper runs
+    in. All must hold: the cwd's git top is a linked worktree (no submodule) below
+    <main>-worktrees/ whose creation THIS session's ledger recorded; p is a directory (no single
+    file, no symlink) with a known build-output name (BUILD_DIR_NAMES); no repository or submodule
+    lies between the worktree and p; git ignores p through a TRACKED .gitignore (never only through
+    .git/info/exclude or a global excludes file). since = the worktree's birth."""
     top, linked = L.git_top(os.path.realpath(os.getcwd()))
     if not top or not linked or p == top or not L.is_under(p, top):
         return False, None, None
+    if not stat.S_ISDIR(st.st_mode) or os.path.basename(p) not in BUILD_DIR_NAMES:
+        return False, None, ("report only: inside a worktree only known build-output directories "
+                             "go (%s)" % ", ".join(sorted(BUILD_DIR_NAMES)))
+    main = _hydra_worktree(top)
+    if not main:
+        return False, None, "report only: not a hydra worktree below <repo>-worktrees/"
+    if not _created_by_session(top, main, entries):
+        return False, None, "report only: this session's ledger does not show it created this worktree"
+    d = os.path.dirname(p)
+    while d != top:
+        if os.path.lexists(os.path.join(d, ".git")):
+            return False, None, "report only: a repository or submodule lies in between"
+        d = os.path.dirname(d)
     rel = os.path.relpath(p, top)
-    if rel == ".git" or rel.startswith(".git/") or rel == ".credo" or rel.startswith(".credo/"):
-        return False, None, None
     try:
-        r = subprocess.run(["git", "-C", top, "check-ignore", "-q", "--", rel], capture_output=True,
-                           timeout=20)
+        r = subprocess.run(["git", "-C", top, "check-ignore", "-v", "--", rel], capture_output=True,
+                           text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
-        return False, None, "git check-ignore failed"
-    if r.returncode != 0:
-        return False, None, None
+        return False, None, "report only: git check-ignore failed"
+    if r.returncode != 0 or ":" not in r.stdout:
+        return False, None, "report only: not ignored by git"
+    source = r.stdout.split(":", 1)[0]
+    src_abs = os.path.normpath(os.path.join(top, source))
+    if os.path.basename(source) != ".gitignore" or not L.is_under(src_abs, top):
+        return False, None, "report only: ignored only by %s, not by a tracked .gitignore" % source
+    try:
+        t = subprocess.run(["git", "-C", top, "ls-files", "--error-unmatch", "--", os.path.relpath(src_abs, top)],
+                           capture_output=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return False, None, "report only: git ls-files failed"
+    if t.returncode != 0:
+        return False, None, "report only: the ignoring .gitignore is not tracked"
     return True, L.birth_time(top), None
 
 
@@ -157,9 +225,13 @@ def check_target(raw, sid, entries, cfg, keep_items):
     if not sid:
         t.reason = "no session id ($CLAUDE_CODE_SESSION_ID) - cannot check the ledger"
         return t
+    bound, why_unbound = L.sid_bound(sid)
+    if not bound:
+        t.reason = "report only: " + why_unbound
+        return t
     ok, entry, why, since = L.owned_entry(p, st, entries, sid)
     if not ok:
-        wt_ok, wt_since, wt_why = own_worktree_output(p, st)
+        wt_ok, wt_since, wt_why = own_worktree_output(p, st, entries)
         if not wt_ok:
             t.reason = wt_why or why
             return t
@@ -543,7 +615,7 @@ def worktrees(args):
         mode = (r.stdout or "").strip() or "deny"
     except (OSError, subprocess.SubprocessError):
         pass
-    argv = [script, "--details"]
+    argv = [script, "--details", "--background"]
     if mode != "auto":
         argv.append("--dry-run")  # only the owner setting [x] removes; otherwise report
     try:
@@ -553,6 +625,54 @@ def worktrees(args):
             out("failed worktrees: %s" % r.stderr.strip().splitlines()[-1])
     except (OSError, subprocess.SubprocessError) as exc:
         out("failed worktrees: %s" % exc)
+
+
+def worktree_busy(args):
+    """Exit 0 and print why when the worktree may be in use (the unattended worktree cleanup then
+    skips it): a file changed in the last 2 hours, a live session whose cwd lies inside, or a live
+    session's ledger naming a path inside. Exit 1 when none holds. Errors count as busy."""
+    wt = os.path.realpath(args.worktree)
+    t_end = time.time() + 30
+    cutoff = time.time() - 2 * 3600
+    try:
+        for dirpath, dirnames, filenames in os.walk(wt):
+            dirnames[:] = [d for d in dirnames if d != ".git"]
+            if time.time() > t_end:
+                out("check did not finish in 30s")
+                return 0
+            for n in filenames + dirnames:
+                try:
+                    st = os.lstat(os.path.join(dirpath, n))
+                except OSError:
+                    continue
+                if max(st.st_mtime, st.st_ctime) > cutoff:
+                    out("changed in the last 2h: %s" % os.path.join(dirpath, n))
+                    return 0
+    except OSError as exc:
+        out("walk failed: %s" % exc)
+        return 0
+    live = L.running_sessions()
+    for prof in L.profile_dirs():
+        for f in glob.glob(os.path.join(glob.escape(prof), "sessions", "*.json")):
+            try:
+                with open(f, encoding="utf-8") as fh:
+                    d = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            cwd = d.get("cwd")
+            if d.get("sessionId") in live and isinstance(cwd, str) and L.is_under(os.path.realpath(cwd), wt):
+                out("live session %s works inside" % d.get("sessionId"))
+                return 0
+    needle = json.dumps(wt)[1:-1]
+    for sid in live:
+        try:
+            with open(L.ledger_path(sid), encoding="utf-8", errors="replace") as fh:
+                if any(needle in line for line in fh):
+                    out("named in the ledger of live session %s" % sid)
+                    return 0
+        except OSError:
+            continue
+    return 1
 
 
 def rescue_credo(args):
@@ -794,11 +914,20 @@ def playwright_prune(args):
         for lf in glob.glob(os.path.join(cache, ".links", "*")):
             with open(lf, encoding="utf-8") as fh:
                 pkg = fh.read().strip()
+            if not pkg:
+                continue
             bj = os.path.join(pkg, "browsers.json")
-            if pkg and os.path.isfile(bj):
-                with open(bj, encoding="utf-8") as fh:
-                    refs |= parse_browsers(json.load(fh), bj)
-                files.append(bj)
+            try:
+                bst = os.stat(bj)
+            except FileNotFoundError:
+                continue  # the package was removed: a stale link
+            except OSError as exc:  # EIO, ENOTCONN, a drive that is down: unclear
+                raise Unclear("%s unreachable (%s)" % (bj, exc.strerror or exc))
+            if not stat.S_ISREG(bst.st_mode):
+                raise Unclear("%s is no regular file" % bj)
+            with open(bj, encoding="utf-8") as fh:
+                refs |= parse_browsers(json.load(fh), bj)
+            files.append(bj)
         used = revisions_in_use(cache)
     except (Unclear, OSError, ValueError) as exc:
         out("playwright prune skipped: %s; nothing is pruned when anything is unclear" % exc)
@@ -918,6 +1047,8 @@ def main():
     s.add_argument("--cache")
     s.add_argument("--search", action="append")
     s.add_argument("--time-limit", type=float, default=600)
+    s = sub.add_parser("worktree-busy")
+    s.add_argument("worktree")
     s = sub.add_parser("rescue-credo")
     s.add_argument("worktree")
     s.add_argument("--dry-run", action="store_true")
@@ -943,6 +1074,8 @@ def main():
             caches(args)
         elif args.cmd == "playwright-prune":
             playwright_prune(args)
+        elif args.cmd == "worktree-busy":
+            return worktree_busy(args)
         elif args.cmd == "rescue-credo":
             return rescue_credo(args)
         elif args.cmd == "maintenance":

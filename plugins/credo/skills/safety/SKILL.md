@@ -103,11 +103,19 @@ this), and the helper deletes only in three places:
 - inside the session TMPDIR (`/tmp/credo-tmp-<uid>/<session id>/`, a private 0700 dir) and the
   Claude Code scratchpad of the session (path derived from the session id, never from an
   environment variable);
-- files and directories the Write/Edit tool created in a temp dir (`/tmp`, `/var/tmp`,
-  `/dev/shm`), when the hook ledger recorded them AND the session's own transcript holds that
-  Write/Edit call;
-- ignored build output inside the linked worktree the agent works in (git ignores it, nothing
-  below it is tracked).
+- a single FILE the Write/Edit tool created in a temp dir (`/tmp`, `/var/tmp`, `/dev/shm`), born
+  after that call started, when the hook ledger recorded it AND the session's own transcript holds
+  a successful Write/Edit call for exactly that path (a directory the Write created on the way,
+  and whatever lands in it later, is report-only);
+- known build-output directories (`node_modules`, `dist`, `build`, `out`, `coverage`, `.next`,
+  `.nuxt`, `.turbo`, `.cache`, `target`, `__pycache__`, `.pytest_cache`, `.mypy_cache`,
+  `playwright-report`, `test-results`, `.venv`) ignored by a tracked `.gitignore` inside the
+  hydra worktree (below `<repo>-worktrees/`) the agent works in and that this session's ledger
+  shows it created; never single files, dotfiles outside that list, submodules or paths ignored
+  only through `.git/info/exclude`.
+
+The session id must belong to the caller's process tree (a live session descriptor names it
+with an ancestor pid); otherwise, and for another live session's id, everything is report-only.
 
 Everything else is report-only, also for an explicit own-rm: what the birth-time scan of a Bash
 call found (the owner or another program may have created it during the call), entries in the

@@ -31,6 +31,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import sys
 import time
 
@@ -179,10 +180,12 @@ def pre(data):
         ti = data.get("tool_input") or {}
         fp = ti.get("file_path") or ti.get("notebook_path")
         if isinstance(fp, str) and fp:
-            new = top_missing(os.path.join(data.get("cwd") or os.getcwd(), os.path.expanduser(fp)))
+            target = os.path.join(data.get("cwd") or os.getcwd(), os.path.expanduser(fp))
+            new = top_missing(target)
             if not new:
                 return  # an existing file: nothing to record, no mark needed
             info["new"] = new
+            info["file"] = os.path.abspath(target)
     elif tool == "Bash":
         st = L.session_tmp(sid)
         if os.path.isdir(L.tmp_base()) and not os.path.isdir(st):
@@ -420,14 +423,27 @@ def post(data):
     cwd = data.get("cwd") or os.getcwd()
     close_window(sid, t0, t1)
     if tool in WRITE_TOOLS:
-        new = (info or {}).get("new")
-        if new and os.path.lexists(new):
-            p = L.real_target(new) or new
+        # Only the written FILE is evidence (born after t0, a regular file); a directory the
+        # Write created on the way is recorded as report-only "write-parent". Nothing born
+        # before t0 is ever recorded.
+        recs = []
+        for key, ev in (("file", "write"), ("new", "write-parent")):
+            path = (info or {}).get(key)
+            if not path or not os.path.lexists(path):
+                continue
+            p = L.real_target(path) or path
             if L.in_claude_profile(p) or L.is_under(p, L.state_dir()):
-                return  # ~/.claude*/** is never recorded (and never deleted by the helper)
+                continue  # ~/.claude*/** is never recorded (and never deleted by the helper)
             st = os.lstat(p)
-            L.append_ledger(sid, [L.make_record(p, st, tool, "write", "write", agent_id, None,
-                                                L.birth_time(p))])
+            bt = L.birth_time(p)
+            if bt is None or bt < t0:
+                continue
+            if ev == "write" and not stat.S_ISREG(st.st_mode):
+                continue
+            if ev == "write-parent" and (key == "new" and info.get("new") == info.get("file")):
+                continue
+            recs.append(L.make_record(p, st, tool, ev, "write", agent_id, None, bt))
+        L.append_ledger(sid, recs)
         return
     if tool != "Bash":
         return
@@ -534,8 +550,9 @@ def session_start(data):
         sys.stdout.write(
             "[credo-cleanup] Own temp dir of this session: %s%s. Put throwaway output there. Delete "
             "own leftovers without a prompt only through: python3 %s own-rm <path>... (only inside "
-            "this TMPDIR or the session scratchpad, files the Write tool created in a temp dir, or "
-            "ignored build output of your own worktree; everything else is report-only; never rm -rf "
+            "this TMPDIR or the session scratchpad, single files the Write tool created in a temp dir, or "
+            "build-output dirs such as node_modules of a worktree this session created; everything else "
+            "is report-only; never rm -rf "
             "outside the cwd). What the session left: python3 %s report\n"
             % (stmp, " (exported as $TMPDIR)" if wrote else "", helper, helper))
 

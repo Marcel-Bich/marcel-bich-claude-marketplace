@@ -20,12 +20,15 @@
 # It also applies the setting-independent rules of the token, git-add and dependency
 # guards (each behind its own switch).
 #
-# credo's cleanup helper (credo-cleanup.py own-rm, #174) is not a delete command for this guard:
-# it decides itself and deletes only inside the session TMPDIR / scratchpad, transcript-confirmed
-# Write-created temp entries and ignored build output of the own worktree, with its own hard
-# denylist (/, the home, ~/.claude*, mounts, repositories, the owner keep list). It reads no paths
-# from the environment, so an env prefix on the call cannot widen it. It is the sanctioned path
-# for an agent's own temp output.
+# credo's cleanup helper (credo-cleanup.py own-rm, #174) is not a delete command for this guard
+# (it names no rm/unlink), so this guard does not judge it; the helper applies its own rules. It
+# deletes without a prompt only inside the TMPDIR and scratchpad of a session bound to the
+# caller's process tree, single files a successful Write/Edit call of that session created in a
+# temp dir (transcript-confirmed), and known build-output dirs (node_modules, dist, ...) ignored by
+# a tracked .gitignore in a hydra worktree that session created; everything else it only reports.
+# It keeps its own hard denylist (/, the home, ~/.claude*, mounts, repositories, the owner keep
+# list) and reads none of its paths or switches from the environment. The session id it uses
+# comes from the environment, which is why it must be bound to the calling process tree.
 #
 # Unlike file-protection.sh this guard does NOT read DOGMA-PERMISSIONS.md and has no
 # per-hook switch and no worktree exemption: it always applies. Only the master

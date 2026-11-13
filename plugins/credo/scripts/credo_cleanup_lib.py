@@ -5,8 +5,9 @@ Idea: in doubt, report, never delete. Hooks record per session what each tool ca
 PreToolUse time mark, then every entry born after it in the watched roots via statx birth time,
 and a file or topmost new directory a Write/Edit call created). Subagents share the session id.
 The ledger is a report: the helper deletes without a prompt only inside the session TMPDIR and
-scratchpad (named by the session id), Write/Edit-created temp entries that the session's own
-transcript confirms, and ignored build output of the worktree it runs in; every delete re-checks
+scratchpad (named by a session id bound to the caller's process tree), single files a successful
+Write/Edit call of the session created in a temp dir (exact transcript match), and known
+build-output dirs of a hydra worktree the session created; every delete re-checks
 the whole tree (birth times, modification times, mounts, repositories, processes, idle time) and
 refuses a hard denylist. No path or switch of this code comes from the environment (the home is
 read from the password database); tests set OVERRIDES through their own shim.
@@ -318,6 +319,46 @@ def pid_alive(pid):
         return True
     except (ValueError, TypeError, OSError):
         return False
+
+
+def ancestor_pids():
+    pids, pid = [], os.getpid()
+    for _ in range(64):
+        pids.append(pid)
+        try:
+            with open("/proc/%d/stat" % pid, encoding="utf-8", errors="replace") as fh:
+                pid = int(fh.read().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            break
+        if pid <= 1:
+            break
+    return set(pids)
+
+
+def sid_bound(sid):
+    """(bound, reason): the session id belongs to the process tree of the caller - a live session
+    descriptor (<profile>/sessions/<pid>.json) names it with a pid among the caller's ancestors.
+    A live descriptor of that id with another pid (someone else's session) or no descriptor at
+    all means not bound: the caller only gets reports."""
+    mine = ancestor_pids()
+    found_other = None
+    for prof in profile_dirs():
+        for f in glob.glob(os.path.join(glob.escape(prof), "sessions", "*.json")):
+            try:
+                with open(f, encoding="utf-8") as fh:
+                    d = json.load(fh)
+                pid = int(d.get("pid") or os.path.basename(f)[:-5])
+            except (OSError, ValueError, TypeError):
+                continue
+            if d.get("sessionId") != sid:
+                continue
+            if pid in mine:
+                return True, None
+            if pid_alive(pid):
+                found_other = pid
+    if found_other:
+        return False, "session %s is alive in another process tree (pid %d)" % (sid, found_other)
+    return False, "session id cannot be bound to the calling process tree"
 
 
 def running_sessions():
@@ -715,6 +756,7 @@ def same_birth(e, path):
 
 
 _TRANSCRIPTS = {}
+WRITE_TOOL_NAMES = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 
 
 def transcript_files(sid):
@@ -726,22 +768,50 @@ def transcript_files(sid):
     return files
 
 
-def transcript_wrote(sid, path):
-    """True when a transcript of this session (main agent or subagent) holds a Write/Edit tool
-    call whose file_path is path or lies below it. A ledger line alone (which a mistaken command
-    could produce) is never enough: the tool call must be in the session's own transcript."""
-    esc = json.dumps(path)[1:-1].encode("utf-8")
-    needles = (b'"file_path":"' + esc + b'"', b'"file_path":"' + esc + b"/")
-    for f in transcript_files(sid):
-        data = _TRANSCRIPTS.get(f)
-        if data is None:
+def _written_paths(f):
+    """Paths of successful Write/Edit/MultiEdit/NotebookEdit tool calls in one transcript: a
+    tool_use of such a name, plus its tool_result that is no error (is_error not true and no
+    error text as toolUseResult). Read calls, rejected and failed writes do not count."""
+    uses, ok = {}, set()
+    try:
+        fh = open(f, encoding="utf-8", errors="replace")
+    except OSError:
+        return set()
+    with fh:
+        for line in fh:
+            if '"tool_use' not in line and '"tool_result' not in line:
+                continue
             try:
-                with open(f, "rb") as fh:
-                    data = fh.read()
-            except OSError:
-                data = b""
-            _TRANSCRIPTS[f] = data
-        if any(n in data for n in needles):
+                d = json.loads(line)
+            except ValueError:
+                continue
+            content = (d.get("message") or {}).get("content") if isinstance(d, dict) else None
+            if not isinstance(content, list):
+                continue
+            for c in content:
+                if not isinstance(c, dict):
+                    continue
+                if c.get("type") == "tool_use" and c.get("name") in WRITE_TOOL_NAMES:
+                    inp = c.get("input") or {}
+                    fp = inp.get("file_path") or inp.get("notebook_path")
+                    if isinstance(fp, str) and os.path.isabs(fp) and c.get("id"):
+                        uses[c["id"]] = os.path.normpath(fp)
+                elif c.get("type") == "tool_result" and c.get("tool_use_id"):
+                    if c.get("is_error") is True or isinstance(d.get("toolUseResult"), str):
+                        continue
+                    ok.add(c["tool_use_id"])
+    return {p for i, p in uses.items() if i in ok}
+
+
+def transcript_wrote(sid, path):
+    """True when a transcript of this session (main agent or subagent) holds a successful
+    Write/Edit call for exactly this file path (no prefix match: a write to X/f says nothing
+    about X)."""
+    for f in transcript_files(sid):
+        if f not in _TRANSCRIPTS:
+            _TRANSCRIPTS[f] = _written_paths(f)
+        paths = _TRANSCRIPTS[f]
+        if path in paths or any((real_target(q) or q) == path for q in paths):
             return True
     return False
 
@@ -752,51 +822,37 @@ def not_deletable_entry(p, e, sid=None):
     dir) is deletable. What the birth-time scan of a Bash call found may have been created by the
     owner or another program during the call, so it is only reported."""
     if e.get("evidence") != "write":
-        return ("report only: found by the birth-time scan of a Bash call (%s evidence); another "
+        return ("report only: not a file the Write/Edit tool created (%s evidence); another "
                 "process may have created it - the owner decides" % e.get("evidence"))
+    if e.get("type") != "file":
+        return "report only: a directory created as a side effect of a Write"
     if not in_temp_root(p):
         return "report only: outside the temp roots (home, worktrees dir or elsewhere)"
     if sid is not None and not transcript_wrote(sid, p):
-        return "report only: no Write/Edit call for it in this session's transcript"
+        return "report only: no successful Write/Edit call for exactly this file in this session's transcript"
     return None
 
 
 def owned_entry(p, st, entries, sid):
-    """(ok, entry_or_None, reason, since). p is a real target path, st its lstat. since is the
-    birth time every inode below the target must have at least (provenance start), or None
-    when unknown (then no directory content can be proven own)."""
+    """(ok, entry_or_None, reason, since). p is a real target path, st its lstat. Own is only:
+    something inside the session TMPDIR or scratchpad (since = the root's birth), or exactly one
+    regular FILE the Write/Edit tool created (since = its own recorded birth). A directory that a
+    Write created as a side effect, and everything that later lands in it, is never own."""
     for root in session_bound_roots(sid):
         if p != root and is_under(p, root):
             return True, None, "session-bound (%s)" % root, birth_time(root)
     e = entries.get(p)
-    if e is not None:
-        if e.get("dev") != st.st_dev or e.get("ino") != st.st_ino or not same_birth(e, p):
-            return False, e, "replaced since it was recorded (dev/inode/birth differ)", None
-        why = not_deletable_entry(p, e, sid)
-        if why:
-            return False, e, why, None
-        return True, e, "ledger entry", e.get("btime")
-    # below a ledger directory entry whose inode still matches
-    best = None
-    for ep, e in entries.items():
-        if e.get("type") != "dir" or not is_under(p, ep) or p == ep:
-            continue
-        if best is None or len(ep) > len(best[0]):
-            best = (ep, e)
-    if best is None:
+    if e is None:
         return False, None, "not created by this session (not in its ledger)", None
-    ep, e = best
-    try:
-        est = os.lstat(ep)
-    except OSError:
-        return False, e, "its recorded parent %s is gone" % ep, None
-    if (est.st_dev != e.get("dev") or est.st_ino != e.get("ino") or not stat.S_ISDIR(est.st_mode)
-            or not same_birth(e, ep)):
-        return False, e, "its recorded parent %s was replaced" % ep, None
-    why = not_deletable_entry(ep, e, sid)
+    if e.get("dev") != st.st_dev or e.get("ino") != st.st_ino or not same_birth(e, p):
+        return False, e, "replaced since it was recorded (dev/inode/birth differ)", None
+    if not stat.S_ISREG(st.st_mode):
+        return False, e, ("report only: only a single file the Write/Edit tool created is deletable "
+                          "outside the session TMPDIR and scratchpad"), None
+    why = not_deletable_entry(p, e, sid)
     if why:
         return False, e, why, None
-    return True, e, "below ledger entry %s" % ep, e.get("btime")
+    return True, e, "ledger entry", e.get("btime")
 
 
 # --------------------------------------------------------------------------- delete
