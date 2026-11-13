@@ -226,9 +226,16 @@ function Get-RelayConfigPath {
 }
 
 function Get-RelayStateDir {
-    $d = Join-Path $env:LOCALAPPDATA 'credo'
+    # CREDO_WIN_STATE_DIR replaces it (tests)
+    $d = if ($env:CREDO_WIN_STATE_DIR) { $env:CREDO_WIN_STATE_DIR } else { Join-Path $env:LOCALAPPDATA 'credo' }
     if (-not (Test-Path -LiteralPath $d)) { [void](New-Item -ItemType Directory -Path $d -Force) }
     return $d
+}
+
+function Get-RelayMutexName {
+    # single instance per user session; CREDO_WIN_RELAY_MUTEX replaces the name (tests)
+    if ($env:CREDO_WIN_RELAY_MUTEX -match '^[A-Za-z0-9_-]{1,64}$') { return ('Local\' + $env:CREDO_WIN_RELAY_MUTEX) }
+    return 'Local\credo-peer-lan-win'
 }
 
 function Write-RelayLog([string]$Text) {
@@ -480,7 +487,9 @@ function Invoke-RelayLine($R, $Link, [string]$Line) {
 function Invoke-RelayLinkPoll($R, $Link) {
     $now = [DateTime]::UtcNow
     if ($Link.State -eq 'idle') {
-        if ($Link.Direction -ne 'out' -or $now -lt $Link.NextTry -or -not $R.Enabled) { return }
+        # loopback peers (same machine) need no bound network, like the Python relay
+        if ($Link.Direction -ne 'out' -or $now -lt $Link.NextTry) { return }
+        if (-not $R.Enabled -and $Link.Peer.Host -ne '127.0.0.1') { return }
         $Link.Client = New-Object System.Net.Sockets.TcpClient
         $Link.Task = $Link.Client.ConnectAsync($Link.Peer.Host, [int]$Link.Peer.Port)
         $Link.State = 'connecting'
@@ -533,7 +542,7 @@ function Invoke-RelayInbound($R, $Client) {
     $src = ([System.Net.IPEndPoint]$Client.Client.RemoteEndPoint).Address.ToString()
     if ($src.StartsWith('::ffff:')) { $src = $src.Substring(7) }
     $allow = @($R.Cfg.Allow) + @($R.Peers | ForEach-Object { $_.Host })
-    if (-not $R.Enabled -or -not (Test-RelayAllowed $src $allow)) { $Client.Close(); return }
+    if ((-not $R.Enabled -and $src -ne '127.0.0.1') -or -not (Test-RelayAllowed $src $allow)) { $Client.Close(); return }
     $stream = $Client.GetStream()
     $stream.ReadTimeout = 10000
     $ms = New-Object System.IO.MemoryStream
@@ -580,7 +589,7 @@ function Invoke-RelayInbound($R, $Client) {
 function Start-Relay {
     $cfg = Read-RelayConfig
     if ($null -eq $cfg) { Write-Output ('no config at ' + (Get-RelayConfigPath) + ' - run -Action Init first'); exit 1 }
-    $mutex = New-Object System.Threading.Mutex($false, 'Local\credo-peer-lan-win')
+    $mutex = New-Object System.Threading.Mutex($false, (Get-RelayMutexName))
     if (-not $mutex.WaitOne(0)) { Write-Output 'another credo-peer-lan-win relay is already running'; exit 0 }
     $stopFile = Join-Path (Get-RelayStateDir) 'peer-lan-win.stop'
     if (Test-Path -LiteralPath $stopFile) { Remove-Item -LiteralPath $stopFile -Force }
@@ -591,6 +600,7 @@ function Start-Relay {
     $R.Peers = Get-RelayPeerList $cfg
     $R.Links = @($R.Peers | ForEach-Object { New-RelayLink $_ })
     Remove-CredoStaleMirrors $R.Hub
+    Start-CredoWatchdog $R.Hub
     $listener = $null
     $acceptTask = $null
     if ($cfg.Listen) {
@@ -612,8 +622,14 @@ function Start-Relay {
                     $R.Enabled = $st[0]
                     if ($R.Enabled) { Write-RelayLog 'network bound: LAN enabled' } else {
                         Write-RelayLog ('LAN disabled: ' + $st[1])
-                        foreach ($l in $R.Links) { if ($l.State -ne 'idle') { Close-RelayLink $R $l 'network no longer allowed' } }
-                        Remove-CredoAllMirrors $R.Hub; $R.SidOwner = @{}
+                        foreach ($l in $R.Links) {
+                            if ($l.Peer.Host -eq '127.0.0.1') { continue }
+                            if ($l.State -ne 'idle') { Close-RelayLink $R $l 'network no longer allowed' }
+                            foreach ($mk in @($R.Hub.Mirrors.Keys)) {
+                                $m = $R.Hub.Mirrors[$mk]
+                                if ($m.Extra.credoPeerLanPeer -eq $l.Key) { $R.SidOwner.Remove($m.Fields.sessionId); Remove-CredoMirror $R.Hub $mk }
+                            }
+                        }
                     }
                 }
             }
@@ -748,7 +764,7 @@ function Invoke-RelayStatus {
     Write-Output ('network: ' + $(if ($st[0]) { 'bound (LAN enabled)' } else { 'DISABLED - ' + $st[1] }))
     $t = Get-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
     Write-Output ('task: ' + $(if ($t) { [string]$t.State } else { 'not installed' }))
-    $m = New-Object System.Threading.Mutex($false, 'Local\credo-peer-lan-win')
+    $m = New-Object System.Threading.Mutex($false, (Get-RelayMutexName))
     $free = $m.WaitOne(0)
     if ($free) { $m.ReleaseMutex() }
     Write-Output ('relay: ' + $(if ($free) { 'not running' } else { 'running' }))

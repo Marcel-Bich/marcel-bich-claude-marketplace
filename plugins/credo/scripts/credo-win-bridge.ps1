@@ -125,6 +125,7 @@ function Start-Bridge {
         Send-BridgeEvent ([ordered]@{ op = 'msg'; key = $mirror.Key; data = [Convert]::ToBase64String($data) })
     } { param($t) Send-BridgeLog $t }
     Remove-CredoStaleMirrors $hub
+    Start-CredoWatchdog $hub
     $in = New-Object System.IO.StreamReader([Console]::OpenStandardInput(), (New-Object System.Text.UTF8Encoding($false)))
     Send-BridgeEvent ([ordered]@{ op = 'ready'; pid = $PID; host = [System.Net.Dns]::GetHostName(); user = $env:USERNAME;
                                   pidDomain = $hub.PidDomain; sessionsDir = $sessDir })

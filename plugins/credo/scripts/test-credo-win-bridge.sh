@@ -32,19 +32,21 @@ command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 missing"; exit 0; }
 # unix socket paths are limited to 107 bytes: keep the tree short
 TMP="$(mktemp -d /tmp/cwb.XXXXXX)"
 WINFIX=""
+WINFIX2=""
 cleanup() {
-    if [ -n "$WINFIX" ] && [ -d "$WINFIX" ]; then
-        # only the files this test created in its own fixture dir, then the dir itself
-        python3 - "$WINFIX" <<'PY'
+    # only the files this test created in its own fixture dirs, then the dirs themselves
+    for wf in "$WINFIX" "$WINFIX2"; do
+        [ -n "$wf" ] && [ -d "$wf" ] || continue
+        python3 - "$wf" <<'PY'
 import os, re, sys
 d = sys.argv[1]
 if os.path.basename(d).startswith("credo-wbtest-"):
     for n in os.listdir(d):
-        if re.search(r"\.(json|key|txt|ps1|tmp|stop)$", n):
+        if re.search(r"\.(json|key|txt|ps1|tmp|stop|log|1)$", n):
             os.remove(os.path.join(d, n))
     os.rmdir(d)
 PY
-    fi
+    done
     rm -rf -- "$TMP"
 }
 trap cleanup EXIT
@@ -550,7 +552,7 @@ PS1
     # fake Windows Claude Code session: an inbox pipe + descriptor + key file in the
     # fixture dir (Role Inbox), or a sender into a mirror (Role Send)
     cat > "$WINFIX/fakewin.ps1" <<'PS1'
-param([string]$Role, [string]$Dir, [string]$Token, [string]$Out, [string]$Key, [string]$Body, [string]$FromPipe)
+param([string]$Role, [string]$Dir, [string]$Token, [string]$Out, [string]$Key, [string]$Body, [string]$FromPipe, [string]$Marker = 'credoWinBridge')
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'credo-win-common.ps1')
 if ($Role -eq 'Inbox') {
@@ -581,7 +583,7 @@ if ($Role -eq 'Send') {
     # find the mirror of WSL session $Key, then send like a Windows Claude Code sender
     foreach ($f in [IO.Directory]::GetFiles($Dir, '*.json')) {
         $o = Read-CredoJsonFile $f
-        if ($null -ne $o -and $o.sessionId -eq $Key -and $o.credoWinBridge -eq $true) { $mpath = $o.messagingSocketPath; $mpid = $o.pid }
+        if ($null -ne $o -and (Get-CredoProp $o 'sessionId') -eq $Key -and (Get-CredoProp $o $Marker) -eq $true) { $mpath = $o.messagingSocketPath; $mpid = $o.pid }
     }
     if (-not $mpath) { 'NOMIRROR'; exit 3 }
     $tok = if ($Token) { $Token } else { Find-CredoToken $Dir $mpid $mpath }
@@ -710,6 +712,189 @@ check("real PS: no Windows mirror files left", not own, left)
 check("real PS: no WSL mirror left", not mirrors())
 PY
     T_PS="$PS" T_WINFIX_W="$WINFIX_W" T_WINFIX="$WINFIX" run_py "real powershell bridge" "$TMP/t3.py"
+
+    # a hard-killed PowerShell half: its watchdog removes the mirrors and the holder
+    cat > "$TMP/t3b.py" <<'PY'
+import json, os, subprocess, time
+from wbt import wb, check
+PS = os.environ["T_PS"]; WFW = os.environ["T_WINFIX_W"]; WFL = os.environ["T_WINFIX"]
+penv = dict(os.environ, CREDO_WIN_SESSIONS_DIR=WFW, WSLENV="CREDO_WIN_SESSIONS_DIR")
+script_w = subprocess.run(["wslpath", "-w", os.path.join(os.environ["CREDO_SCRIPTS"], "credo-win-bridge.ps1")],
+                          capture_output=True, text=True).stdout.strip()
+p = subprocess.Popen([PS, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script_w, "-Mode", "Bridge"],
+                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=penv)
+ready = json.loads(p.stdout.readline())
+p.stdin.write(b'{"op":"publish","sessions":[{"key":"wd-1","sessionId":"wd-1","name":"wd","status":"idle"}]}\n'); p.stdin.flush()
+pub = json.loads(p.stdout.readline())
+def ours():
+    out = []
+    for n in os.listdir(WFL):
+        if n.endswith(".json") and n[:-5].isdigit():
+            try:
+                d = json.load(open(os.path.join(WFL, n), encoding="utf-8-sig"))
+            except Exception:
+                continue
+            if d.get("credoWinBridge"):
+                out.append(d)
+    return out
+check("watchdog: mirror exists before the kill", pub.get("op") == "published" and len(ours()) == 1)
+holder = ours()[0]["pid"] if ours() else 0
+subprocess.run([PS, "-NoProfile", "-NonInteractive", "-Command", "Stop-Process -Id %d -Force" % ready["pid"]],
+               capture_output=True, timeout=60)
+end = time.time() + 30
+while time.time() < end and ours():
+    time.sleep(0.5)
+check("watchdog: mirror files removed after a hard kill", not ours(), ours())
+check("watchdog: key file removed", not [n for n in os.listdir(WFL) if n.endswith(".key") and n.startswith("%d." % holder)])
+alive = subprocess.run([PS, "-NoProfile", "-NonInteractive", "-Command", "[bool](Get-Process -Id %d -ErrorAction SilentlyContinue)" % holder],
+                       capture_output=True, text=True, timeout=60).stdout.strip()
+check("watchdog: holder process ended", alive == "False", alive)
+try:
+    p.kill()
+except Exception:
+    pass
+PY
+    T_PS="$PS" T_WINFIX_W="$WINFIX_W" T_WINFIX="$WINFIX" run_py "watchdog" "$TMP/t3b.py"
+
+    # ----------------------------------------------------------------------------
+    # 4. native Windows relay (credo-peer-lan-win.ps1) against the REAL Python LAN
+    #    relay over loopback (Windows localhost reaches WSL): link without pairing,
+    #    rosters both ways, a deliver in each direction, shared token, cleanup
+    # ----------------------------------------------------------------------------
+    WINFIX2_W="${WT}credo-wbtest-$$-$RANDOM-relay"
+    WINFIX2="$(wslpath -u "$WINFIX2_W")"
+    mkdir -p "$WINFIX2"
+    cp "$SCRIPT_DIR/credo-win-common.ps1" "$SCRIPT_DIR/credo-peer-lan-win.ps1" "$WINFIX/fakewin.ps1" "$WINFIX2/"
+    cat > "$TMP/t4.py" <<'PY'
+import base64, json, os, socket, subprocess, sys, tempfile, threading, time
+from wbt import wb, check, ns_domain
+PS = os.environ["T_PS"]; WFW = os.environ["T_WINFIX_W"]; WFL = os.environ["T_WINFIX"]
+TOKEN = "test-relay-token-1"     # fake shared relay token
+WTOK = "d00dd00dd00dd00dd00dd00dd00dd00d"   # fake key token of the fake Windows session
+root = os.path.abspath(tempfile.mkdtemp(dir="."))
+def free_port():
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
+P1, P2 = free_port(), free_port()
+cfg = os.path.join(root, "home", ".claude"); sd = os.path.join(cfg, "sessions")
+os.makedirs(sd); os.makedirs(os.path.join(cfg, "credo")); os.makedirs(os.path.join(root, "sock"))
+json.dump({"this_machine": "box-a", "listen_host": "127.0.0.1", "listen_port": P1, "token": TOKEN,
+           "roster_interval": 0.5, "machine_timeout": 60, "peers": ["127.0.0.1:%d" % P2]},
+          open(os.path.join(cfg, "credo", "peer-lan.json"), "w"))
+inbox = os.path.join(root, "lin.sock"); got = []
+srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); srv.bind(inbox); srv.listen(4)
+def serve():
+    while True:
+        c, _ = srv.accept(); data = b""
+        while True:
+            ch = c.recv(65536)
+            if not ch: break
+            data += ch
+        got.append(data); c.close()
+threading.Thread(target=serve, daemon=True).start()
+me = os.getpid()
+json.dump({"pid": me, "sessionId": "lin-1", "procStart": wb.lan().proc_start(me), "pidDomain": ns_domain(),
+           "messagingSocketPath": inbox, "name": "bugs", "nameSource": "user", "status": "idle"},
+          open(os.path.join(sd, "%d.json" % me), "w"))
+with open(os.path.join(WFL, "relay.json"), "w") as fh:
+    json.dump({"this_machine": "laptop-1", "listen_port": P2, "peers": ["127.0.0.1:%d" % P1], "token": TOKEN,
+               "listen": False, "roster_interval": 1, "networks": []}, fh)
+env = dict(os.environ, HOME=os.path.join(root, "home"), CLAUDE_CONFIG_DIR=cfg,
+           CREDO_PEER_LAN_CONFIG=os.path.join(cfg, "credo", "peer-lan.json"), CREDO_PEER_LAN_SOCKDIR=os.path.join(root, "sock"))
+for k in ("CREDO_SESSION_MODES_DIR", "CREDO_SESSION_ROLES_DIR", "CREDO_SESSION_META_DIR"):
+    env.pop(k, None)
+py = subprocess.Popen([sys.executable, os.path.join(os.environ["CREDO_SCRIPTS"], "credo-peer-lan.py"), "daemon"], env=env,
+                      stdout=open(os.path.join(root, "py.log"), "w"), stderr=subprocess.STDOUT)
+base = [PS, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]
+recv = WFW + "\\recv.txt"; recv_l = os.path.join(WFL, "recv.txt")
+fake = subprocess.Popen(base + [WFW + "\\fakewin.ps1", "-Role", "Inbox", "-Dir", WFW, "-Token", WTOK, "-Out", recv],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+renv = dict(os.environ, CREDO_WIN_SESSIONS_DIR=WFW, CREDO_WIN_STATE_DIR=WFW, CREDO_WIN_RELAY_MUTEX="credo-test-%d" % os.getpid(),
+            WSLENV="CREDO_WIN_SESSIONS_DIR:CREDO_WIN_STATE_DIR:CREDO_WIN_RELAY_MUTEX")
+relay = subprocess.Popen(base + [WFW + "\\credo-peer-lan-win.ps1", "-Action", "Run", "-ConfigPath", WFW + "\\relay.json"],
+                         env=renv, stdout=open(os.path.join(root, "relay.out"), "w"), stderr=subprocess.STDOUT)
+def wait(cond, secs=60):
+    end = time.time() + secs
+    while time.time() < end:
+        if cond(): return True
+        time.sleep(0.25)
+    return False
+def py_mirror():
+    for p, d in wb.read_descriptors(sd):
+        if d.get("credoPeerLan") and d.get("sessionId") == "win-sess-1":
+            return d
+def win_mirror():
+    for n in os.listdir(WFL):
+        if n.endswith(".json") and n[:-5].isdigit():
+            try:
+                d = json.load(open(os.path.join(WFL, n), encoding="utf-8-sig"))
+            except Exception:
+                continue
+            if d.get("credoPeerLan") and d.get("sessionId") == "lin-1":
+                return d
+try:
+    check("relay: Python relay mirrors the Windows session", wait(lambda: py_mirror() is not None))
+    pm = py_mirror() or {}
+    check("relay: mirror name from the Windows roster", "`laptop-1`" in pm.get("name", "") and "`wsl-recovery`+" in pm.get("name", ""), pm.get("name"))
+    check("relay: PowerShell relay mirrors the Linux session", wait(lambda: win_mirror() is not None))
+    wm = win_mirror() or {}
+    check("relay: Windows mirror name follows the LAN convention", "`box-a`" in wm.get("name", "") and "`bugs`+" in wm.get("name", ""), wm.get("name"))
+    # Linux -> Windows: a Claude-style write into the Python mirror's proxy socket
+    frame = {"type": "user", "from": "uds:" + inbox, "message": {"role": "user",
+             "content": "<cross-session-message from=\"uds:%s\" from-name=\"bugs\">\nhello windows\n</cross-session-message>" % inbox}}
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s.connect(pm["messagingSocketPath"])
+    s.sendall(json.dumps(frame).encode() + b"\n"); s.shutdown(socket.SHUT_WR); s.close()
+    check("relay: deliver reached the Windows inbox", wait(lambda: os.path.exists(recv_l) and open(recv_l).read().strip(), 30))
+    raw = base64.b64decode(open(recv_l).read().split()[0]) if os.path.exists(recv_l) else b""
+    ok, rest = wb.check_auth(raw, WTOK)
+    check("relay: auth line with the target's token", ok)
+    o = json.loads(rest) if ok else {}
+    c = o.get("message", {}).get("content", "")
+    check("relay: envelope with the framing line and text", "External peer text." in c and "hello windows" in c and "from-mode" not in c, c)
+    check("relay: reply address is the Windows mirror of the sender", o.get("from") == "uds:" + wm.get("messagingSocketPath", "?"), o.get("from"))
+    # Windows -> Linux: a Windows sender writes into the PowerShell relay's mirror
+    wpipe = None
+    for n in os.listdir(WFL):
+        if n.endswith(".json") and n[:-5].isdigit():
+            d = json.load(open(os.path.join(WFL, n), encoding="utf-8-sig"))
+            if d.get("sessionId") == "win-sess-1":
+                wpipe = d["messagingSocketPath"]
+    r = subprocess.run(base + [WFW + "\\fakewin.ps1", "-Role", "Send", "-Dir", WFW, "-Key", "lin-1", "-Body", "hello linux",
+                               "-FromPipe", str(wpipe), "-Marker", "credoPeerLan"], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=60)
+    check("relay: Windows sender wrote into the mirror", "SENT" in r.stdout, r.stdout + r.stderr)
+    check("relay: deliver reached the Linux inbox", wait(lambda: any(b"hello linux" in g for g in got), 30))
+    line = [g for g in got if b"hello linux" in g]
+    o = json.loads(line[0]) if line else {}
+    c = o.get("message", {}).get("content", "")
+    check("relay: Linux envelope framed, no from-mode", "External peer text." in c and "from-mode" not in c, c)
+    check("relay: reply address is the Python mirror of the Windows sender", o.get("from") == "uds:" + pm.get("messagingSocketPath", "?"), o.get("from"))
+finally:
+    lp = os.path.join(WFL, "peer-lan-win.log")
+    if os.environ.get("VERBOSE") and os.path.exists(lp):
+        print(open(lp, encoding="utf-8", errors="replace").read()[-3000:])
+        print(open(os.path.join(root, "relay.out"), errors="replace").read()[-2000:])
+    open(os.path.join(WFL, "peer-lan-win.stop"), "w").close()
+    try:
+        relay.wait(30)
+    except Exception:
+        relay.kill()
+    open(recv_l + ".stop", "w").close()
+    try:
+        fake.wait(20)
+    except Exception:
+        fake.kill()
+    py.terminate()
+    try:
+        py.wait(15)
+    except Exception:
+        py.kill()
+left = [n for n in os.listdir(WFL) if n.endswith(".json") and n[:-5].isdigit()
+        and json.load(open(os.path.join(WFL, n), encoding="utf-8-sig")).get("credoPeerLan")]
+check("relay: PowerShell relay stopped", relay.poll() is not None)
+check("relay: no Windows mirror files left", not left, left)
+check("relay: no key file of a mirror left", len([n for n in os.listdir(WFL) if n.endswith(".key")]) <= 1, os.listdir(WFL))
+PY
+    T_PS="$PS" T_WINFIX_W="$WINFIX2_W" T_WINFIX="$WINFIX2" run_py "native windows relay" "$TMP/t4.py"
 fi
 
 echo "credo-win-bridge: $PASS passed, $FAIL failed"

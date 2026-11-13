@@ -319,25 +319,25 @@ function New-CredoDescriptorJson($Hub, $Mirror) {
     $now = Get-CredoNowMs
     $d = [ordered]@{
         pid                 = $Mirror.HolderPid
-        sessionId           = [string]$f.sessionId
-        cwd                 = [string]$f.cwd
+        sessionId           = [string]$f['sessionId']
+        cwd                 = [string]$f['cwd']
         startedAt           = $Mirror.StartedAt
         procStart           = $Mirror.HolderFt
-        version             = [string]$f.version
+        version             = [string]$f['version']
         peerProtocol        = 1
-        peerFeatures        = @($f.peerFeatures | Where-Object { $_ -is [string] })
+        peerFeatures        = @($f['peerFeatures'] | Where-Object { $_ -is [string] })
         kind                = 'interactive'
         entrypoint          = 'cli'
         pidDomain           = $Hub.PidDomain
         messagingSocketPath = $Mirror.PipePath
-        name                = [string]$f.name
+        name                = [string]$f['name']
         nameSource          = 'credo'
         nameSince           = $Mirror.StartedAt
         updatedAt           = $now
-        status              = [string]$f.status
+        status              = [string]$f['status']
         statusUpdatedAt     = $now
     }
-    if ($f.peerProtocol -is [int] -or $f.peerProtocol -is [long]) { $d.peerProtocol = [int]$f.peerProtocol }
+    if ($f['peerProtocol'] -is [int] -or $f['peerProtocol'] -is [long]) { $d.peerProtocol = [int]$f['peerProtocol'] }
     if ([string]::IsNullOrEmpty($d.status)) { $d.status = 'idle' }
     $d[$Hub.Marker] = $true
     $d['credoOwnerPid'] = $Hub.OwnerPid
@@ -405,7 +405,7 @@ function New-CredoMirror($Hub, [string]$Key, $Fields, $Extra) {
 function Update-CredoMirror($Hub, $Mirror, $Fields) {
     $old = $Mirror.Fields
     $Mirror.Fields = $Fields
-    if ([string]$old.name -ceq [string]$Fields.name -and [string]$old.status -ceq [string]$Fields.status) { return }
+    if ([string]$old['name'] -ceq [string]$Fields['name'] -and [string]$old['status'] -ceq [string]$Fields['status']) { return }
     try { Write-CredoFileAtomic $Mirror.DescPath (New-CredoDescriptorJson $Hub $Mirror) } catch {
         Write-CredoHubLog $Hub ('descriptor update failed: ' + $_.Exception.Message)
     }
@@ -630,4 +630,37 @@ function Wait-CredoTasks($Tasks, [int]$TimeoutMs) {
     $arr = New-Object 'System.Threading.Tasks.Task[]' $Tasks.Count
     for ($i = 0; $i -lt $Tasks.Count; $i++) { $arr[$i] = $Tasks[$i] }
     [void][System.Threading.Tasks.Task]::WaitAny($arr, $TimeoutMs)
+}
+
+# --- watchdog: cleanup after a hard kill ------------------------------------------------
+
+function Start-CredoWatchdog($Hub) {
+    # a separate hidden powershell.exe that waits for this process to end and then
+    # removes the mirrors it left (only files with this marker whose owner is gone, only
+    # holders proven by pid + creation time + image name). A clean exit has removed them
+    # already; the watchdog then finds nothing and ends.
+    $q = { param($s) "'" + ([string]$s).Replace("'", "''") + "'" }
+    $cmd = '. ' + (& $q (Join-Path $PSScriptRoot 'credo-win-common.ps1')) + '; Invoke-CredoWatchdog ' + $Hub.OwnerPid + ' ' +
+           (& $q $Hub.OwnerFt) + ' ' + (& $q $Hub.SessDir) + ' ' + (& $q $Hub.Marker)
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' +
+                     [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($cmd))
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    try { $p = [System.Diagnostics.Process]::Start($psi); $p.Dispose() } catch {
+        Write-CredoHubLog $Hub ('watchdog not started: ' + $_.Exception.Message)
+    }
+}
+
+function Invoke-CredoWatchdog([long]$OwnerPid, [string]$OwnerFt, [string]$SessDir, [string]$Marker) {
+    try {
+        $p = [System.Diagnostics.Process]::GetProcessById([int]$OwnerPid)
+        if ([string]$p.StartTime.ToFileTimeUtc() -eq $OwnerFt) { $p.WaitForExit() }
+        $p.Dispose()
+    } catch {
+        while ((Get-CredoProcessFt $OwnerPid) -eq $OwnerFt) { Start-Sleep -Seconds 2 }
+    }
+    $me = [System.Diagnostics.Process]::GetCurrentProcess()
+    Remove-CredoStaleMirrors @{ SessDir = $SessDir; Marker = $Marker; OwnerPid = [long]$me.Id; OwnerFt = ''; OnLog = $null }
 }
