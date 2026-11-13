@@ -476,8 +476,8 @@ function Invoke-RelayLine($R, $Link, [string]$Line) {
         return
     }
     switch ($kind) {
-        'roster' { Invoke-RelayRoster $R $Link $p }
-        'deliver' { Invoke-RelayDeliver $R $Link $p }
+        'roster' { try { Invoke-RelayRoster $R $Link $p } catch { Write-RelayLog ('roster failed: ' + $_.Exception.Message) } }
+        'deliver' { try { Invoke-RelayDeliver $R $Link $p } catch { Write-RelayLog ('deliver failed: ' + $_.Exception.Message) } }
         'ping' { }
         'link' { }
         default { Write-RelayLog ('unknown message kind ' + $kind) }
@@ -642,7 +642,7 @@ function Start-Relay {
                 $acceptTask = $listener.AcceptTcpClientAsync()
             }
             foreach ($l in $R.Links) { try { Invoke-RelayLinkPoll $R $l } catch { Close-RelayLink $R $l ('error: ' + $_.Exception.Message) } }
-            Invoke-CredoHubPoll $R.Hub
+            try { Invoke-CredoHubPoll $R.Hub } catch { Write-RelayLog ('poll failed: ' + $_.Exception.Message) }
             $now = [DateTime]::UtcNow
             if ($now -ge $nextRoster) {
                 $nextRoster = $now.AddSeconds($cfg.Interval)

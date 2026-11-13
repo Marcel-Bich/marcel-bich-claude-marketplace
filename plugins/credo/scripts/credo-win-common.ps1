@@ -263,6 +263,7 @@ function Find-CredoToken([string]$SessDir, [long]$TargetPid, [string]$PipePath) 
     if ($null -eq $c) { return $null }
     $suffix = '.' + (Get-CredoSha256Hex $c) + '.key'
     $cands = @()
+    if (-not (Test-Path -LiteralPath $SessDir)) { return $null }
     foreach ($f in [System.IO.Directory]::GetFiles($SessDir, '*.key')) {
         $n = [System.IO.Path]::GetFileName($f)
         if (-not $n.EndsWith($suffix)) { continue }

@@ -756,6 +756,29 @@ except Exception:
 PY
     T_PS="$PS" T_WINFIX_W="$WINFIX_W" T_WINFIX="$WINFIX" run_py "watchdog" "$TMP/t3b.py"
 
+    # no Windows sessions dir (Claude Code never ran on Windows): no mirrors, no new dir
+    cat > "$TMP/t3c.py" <<'PY'
+import json, os, subprocess
+from wbt import wb, check
+PS = os.environ["T_PS"]; WFW = os.environ["T_WINFIX_W"]; WFL = os.environ["T_WINFIX"]
+penv = dict(os.environ, CREDO_WIN_SESSIONS_DIR=WFW + "\\nosessions", WSLENV="CREDO_WIN_SESSIONS_DIR")
+script_w = subprocess.run(["wslpath", "-w", os.path.join(os.environ["CREDO_SCRIPTS"], "credo-win-bridge.ps1")],
+                          capture_output=True, text=True).stdout.strip()
+r = subprocess.run([PS, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script_w, "-Mode", "Bridge"],
+                   input=b'{"op":"list","id":1}\n{"op":"publish","sessions":[{"key":"n-1","sessionId":"n-1","name":"n"}]}\n'
+                         b'{"op":"send","id":2,"pid":1,"pipe":"\\\\\\\\.\\\\pipe\\\\LOCAL\\\\cc-msg-00000000000000000000000000000000","data":"eA=="}\n',
+                   capture_output=True, env=penv, timeout=60)
+evs = [json.loads(l) for l in r.stdout.decode().splitlines() if l.strip()]
+ops = [e.get("op") for e in evs]
+check("no sessions dir: bridge answers list, publish and send", "list" in ops and "published" in ops and "sent" in ops, ops)
+pub = [e for e in evs if e.get("op") == "published"]
+check("no sessions dir: no mirror made", pub and pub[0].get("mirrors") == [], pub)
+sent = [e for e in evs if e.get("op") == "sent"]
+check("no sessions dir: send fails cleanly", sent and sent[0].get("ok") is False, sent)
+check("no sessions dir: directory not created", not os.path.exists(os.path.join(WFL, "nosessions")))
+PY
+    T_PS="$PS" T_WINFIX_W="$WINFIX_W" T_WINFIX="$WINFIX" run_py "no sessions dir" "$TMP/t3c.py"
+
     # ----------------------------------------------------------------------------
     # 4. native Windows relay (credo-peer-lan-win.ps1) against the REAL Python LAN
     #    relay over loopback (Windows localhost reaches WSL): link without pairing,

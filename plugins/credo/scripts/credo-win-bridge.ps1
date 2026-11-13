@@ -60,6 +60,13 @@ function Get-BridgeSessionList($Hub) {
 
 function Sync-BridgeMirrors($Hub, $Sessions) {
     $want = @{}
+    if (-not (Test-Path -LiteralPath $Hub.SessDir)) {
+        # Claude Code was never run on Windows for this user: nothing reads mirrors there,
+        # so none are made (and the directory is not created)
+        Remove-CredoAllMirrors $Hub
+        Send-BridgeEvent ([ordered]@{ op = 'published'; mirrors = @() })
+        return
+    }
     foreach ($s in @($Sessions)) {
         if ($null -eq $s) { continue }
         $key = [string](Get-CredoProp $s 'key')
@@ -119,7 +126,6 @@ function Invoke-BridgeCommand($Hub, [string]$Line) {
 
 function Start-Bridge {
     $sessDir = Get-CredoSessionsDir
-    if (-not (Test-Path -LiteralPath $sessDir)) { [void](New-Item -ItemType Directory -Path $sessDir -Force) }
     $hub = New-CredoHub $sessDir 'credoWinBridge' {
         param($mirror, [byte[]]$data)
         Send-BridgeEvent ([ordered]@{ op = 'msg'; key = $mirror.Key; data = [Convert]::ToBase64String($data) })
@@ -139,14 +145,20 @@ function Start-Bridge {
             if ($lineTask.IsCompleted) {
                 if ($lineTask.IsFaulted -or $null -eq $lineTask.Result) { break }
                 $line = $lineTask.Result
-                if ($line.Trim()) { if (-not (Invoke-BridgeCommand $hub $line)) { break } }
+                $go = $true
+                if ($line.Trim()) {
+                    try { $go = Invoke-BridgeCommand $hub $line } catch { Send-BridgeLog ('command failed: ' + $_.Exception.Message) }
+                }
+                if (-not $go) { break }
                 $lineTask = $in.ReadLineAsync()
             }
-            Invoke-CredoHubPoll $hub
-            if ([DateTime]::UtcNow -gt $nextCheck) {
-                $nextCheck = [DateTime]::UtcNow.AddSeconds(10)
-                Test-CredoHolders $hub
-            }
+            try {
+                Invoke-CredoHubPoll $hub
+                if ([DateTime]::UtcNow -gt $nextCheck) {
+                    $nextCheck = [DateTime]::UtcNow.AddSeconds(10)
+                    Test-CredoHolders $hub
+                }
+            } catch { Send-BridgeLog ('poll failed: ' + $_.Exception.Message) }
         }
     } finally {
         Remove-CredoAllMirrors $hub
