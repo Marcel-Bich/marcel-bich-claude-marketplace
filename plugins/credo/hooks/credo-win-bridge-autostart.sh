@@ -27,6 +27,19 @@ script="${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py"
 [ -f "$script" ] || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 
+# Fast path (this hook also runs on every UserPromptSubmit, because /reload-plugins after a
+# plugin update fires no SessionStart): a live daemon of this plugin version needs nothing.
+# A config switch-off is still applied by the next SessionStart or a version change.
+if [ "${CREDO_WIN_BRIDGE_EVENT:-}" = "prompt" ]; then
+  state="${XDG_STATE_HOME:-$HOME/.local/state}/credo/win-bridge/bridge.pid"
+  ver=$(sed -n 's/^version: *//p' "${CLAUDE_PLUGIN_ROOT}/plugin.yaml" 2>/dev/null | head -1)
+  rec=$(cat "$state" 2>/dev/null)
+  pid=$(printf '%s' "$rec" | sed -n 's/.*"pid": *\([0-9][0-9]*\).*/\1/p')
+  if [ -n "$pid" ] && [ -n "$ver" ] && [ -d "/proc/$pid" ] && printf '%s' "$rec" | grep -q "\"version\": *\"$ver\""; then
+    exit 0
+  fi
+fi
+
 # detached: own session, no inherited stdio, so the hook never waits for it
 if command -v setsid >/dev/null 2>&1; then
   setsid python3 "$script" ensure </dev/null >/dev/null 2>&1 &

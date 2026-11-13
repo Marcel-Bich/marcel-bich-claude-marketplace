@@ -8,6 +8,12 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.84
 
+##### v0.84.66
+
+###### Fixed
+
+- The Windows peer bridge daemon now also starts on the next prompt after a plugin update and /reload-plugins (the autostart hook runs on UserPromptSubmit too, with a fast path when the current version already runs).
+
 ##### v0.84.65
 
 ###### Added
