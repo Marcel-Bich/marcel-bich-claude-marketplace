@@ -2,80 +2,46 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-11
 
-## dogma
-
-### v1
-
-#### v1.47
-
-##### v1.47.8
-
-###### Fixed
-
-- A harmless `2>/dev/null` or `>/dev/null` is no longer blocked on native Windows as "overwrite of a protected path (C:devnull)". File protection (and git permissions and dependency verification, through the shared findings helper) ran the shell-aware analysis through `python3` by name; with a native Windows Python that analysis resolved `/dev/null` to `C:\dev\null`. The analysis now runs only under a POSIX Python 3 (otherwise the text rules decide), refuses to judge under a native Windows Python, and treats the literal redirect targets `/dev/null`, `/dev/stdout`, `/dev/stderr` and `/dev/fd/N` as no files on every platform.
-- The delete guard's text fallback (no POSIX Python 3) now also blocks redirects and `tee` onto protected paths (`> /etc/passwd`, `>> ~/.bashrc`, the home level, system dirs, devices, Windows system and profile config paths); deletes stay blocked as before.
-- No dogma hook or helper needs a binary named `python3` any more: Python is looked up as `python3`, then `python`, then `py -3` (python.org ships no `python3.exe`), the Microsoft Store stub is still rejected. The notice hook, `notices-pending.sh`, `source-cache.sh`, `permissions-summary.sh` and `worktree-files.sh` only parse JSON or text and also accept a native Windows Python (UTF-8 I/O, CRLF output turned into LF).
-
-##### v1.47.7
-
-###### Fixed
-
-- The delete guard no longer blocks every command on native Windows with "guard error (exit 49)". Under Git Bash `python3` can be the Microsoft Store alias stub, which exits 9009 (seen as 49); the guard took it for a Python and failed closed on its exit code. The guard and token protection now start each candidate (`python3`, then `python`) once and use it only when it reports a POSIX Python 3. The Store stub and a native Windows Python (whose path semantics the guard does not model) count as missing: harmless commands pass, destructive-looking commands are denied by the text fallback, and token protection runs its own text rules instead of skipping them.
-- No dogma hook or band script starts a bare `bash` any more, which on Windows can resolve to `System32\bash.exe` (the WSL launcher). Scripts call the running bash by its path, the session-start hook uses `/bin/bash`, and on Windows the dogma band runs its scripts through Git Bash by its full path (nothing when Git Bash is missing).
-
-##### v1.47.6
-
-###### Changed
-
-- The delete guard documents and tests credo's ledger-verified cleanup helper (`credo-cleanup.py own-rm`) as the sanctioned delete path for an agent's own temp output. Called by its literal path it is no delete finding.
-
-##### v1.47.5
-
-###### Changed
-
-- Auto worktree cleanup option names the lossless case: a merged worktree whose only leftovers are `.credo/` changes already present in the main checkout is removed too; setup symlinks into the main checkout do not count as changes
-
-##### v1.47.4
-
-###### Fixed
-
-- Command substitutions inside arithmetic expansion are checked like top-level ones
-
-##### v1.47.3
-
-###### Added
-
-- Session-start warning when `jq` is missing: dogma's protection hooks (delete guard, git permissions, dependency verification) are off without it, so the user is urged to install jq (`hooks/jq-missing-warn.sh`)
-
-###### Fixed
-
-- Redirect-like text in an unquoted heredoc body of `cat` or `tee` (`see <dogma>/x`, `a>/x`) is no longer denied as a redirect onto a critical path; command substitutions and backticks in the body are still checked
-
-## limit
-
-### v2
-
-#### v2.37
-
-##### v2.37.3
-
-###### Fixed
-
-- Native Windows (Git Bash): the 5h and weekly figures show again. The usage response is now saved through a command-line path that Git Bash translates; before, the native curl wrote it to the drive root (`C:\tmp`) and the shared cache stayed empty
-- Highscore and token figures no longer need `bc` (missing in Git Bash); they use bash integer math with the same one-decimal truncation
-- Background refresh, ledger scan, plan detection and the provider hand-off start the running bash instead of a `bash` looked up on PATH, which on native Windows can be the WSL launcher (`System32\bash.exe`)
-
-##### v2.37.2
-
-###### Fixed
-
-- A plan without a 5h limit (five_hour.utilization null, weekly only) no longer shows `invalid_response`; the 5h line is left out and the weekly lines render
-
 ## credo
 
 ### v0
 
 #### v0.85
+
+##### v0.85.2
+
+###### Added
+
+- `python3` is a documented requirement (marketplace and credo README), and `/credo:setup`
+  Step 1b detects a missing Python or the Store stub and offers the install command (runs it
+  only after the user's yes)
+
+###### Fixed
+
+- credo hooks no longer fail visibly on native Windows when `python3`/`python` is only the
+  Microsoft Store alias stub or missing: every Python hook probes for a working Python 3
+  (`python3`, then `python`, then `py -3`), and the three ledger entries run through the new
+  launcher `hooks/credo-py.sh` instead of the `python3` shebang
+- Without a working Python 3 each session shows ONE clear message `credo needs python3` with
+  the install command for the platform, instead of the Store text or a missing-module error
+- A native Windows Python (python.org `python`, the `py` launcher) works: no credo script
+  imports `fcntl` at top level any more; the new portable lock `scripts/credo_lock.py`
+  (flock on POSIX, `msvcrt.locking` on Windows) is used by the cleanup library, the self
+  restart, the LAN relay trust list and the WSL bridge, so none of them crashes with
+  `No module named 'fcntl'`. The provenance ledger and the cleanup helper still exit 0
+  there (POSIX only for now), and the Python LAN relay is not offered there
+- Helper scripts reached from hooks (`credo-config.sh` and others) find Python the same way
+  when `python3` is not on PATH
+- Item and code ids can be drawn on Git Bash: the counter lock falls back to an atomic
+  `mkdir` lock when `flock` is missing (also macOS)
+- The 5h budget guard finds the limit cache on native Windows (the `/tmp` glob is handed to
+  the Windows Python in its Windows form)
+- Hooks run credo's shell scripts with their own bash (`$BASH`), and the Python scripts use
+  `CREDO_BASH` (Git Bash) instead of a bare `bash`, which on Windows is the WSL launcher
+- Process liveness on native Windows: `os.kill(pid, 0)` (which sends CTRL_C_EVENT there) is
+  replaced by OpenProcess/GetExitCodeProcess (`scripts/credo_platform.py`), and the peer
+  bridge checks Windows pids with `tasklist`, so live mirror entries are not pruned
+- No `os.geteuid()` crash on native Windows in the session-name and peer-check helpers
 
 ##### v0.85.1
 
@@ -553,6 +519,75 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 - A bound network whose Windows network category is Public (outside `windows_profiles`) gets the same hint, telling the user where to switch the network to Private.
 - `check` prints a hint line for both cases, and the new `network-hint` subcommand prints the pending agent text for the SessionStart hook.
 - A router refused for a subnet cannot be bound again: `bind` refuses it and `init` offers no bind command for it. `bind` also refuses a profile name that another router already uses, instead of overwriting that profile.
+
+## dogma
+
+### v1
+
+#### v1.47
+
+##### v1.47.8
+
+###### Fixed
+
+- A harmless `2>/dev/null` or `>/dev/null` is no longer blocked on native Windows as "overwrite of a protected path (C:devnull)". File protection (and git permissions and dependency verification, through the shared findings helper) ran the shell-aware analysis through `python3` by name; with a native Windows Python that analysis resolved `/dev/null` to `C:\dev\null`. The analysis now runs only under a POSIX Python 3 (otherwise the text rules decide), refuses to judge under a native Windows Python, and treats the literal redirect targets `/dev/null`, `/dev/stdout`, `/dev/stderr` and `/dev/fd/N` as no files on every platform.
+- The delete guard's text fallback (no POSIX Python 3) now also blocks redirects and `tee` onto protected paths (`> /etc/passwd`, `>> ~/.bashrc`, the home level, system dirs, devices, Windows system and profile config paths); deletes stay blocked as before.
+- No dogma hook or helper needs a binary named `python3` any more: Python is looked up as `python3`, then `python`, then `py -3` (python.org ships no `python3.exe`), the Microsoft Store stub is still rejected. The notice hook, `notices-pending.sh`, `source-cache.sh`, `permissions-summary.sh` and `worktree-files.sh` only parse JSON or text and also accept a native Windows Python (UTF-8 I/O, CRLF output turned into LF).
+
+##### v1.47.7
+
+###### Fixed
+
+- The delete guard no longer blocks every command on native Windows with "guard error (exit 49)". Under Git Bash `python3` can be the Microsoft Store alias stub, which exits 9009 (seen as 49); the guard took it for a Python and failed closed on its exit code. The guard and token protection now start each candidate (`python3`, then `python`) once and use it only when it reports a POSIX Python 3. The Store stub and a native Windows Python (whose path semantics the guard does not model) count as missing: harmless commands pass, destructive-looking commands are denied by the text fallback, and token protection runs its own text rules instead of skipping them.
+- No dogma hook or band script starts a bare `bash` any more, which on Windows can resolve to `System32\bash.exe` (the WSL launcher). Scripts call the running bash by its path, the session-start hook uses `/bin/bash`, and on Windows the dogma band runs its scripts through Git Bash by its full path (nothing when Git Bash is missing).
+
+##### v1.47.6
+
+###### Changed
+
+- The delete guard documents and tests credo's ledger-verified cleanup helper (`credo-cleanup.py own-rm`) as the sanctioned delete path for an agent's own temp output. Called by its literal path it is no delete finding.
+
+##### v1.47.5
+
+###### Changed
+
+- Auto worktree cleanup option names the lossless case: a merged worktree whose only leftovers are `.credo/` changes already present in the main checkout is removed too; setup symlinks into the main checkout do not count as changes
+
+##### v1.47.4
+
+###### Fixed
+
+- Command substitutions inside arithmetic expansion are checked like top-level ones
+
+##### v1.47.3
+
+###### Added
+
+- Session-start warning when `jq` is missing: dogma's protection hooks (delete guard, git permissions, dependency verification) are off without it, so the user is urged to install jq (`hooks/jq-missing-warn.sh`)
+
+###### Fixed
+
+- Redirect-like text in an unquoted heredoc body of `cat` or `tee` (`see <dogma>/x`, `a>/x`) is no longer denied as a redirect onto a critical path; command substitutions and backticks in the body are still checked
+
+## limit
+
+### v2
+
+#### v2.37
+
+##### v2.37.3
+
+###### Fixed
+
+- Native Windows (Git Bash): the 5h and weekly figures show again. The usage response is now saved through a command-line path that Git Bash translates; before, the native curl wrote it to the drive root (`C:\tmp`) and the shared cache stayed empty
+- Highscore and token figures no longer need `bc` (missing in Git Bash); they use bash integer math with the same one-decimal truncation
+- Background refresh, ledger scan, plan detection and the provider hand-off start the running bash instead of a `bash` looked up on PATH, which on native Windows can be the WSL launcher (`System32\bash.exe`)
+
+##### v2.37.2
+
+###### Fixed
+
+- A plan without a 5h limit (five_hour.utilization null, weekly only) no longer shows `invalid_response`; the 5h line is left out and the weekly lines render
 
 ## hydra
 
