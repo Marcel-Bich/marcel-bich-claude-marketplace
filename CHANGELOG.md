@@ -2,6 +2,26 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-11
 
+## limit
+
+### v2
+
+#### v2.37
+
+##### v2.37.3
+
+###### Fixed
+
+- Native Windows (Git Bash): the 5h and weekly figures show again. The usage response is now saved through a command-line path that Git Bash translates; before, the native curl wrote it to the drive root (`C:\tmp`) and the shared cache stayed empty
+- Highscore and token figures no longer need `bc` (missing in Git Bash); they use bash integer math with the same one-decimal truncation
+- Background refresh, ledger scan, plan detection and the provider hand-off start the running bash instead of a `bash` looked up on PATH, which on native Windows can be the WSL launcher (`System32\bash.exe`)
+
+##### v2.37.2
+
+###### Fixed
+
+- A plan without a 5h limit (five_hour.utilization null, weekly only) no longer shows `invalid_response`; the 5h line is left out and the weekly lines render
+
 ## dogma
 
 ### v1
@@ -537,18 +557,6 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 ###### Changed
 
 - `/hydra:cleanup` names the lossless case: a merged worktree whose only leftovers are setup symlinks into the main checkout or `.credo/` changes already present in the main checkout is removed too, under credo's owner setting
-
-## limit
-
-### v2
-
-#### v2.37
-
-##### v2.37.2
-
-###### Fixed
-
-- A plan without a 5h limit (five_hour.utilization null, weekly only) no longer shows `invalid_response`; the 5h line is left out and the weekly lines render
 
 # 2026-10
 
