@@ -15,8 +15,10 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sigtoast.XXXXXX")" || exit 1
 SLOT="sigtoast-$$"
+HN_SID="sigtoast-hn-$$"
 cleanup() {
     rm -f -- "/tmp/claude-mb-notify-id-$SLOT" "/tmp/claude-mb-notify-id-$SLOT.lock"
+    rm -f -- "/tmp/claude-mb-notify-id-session-$HN_SID-notification" "/tmp/claude-mb-notify-id-session-$HN_SID-notification.lock"
     case "$TMP" in
         "${TMPDIR:-/tmp}"/sigtoast.??????) rm -rf -- "$TMP" ;;
         *) echo "refusing to remove unexpected temp root: '$TMP'" >&2 ;;
@@ -45,12 +47,22 @@ check_contains() {
 
 # --- hermetic PATH ------------------------------------------------------------------
 
+# A BASH_ENV startup file would run in every child bash and could change PATH or the env
+unset BASH_ENV ENV
+
 SYSBIN="$TMP/sysbin"
 BIN="$TMP/bin"
 mkdir -p "$SYSBIN" "$BIN"
 for t in bash cat grep sed awk tr head tail cut date stat mkdir touch mv rm rmdir flock timeout \
-         dirname basename id sleep mktemp wc readlink env sort ls cp ln tee find bc kill jq chmod base64 iconv realpath; do
+         dirname basename id sleep mktemp wc readlink env sort ls cp ln tee find bc kill jq chmod base64 iconv realpath \
+         uname xargs pwd; do
     p="$(command -v "$t" 2>/dev/null)" && [ -x "$p" ] && ln -s "$p" "$SYSBIN/$t"
+done
+# Same tools without bc (native Windows Git Bash has none): every volume computation must still work
+SYSBIN_NOBC="$TMP/sysbin-nobc"
+mkdir -p "$SYSBIN_NOBC"
+for p in "$SYSBIN"/*; do
+    [ "${p##*/}" = "bc" ] || ln -s "$(readlink "$p")" "$SYSBIN_NOBC/${p##*/}"
 done
 PATH_STUBS="$BIN:$SYSBIN"
 PATH_NONE="$SYSBIN"
@@ -72,6 +84,7 @@ mkps() {
 #!/bin/bash
 { printf 'CALL'; for a in "$@"; do printf ' <%s>' "$a"; done; printf '\n'; } >> "$PS_LOG"
 printf 'STDIN=%s\n' "$(readlink /proc/self/fd/0 2>/dev/null)" >> "$PS_LOG"
+printf 'MSYSCONV=%s/%s\n' "${MSYS2_ARG_CONV_EXCL:-}" "${MSYS_NO_PATHCONV:-}" >> "$PS_LOG"
 prev=""
 for a in "$@"; do
     if [ "$prev" = "-EncodedCommand" ]; then
@@ -362,7 +375,7 @@ check_contains "notify: stub called with the toast text" "All good" "$(cat "$PS_
 check_contains "notify: -NoProfile passed" "<-NoProfile>" "$(cat "$PS_LOG")"
 check_contains "notify: script goes through -EncodedCommand" "<-EncodedCommand>" "$(cat "$PS_LOG")"
 check "notify: no -Command with a multi-line argv string" "0" "$(grep -c '<-Command>' "$PS_LOG")"
-check "notify: every argv stays on one line" "0" "$(grep -c -v -E '^(CALL|STDIN=|SCRIPT |TERMS=)' "$PS_LOG")"
+check "notify: every argv stays on one line" "0" "$(grep -c -v -E '^(CALL|STDIN=|SCRIPT |TERMS=|MSYSCONV=)' "$PS_LOG")"
 check_contains "notify: decoded script carries the text" "All good" "$(grep '^SCRIPT' "$PS_LOG")"
 check_contains "notify: script silences progress output" "ProgressPreference" "$(grep '^SCRIPT' "$PS_LOG")"
 
@@ -911,6 +924,165 @@ check "session-start wsl, no powershell: rc 0" "0" "$rc"
 check_contains "session-start wsl, no powershell: one context line" "powershell.exe could not be found" "$out"
 write_mounts_c
 rm -f -- "$SS_FIRST"
+
+# --- native Windows (Git Bash / MSYS2), simulated through CLAUDE_MB_SIGNAL_UNAME ------------
+
+# detection: fresh subshell per value (the result is cached per shell)
+nat() { ( _WINNATIVE_DETECTED=""; _WSL_DETECTED=""; CLAUDE_MB_SIGNAL_UNAME="$1" CLAUDE_MB_SIGNAL_PROC_VERSION="${2:-$TMP/version.linux}"
+          if "$3"; then echo yes; else echo no; fi ) }
+check "native: MINGW64 uname is native Windows" "yes" "$(nat MINGW64_NT-10.0-19045 "" is_windows_native)"
+check "native: MINGW32 uname is native Windows" "yes" "$(nat MINGW32_NT-6.1 "" is_windows_native)"
+check "native: MSYS uname is native Windows" "yes" "$(nat MSYS_NT-10.0-22631 "" is_windows_native)"
+check "native: Linux uname is not native Windows" "no" "$(nat Linux "" is_windows_native)"
+check "native: Darwin uname is not native Windows" "no" "$(nat Darwin "" is_windows_native)"
+check "native: MINGW counts as a Windows host" "yes" "$(nat MINGW64_NT-10.0 "" is_windows_host)"
+check "native: MINGW is not WSL" "no" "$(nat MINGW64_NT-10.0 "" is_wsl)"
+check "native: WSL is a Windows host" "yes" "$(nat Linux "$TMP/version.wsl" is_windows_host)"
+check "native: plain Linux is no Windows host" "no" "$(nat Linux "" is_windows_host)"
+check "native: real uname on this Linux test box is not native" "no" "$( _WINNATIVE_DETECTED=""; unset CLAUDE_MB_SIGNAL_UNAME; is_windows_native && echo yes || echo no)"
+
+# %SystemRoot% fallback (PATH miss, no drive mounts): only on native Windows, through cygpath -u
+cat > "$BIN/cygpath" <<'EOS'
+#!/bin/bash
+echo "cygpath $*" >> "$PS_LOG"
+[ "$1" = "-u" ] && shift
+[ "$1" = "--" ] && shift
+printf '%s\n' "$1"
+EOS
+chmod +x "$BIN/cygpath"
+: > "$CLAUDE_MB_SIGNAL_PROC_MOUNTS"
+reset_state
+check "native: SystemRoot fallback" "$WIN/c/$PS_REL" "$( _WINNATIVE_DETECTED=""; CLAUDE_MB_SIGNAL_UNAME=MINGW64_NT-10.0 SYSTEMROOT="$WIN/c/Windows" resolve_powershell)"
+check_contains "native: SystemRoot converted with cygpath -u" "cygpath -u -- $WIN/c/Windows" "$(cat "$PS_LOG")"
+reset_state
+check "native: WINDIR when SYSTEMROOT is unset" "$WIN/c/$PS_REL" "$( _WINNATIVE_DETECTED=""; unset SYSTEMROOT; CLAUDE_MB_SIGNAL_UNAME=MINGW64_NT-10.0 WINDIR="$WIN/c/Windows" resolve_powershell)"
+reset_state
+check "native: SystemRoot ignored off native Windows" "" "$( _WINNATIVE_DETECTED=""; CLAUDE_MB_SIGNAL_UNAME=Linux SYSTEMROOT="$WIN/c/Windows" resolve_powershell)"
+reset_state
+check "native: SystemRoot without powershell.exe below it" "" "$( _WINNATIVE_DETECTED=""; CLAUDE_MB_SIGNAL_UNAME=MINGW64_NT-10.0 SYSTEMROOT="$WIN/none" resolve_powershell)"
+rm -f -- "$BIN/cygpath"
+write_mounts_c
+
+# signal_prime: native Windows resolves the state dir and powershell.exe once per process
+reset_state
+check "prime: off native Windows nothing is cached" "|" "$( _WINNATIVE_DETECTED=""; CLAUDE_MB_SIGNAL_UNAME=Linux signal_prime; printf '%s|%s' "$_SIGNAL_SD_VAL" "$_SIGNAL_PS_VAL")"
+check "prime: native caches state dir and powershell" "$CLAUDE_MB_SIGNAL_STATE_DIR|$WIN/c/$PS_REL" "$( _WINNATIVE_DETECTED=""; CLAUDE_MB_SIGNAL_UNAME=MINGW64_NT-10.0 signal_prime; printf '%s|%s' "$_SIGNAL_SD_VAL" "$_SIGNAL_PS_VAL")"
+check "prime: cached state dir is reused without a new check" "$CLAUDE_MB_SIGNAL_STATE_DIR" "$( _WINNATIVE_DETECTED=""; CLAUDE_MB_SIGNAL_UNAME=MINGW64_NT-10.0 signal_prime; _signal_state_dir_check() { echo WRONG; }; signal_state_dir)"
+check "prime: another state dir setting is checked again" "$TMP/other-sd" "$( _WINNATIVE_DETECTED=""; CLAUDE_MB_SIGNAL_UNAME=MINGW64_NT-10.0 signal_prime; CLAUDE_MB_SIGNAL_STATE_DIR="$TMP/other-sd" signal_state_dir)"
+check "prime: a cached state dir turned symlink is not reused" "" "$( _WINNATIVE_DETECTED=""; CLAUDE_MB_SIGNAL_UNAME=MINGW64_NT-10.0 signal_prime; mv "$CLAUDE_MB_SIGNAL_STATE_DIR" "$CLAUDE_MB_SIGNAL_STATE_DIR.moved"; ln -s "$CLAUDE_MB_SIGNAL_STATE_DIR.moved" "$CLAUDE_MB_SIGNAL_STATE_DIR"; signal_state_dir)"
+reset_state
+check "prime: a cached powershell that vanished is resolved again" "$WIN/c/$PS_REL" "$( _WINNATIVE_DETECTED=""; CLAUDE_MB_SIGNAL_UNAME=MINGW64_NT-10.0 signal_prime; _SIGNAL_PS_VAL="$TMP/gone/powershell.exe"; resolve_powershell)"
+
+# repo-context / kitty-tab: no tmux adoption and no kitty process walk on native Windows
+check "native: no tmux adoption" "unset" "$( _WINNATIVE_DETECTED=""; unset TMUX TMUX_PANE; source "$SRC_DIR/repo-context.sh"; CLAUDE_MB_SIGNAL_UNAME=MINGW64_NT-10.0 signal_adopt_client_tmux; echo "${TMUX_PANE-unset}")"
+check "native: no kitty window lookup" "1" "$( _WINNATIVE_DETECTED=""; source "$SRC_DIR/kitty-tab.sh"; CLAUDE_MB_SIGNAL_UNAME=MINGW64_NT-10.0 _find_kitty_window_pid >/dev/null; echo $?)"
+
+# MSYS argument conversion is switched off for the powershell.exe run on native Windows only
+reset_state
+( _WINNATIVE_DETECTED=""; CLAUDE_MB_SIGNAL_UNAME=MINGW64_NT-10.0 windows_sound complete 0.4; wait )
+check_contains "native: MSYS arg conversion off for powershell" "MSYSCONV=*/1" "$(cat "$PS_LOG")"
+reset_state
+( _WINNATIVE_DETECTED=""; CLAUDE_MB_SIGNAL_UNAME=Linux windows_sound complete 0.4; wait )
+check_contains "native: no MSYS variables on Linux/WSL" "MSYSCONV=/" "$(cat "$PS_LOG")"
+
+# notify-replace.sh on native Windows: toast through powershell.exe from PATH, never gdbus
+reset_state
+mkps "$BIN/powershell.exe"
+: > "$CLAUDE_MB_SIGNAL_PROC_MOUNTS"
+CLAUDE_MB_SIGNAL_UNAME=MINGW64_NT-10.0-19045 nr "$TMP/version.linux" "$BIN:$SYSBIN_NOBC"; rc=$?
+wait; sleep 0.3
+check "nr native: rc 0" "0" "$rc"
+check_contains "nr native: toast through powershell.exe on PATH" "ToastNotificationManager" "$(grep '^SCRIPT' "$PS_LOG")"
+check_contains "nr native: powershell from PATH" "CALL <-NoProfile>" "$(cat "$PS_LOG")"
+check "nr native: gdbus never called" "" "$(cat "$GDBUS_LOG")"
+check "nr native: notify-send never called" "" "$(cat "$NS_LOG")"
+# native without any powershell.exe: rc 1 and the warning
+reset_state
+rm -f -- "$BIN/powershell.exe"
+CLAUDE_MB_SIGNAL_UNAME=MINGW64_NT-10.0-19045 nr "$TMP/version.linux" "$BIN:$SYSBIN_NOBC"; rc=$?
+check "nr native missing: rc 1" "1" "$rc"
+check_contains "nr native missing: warning on stderr" "powershell.exe not found" "$(cat "$TMP/nr.err")"
+check "nr native missing: no gdbus fallback" "" "$(cat "$GDBUS_LOG")"
+write_mounts_c
+
+# --- volume math without bc ---------------------------------------------------------
+
+OLDPATH="$PATH"
+export PATH="$BIN:$SYSBIN_NOBC"
+check "nobc: bc really missing" "" "$(command -v bc)"
+vb() { if "$@"; then echo yes; else echo no; fi; }
+check "nobc: 0.4 > 0" "yes" "$(vb signal_vol_gt0 0.4)"
+check "nobc: .5 > 0" "yes" "$(vb signal_vol_gt0 .5)"
+check "nobc: 0 is off" "no" "$(vb signal_vol_gt0 0)"
+check "nobc: 0.0 is off" "no" "$(vb signal_vol_gt0 0.0)"
+check "nobc: negative is off" "no" "$(vb signal_vol_gt0 -1)"
+check "nobc: text is off" "no" "$(vb signal_vol_gt0 abc)"
+check "nobc: empty is off" "no" "$(vb signal_vol_gt0 '')"
+check "nobc: two dots is off" "no" "$(vb signal_vol_gt0 1.2.3)"
+check "nobc: 1 <= 1" "yes" "$(vb signal_vol_le1 1)"
+check "nobc: 1.5 > 1" "no" "$(vb signal_vol_le1 1.5)"
+check "nobc: paplay volume 50 * 0.4 * 655.36" "13107" "$(signal_mul_int 50 0.4 655.36)"
+check "nobc: paplay volume 100 * 1 * 655.36" "65536" "$(signal_mul_int 100 1 655.36)"
+check "nobc: product of a non-number is empty" "" "$(signal_mul_int 50 x 655.36)"
+check "nobc: windows volume 0.4 * 0.125" "0.0500" "$(signal_mul_dec 0.4 0.125)"
+# a comma locale (when installed) must not turn the decimal dot into a comma
+COMMA_LOC="$(locale -a 2>/dev/null | grep -i -m1 -E '^de_DE\.utf-?8$')"
+if [ -n "$COMMA_LOC" ]; then
+    check "nobc: decimal dot even in a comma locale" "0.0875" "$(LC_ALL="$COMMA_LOC" signal_mul_dec 0.25 0.35)"
+fi
+reset_state
+windows_sound complete 0.4; wait
+check_contains "nobc: complete sound volume reaches the script" "Volume = 0.0500 " "$(grep '^SCRIPT' "$PS_LOG")"
+reset_state
+windows_sound attention 0.25; wait
+check_contains "nobc: attention sound volume reaches the script" "Volume = 0.0875 " "$(grep '^SCRIPT' "$PS_LOG")"
+reset_state
+windows_sound complete 'abc;Remove-Item x'; wait
+check_contains "nobc: invalid volume falls back to 0.05" "Volume = 0.05 " "$(grep '^SCRIPT' "$PS_LOG")"
+check "nobc: invalid volume never reaches the script" "0" "$(grep -c 'Remove-Item' "$PS_LOG")"
+export PATH="$OLDPATH"
+
+# hook-notify.sh end to end: native Windows plays the Windows sound; Linux without bc still
+# computes the paplay volume
+HN_CWD="$TMP/hn-cwd"
+mkdir -p "$HN_CWD"
+hn() { # hn <uname> <version-file> <path>; Notification permission prompt
+    ( cd "$HN_CWD" && printf '{"session_id":"%s","cwd":"%s","notification_type":"permission_prompt"}' "$HN_SID" "$HN_CWD" \
+        | CLAUDE_MB_SIGNAL_UNAME="$1" CLAUDE_MB_SIGNAL_PROC_VERSION="$2" PATH="$3" CLAUDE_MB_KITTY_TAB=false \
+          CLAUDE_MB_NOTIFY_SOUND_COMPLETE="${HN_VOL-0.4}" \
+          env -u TMUX -u TMUX_PANE -u KITTY_WINDOW_ID bash "$SRC_DIR/hook-notify.sh" notification 2>"$TMP/hn.err" )
+}
+reset_state
+mkps "$BIN/powershell.exe"
+hn MINGW64_NT-10.0-19045 "$TMP/version.linux" "$BIN:$SYSBIN_NOBC"; rc=$?
+sleep 0.5
+check "hook native: rc 0" "0" "$rc"
+check_contains "hook native: toast shown through powershell" "ToastNotificationManager" "$(grep '^SCRIPT' "$PS_LOG")"
+check_contains "hook native: Windows sound with volume, no bc" "Volume = 0.0500 " "$(grep '^SCRIPT' "$PS_LOG")"
+check "hook native: no stderr" "" "$(cat "$TMP/hn.err")"
+rm -f -- "$BIN/powershell.exe"
+export PA_LOG="$TMP/paplay.log"
+: > "$PA_LOG"
+cat > "$BIN/paplay" <<'EOS'
+#!/bin/bash
+echo "paplay $*" >> "$PA_LOG"
+EOS
+cat > "$BIN/pactl" <<'EOS'
+#!/bin/bash
+echo "Volume: front-left: 32768 /  50% / -18.06 dB,   front-right: 32768 /  50% / -18.06 dB"
+EOS
+chmod +x "$BIN/paplay" "$BIN/pactl"
+reset_state
+CLAUDE_MB_NOTIFY_TOAST=false hn Linux "$TMP/version.linux" "$BIN:$SYSBIN_NOBC"; rc=$?
+sleep 0.5
+check "hook linux nobc: rc 0" "0" "$rc"
+check_contains "hook linux nobc: paplay volume computed without bc" "paplay --volume=13107 " "$(cat "$PA_LOG")"
+check "hook linux nobc: powershell never called" "" "$(cat "$PS_LOG")"
+: > "$PA_LOG"
+HN_VOL=0 CLAUDE_MB_NOTIFY_TOAST=false hn Linux "$TMP/version.linux" "$BIN:$SYSBIN_NOBC"
+sleep 0.3
+check "hook linux nobc: volume 0 plays nothing" "" "$(cat "$PA_LOG")"
+rm -f -- "$BIN/paplay" "$BIN/pactl"
 
 echo "test-toast-delivery: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

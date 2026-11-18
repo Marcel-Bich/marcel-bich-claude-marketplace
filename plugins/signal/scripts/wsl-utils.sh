@@ -1,8 +1,9 @@
 #!/bin/bash
-# wsl-utils.sh: WSL detection, powershell.exe resolution and Windows compatibility functions
+# wsl-utils.sh: WSL and native Windows detection, powershell.exe resolution and Windows compatibility functions
 # Part of desktop-notifier plugin for Claude Code
 #
-# Provides cross-platform support for notifications and sound on WSL.
+# Provides cross-platform support for notifications and sound on WSL and on native Windows
+# (Claude Code native, hooks run by Git Bash / MSYS2). Both use the same powershell.exe path.
 #
 # Environment:
 #   CLAUDE_MB_NOTIFY_TOAST: "true" (default) or "false"/"off"/"no"/"0"/"disabled" to skip every toast and
@@ -14,6 +15,7 @@
 #   CLAUDE_MB_SIGNAL_PS_TIMEOUT: seconds before a powershell.exe run is killed (default 20); a toast run that
 #                           hides its toast gets this plus CLAUDE_MB_NOTIFY_TOAST_SECONDS
 #   CLAUDE_MB_SIGNAL_PROC_MOUNTS / CLAUDE_MB_SIGNAL_PROC_VERSION: test seams for /proc/mounts and /proc/version
+#   CLAUDE_MB_SIGNAL_UNAME: test seam for the output of `uname -s`
 
 # Cache WSL detection result
 _WSL_DETECTED=""
@@ -28,6 +30,71 @@ is_wsl() {
         fi
     fi
     [ "$_WSL_DETECTED" = "true" ]
+}
+
+# Cache native Windows detection result
+_WINNATIVE_DETECTED=""
+
+# Check if running on native Windows: Git Bash / MSYS2 (uname -s MINGW* or MSYS*). Cygwin is
+# not targeted. No bc, flock, setsid or Linux /proc there; powershell.exe is on PATH.
+is_windows_native() {
+    if [ -z "$_WINNATIVE_DETECTED" ]; then
+        local u="${CLAUDE_MB_SIGNAL_UNAME:-}"
+        if [ -z "$u" ]; then
+            # no fork on Linux and macOS (bash knows its OS type); uname -s elsewhere
+            case "${OSTYPE:-}" in
+                linux*|darwin*) u="$OSTYPE" ;;
+                *) u="$(uname -s 2>/dev/null)" ;;
+            esac
+        fi
+        case "$u" in
+            MINGW*|MSYS*) _WINNATIVE_DETECTED="true" ;;
+            *) _WINNATIVE_DETECTED="false" ;;
+        esac
+    fi
+    [ "$_WINNATIVE_DETECTED" = "true" ]
+}
+
+# True when Windows toasts and sounds through powershell.exe are the channel: WSL or native Windows
+is_windows_host() {
+    is_wsl || is_windows_native
+}
+
+# --- volume math without bc (awk, C locale so the decimal mark is always a dot) ----------
+
+# True when the value is a plain non-negative decimal number (digits, at most one dot).
+_signal_is_num() {
+    case "$1" in
+        ''|.|*[!0-9.]*|*.*.*) return 1 ;;
+    esac
+    return 0
+}
+
+# True when the volume is a number greater than 0 (a non-number counts as off).
+signal_vol_gt0() {
+    _signal_is_num "$1" && LC_ALL=C awk -v v="$1" 'BEGIN { exit !(v + 0 > 0) }'
+}
+
+# True when the volume is a number of at most 1.
+signal_vol_le1() {
+    _signal_is_num "$1" && LC_ALL=C awk -v v="$1" 'BEGIN { exit !(v + 0 <= 1) }'
+}
+
+# Print the product of two or three numbers, cut to an integer (paplay --volume); nothing for a
+# non-number.
+# Usage: signal_mul_int <a> <b> [<c>]
+signal_mul_int() {
+    local x
+    for x in "$@"; do _signal_is_num "$x" || return 1; done
+    LC_ALL=C awk -v a="$1" -v b="$2" -v c="${3:-1}" 'BEGIN { printf "%d\n", a * b * c }'
+}
+
+# Print the product of two numbers with four decimals (PowerShell MediaPlayer volume); nothing
+# for a non-number.
+# Usage: signal_mul_dec <a> <b>
+signal_mul_dec() {
+    _signal_is_num "$1" && _signal_is_num "$2" || return 1
+    LC_ALL=C awk -v a="$1" -v b="$2" 'BEGIN { printf "%.4f\n", a * b }'
 }
 
 # --- state dir, log, rate-limited warnings -------------------------------------------
@@ -74,7 +141,39 @@ _signal_physdir() {
     ( CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P )
 }
 
+# Native Windows only: every process start costs about 0.1 s there, and a hook runs
+# signal_state_dir and resolve_powershell many times (mostly in $(...) subshells, which cannot
+# fill a cache for their parent). signal_prime, called once at the top of a hook script, runs
+# both checks once and keeps the results in shell variables that every subshell inherits.
+# The cached state dir is only reused for the same configuration and while it is still a real
+# directory; the cached powershell.exe path is re-validated. On Linux and WSL nothing is cached.
+_SIGNAL_SD_KEY=""
+_SIGNAL_SD_VAL=""
+_SIGNAL_PS_VAL=""
+_signal_sd_key() {
+    printf '%s|%s|%s' "${CLAUDE_MB_SIGNAL_STATE_DIR:-}" "${XDG_STATE_HOME:-}" "${HOME:-}"
+}
+signal_prime() {
+    local d p
+    is_windows_native || return 0
+    if d="$(_signal_state_dir_check)"; then
+        _SIGNAL_SD_KEY="$(_signal_sd_key)"
+        _SIGNAL_SD_VAL="$d"
+    fi
+    p="$(resolve_powershell)" && _SIGNAL_PS_VAL="$p"
+    return 0
+}
+
 signal_state_dir() {
+    if [ -n "$_SIGNAL_SD_VAL" ] && [ "$_SIGNAL_SD_KEY" = "$(_signal_sd_key)" ] \
+        && [ -d "$_SIGNAL_SD_VAL" ] && [ ! -L "$_SIGNAL_SD_VAL" ]; then
+        printf '%s\n' "$_SIGNAL_SD_VAL"
+        return 0
+    fi
+    _signal_state_dir_check
+}
+
+_signal_state_dir_check() {
     local d="${CLAUDE_MB_SIGNAL_STATE_DIR:-}" home anchor p ra rd uid owner mode gid m dmode=""
     if [ -z "$d" ]; then
         if [ -n "${XDG_STATE_HOME:-}" ]; then d="$XDG_STATE_HOME/claude-mb-signal"
@@ -266,11 +365,29 @@ _signal_ps_from_mounts() {
     return 1
 }
 
+# Native Windows only: print Windows PowerShell below %SystemRoot% (or %WINDIR%), converted to an
+# MSYS path with cygpath -u. Returns 1 elsewhere or when it is not there.
+_signal_ps_from_sysroot() {
+    local root cand
+    is_windows_native || return 1
+    root="${SYSTEMROOT:-${WINDIR:-}}"
+    [ -n "$root" ] || return 1
+    command -v cygpath >/dev/null 2>&1 || return 1
+    root="$(cygpath -u -- "$root" 2>/dev/null)" || return 1
+    cand="${root%/}/System32/WindowsPowerShell/v1.0/powershell.exe"
+    _signal_valid_ps "$cand" || return 1
+    printf '%s\n' "$cand"
+}
+
 # Print the path of powershell.exe: PATH first, then the cached path (re-validated), then
-# a scan of the Windows drive mounts; a found path is cached in the state dir.
+# a scan of the Windows drive mounts (WSL), then %SystemRoot% (native Windows); a found path is cached in the state dir.
 # Returns 1 (prints nothing, no warning) when it cannot be found.
 resolve_powershell() {
     local p d cached
+    if [ -n "$_SIGNAL_PS_VAL" ] && _signal_valid_ps "$_SIGNAL_PS_VAL"; then
+        printf '%s\n' "$_SIGNAL_PS_VAL"
+        return 0
+    fi
     d="$(signal_state_dir)" || d=""
     p="$(command -v powershell.exe 2>/dev/null)"
     if [ -z "$p" ] || ! _signal_valid_ps "$p"; then
@@ -280,6 +397,7 @@ resolve_powershell() {
             _signal_valid_ps "$cached" && p="$cached"
         fi
         [ -n "$p" ] || p="$(_signal_ps_from_mounts)"
+        [ -n "$p" ] || p="$(_signal_ps_from_sysroot)"
     fi
     [ -n "$p" ] || return 1
     if [ -n "$d" ] && [ "$(head -n1 -- "$d/powershell-path" 2>/dev/null)" != "$p" ]; then
@@ -309,6 +427,10 @@ _signal_ps_run() {
     if ! enc="$(_signal_ps_encode "\$ProgressPreference = 'SilentlyContinue'"$'\n'"$3")"; then
         echo "cannot encode the PowerShell script (iconv or base64 missing)" >&2
         return 125
+    fi
+    # Native Windows: no MSYS argument conversion (the base64 text must reach powershell.exe as is)
+    if is_windows_native; then
+        local -x MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
     fi
     if command -v timeout >/dev/null 2>&1; then
         timeout "$2" "$1" -NoProfile -NonInteractive -EncodedCommand "$enc" </dev/null
@@ -504,7 +626,7 @@ windows_sound() {
 
     # Convert Linux volume to Windows volume
     local win_volume
-    win_volume=$(echo "$linux_volume * $volume_factor" | bc -l 2>/dev/null | head -c 6)
+    win_volume=$(signal_mul_dec "$linux_volume" "$volume_factor")
     [ -z "$win_volume" ] && win_volume="0.05"
 
     signal_ps_bg sound "$ps" "

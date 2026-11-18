@@ -16,7 +16,7 @@ Desktop notifications showing what Claude Code is working on - stay informed eve
   - For sessions hosted by the Claude Code background daemon, or when `TMUX_PANE` is missing in the hook environment, the tmux pane is taken from the client terminal process (`TMUX` and `TMUX_PANE` read from its environment, nothing else); a client that cannot be verified is ignored, so the tmux parts are then simply omitted
   - Body, first line: `git: <parent>/<repo>` of the repo the session works in - resolved from the limit plugin's per-session work-repo state, then git discovery from the cwd, then the credo session pin (limit and credo are optional); omitted when no repo resolves
   - Body, last line (after an empty line): `tmux: <session> | kitty: <tab>` with only the parts that exist; omitted outside tmux/kitty. tmux is the session of the current pane; kitty is the tab title without `[ai...]`/`[ask]`/`[fin]` prefixes, taken from the tab indicator's saved title or, if the indicator is disabled or has no saved title, read live via `kitty @ ls` (needs the kitty socket)
-  - On WSL2 the body lines are joined with ` | ` because the toast shows the body as a single text field
+  - On WSL2 and native Windows the body lines are joined with ` | ` because the toast shows the body as a single text field
   - On GNOME Shell the line breaks are sent as carriage returns, because GNOME turns every `\n` in the body into a space (empty lines are kept)
 - Sound alerts with context-aware sounds:
   - "Complete" sound for permission prompts (requires attention)
@@ -27,7 +27,7 @@ Desktop notifications showing what Claude Code is working on - stay informed eve
 - "Tool waiting" hints are skipped in bypass permissions mode (no tool ever waits there, switch: `CLAUDE_MB_NOTIFY_BYPASS_TOOLS`); real permission prompts are still notified
 - Non-stacking notifications: one slot per session and hook type; each new notification replaces the previous one of the same session (previous one is closed first to prevent Linux tray stacking). Hooks firing at the same moment (parallel tool calls) are serialized with `flock`, so they no longer leave several notifications behind
 - Kitty terminal tab indicator for active Claude sessions
-- Cross-platform: Linux and WSL2 (Windows 10/11); `powershell.exe` is found even when it is not on `PATH`, failed deliveries are logged and warned about once a day, and a once-a-day preflight tells you when toasts are switched off (see "Delivery and preflight")
+- Cross-platform: Linux, WSL2 and native Windows (Claude Code native, hooks run by Git Bash; Windows 10/11); `powershell.exe` is found even when it is not on `PATH`, failed deliveries are logged and warned about once a day, and a once-a-day preflight tells you when toasts are switched off (see "Delivery and preflight")
 
 ## Requirements
 
@@ -41,7 +41,7 @@ Sound is optional. On Linux the plugin tries the first available player in this 
 - `pw-play` (PipeWire, `pipewire-bin` on Debian/Ubuntu) - honours the configured volume
 - `ffplay` (ffmpeg) - plays at full volume (no per-play volume control)
 
-If none is installed, notifications still work; only the sound is skipped. On WSL2 the Windows system sound is used instead.
+If none is installed, notifications still work; only the sound is skipped. On WSL2 and native Windows the Windows system sound is used instead. No `bc` is needed (volume math uses `awk`).
 
 ## Configuration
 
@@ -58,9 +58,19 @@ If none is installed, notifications still work; only the sound is skipped. On WS
 ## Delivery and preflight
 
 - **WSL2:** `powershell.exe` is looked up on `PATH`, then in the Windows drive mounts of `/proc/mounts` (`Windows/System32/WindowsPowerShell/v1.0/powershell.exe` below a 9p/drvfs mount with a drive letter; no drive is hardcoded). The found path is cached in the state dir and re-checked before use. If it cannot be found, toasts and sounds are skipped with one warning per day (stderr and `signal.log` in the state dir)
+- **Native Windows (Git Bash / MSYS2, `uname -s` starts with `MINGW` or `MSYS`):** the same PowerShell toast and sound path as on WSL2. `powershell.exe` is taken from `PATH` (Git Bash has it there), else the cached path, else `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` (converted with `cygpath -u`). MSYS argument conversion is switched off for the `powershell.exe` run. Because every process start is slow there, a hook resolves the state dir and `powershell.exe` only once per run
 - **Exit codes** of `powershell.exe` runs (killed after 20 s; a toast run also gets its hide wait of `CLAUDE_MB_NOTIFY_TOAST_SECONDS` on top) and of gdbus/notify-send are evaluated; a failure is logged, and when no channel worked one warning per day is emitted. Hooks never block on it
-- **Preflight** (SessionStart, at most once a day, only with `CLAUDE_MB_NOTIFY_TOAST` on): on WSL a read-only registry check whether Windows toasts are enabled (absent value = enabled, Focus Assist is not checked); on native Linux only whether `gdbus` or `notify-send` exists. The WSL check runs detached in the background (a cold `powershell.exe` can be slower than the SessionStart timeout), so it is reported by the NEXT session start; a failed check (or a `powershell.exe` that cannot be found) is retried at most once per hour (`CLAUDE_MB_SIGNAL_PREFLIGHT_TIMEOUT`, default 20 s). If something is off, one short context line asks Claude to tell you once and ask whether it should open the notification settings (it never does that on its own). Nothing is changed automatically; you switch it on yourself (Settings > System > Notifications > "Get notifications from apps and other senders"). No other fallback is used
+- **Preflight** (SessionStart, at most once a day, only with `CLAUDE_MB_NOTIFY_TOAST` on): on WSL and native Windows a read-only registry check whether Windows toasts are enabled (absent value = enabled, Focus Assist is not checked); on native Linux only whether `gdbus` or `notify-send` exists. The Windows check runs detached in the background (a cold `powershell.exe` can be slower than the SessionStart timeout), so it is reported by the NEXT session start; a failed check (or a `powershell.exe` that cannot be found) is retried at most once per hour (`CLAUDE_MB_SIGNAL_PREFLIGHT_TIMEOUT`, default 20 s). If something is off, one short context line asks Claude to tell you once and ask whether it should open the notification settings (it never does that on its own). Nothing is changed automatically; you switch it on yourself (Settings > System > Notifications > "Get notifications from apps and other senders"). No other fallback is used
 - **Stop the hints or start over:** `bash <plugin>/scripts/toast-preflight.sh decline` (no further hints), `... reset` (hints and warnings come back), `... open-settings` (opens `ms-settings:notifications`)
+
+## Windows limitations
+
+On native Windows (Claude Code native, hooks run by Git Bash) toasts, sounds and the preflight work as on WSL2. Not available there:
+
+- **Kitty tab indicator** and the `kitty:` part of the toast: kitty does not run on Windows, the process walk is skipped
+- **tmux** session name and the `tmux:` part of the toast: Git Bash ships no tmux, and the client pane lookup reads the Linux `/proc`, which Git Bash does not have in that form
+- **User-set session name** in the toast title: the session descriptor is looked up by the Claude Code process id, which a Git Bash hook cannot see; the title falls back to the short session id
+- **`flock`** (Git Bash has none): it only serializes the Linux notification ID files, Windows toasts replace each other by their tag anyway
 
 ## Kitty Tab Indicator
 

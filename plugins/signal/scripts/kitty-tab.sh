@@ -56,6 +56,10 @@ _walk_up_to_kitty_child() {
 # --- Find kitty window PID via process tree ---
 
 _find_kitty_window_pid() {
+    # Native Windows (Git Bash): there is no kitty, skip the process walk (each step forks)
+    if declare -F is_windows_native >/dev/null && is_windows_native; then
+        return 1
+    fi
     # In tmux: start from tmux client PID (which is in kitty's process tree).
     # Target this pane's client via -t "$TMUX_PANE"; without it tmux picks the
     # most recent client, which is wrong when several clients are attached.

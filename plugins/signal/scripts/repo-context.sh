@@ -236,6 +236,8 @@ _signal_client_pid() {
 # are validated; anything odd leaves the environment untouched.
 signal_adopt_client_tmux() {
     [ -n "${TMUX_PANE:-}" ] && return 0
+    # Native Windows (Git Bash): no tmux and no Linux /proc ancestry to read
+    declare -F is_windows_native >/dev/null && is_windows_native && return 0
     local client item tmux_val="" pane=""
     client=$(_signal_client_pid) || return 0
     [ -n "$client" ] || return 0

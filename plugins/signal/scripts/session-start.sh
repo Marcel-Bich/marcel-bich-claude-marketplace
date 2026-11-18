@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/wsl-utils.sh"
 source "$SCRIPT_DIR/repo-context.sh"
 source "$SCRIPT_DIR/toast-preflight.sh"
+# Native Windows: resolve the state dir and powershell.exe once for this process (no-op elsewhere)
+signal_prime
 
 PROJECT=$(basename "$PWD" 2>/dev/null || echo "claude")
 
@@ -21,8 +23,8 @@ esac
 # (Either stale from /resume, or user is at terminal anyway for new session)
 touch "/tmp/claude-mb-first-event-pending-$(signal_notify_key "$SID" "$PROJECT" first)"
 
-if is_wsl; then
-    # Windows: Clear only ClaudeCode group notifications from Action Center
+if is_windows_host; then
+    # Windows (WSL or native Git Bash): Clear only ClaudeCode group notifications from Action Center
     # (toast history; skipped with the toast switch off or when powershell.exe is missing, the
     # missing case is reported once a day by the preflight below)
     if signal_toast_enabled && SIGNAL_PS="$(resolve_powershell)"; then

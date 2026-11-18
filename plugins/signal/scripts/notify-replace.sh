@@ -4,7 +4,7 @@
 #
 # Uses gdbus for notification replacement (prevents stacking)
 # Falls back to notify-send if gdbus fails
-# On WSL: Uses Windows toast notifications via PowerShell (resolved by wsl-utils.sh)
+# On WSL and native Windows (Git Bash): Uses Windows toast notifications via PowerShell (resolved by wsl-utils.sh)
 #
 # CLAUDE_MB_NOTIFY_TOAST=false skips every attempt. Exit code: 0 delivered/started or switched
 # off, 1 when no notification channel worked (one warning per day on stderr, plus the state log).
@@ -15,9 +15,11 @@
 # non-zero code as a non-blocking error (stderr shown, the action goes on), so 1 stays harmless.
 # Keep it that way: never exit 2 from here.
 
-# Load WSL utilities
+# Load WSL / native Windows utilities
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/wsl-utils.sh"
+# Native Windows: resolve the state dir and powershell.exe once for this process (no-op elsewhere)
+signal_prime
 
 SESSION_ID="${1:-default}"
 TITLE="${2:-Claude Code}"
@@ -53,8 +55,8 @@ case "$URGENCY" in
     *)          TIMEOUT=5000 ;;
 esac
 
-# WSL: Use Windows toast notifications with replacement support
-if is_wsl; then
+# WSL and native Windows (Git Bash): Windows toast notifications with replacement support
+if is_windows_host; then
     # SESSION_ID is used as Tag for notification replacement
     # (windows_notify returns 1 after its own once-per-day warning when powershell.exe is missing)
     windows_notify "$TITLE" "$BODY" "$SESSION_ID" "$URGENCY"

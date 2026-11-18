@@ -16,10 +16,12 @@ NOTIFY_BYPASS_TOOLS="${CLAUDE_MB_NOTIFY_BYPASS_TOOLS:-false}"
 # Get plugin root and hook type
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# Load WSL utilities
+# Load WSL / native Windows utilities
 source "$PLUGIN_ROOT/scripts/wsl-utils.sh"
 source "$PLUGIN_ROOT/scripts/kitty-tab.sh"
 source "$PLUGIN_ROOT/scripts/repo-context.sh"
+# Native Windows: resolve the state dir and powershell.exe once for this process (no-op elsewhere)
+signal_prime
 HOOK_TYPE="${1:-notification}"
 # Daemon-hosted sessions have no TMUX_PANE of their own: take the client pane
 signal_adopt_client_tmux
@@ -165,23 +167,23 @@ else
     SOUND_FILE="/usr/share/sounds/freedesktop/stereo/message.oga"
 fi
 
-if is_wsl; then
-    # WSL: Use Windows system sound with volume
+if is_windows_host; then
+    # WSL and native Windows (Git Bash): Windows system sound with volume
     windows_sound "$SOUND_TYPE" "$SOUND_VOLUME"
-elif command -v paplay &> /dev/null && [ "$(echo "$SOUND_VOLUME > 0" | bc 2>/dev/null)" = "1" ]; then
+elif command -v paplay &> /dev/null && signal_vol_gt0 "$SOUND_VOLUME"; then
     # Linux (PulseAudio): paplay uses pactl for current sink volume + paplay --volume
     CURRENT_VOL=$(pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | grep -oP '\d+(?=%)' | head -1)
-    PLAY_VOL=$(echo "${CURRENT_VOL:-50} * $SOUND_VOLUME * 655.36" | bc 2>/dev/null | cut -d. -f1)
+    PLAY_VOL=$(signal_mul_int "${CURRENT_VOL:-50}" "$SOUND_VOLUME" 655.36)
     [ -n "$PLAY_VOL" ] && paplay --volume="$PLAY_VOL" "$SOUND_FILE" 2>/dev/null &
-elif command -v pw-play &> /dev/null && [ "$(echo "$SOUND_VOLUME > 0" | bc 2>/dev/null)" = "1" ]; then
+elif command -v pw-play &> /dev/null && signal_vol_gt0 "$SOUND_VOLUME"; then
     # Linux (PipeWire): fallback when paplay is not installed.
     # pw-play --volume takes a float 0.0-1.0; use SOUND_VOLUME directly if in range, else play without it.
-    if [ "$(echo "$SOUND_VOLUME <= 1" | bc 2>/dev/null)" = "1" ]; then
+    if signal_vol_le1 "$SOUND_VOLUME"; then
         pw-play --volume="$SOUND_VOLUME" "$SOUND_FILE" 2>/dev/null &
     else
         pw-play "$SOUND_FILE" 2>/dev/null &
     fi
-elif command -v ffplay &> /dev/null && [ "$(echo "$SOUND_VOLUME > 0" | bc 2>/dev/null)" = "1" ]; then
+elif command -v ffplay &> /dev/null && signal_vol_gt0 "$SOUND_VOLUME"; then
     # Linux (ffmpeg): last-resort fallback. ffplay has no simple linear volume flag,
     # so sound plays at full volume - sound without exact volume beats no sound at all.
     ffplay -nodisp -autoexit -loglevel quiet "$SOUND_FILE" 2>/dev/null &

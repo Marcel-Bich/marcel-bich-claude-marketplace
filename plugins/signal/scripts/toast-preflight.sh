@@ -8,12 +8,12 @@
 #   toast-preflight.sh open-settings   open the Windows notification settings (ms-settings:notifications)
 #
 # Only runs when CLAUDE_MB_NOTIFY_TOAST is on. At most once per day (stamp in the state dir).
-# WSL: READ-ONLY registry reads through powershell.exe (nothing is ever written or changed),
+# WSL and native Windows (Git Bash): READ-ONLY registry reads through powershell.exe (nothing is ever written or changed),
 # absent value = enabled. Native Linux: only checks that gdbus or notify-send exist (never
 # powershell). The result is at most one short line on stdout, which SessionStart hands to
 # the agent as context. Focus Assist is deliberately not checked. There is no other fallback.
 #
-# WSL flow (SessionStart has a 5 s budget, a cold powershell.exe start can take longer):
+# Windows flow, WSL and native (SessionStart has a 5 s budget, a cold powershell.exe start can take longer):
 #   session N    starts the registry read detached in the background (stdin /dev/null, marker
 #                preflight-pending) and prints nothing; the probe writes preflight-result
 #   session N+1  reports the result (one line when toasts look disabled), sets the daily stamp
@@ -115,7 +115,9 @@ _signal_preflight_wsl() {
         signal_touch "$d/preflight-failed"
         signal_stamp_fresh "$d/warned-preflight-ps-missing" && return 0
         signal_touch "$d/warned-preflight-ps-missing"
-        echo "[signal] powershell.exe could not be found from this WSL session (not on PATH, not below any Windows drive mount), so Windows toasts and sounds are skipped. Tell the user once, briefly; do not search for it or install anything. If the user wants no further hints, run: bash \"$_SIGNAL_PREFLIGHT_SELF\" decline"
+        local where="from this WSL session (not on PATH, not below any Windows drive mount)"
+        is_windows_native && where="in this Git Bash session (not on PATH, not below %SystemRoot%)"
+        echo "[signal] powershell.exe could not be found $where, so Windows toasts and sounds are skipped. Tell the user once, briefly; do not search for it or install anything. If the user wants no further hints, run: bash \"$_SIGNAL_PREFLIGHT_SELF\" decline"
         return 0
     fi
 
@@ -140,7 +142,7 @@ signal_preflight() {
     signal_toast_enabled || return 0
     d="$(signal_state_dir)" || return 0
     [ -e "$d/preflight-declined" ] && return 0
-    if is_wsl; then
+    if is_windows_host; then
         _signal_preflight_wsl "$d"
     else
         _signal_preflight_linux "$d"
@@ -162,7 +164,7 @@ _signal_preflight_main() {
             echo "signal: toast hints and warnings reset"
             ;;
         open-settings)
-            is_wsl || { echo "open-settings is only for WSL" >&2; return 1; }
+            is_windows_host || { echo "open-settings is only for WSL and native Windows" >&2; return 1; }
             ps="$(resolve_powershell)" || { echo "powershell.exe not found" >&2; return 1; }
             _signal_ps_run "$ps" 10 "Start-Process 'ms-settings:notifications'" >/dev/null 2>&1
             ;;
