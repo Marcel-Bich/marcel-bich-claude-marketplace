@@ -6,6 +6,12 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.85
 
+#### v0.85.1
+
+##### Fixed
+
+- The credo band no longer starts WSL on native Windows. It ran its scripts by their path, which could resolve to `System32\bash.exe` (the WSL launcher) and boot the default distro on every poll, so `wsl --shutdown` never held. On Windows the band now runs them through Git Bash by its full path and polls nothing when Git Bash is missing.
+
 #### v0.85.0
 
 ##### Added

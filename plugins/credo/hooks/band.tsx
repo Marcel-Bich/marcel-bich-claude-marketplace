@@ -133,10 +133,34 @@ function value(c: CredoCounts, key: Key) {
   return key === 'parked' ? c.hold + c.future : c[key]
 }
 
+// On native Windows a script started by its own path (or a bare "bash") can
+// resolve to System32\bash.exe, the WSL launcher, which boots the default WSL
+// distro on every poll and keeps it from ever staying shut down. There the
+// scripts run through Git Bash by its full path; without Git Bash the band polls
+// nothing. undefined = not resolved yet, null = no usable shell.
+const GIT_BASH = [
+  'C:\\Program Files\\Git\\bin\\bash.exe',
+  'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+]
+let shellPrefix: string[] | null | undefined
+
+async function scriptShell($: EngineInterface): Promise<string[] | null> {
+  if (shellPrefix !== undefined) return shellPrefix
+  const { platform } = await $.session.info()
+  if (platform !== 'windows') return (shellPrefix = [])
+  for (const p of GIT_BASH) {
+    if (await $.fs.exists(p).catch(() => false)) return (shellPrefix = [p])
+  }
+  $.ui.log('credo band: no Git Bash found on Windows, band scripts disabled', { to: 'debug' })
+  return (shellPrefix = null)
+}
+
 // runs one of credo's core scripts with this session's id (session pin, autonomy)
 async function runScript($: EngineInterface, args: string[]) {
+  const shell = await scriptShell($)
+  if (shell === null) throw new Error('no Git Bash on Windows')
   const sid = await $.session.id()
-  return $.process.run([`${$.plugin.root}/scripts/${args[0]}`, ...args.slice(1)], {
+  return $.process.run([...shell, `${$.plugin.root}/scripts/${args[0]}`, ...args.slice(1)], {
     env: { CREDO_SESSION_ID: sid },
     timeoutMs: RUN_TIMEOUT_MS,
   })
