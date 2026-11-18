@@ -2,42 +2,35 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-11
 
-## limit
-
-### v2
-
-#### v2.37
-
-##### v2.37.4
-
-###### Fixed
-
-- Native Windows (Git Bash): local token counting works. A native `jq.exe` (e.g. from winget) writes CRLF line ends, and the stray `\r` broke offsets, pending flags, completeness and every number read back from jq; jq now runs with `-b` there (or its `\r` is stripped when the build has no `-b`). The local highscore line and the Est100% samples depend on this
-- Native Windows: `--arg` values that look like paths are no longer rewritten by Git Bash into `C:/...` before jq sees them, so ledger lookups by transcript path and the pruning of deleted transcripts match the stored keys
-- Native Windows: a `transcript_path` in Windows form (`C:\Users\...`) maps to the same ledger entry as its POSIX spelling, so it is not counted twice
-- A `CLAUDE_CONFIG_DIR` with backslashes (`C:\Users\me\.claude-x`) keeps its profile name in every limit script; the combined-statusline setup writes it as `C:/...` into `statusLine.command`
-- Plan detection, the work-repo hooks, the GLM statusline and the refresh-interval hook get the same jq fix on native Windows
-- With jq 1.7 or newer, history entries and the highscore view show `0` / `9` again instead of the literal `0.0` / `9.0`
-
-##### v2.37.3
-
-###### Fixed
-
-- Native Windows (Git Bash): the 5h and weekly figures show again. The usage response is now saved through a command-line path that Git Bash translates; before, the native curl wrote it to the drive root (`C:\tmp`) and the shared cache stayed empty
-- Highscore and token figures no longer need `bc` (missing in Git Bash); they use bash integer math with the same one-decimal truncation
-- Background refresh, ledger scan, plan detection and the provider hand-off start the running bash instead of a `bash` looked up on PATH, which on native Windows can be the WSL launcher (`System32\bash.exe`)
-
-##### v2.37.2
-
-###### Fixed
-
-- A plan without a 5h limit (five_hour.utilization null, weekly only) no longer shows `invalid_response`; the 5h line is left out and the weekly lines render
-
 ## credo
 
 ### v0
 
 #### v0.85
+
+##### v0.85.4
+
+###### Added
+
+- `/credo:setup` power-down detects native Windows: `powercfg /a` for the available states,
+  `MSYS_NO_PATHCONV=1 shutdown.exe /h` (hibernate) or the standby command
+- README section "Windows limitations"
+
+###### Fixed
+
+- Every hook command quotes `${CLAUDE_PLUGIN_ROOT}`, so the hooks still run when the plugin root
+  contains a space (for example a Windows profile like `C:\Users\First Last`)
+- `credo-worktree-setup.sh` matches hydra's `worktree-setup.sh` on native Windows: native symlinks
+  only (never a silent copy, never a junction), a skip with a Developer Mode hint when Windows refuses
+  symlinks, relative targets without Python (`realpath --relative-to`), `${BASH:-bash}` for dogma's
+  list, Windows `installPath` entries, and no silent exit when the newest dogma lacks `worktree-files.sh`
+- The resource gate checks the CPU on native Windows through CIM `Win32_Processor.LoadPercentage`
+  (the WSL host path) instead of the MSYS load average, which always reads 0.00
+- `credo-worktree-cleanup.sh` fails closed on native Windows: the live-process check cannot see
+  Windows processes, so merged worktrees are reported as an owner question and never removed
+- self-restart, self-compact, self-reload, the periodic reminder, owner-type and runtime pane
+  references refuse with one clear "needs tmux, not available on native Windows" line instead of
+  failing deeper down (the reminder hooks stay silent)
 
 ##### v0.85.3
 
@@ -565,11 +558,85 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 - `check` prints a hint line for both cases, and the new `network-hint` subcommand prints the pending agent text for the SessionStart hook.
 - A router refused for a subnet cannot be bound again: `bind` refuses it and `init` offers no bind command for it. `bind` also refuses a profile name that another router already uses, instead of overwriting that profile.
 
+## signal
+
+### v1
+
+#### v1.7
+
+##### v1.7.1
+
+###### Fixed
+
+- Every hook command quotes `${CLAUDE_PLUGIN_ROOT}`, so the hooks still run when the plugin root
+  contains a space (for example a Windows profile like `C:\Users\First Last`)
+
+##### v1.7.0
+
+###### Added
+
+- Native Windows support (Claude Code native, hooks run by Git Bash / MSYS2): detected by `uname -s` `MINGW*` or `MSYS*`, toasts, sounds, the Action Center cleanup at session start and the toast preflight now use the same PowerShell path as WSL2. `powershell.exe` comes from `PATH`, else the cached path, else `%SystemRoot%` (via `cygpath -u`); MSYS argument conversion is switched off for the `powershell.exe` run.
+- On native Windows a hook resolves the state dir and `powershell.exe` once per run and skips the tmux and kitty process lookups, so the hooks stay well inside their timeouts despite the slow process start there.
+- README section "Windows limitations": kitty tab indicator, tmux label, user-set session name in the title and `flock` are not available on native Windows.
+
+###### Fixed
+
+- Sound volume math no longer needs `bc` (now `awk` in the C locale): without `bc` the Windows sound fell back to a fixed volume and the Linux `paplay`, `pw-play` and `ffplay` sounds were skipped entirely. A volume that is not a plain non-negative number counts as off on Linux and as the default 0.05 on Windows.
+
+## limit
+
+### v2
+
+#### v2.37
+
+##### v2.37.5
+
+###### Fixed
+
+- Every hook command quotes `${CLAUDE_PLUGIN_ROOT}`, so the hooks still run when the plugin root
+  contains a space (for example a Windows profile like `C:\Users\First Last`)
+
+##### v2.37.4
+
+###### Fixed
+
+- Native Windows (Git Bash): local token counting works. A native `jq.exe` (e.g. from winget) writes CRLF line ends, and the stray `\r` broke offsets, pending flags, completeness and every number read back from jq; jq now runs with `-b` there (or its `\r` is stripped when the build has no `-b`). The local highscore line and the Est100% samples depend on this
+- Native Windows: `--arg` values that look like paths are no longer rewritten by Git Bash into `C:/...` before jq sees them, so ledger lookups by transcript path and the pruning of deleted transcripts match the stored keys
+- Native Windows: a `transcript_path` in Windows form (`C:\Users\...`) maps to the same ledger entry as its POSIX spelling, so it is not counted twice
+- A `CLAUDE_CONFIG_DIR` with backslashes (`C:\Users\me\.claude-x`) keeps its profile name in every limit script; the combined-statusline setup writes it as `C:/...` into `statusLine.command`
+- Plan detection, the work-repo hooks, the GLM statusline and the refresh-interval hook get the same jq fix on native Windows
+- With jq 1.7 or newer, history entries and the highscore view show `0` / `9` again instead of the literal `0.0` / `9.0`
+
+##### v2.37.3
+
+###### Fixed
+
+- Native Windows (Git Bash): the 5h and weekly figures show again. The usage response is now saved through a command-line path that Git Bash translates; before, the native curl wrote it to the drive root (`C:\tmp`) and the shared cache stayed empty
+- Highscore and token figures no longer need `bc` (missing in Git Bash); they use bash integer math with the same one-decimal truncation
+- Background refresh, ledger scan, plan detection and the provider hand-off start the running bash instead of a `bash` looked up on PATH, which on native Windows can be the WSL launcher (`System32\bash.exe`)
+
+##### v2.37.2
+
+###### Fixed
+
+- A plan without a 5h limit (five_hour.utilization null, weekly only) no longer shows `invalid_response`; the 5h line is left out and the weekly lines render
+
 ## hydra
 
 ### v0
 
 #### v0.4
+
+##### v0.4.1
+
+###### Added
+
+- README section "Windows limitations"
+
+###### Fixed
+
+- Every hook command quotes `${CLAUDE_PLUGIN_ROOT}`, so the hooks still run when the plugin root
+  contains a space (for example a Windows profile like `C:\Users\First Last`)
 
 ##### v0.4.0
 
@@ -592,29 +659,22 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 - `/hydra:cleanup` names the lossless case: a merged worktree whose only leftovers are setup symlinks into the main checkout or `.credo/` changes already present in the main checkout is removed too, under credo's owner setting
 
-## signal
-
-### v1
-
-#### v1.7
-
-##### v1.7.0
-
-###### Added
-
-- Native Windows support (Claude Code native, hooks run by Git Bash / MSYS2): detected by `uname -s` `MINGW*` or `MSYS*`, toasts, sounds, the Action Center cleanup at session start and the toast preflight now use the same PowerShell path as WSL2. `powershell.exe` comes from `PATH`, else the cached path, else `%SystemRoot%` (via `cygpath -u`); MSYS argument conversion is switched off for the `powershell.exe` run.
-- On native Windows a hook resolves the state dir and `powershell.exe` once per run and skips the tmux and kitty process lookups, so the hooks stay well inside their timeouts despite the slow process start there.
-- README section "Windows limitations": kitty tab indicator, tmux label, user-set session name in the title and `flock` are not available on native Windows.
-
-###### Fixed
-
-- Sound volume math no longer needs `bc` (now `awk` in the C locale): without `bc` the Windows sound fell back to a fixed volume and the Linux `paplay`, `pw-play` and `ffplay` sounds were skipped entirely. A volume that is not a plain non-negative number counts as off on Linux and as the default 0.05 on Windows.
-
 ## dogma
 
 ### v1
 
 #### v1.47
+
+##### v1.47.9
+
+###### Added
+
+- README section "Windows limitations"
+
+###### Fixed
+
+- Every hook command quotes `${CLAUDE_PLUGIN_ROOT}`, so the hooks still run when the plugin root
+  contains a space (for example a Windows profile like `C:\Users\First Last`)
 
 ##### v1.47.8
 
