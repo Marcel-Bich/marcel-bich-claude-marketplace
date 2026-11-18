@@ -2,6 +2,47 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-11
 
+## dogma
+
+### v1
+
+#### v1.47
+
+##### v1.47.7
+
+###### Fixed
+
+- The delete guard no longer blocks every command on native Windows with "guard error (exit 49)". Under Git Bash `python3` can be the Microsoft Store alias stub, which exits 9009 (seen as 49); the guard took it for a Python and failed closed on its exit code. The guard and token protection now start each candidate (`python3`, then `python`) once and use it only when it reports a POSIX Python 3. The Store stub and a native Windows Python (whose path semantics the guard does not model) count as missing: harmless commands pass, destructive-looking commands are denied by the text fallback, and token protection runs its own text rules instead of skipping them.
+- No dogma hook or band script starts a bare `bash` any more, which on Windows can resolve to `System32\bash.exe` (the WSL launcher). Scripts call the running bash by its path, the session-start hook uses `/bin/bash`, and on Windows the dogma band runs its scripts through Git Bash by its full path (nothing when Git Bash is missing).
+
+##### v1.47.6
+
+###### Changed
+
+- The delete guard documents and tests credo's ledger-verified cleanup helper (`credo-cleanup.py own-rm`) as the sanctioned delete path for an agent's own temp output. Called by its literal path it is no delete finding.
+
+##### v1.47.5
+
+###### Changed
+
+- Auto worktree cleanup option names the lossless case: a merged worktree whose only leftovers are `.credo/` changes already present in the main checkout is removed too; setup symlinks into the main checkout do not count as changes
+
+##### v1.47.4
+
+###### Fixed
+
+- Command substitutions inside arithmetic expansion are checked like top-level ones
+
+##### v1.47.3
+
+###### Added
+
+- Session-start warning when `jq` is missing: dogma's protection hooks (delete guard, git permissions, dependency verification) are off without it, so the user is urged to install jq (`hooks/jq-missing-warn.sh`)
+
+###### Fixed
+
+- Redirect-like text in an unquoted heredoc body of `cat` or `tee` (`see <dogma>/x`, `a>/x`) is no longer denied as a redirect onto a critical path; command substitutions and backticks in the body are still checked
+
 ## credo
 
 ### v0
@@ -484,40 +525,6 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 - A bound network whose Windows network category is Public (outside `windows_profiles`) gets the same hint, telling the user where to switch the network to Private.
 - `check` prints a hint line for both cases, and the new `network-hint` subcommand prints the pending agent text for the SessionStart hook.
 - A router refused for a subnet cannot be bound again: `bind` refuses it and `init` offers no bind command for it. `bind` also refuses a profile name that another router already uses, instead of overwriting that profile.
-
-## dogma
-
-### v1
-
-#### v1.47
-
-##### v1.47.6
-
-###### Changed
-
-- The delete guard documents and tests credo's ledger-verified cleanup helper (`credo-cleanup.py own-rm`) as the sanctioned delete path for an agent's own temp output. Called by its literal path it is no delete finding.
-
-##### v1.47.5
-
-###### Changed
-
-- Auto worktree cleanup option names the lossless case: a merged worktree whose only leftovers are `.credo/` changes already present in the main checkout is removed too; setup symlinks into the main checkout do not count as changes
-
-##### v1.47.4
-
-###### Fixed
-
-- Command substitutions inside arithmetic expansion are checked like top-level ones
-
-##### v1.47.3
-
-###### Added
-
-- Session-start warning when `jq` is missing: dogma's protection hooks (delete guard, git permissions, dependency verification) are off without it, so the user is urged to install jq (`hooks/jq-missing-warn.sh`)
-
-###### Fixed
-
-- Redirect-like text in an unquoted heredoc body of `cat` or `tee` (`see <dogma>/x`, `a>/x`) is no longer denied as a redirect onto a critical path; command substitutions and backticks in the body are still checked
 
 ## hydra
 
