@@ -33,8 +33,9 @@
 # Unlike file-protection.sh this guard does NOT read DOGMA-PERMISSIONS.md and has no
 # per-hook switch and no worktree exemption: it always applies. Only the master
 # switch CLAUDE_MB_DOGMA_ENABLED=false turns it off.
-# Core logic: bash-guard.py + delete-guard.py (python3). Without python3 a command that
-# looks destructive is denied (fail closed).
+# Core logic: bash-guard.py + delete-guard.py (Python 3). Without a working POSIX Python 3
+# (lib-python.sh: not the Windows Store alias stub, not a native Windows Python) a command
+# that looks destructive is denied (fail closed).
 
 if [ "${CLAUDE_MB_DOGMA_ENABLED:-true}" != "true" ]; then
     exit 0
@@ -51,15 +52,17 @@ deny() {
     exit 0
 }
 
-if ! command -v python3 >/dev/null 2>&1; then
+# shellcheck source=lib-python.sh
+. "$SCRIPT_DIR/lib-python.sh"
+if ! dogma_find_python; then
     cmd="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)"
     if printf '%s' "$cmd" | grep -qE '(^|[^[:alnum:]_])(rm|unlink|shred|rmdir|mv|ln|find|mkfs|wipefs|dd|truncate)([^[:alnum:]_]|$)'; then
-        deny "python3 is missing, destructive-looking command blocked (fail closed)"
+        deny "no working Python 3 (python3/python missing, the Windows Store stub or a native Windows Python), destructive-looking command blocked (fail closed)"
     fi
     exit 0
 fi
 
-reason="$(printf '%s' "$INPUT" | python3 -I "$SCRIPT_DIR/bash-guard.py" 2>/dev/null)"
+reason="$(printf '%s' "$INPUT" | "$DOGMA_PYTHON" -I "$SCRIPT_DIR/bash-guard.py" 2>/dev/null)"
 rc=$?
 if [ "$rc" -ne 0 ]; then
     deny "guard error (exit $rc), command blocked (fail closed)"

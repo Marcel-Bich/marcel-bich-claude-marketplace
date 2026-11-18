@@ -325,9 +325,12 @@ fi
 # the always-on delete-guard.sh hook, behind CLAUDE_MB_DOGMA_TOKEN_PROTECTION, honouring
 # CLAUDE_MB_DOGMA_TOKEN_STRICT and the allowlist). It sees through quoting, variables,
 # wrappers and nested shells and does not match words inside messages or patterns.
-# The text patterns below are the fallback without python3.
+# The text patterns below are the fallback without a working POSIX Python 3 (lib-python.sh;
+# on Windows python3 can be the Store alias stub, which must not switch these rules off).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if command -v python3 >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/bash-guard.py" ]; then
+# shellcheck source=lib-python.sh
+. "$SCRIPT_DIR/lib-python.sh"
+if [ -f "$SCRIPT_DIR/bash-guard.py" ] && dogma_find_python; then
     log_debug "Bash command checked by bash-guard.py"
     exit 0
 fi

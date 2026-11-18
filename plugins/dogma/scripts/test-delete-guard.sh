@@ -623,5 +623,67 @@ setting_rows "\"\$CREDO_CLEANUP\" own-rm /tmp/acme-task/out" allow ask deny
 [ -s "$PERM/d/TO-DELETE.md" ] && [ ! -e "$PERM/x/TO-DELETE.md" ] && [ ! -e "$PERM/q/TO-DELETE.md" ] \
     && PASS=$((PASS + 1)) || { FAIL=$((FAIL + 1)); echo "FAIL TO-DELETE.md only in the [ ] folder"; }
 
+# --- native Windows (#187): under Git Bash "python3" and "python" can be the Microsoft Store
+# alias stub, which only prints "Python was not found" and exits 9009 (seen as exit 49). The
+# guard took it for a Python, ran bash-guard.py through it and blocked every command ("guard
+# error (exit 49)"). A native Windows Python is no usable guard interpreter either: bash-guard.py
+# needs POSIX paths. Both must count as "no Python": harmless commands pass, destructive-looking
+# ones are denied by the text fallback, and token-protection.sh runs its own text rules.
+WIN="$T/winbin"
+mkdir -p "$WIN/store" "$WIN/native" "$WIN/mixed"
+for d in store mixed; do
+    printf '#!/bin/sh\necho "Python was not found; run without arguments to install from the Microsoft Store" >&2\nexit 49\n' \
+        >"$WIN/$d/python3"
+done
+cp "$WIN/store/python3" "$WIN/store/python"
+# a native Windows Python: starts fine, but reports Windows path semantics; its guard output is
+# empty (= allow), so trusting it would let every delete through
+printf '#!/bin/sh\ncat >/dev/null\nprintf "dogma-python 3 nt\\n"\nexit 0\n' >"$WIN/native/python3"
+cp "$WIN/native/python3" "$WIN/native/python"
+chmod +x "$WIN/store/python3" "$WIN/store/python" "$WIN/native/python3" "$WIN/native/python" "$WIN/mixed/python3"
+ln -s "$(command -v python3)" "$WIN/mixed/python"   # store stub as python3, a working python as python
+# run_win <stub dir> <cwd> <command> -> deny/allow plus the reason
+run_win() {
+    jq -n --arg c "$3" --arg d "$2" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+        PATH="$WIN/$1:$PATH" HOME="$FH" CLAUDE_MB_DOGMA_ENABLED=true bash "$HOOK" 2>/dev/null
+}
+expect_win() { # want stubdir cmd [reason-substring]
+    local out got
+    out="$(run_win "$2" "$T" "$3")"
+    case "$out" in *'"deny"'*) got=deny ;; *) got=allow ;; esac
+    if [ "$got" = "$1" ] && { [ -z "${4:-}" ] || [[ "$out" == *"$4"* ]]; }; then PASS=$((PASS + 1))
+    else FAIL=$((FAIL + 1)); printf 'FAIL win/%s want %s got %s: %s (%s)\n' "$2" "$1" "$got" "$3" "$out"; fi
+}
+for d in store native; do
+    expect_win allow "$d" "ls -la"
+    expect_win allow "$d" "git status"
+    expect_win deny  "$d" "rm -rf $T/plain/dir" "no working Python 3"
+    expect_win deny  "$d" "rm -rf ~"
+    expect_win deny  "$d" "mv $FH/proj /tmp/x"
+done
+# never the stub's exit code as a guard error
+out="$(run_win store "$T" "ls")"
+case "$out" in *"exit 49"*) FAIL=$((FAIL + 1)); echo "FAIL store stub still reported as guard error: $out" ;;
+    *) PASS=$((PASS + 1)) ;; esac
+# a working "python" after a broken "python3" runs the full shell-aware guard
+expect_win allow mixed "rm -rf $T/plain/dir"
+expect_win deny  mixed "rm -rf ~"
+expect_win allow mixed "echo rm -rf ~ is dangerous"
+# token-protection.sh must not skip its text rules for a Python that does not work
+TOKEN_HOOK="$HERE/token-protection.sh"
+for d in store native; do
+    out="$(jq -n '{tool_name: "Bash", tool_input: {command: "env"}}' |
+        PATH="$WIN/$d:$PATH" HOME="$FH" CLAUDE_MB_DOGMA_ENABLED=true bash "$TOKEN_HOOK" 2>/dev/null)"
+    case "$out" in *'"deny"'*) PASS=$((PASS + 1)) ;;
+        *) FAIL=$((FAIL + 1)); echo "FAIL token-protection with $d python lets env through: $out" ;; esac
+done
+# no hook script starts a bare "bash": on Windows that can be System32\bash.exe (the WSL launcher)
+bare_bash="$(grep -nE '(^|[;&|(`]|\$\(|[[:space:]])bash[[:space:]]+["$]' "$HERE"/*.sh "$HERE"/../hooks/*.sh |
+    grep -v '/test-' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -vE 'output_block|log_debug|echo ' || true)"
+if [ -z "$bare_bash" ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL bare bash call: $bare_bash"; fi
+if grep -nE "process\.run\(\[\`\\$\{\\$\.plugin\.root\}" "$HERE/../hooks/band.tsx" >/dev/null; then
+    FAIL=$((FAIL + 1)); echo "FAIL band.tsx runs a script by its path (System32 bash trap on Windows)"
+else PASS=$((PASS + 1)); fi
+
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

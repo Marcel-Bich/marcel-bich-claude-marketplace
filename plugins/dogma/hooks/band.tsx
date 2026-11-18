@@ -66,13 +66,42 @@ function pack(pieces: Piece[], columns: number, gap: number): Piece[][] {
   return lines
 }
 
+// On native Windows a script started by its own path (or a bare "bash") can
+// resolve to System32\bash.exe, the WSL launcher, which boots the default WSL
+// distro on every poll. There the scripts run through Git Bash by its full path;
+// without Git Bash the band runs nothing. undefined = not resolved yet,
+// null = no usable shell.
+const GIT_BASH = [
+  'C:\\Program Files\\Git\\bin\\bash.exe',
+  'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+]
+let shellPrefix: string[] | null | undefined
+
+async function scriptShell($: EngineInterface): Promise<string[] | null> {
+  if (shellPrefix !== undefined) return shellPrefix
+  const { platform } = await $.session.info()
+  if (platform !== 'windows') return (shellPrefix = [])
+  for (const p of GIT_BASH) {
+    if (await $.fs.exists(p).catch(() => false)) return (shellPrefix = [p])
+  }
+  $.ui.log('dogma band: no Git Bash found on Windows, band scripts disabled', { to: 'debug' })
+  return (shellPrefix = null)
+}
+
+// runs one of dogma's scripts (never by its bare path, see scriptShell)
+async function runScript($: EngineInterface, script: string, args: string[]) {
+  const shell = await scriptShell($)
+  if (shell === null) throw new Error('no Git Bash on Windows')
+  return $.process.run([...shell, `${$.plugin.root}/scripts/${script}`, ...args], { timeoutMs: 5000 })
+}
+
 // summary of the session's cwd; exit 4 (no DOGMA-PERMISSIONS.md) or any failure hides the band
 async function refresh($: EngineInterface) {
   // exit 4 (no DOGMA-PERMISSIONS.md) hides the band; any other failure (a timeout
   // under load) keeps the last known value and logs the reason to the debug log
   let next: DogmaSummary | null = null
   try {
-    const r = await $.process.run([`${$.plugin.root}/scripts/permissions-summary.sh`, '--json'], { timeoutMs: 5000 })
+    const r = await runScript($, 'permissions-summary.sh', ['--json'])
     if (r.exitCode !== 0 && r.exitCode !== 4) {
       $.ui.log(`dogma band: permissions-summary.sh exit ${r.exitCode}: ${r.stderr.trim()}`, { to: 'debug' })
       return
@@ -117,7 +146,7 @@ async function refresh($: EngineInterface) {
 // exit 4 = none pending; any other failure only goes to the debug log
 async function noticeToast($: EngineInterface) {
   try {
-    const r = await $.process.run([`${$.plugin.root}/scripts/notices-pending.sh`, '--json'], { timeoutMs: 5000 })
+    const r = await runScript($, 'notices-pending.sh', ['--json'])
     if (r.exitCode === 4) return
     if (r.exitCode !== 0) {
       $.ui.log(`dogma band: notices-pending.sh exit ${r.exitCode}: ${r.stderr.trim()}`, { to: 'debug' })

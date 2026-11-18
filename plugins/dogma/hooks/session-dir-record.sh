@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # session-dir-record.sh - dogma plugin (SessionStart hook)
 #
 # Records the session folder (the folder the Claude Code session was started in) so

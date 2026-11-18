@@ -88,7 +88,8 @@ if [ "$MODE" = url ]; then
 fi
 
 # host/owner/repo/owner-repo: git-scope.sh prints host/owner/repo of the same remote
-SCOPE="$(bash "$SCRIPT_DIR/git-scope.sh")" || exit 1
+# the running bash by its path: a bare "bash" can be the WSL launcher on Windows
+SCOPE="$("$BASH" "$SCRIPT_DIR/git-scope.sh")" || exit 1
 case "$MODE" in
     host)
         printf '%s\n' "${SCOPE%%/*}"

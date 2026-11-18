@@ -243,7 +243,7 @@ dogma_pinned_dir() {
     local cfg credo_dir proj sess
     cfg="$(dogma_credo_config)" || return 1
     credo_dir="$(CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID:-${DOGMA_SESSION_ID:-}}" \
-        bash "$cfg" resolve-project 2>/dev/null)" || return 1
+        "$BASH" "$cfg" resolve-project 2>/dev/null)" || return 1
     [ -n "$credo_dir" ] || return 1
     proj="$(dirname "$(dogma_abs_path "$credo_dir")")"
     [ -d "$proj" ] || return 1
