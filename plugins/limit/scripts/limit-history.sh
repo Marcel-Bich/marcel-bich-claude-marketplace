@@ -9,6 +9,8 @@ set -euo pipefail
 # Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
 # =============================================================================
 CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+# Native Windows may set it as C:\Users\me\.claude-x: use "/" so basename sees the profile.
+CLAUDE_BASE_DIR="${CLAUDE_BASE_DIR//\\//}"
 PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
 _HIST_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$_HIST_DIR" == "${BASH_SOURCE[0]}" ]] && _HIST_DIR="."
@@ -133,6 +135,7 @@ append_history() {
     local ts entry
     ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+    # "+ 0": jq 1.7+ keeps the literal 0.0 / 9.0 of a number, jq 1.6 writes 0 / 9.
     entry=$(jq -cn \
         --arg ts "$ts" \
         --argjson api5h "${api_5h:-0}" \
@@ -149,10 +152,10 @@ append_history() {
         --arg r7 "$reset_7d" \
         '{
             ts: $ts,
-            "5h": ({api: $api5h, local: $local5h, hs: $hs5h} + (if $r5 != "" then {reset: $r5} else {} end)),
-            "7d": ({api: $api7d, local: $local7d, hs: $hs7d} + (if $r7 != "" then {reset: $r7} else {} end)),
-            opus: $opus,
-            sonnet: $sonnet,
+            "5h": ({api: ($api5h + 0), local: $local5h, hs: $hs5h} + (if $r5 != "" then {reset: $r5} else {} end)),
+            "7d": ({api: ($api7d + 0), local: $local7d, hs: $hs7d} + (if $r7 != "" then {reset: $r7} else {} end)),
+            opus: ($opus + 0),
+            sonnet: ($sonnet + 0),
             plan: $plan,
             device: $device
         }' 2>/dev/null)

@@ -278,7 +278,11 @@ t1=$(date +%s%N)
 small_ms=$(((t1 - t0) / 1000000))
 check "all small files read in one run" "300" "$(jq --arg d "$SMALLP/" '[.files | to_entries[] | select(.key | startswith($d)) | select(.value.b > 0)] | length' "$LEDGER_FILE")"
 check "one batched run completes the backfill" "true" "$(ledger_complete)"
-if [[ "$small_ms" -lt 6000 ]]; then ok "300 small files in ${small_ms} ms"; else bad "300 small files took ${small_ms} ms (per-file overhead?)"; fi
+# Native Windows (Git Bash) starts a process about 10x slower: one jq per file
+# would cost more than 15 s there, the batched run takes a few seconds.
+small_limit=6000
+[[ "$_LEDGER_WIN" -eq 1 ]] && small_limit=12000
+if [[ "$small_ms" -lt "$small_limit" ]]; then ok "300 small files in ${small_ms} ms"; else bad "300 small files took ${small_ms} ms (per-file overhead?)"; fi
 
 echo ">>> C: entries of deleted transcripts are pruned"
 mv "$SMALLP/s1.jsonl" "$TEST_DIR/s1-moved.jsonl"
@@ -350,10 +354,22 @@ SPELL="$PROJ/spell-session.jsonl"
 mkline msg_sp1 req_sp1 claude-opus-5-5 "$TS_RECENT" 1 9 0 0 0 text > "$SPELL"
 ledger_scan_files "${PROJ}//spell-session.jsonl"
 CLAUDE_PROJECTS_DIR="$CLAUDE_CONFIG_DIR//projects/" LEDGER_FORCE_SCAN=1 ledger_scan_all
-ln -s "$CLAUDE_CONFIG_DIR/projects" "$TEST_DIR/projects-link"
-ledger_scan_files "$TEST_DIR/projects-link/-home-myuser-acme/spell-session.jsonl"
+# A real symlink, or none: Git Bash's plain `ln -s` copies the directory, and a
+# copy is a second transcript, not a second spelling. Without symlink rights
+# (native Windows without developer mode) the fourth spelling is "/./" instead.
+SPELL_BASE="$PROJ"
+if MSYS="${MSYS:+$MSYS }winsymlinks:nativestrict" ln -s "$CLAUDE_CONFIG_DIR/projects" "$TEST_DIR/projects-link" 2>/dev/null \
+    && [[ -L "$TEST_DIR/projects-link" ]]; then
+    SPELL_BASE="$TEST_DIR/projects-link/-home-myuser-acme"
+fi
+ledger_scan_files "$SPELL_BASE/spell-session.jsonl"
 mkline msg_sp2 req_sp2 claude-opus-5-5 "$TS_RECENT" 1 11 0 0 0 text >> "$SPELL"
-ledger_scan_files "$TEST_DIR/projects-link/-home-myuser-acme/./spell-session.jsonl"
+ledger_scan_files "$SPELL_BASE/./spell-session.jsonl"
+# Native Windows: Claude Code hands over transcript_path as C:\Users\...
+if [[ "$_LEDGER_WIN" -eq 1 ]] && command -v cygpath >/dev/null 2>&1; then
+    ledger_scan_files "$(cygpath -w "$SPELL")"
+    ledger_scan_files "$(cygpath -m "$SPELL")"
+fi
 read -r s_in s_out s_cr s_cw <<< "$(ledger_session_totals spell-session)"
 check "two messages under four spellings counted once each" "20" "$s_out"
 check "a single ledger entry for the transcript" "1" "$(jq '[.files | keys[] | select(endswith("/spell-session.jsonl"))] | length' "$LEDGER_FILE")"

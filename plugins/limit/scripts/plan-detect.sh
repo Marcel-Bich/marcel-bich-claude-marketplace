@@ -4,12 +4,20 @@
 
 # Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
 CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+# Native Windows may set it as C:\Users\me\.claude-x: use "/" so basename sees the profile.
+CLAUDE_BASE_DIR="${CLAUDE_BASE_DIR//\\//}"
 CREDS_FILE="${CLAUDE_BASE_DIR}/.credentials.json"
 
 if [[ ! -f "${CREDS_FILE}" ]]; then
   echo "unknown"
   exit 0
 fi
+
+# jq as wrapped for native Windows (LF output, --arg values not path-converted).
+_lim_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_lim_dir" == "${BASH_SOURCE[0]}" ]] && _lim_dir="."
+# shellcheck source=state-io.sh
+source "${_lim_dir}/state-io.sh" 2>/dev/null || true
 
 # Extract ONLY the two relevant fields
 TIER=$(jq -r '.claudeAiOauth.rateLimitTier // "unknown"' "${CREDS_FILE}" 2>/dev/null)

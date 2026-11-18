@@ -12,6 +12,11 @@ set +e
 input=$(cat 2>/dev/null) || input=""
 [[ -z "$input" ]] && exit 0
 command -v jq >/dev/null 2>&1 || exit 0
+# jq as wrapped for native Windows (LF output, --arg values not path-converted).
+_lim_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_lim_dir" == "${BASH_SOURCE[0]}" ]] && _lim_dir="."
+# shellcheck source=state-io.sh
+source "${_lim_dir}/state-io.sh" 2>/dev/null || true
 
 session_id=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null) || session_id=""
 [[ -z "$session_id" || "$session_id" == "null" ]] && exit 0

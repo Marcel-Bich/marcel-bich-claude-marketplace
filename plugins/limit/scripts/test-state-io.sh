@@ -39,8 +39,13 @@ for _ in $(seq 1 12); do
     pids+=("$!")
 done
 
-# A reader running alongside the writers must always see complete JSON.
-( bad=0; for _ in $(seq 1 300); do jq -e . "$COUNTER" >/dev/null 2>&1 || bad=$((bad + 1)); done; echo "$bad" > "$TEST_DIR/reader-bad" ) &
+# A reader running alongside the writers must always see complete JSON. A file
+# that cannot be opened at that instant is no partial read: native Windows can
+# refuse an open for a moment while a rename replaces the file.
+( bad=0; for _ in $(seq 1 300); do
+      c=$(cat "$COUNTER" 2>/dev/null) || continue
+      jq -e . <<< "$c" >/dev/null 2>&1 || bad=$((bad + 1))
+  done; echo "$bad" > "$TEST_DIR/reader-bad" ) &
 pids+=("$!")
 
 for pid in "${pids[@]}"; do wait "$pid"; done
@@ -55,6 +60,19 @@ _limit_mkdir_acquire "$TEST_DIR/fallback.lock.d" 2; rc2=$?
 rmdir "$TEST_DIR/fallback.lock.d" 2>/dev/null
 check "first acquire succeeds" "0" "$rc1"
 check "second acquire is refused while the lock is held" "1" "$rc2"
+# The holder releases the lock between our failed mkdir and the stat: the lock
+# must be retried, not taken for a stale one that cannot be removed (that gave
+# up at once and lost updates on native Windows, where this window is wide).
+check "a lock released between mkdir and stat is retried" "0" "$(
+    mkdir_calls=0
+    mkdir() { mkdir_calls=$((mkdir_calls + 1)); [[ "$mkdir_calls" -gt 1 ]] && command mkdir "$@"; }
+    _limit_mkdir_acquire "$TEST_DIR/vanish.lock.d" 2; echo $?
+)"
+rmdir "$TEST_DIR/vanish.lock.d" 2>/dev/null
+check "mkdir that keeps failing still gives up" "1" "$(
+    mkdir() { return 1; }
+    _limit_mkdir_acquire "$TEST_DIR/never.lock.d" 3; echo $?
+)"
 
 echo ">>> rejected write"
 before=$(cksum < "$COUNTER")

@@ -186,6 +186,93 @@ else
     echo "  SKIP: no setsid on this system"
 fi
 
+echo ">>> jq on native Windows: LF output and --arg values kept as written"
+# Mock of jq.exe as Git Bash starts it: CRLF output unless -b (or no -b at all
+# with MOCK_JQ_NO_B=1), and the MSYS runtime's argument rewriting: an argument
+# that starts with "/" becomes "W:/..." unless MSYS2_ARG_CONV_EXCL lists a
+# prefix of it. A rewritten path that exists is opened (file operand); any other
+# keeps the W: spelling, as the real jq.exe would see it.
+MSYS_JQ="$TEST_DIR/msys-jq"
+mkdir -p "$MSYS_JQ"
+REAL_JQ=$(command -v jq)
+cat > "$MSYS_JQ/jq" <<EOF
+#!$REAL_BASH
+IFS=';' read -r -a excl <<< "\${MSYS2_ARG_CONV_EXCL:-}"
+args=() binary=0
+for a in "\$@"; do
+    if [[ "\$a" == -b ]]; then
+        [[ "\${MOCK_JQ_NO_B:-0}" == 1 ]] && { echo "jq: Unknown option: -b" >&2; exit 2; }
+        binary=1; continue
+    fi
+    if [[ "\$a" == /* ]]; then
+        keep=0
+        for e in "\${excl[@]}"; do [[ -n "\$e" && "\$a" == "\$e"* ]] && keep=1; done
+        if [[ \$keep == 0 ]]; then [[ -e "\$a" ]] || a="W:\$a"; fi
+    fi
+    args+=("\$a")
+done
+# The real jq may itself be jq.exe (test run under Git Bash): drop its own CRs.
+"$REAL_JQ" "\${args[@]}" | tr -d '\r' | if [[ \$binary == 1 ]]; then cat; else sed 's/\$/\r/'; fi
+exit "\${PIPESTATUS[0]}"
+EOF
+chmod +x "$MSYS_JQ/jq"
+winjq() { # mock-env script -> output of the script under OSTYPE=msys with the mock jq
+    env -u LIMIT_JQ_MODE PATH="$MSYS_JQ:$PATH" MOCK_JQ_NO_B="$1" "$REAL_BASH" -c \
+        'OSTYPE=msys; source "$1/state-io.sh"; eval "$2"' _ "$SCRIPT_DIR" "$2"
+}
+check "mock really writes CRLF" "1" "$(printf '{"a":1}' | PATH="$MSYS_JQ:$PATH" jq -r .a | tr -d '\n' | grep -c $'\r')"
+check "-b build: mode binary" "binary" "$(winjq 0 'printf "%s" "$LIMIT_JQ_MODE"')"
+check "-b build: raw output has no CR" "true|1" "$(winjq 0 'v=$(jq -n -r true); n=$(printf "{\"a\":1}" | jq .a); printf "%s|%s" "$v" "$n"')"
+check "no -b build: mode strip" "strip" "$(winjq 1 'printf "%s" "$LIMIT_JQ_MODE"')"
+check "no -b build: CR stripped" "true" "$(winjq 1 'jq -n -r true')"
+check "no -b build: exit status kept" "1" "$(winjq 1 'jq -n -e false >/dev/null; echo $?')"
+check "read of TSV from jq gets clean fields" "K|/p/a.jsonl|7|1" \
+    "$(winjq 0 'IFS=$'"'"'\t'"'"' read -r t p b q < <(jq -n -r "\"K\t/p/a.jsonl\t7\t1\""); printf "%s|%s|%s|%s" "$t" "$p" "$b" "$q"')"
+check "--arg path value reaches jq unconverted" "/tmp/limit-x/a.jsonl" "$(winjq 0 'jq -n -r --arg p /tmp/limit-x/a.jsonl "\$p"')"
+printf '{"files":{"/tmp/limit-x/a.jsonl":{"b":5}}}' > "$TEST_DIR/winled.json"
+check "--arg key lookup in a file operand" "5" "$(winjq 0 "jq -r --arg p /tmp/limit-x/a.jsonl '.files[\$p].b' '$TEST_DIR/winled.json'")"
+check "a --arg value that prefixes a file operand stays convertible" "W:$TEST_DIR/win" \
+    "$(winjq 0 "jq -r --arg d '$TEST_DIR/win' '\$d' '$TEST_DIR/winled.json'")"
+check "Linux: jq is not wrapped" "file" "$("$REAL_BASH" -c 'OSTYPE=linux-gnu; source "$1/state-io.sh"; type -t jq' _ "$SCRIPT_DIR")"
+
+echo ">>> CLAUDE_CONFIG_DIR with backslashes (native Windows) keeps the profile name"
+for lib in usage-ledger.sh highscore-state.sh limit-history.sh; do
+    check "$lib profile name" ".claude-work" "$(CLAUDE_CONFIG_DIR='C:\Users\alice\.claude-work' PLUGIN_DATA_DIR="$TEST_DIR/pn" \
+        "$REAL_BASH" -c 'source "$1/$2" >/dev/null 2>&1; printf "%s" "$PROFILE_NAME"' _ "$SCRIPT_DIR" "$lib")"
+done
+
+echo ">>> ledger path spelling: Windows transcript_path vs POSIX"
+canon() { # ostype path -> canonical ledger key
+    PLUGIN_DATA_DIR="$TEST_DIR/pn" "$REAL_BASH" -c 'OSTYPE=$1; source "$2/usage-ledger.sh"; _ledger_canon "$3"; printf "%s" "$_LEDGER_CANON"' \
+        _ "$1" "$SCRIPT_DIR" "$2"
+}
+check "msys: backslash drive path is absolute, / separators" "C:/Users/alice/p/s.jsonl" "$(canon msys 'C:\Users\alice\p\s.jsonl')"
+check "msys: mixed drive path is absolute" "C:/Users/alice/p/s.jsonl" "$(canon msys 'C:/Users/alice/p/s.jsonl')"
+check "Linux: a backslash in a file name is kept" "/nonexistent-limit/a\\b.jsonl" "$(canon linux-gnu '/nonexistent-limit/a\b.jsonl')"
+
+echo ">>> setup-combined-statusline: no backslash path in statusLine.command"
+SETUP_CFG="$TEST_DIR/setup-cfg"
+mkdir -p "$SETUP_CFG/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts" "$TEST_DIR/cygpath-bin"
+: > "$SETUP_CFG/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/usage-statusline.sh"
+printf '{"theme":"dark"}\n' > "$SETUP_CFG/settings.json"
+if [[ "${OSTYPE:-}" == msys* ]] && command -v cygpath >/dev/null 2>&1; then
+    # Real Git Bash: the real cygpath and a real C:\... path.
+    win_cfg=$(cygpath -w "$SETUP_CFG")
+    want_cmd="$(cygpath -m "$SETUP_CFG")/statusline-mb-combined.sh"
+else
+    # Mock cygpath -m: "\" -> "/" (the test dir stands in for the drive path).
+    printf '#!%s\n[[ "$1" == -m ]] && printf "%%s\\n" "${2//\\\\//}"\n' "$REAL_BASH" > "$TEST_DIR/cygpath-bin/cygpath"
+    chmod +x "$TEST_DIR/cygpath-bin/cygpath"
+    win_cfg="${SETUP_CFG//\//\\}"
+    want_cmd="$SETUP_CFG/statusline-mb-combined.sh"
+fi
+PATH="$TEST_DIR/cygpath-bin:$PATH" CLAUDE_CONFIG_DIR="$win_cfg" "$REAL_BASH" -c \
+    'OSTYPE=msys; source "$1/setup-combined-statusline.sh"' _ "$SCRIPT_DIR" >/dev/null 2>&1
+cmd=$(jq -r '.statusLine.command // empty' "$SETUP_CFG/settings.json" 2>/dev/null)
+check "statusLine.command in / form" "$want_cmd" "$cmd"
+hasnt "no backslash in statusLine.command" '\' "$cmd"
+check "other settings kept" "dark" "$(jq -r '.theme' "$SETUP_CFG/settings.json" 2>/dev/null)"
+
 echo
 echo "passed: $PASS failed: $FAIL"
 [[ "$FAIL" -eq 0 ]]

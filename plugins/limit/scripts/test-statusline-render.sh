@@ -12,6 +12,10 @@ set -uo pipefail
 while IFS= read -r limit_var; do unset "$limit_var"; done < <(compgen -e | grep '^CLAUDE_MB_LIMIT_')
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The test's own jq calls go through the same wrapper as the plugin (native
+# Windows: LF output, `--arg p <path>` lookups not path-converted).
+# shellcheck source=state-io.sh
+source "$SCRIPT_DIR/state-io.sh"
 TEST_DIR=$(mktemp -d)
 FAKE_PROFILE="limit-render-$$-${RANDOM}"
 SID="render-session-$$"

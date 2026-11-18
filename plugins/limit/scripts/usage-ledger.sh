@@ -30,6 +30,8 @@
 # shellcheck disable=SC2250
 
 CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+# Native Windows may set it as C:\Users\me\.claude-x: use "/" so basename sees the profile.
+CLAUDE_BASE_DIR="${CLAUDE_BASE_DIR//\\//}"
 PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
 _LEDGER_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$_LEDGER_DIR" == "${BASH_SOURCE[0]}" ]] && _LEDGER_DIR="."
@@ -48,14 +50,23 @@ CLAUDE_PROJECTS_DIR="${CLAUDE_PROJECTS_DIR:-${CLAUDE_BASE_DIR}/projects}"
 # symlinked directory). Sets _LEDGER_CANON: the physical directory (symlinks
 # resolved once per directory and cached) plus the file name; a directory that
 # cannot be resolved keeps its normalized spelling.
+_LEDGER_WIN=0
+case "${OSTYPE:-}" in msys* | cygwin*) _LEDGER_WIN=1 ;; esac
 declare -gA _LEDGER_CANON_DIRS=()
 _LEDGER_CANON=""
 _ledger_canon() {
     local p="$1" d b c
+    # Native Windows hands over C:\Users\me\... (transcript_path): "/" separators,
+    # and the drive form counts as absolute (cd -P below maps it to /c/...).
+    local drive=0
+    if [[ "$_LEDGER_WIN" -eq 1 ]]; then
+        p="${p//\\//}"
+        [[ "$p" == [A-Za-z]:/* ]] && drive=1
+    fi
     while [[ "$p" == *//* ]]; do p="${p//\/\//\/}"; done
     while [[ "$p" == */./* ]]; do p="${p//\/.\//\/}"; done
     [[ "$p" == ./* ]] && p="${PWD}/${p#./}"
-    [[ "$p" == /* ]] || p="${PWD}/${p}"
+    [[ "$p" == /* || "$drive" -eq 1 ]] || p="${PWD}/${p}"
     [[ "$p" == */ && "$p" != "/" ]] && p="${p%/}"
     d="${p%/*}"
     b="${p##*/}"

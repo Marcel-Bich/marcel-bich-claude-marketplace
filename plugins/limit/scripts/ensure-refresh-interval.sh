@@ -31,6 +31,7 @@
 # Failure-safe: ANY problem -> exit 0. Never block a session.
 
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+CONFIG_DIR="${CONFIG_DIR//\\//}"  # C:\Users\me\.claude-x on native Windows
 HEAL_STATUS="$CONFIG_DIR/.limit-refresh-heal-status"
 
 # Proof-of-fire: record that the hook actually executed, before any guard can
@@ -53,6 +54,11 @@ esac
 [[ "$optval" =~ ^[1-9][0-9]*$ ]] || optval=5
 
 command -v jq >/dev/null 2>&1 || { _heal_log "?" "no-jq"; exit 0; }
+# jq as wrapped for native Windows (LF output, --arg values not path-converted).
+_lim_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_lim_dir" == "${BASH_SOURCE[0]}" ]] && _lim_dir="."
+# shellcheck source=state-io.sh
+source "${_lim_dir}/state-io.sh" 2>/dev/null || true
 
 # --- read hook stdin (source) ---
 INPUT=$(cat 2>/dev/null) || INPUT=""

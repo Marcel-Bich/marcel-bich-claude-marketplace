@@ -51,6 +51,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/state-io.sh"
 # Configuration (kept identical to usage-statusline.sh)
 # =============================================================================
 CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+# Native Windows may set it as C:\Users\me\.claude-x: use "/" so basename sees the profile.
+CLAUDE_BASE_DIR="${CLAUDE_BASE_DIR//\\//}"
 PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
 
 CREDENTIALS_FILE="${CLAUDE_BASE_DIR}/.credentials.json"

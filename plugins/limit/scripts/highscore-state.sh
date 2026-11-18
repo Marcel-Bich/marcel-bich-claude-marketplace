@@ -17,6 +17,8 @@
 # shellcheck disable=SC2250
 
 CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+# Native Windows may set it as C:\Users\me\.claude-x: use "/" so basename sees the profile.
+CLAUDE_BASE_DIR="${CLAUDE_BASE_DIR//\\//}"
 PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
 _HS_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$_HS_DIR" == "${BASH_SOURCE[0]}" ]] && _HS_DIR="."

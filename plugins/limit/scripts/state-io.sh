@@ -8,6 +8,7 @@
 #   - limit_read_json <file>                print file only if it is valid JSON
 #   - limit_debug_enabled                   one debug flag for all scripts
 #   - limit_si <int>                        1500000 -> 1.5M (no bc needed)
+#   - jq                                    LF-only output on native Windows
 #
 # Parallel statusline renders (one per open session, several per second) used to
 # write state with `cat > file`, so a concurrent reader could see an empty or
@@ -63,8 +64,22 @@ _limit_mkdir_acquire() {
     local lockdir="$1" tries="$2" i=0
     while ! mkdir "$lockdir" 2>/dev/null; do
         local mtime now
-        mtime=$(stat -c %Y "$lockdir" 2>/dev/null || stat -f %m "$lockdir" 2>/dev/null || echo 0)
         now=$(date +%s)
+        # Each stat on its own: when GNU `stat -c` fails, `stat -f %m` prints
+        # file-system lines ("File: ...") that are no number.
+        mtime=$(stat -c %Y "$lockdir" 2>/dev/null) || mtime=$(stat -f %m "$lockdir" 2>/dev/null) || mtime=""
+        if [[ ! "$mtime" =~ ^[0-9]+$ ]]; then
+            # The holder released it between mkdir and stat (a wide window on
+            # native Windows): try mkdir again. The old fallback age 0 made it
+            # look stale, rmdir failed and the lock was given up as busy. Still
+            # counted as a try: mkdir may fail for good (no write permission).
+            if [[ ! -e "$lockdir" ]]; then
+                i=$((i + 1))
+                [[ "$i" -ge "$tries" ]] && return 1
+                continue
+            fi
+            mtime="$now"
+        fi
         if [[ $((now - mtime)) -gt 30 ]]; then
             # A stale lock that cannot be removed (not a dir, no permission) must
             # not spin forever: give up like a busy lock.
@@ -182,3 +197,57 @@ limit_si() {
         div=$((div * 1000))
     done
 }
+
+# Native Windows jq (jq.exe from winget, run from Git Bash) needs two fixes,
+# applied only under MSYS/Cygwin; on Linux and macOS jq is never wrapped:
+# 1. It writes CRLF line ends. Bash keeps the \r in `read`, here-strings and
+#    multi-line $(...), so "true\r" is not "true", "1\r" is no number and every
+#    TSV row from jq carries a stray \r into keys and awk fields. jq runs with -b (binary
+#    stdout, plain LF); a build without -b gets its \r stripped.
+# 2. The MSYS runtime rewrites every argument of a native program that looks
+#    like a POSIX path, --arg values included: `--arg p /tmp/x` reaches jq as
+#    "C:/Users/me/AppData/Local/Temp/x" and never matches the ledger keys,
+#    which keep bash's spelling. --arg values are exempted through
+#    MSYS2_ARG_CONV_EXCL (a list of prefixes), so file operands are still
+#    translated. A value that is a prefix of another argument is left alone,
+#    otherwise that file operand would not be translated either.
+# The output probe runs once per process tree (LIMIT_JQ_MODE is exported).
+case "${OSTYPE:-}" in
+    msys* | cygwin*)
+        if [[ -z "${LIMIT_JQ_MODE:-}" ]]; then
+            LIMIT_JQ_MODE="plain"
+            if [[ "$(printf '1' | command jq -b . 2>/dev/null)" == "1" ]]; then
+                LIMIT_JQ_MODE="binary"
+            # tr: Git Bash drops a trailing \r in $(...) by itself (but not in
+            # `read` or inside multi-line output), so make it visible first.
+            elif [[ "$(printf '1' | command jq . 2>/dev/null | tr '\r' 'R')" == *R* ]]; then
+                LIMIT_JQ_MODE="strip"
+            fi
+            export LIMIT_JQ_MODE
+        fi
+        jq() {
+            local -a args=("$@")
+            local n="${#args[@]}" i j v excl="" clash
+            for ((i = 0; i + 2 < n; i++)); do
+                [[ "${args[i]}" == "--arg" ]] || continue
+                v="${args[i + 2]}"
+                i=$((i + 2))
+                [[ "$v" == */* && "$v" != *";"* ]] || continue
+                clash=0
+                for ((j = 0; j < n; j++)); do
+                    [[ "$j" -ne "$i" && "${args[j]}" == "$v"* ]] && { clash=1; break; }
+                done
+                [[ "$clash" -eq 0 ]] && excl+="${excl:+;}${v}"
+            done
+            [[ -n "${MSYS2_ARG_CONV_EXCL:-}" ]] && excl+="${excl:+;}${MSYS2_ARG_CONV_EXCL}"
+            case "$LIMIT_JQ_MODE" in
+                binary) MSYS2_ARG_CONV_EXCL="$excl" command jq -b "$@" ;;
+                strip)
+                    MSYS2_ARG_CONV_EXCL="$excl" command jq "$@" | tr -d '\r'
+                    return "${PIPESTATUS[0]}"
+                    ;;
+                *) MSYS2_ARG_CONV_EXCL="$excl" command jq "$@" ;;
+            esac
+        }
+        ;;
+esac

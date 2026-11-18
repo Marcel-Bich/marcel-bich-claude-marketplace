@@ -29,6 +29,11 @@ export LC_NUMERIC=C
 
 INPUT=$(cat 2>/dev/null || echo '')
 command -v jq   >/dev/null 2>&1 || { echo "GLM | jq missing"; exit 0; }
+# jq as wrapped for native Windows (LF output, --arg values not path-converted).
+_lim_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_lim_dir" == "${BASH_SOURCE[0]}" ]] && _lim_dir="."
+# shellcheck source=state-io.sh
+source "${_lim_dir}/state-io.sh" 2>/dev/null || true
 command -v curl >/dev/null 2>&1 || { echo "GLM | curl missing"; exit 0; }
 
 # --- config -----------------------------------------------------------------
@@ -40,7 +45,8 @@ CACHE_MAX_AGE="${CLAUDE_MB_ZAI_CACHE_AGE:-60}"
 CTX_CACHE_ENABLED="${CLAUDE_MB_ZAI_CTX_CACHE:-true}"
 AUTO_COMPACT_PCT="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-85}"
 [[ "$AUTO_COMPACT_PCT" =~ ^[0-9]+$ ]] || AUTO_COMPACT_PCT=85
-PROFILE_NAME=$(basename "${CLAUDE_CONFIG_DIR:-$HOME/.claude}")
+_zai_cfg_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+PROFILE_NAME=$(basename "${_zai_cfg_dir//\\//}")  # C:\Users\me\.claude-x on native Windows
 
 SHOW_TOKENS="${CLAUDE_MB_LIMIT_TOKENS:-true}"
 SHOW_CTX="${CLAUDE_MB_LIMIT_CTX:-true}"

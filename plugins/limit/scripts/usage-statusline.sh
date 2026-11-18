@@ -18,6 +18,8 @@ export LC_NUMERIC=C
 # Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
 # =============================================================================
 CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+# Native Windows may set it as C:\Users\me\.claude-x: use "/" so basename sees the profile.
+CLAUDE_BASE_DIR="${CLAUDE_BASE_DIR//\\//}"
 PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
 
 # Configuration
@@ -1169,7 +1171,7 @@ get_session_caption() {
         fi
 
         # 3. Try to read from JSONL session file
-        local config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+        local config_dir="$CLAUDE_BASE_DIR"
         local jsonl_file=""
 
         # Find JSONL by session ID (search in projects dir)

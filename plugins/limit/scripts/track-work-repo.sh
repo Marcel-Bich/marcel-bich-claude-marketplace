@@ -31,6 +31,11 @@ set +e
 input=$(cat 2>/dev/null) || input=""
 [[ -z "$input" ]] && exit 0
 command -v jq >/dev/null 2>&1 || exit 0
+# jq as wrapped for native Windows (LF output, --arg values not path-converted).
+_lim_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_lim_dir" == "${BASH_SOURCE[0]}" ]] && _lim_dir="."
+# shellcheck source=state-io.sh
+source "${_lim_dir}/state-io.sh" 2>/dev/null || true
 
 # 2. Subagent filter: `.agent_id` is set only on real subagent tool calls and is
 #    the official discriminator. If present and non-empty -> ignore this call.

@@ -9,6 +9,8 @@ export LC_NUMERIC=C
 
 # Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
 CLAUDE_BASE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+# Native Windows may set it as C:\Users\me\.claude-x: use "/" so basename sees the profile.
+CLAUDE_BASE_DIR="${CLAUDE_BASE_DIR//\\//}"
 PROFILE_NAME=$(basename "${CLAUDE_BASE_DIR}")
 
 # Paths - profile-specific
@@ -115,7 +117,8 @@ json_get() {
 
     if [[ -f "$file" ]]; then
         local val
-        val=$(jq -r "$path // \"$default\"" "$file" 2>/dev/null) || val="$default"
+        # "+ 0": jq 1.7+ keeps a number's literal (0.0, 9.0), jq 1.6 prints 0, 9.
+        val=$(jq -r "($path // \"$default\") | if type == \"number\" then . + 0 else . end" "$file" 2>/dev/null) || val="$default"
         [[ "$val" == "null" ]] && val="$default"
         echo "$val"
     else

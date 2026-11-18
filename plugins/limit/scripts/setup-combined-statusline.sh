@@ -12,8 +12,16 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
 
-# Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile
+# Multi-Account Support: CLAUDE_CONFIG_DIR determines the profile.
+# On native Windows (Git Bash) it can be C:\Users\me\.claude-x: settings.json and
+# the statusLine command then get the mixed form C:/Users/me/.claude-x, which both
+# Git Bash and Windows read (a backslash path breaks the command line).
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+case "${OSTYPE:-}" in
+    msys* | cygwin*)
+        CLAUDE_DIR=$(cygpath -m "$CLAUDE_DIR" 2>/dev/null || printf '%s' "${CLAUDE_DIR//\\//}")
+        ;;
+esac
 SETTINGS_FILE="${CLAUDE_DIR}/settings.json"
 WRAPPER_SCRIPT="${CLAUDE_DIR}/statusline-mb-combined.sh"
 LIMIT_SCRIPT="${CLAUDE_DIR}/plugins/marketplaces/marcel-bich-claude-marketplace/plugins/limit/scripts/usage-statusline.sh"
