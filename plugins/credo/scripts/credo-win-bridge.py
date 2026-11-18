@@ -21,6 +21,11 @@ WSL side (this script)
   (credo-win-bridge.ps1, one long-running powershell.exe started from here over WSL
   interop, stdio protocol below). It reads the target session's own key file LOCALLY on
   Windows, writes the auth line the Windows inbox requires, then the message bytes.
+  The WSL sender only sees success once that write succeeded; otherwise its socket is
+  reset and SendMessage reports a failure (see VERDICT_WAIT). Known limit: a Windows
+  session that runs elevated (as administrator) cannot be written to by a non-elevated
+  bridge - its inbox pipe grants write only to Administrators and SYSTEM - so such
+  sends fail with that reason instead of being lost.
 - The other direction: the PowerShell half offers one named pipe per live WSL session
   (and per LAN-relay mirror, so LAN peers reach Windows sessions too), with a mirror
   descriptor and its OWN key file (random token) in %USERPROFILE%\\.claude\\sessions.
@@ -47,7 +52,7 @@ SAFETY
 
 stdio protocol with the PowerShell half (one JSON object per line, UTF-8):
   to PS:   {"op":"list","id":N}
-           {"op":"send","id":N,"pid":P,"pipe":"<messagingSocketPath>","data":"<b64>"}
+           {"op":"send","id":N,"pid":P,"pipe":"<messagingSocketPath>","data":"<b64>","ttl":ms}
            {"op":"publish","sessions":[{"key":sid,"sessionId","name","status",...}]}
            {"op":"quit"}
   from PS: {"op":"ready","pid":P,"host":H,"user":U,"pidDomain":D}
@@ -69,6 +74,7 @@ import importlib.util
 import json
 import os
 import re
+import select
 import signal
 import socket
 import subprocess
@@ -100,6 +106,15 @@ MAX_MSG = 4 * 1024 * 1024
 MAX_WIN_SESSIONS = 64
 LOG_MAX = 2 * 1024 * 1024
 PS_RESTART_MAX = 60.0
+# Delivery confirmation (item #196). A Claude Code sender writes its message, half-closes
+# and waits for the socket to close: a clean close is "sent", a socket error (or 5 s of
+# silence) is a failed send. The holder therefore keeps the LAST byte of a message unread
+# until the PowerShell half reports the verdict: delivered -> drain and close cleanly;
+# not delivered -> close with that byte unread, which makes the kernel reset the
+# sender's socket (ECONNRESET), so the sender reports a failure instead of success.
+# The whole verdict must arrive inside the sender's 5 s idle timeout.
+VERDICT_WAIT = 3.8
+SEND_TTL_MS = 3000
 PS_SCRIPT = "credo-win-bridge.ps1"
 
 # messagingSocketPath of a Windows session (same rule as Claude Code's own parser:
@@ -678,31 +693,32 @@ def run_holder(sock_path):
     srv.settimeout(2.0)
     stop = threading.Event()
 
+    verdicts = {}
+    verdicts_lock = threading.Lock()
+
     def serve(conn):
-        buf = b""
+        cid = uuid.uuid4().hex
+        ev = threading.Event()
         try:
-            conn.settimeout(CONN_TIMEOUT)
-            deadline = time.monotonic() + CONN_TIMEOUT
-            while time.monotonic() < deadline:
-                try:
-                    chunk = conn.recv(65536)
-                except socket.timeout:
-                    break
-                if not chunk:
-                    break
-                buf += chunk
-                if len(buf) > MAX_MSG:
-                    buf = b""
-                    break
-        except OSError:
-            pass
+            data = read_held(conn)
+            if data is None:
+                return                  # timeout or too big: close unread -> sender fails
+            if not data.strip():
+                drain(conn)
+                return
+            with verdicts_lock:
+                verdicts[cid] = [ev, False]
+            emit({"op": "in", "id": cid, "data": b64(data)})
+            ev.wait(VERDICT_WAIT)
+            with verdicts_lock:
+                ok = verdicts.pop(cid, [None, False])[1]
+            if ok:
+                drain(conn)
         finally:
             try:
                 conn.close()
             except OSError:
                 pass
-        if buf.strip():
-            emit({"op": "in", "data": b64(buf)})
 
     def commands():
         for raw in sys.stdin.buffer:
@@ -716,6 +732,12 @@ def run_holder(sock_path):
                 data = unb64(cmd.get("data") or "")
                 ok, err = write_unix(cmd.get("target"), data)
                 emit({"op": "wrote", "id": cmd.get("id"), "ok": ok, "err": err})
+            elif cmd.get("op") == "verdict":
+                with verdicts_lock:
+                    v = verdicts.get(cmd.get("id"))
+                    if v is not None:
+                        v[1] = cmd.get("ok") is True
+                        v[0].set()
             elif cmd.get("op") == "quit":
                 break
         stop.set()
@@ -743,6 +765,53 @@ def run_holder(sock_path):
         except OSError:
             pass
     return 0
+
+
+def read_held(conn, timeout=CONN_TIMEOUT, max_msg=MAX_MSG):
+    """Read what a sender writes up to its half-close (or close), but keep the last
+    byte queued in the socket so the connection can still be failed with a reset (see
+    VERDICT_WAIT). Returns the full bytes (the unread byte included), or None on timeout,
+    oversize or a socket error."""
+    buf = bytearray()
+    pending = 0
+    po = select.poll()
+    po.register(conn, select.POLLIN | select.POLLRDHUP)
+    deadline = time.monotonic() + timeout
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return None
+        # with one byte held back POLLIN stays set: wait for the half-close only, and
+        # peek again every 20 ms for data that came in meanwhile
+        po.modify(conn, select.POLLRDHUP if pending else select.POLLIN | select.POLLRDHUP)
+        events = po.poll(int(min(left, 0.02 if pending else left) * 1000) + 1)
+        flags = events[0][1] if events else 0
+        try:
+            peek = conn.recv(65536, socket.MSG_PEEK | socket.MSG_DONTWAIT)
+        except BlockingIOError:
+            peek = None
+        except OSError:
+            return None
+        if peek is not None and len(peek) > 1:
+            buf += conn.recv(len(peek) - 1)
+            pending = 1
+            if len(buf) > max_msg:
+                return None
+            continue
+        if peek is not None:
+            pending = len(peek)
+        if flags & (select.POLLRDHUP | select.POLLHUP | select.POLLERR) or peek == b"":
+            return bytes(buf) + (peek or b"")
+
+
+def drain(conn, timeout=1.0):
+    """Consume what is left (the held-back byte), so the close is clean."""
+    try:
+        conn.settimeout(timeout)
+        while conn.recv(65536):
+            pass
+    except OSError:
+        pass
 
 
 def write_unix(target, data):
@@ -807,9 +876,22 @@ class Holder(object):
             if ev.get("op") == "in":
                 data = unb64(ev.get("data") or "")
                 if data:
-                    self.daemon.to_windows(self, data)
+                    self.daemon.to_windows(self, data, ev.get("id"))
+                else:
+                    self.verdict(ev.get("id"), False)
             elif ev.get("op") == "wrote" and not ev.get("ok"):
                 log("holder %d: write into a WSL inbox failed: %s" % (self.pid, ev.get("err")))
+
+    def verdict(self, cid, ok):
+        """Tell the holder whether the message of connection cid reached Windows."""
+        if not isinstance(cid, str):
+            return
+        with self.lock:
+            try:
+                self.proc.stdin.write(encode({"op": "verdict", "id": cid, "ok": bool(ok)}))
+                self.proc.stdin.flush()
+            except (OSError, ValueError):
+                pass
 
     def write(self, target, data):
         with self.lock:
@@ -864,6 +946,7 @@ class Daemon(object):
         self.holders = {}          # Windows sessionId -> Holder
         self.published = {}        # WSL sessionId -> publish entry (with "sock")
         self.mirror_pipe = {}      # WSL sessionId -> Windows mirror pipe path
+        self.pending = {}          # send id -> (holder, connection id, monotonic start)
         self.next_id = 1
         self.user = ""
         self.last_list = 0.0
@@ -924,8 +1007,19 @@ class Daemon(object):
             if data:
                 self.to_wsl(ev.get("key"), data)
         elif op == "sent":
-            if not ev.get("ok"):
-                log("send to a Windows session failed: %s" % ev.get("err"))
+            with self.lock:
+                pend = self.pending.pop(ev.get("id"), None)
+            ok = ev.get("ok") is True
+            name = pend[0].name if pend else "a Windows session"
+            if not ok:
+                late = pend is not None and time.monotonic() - pend[2] > VERDICT_WAIT
+                log("message to %s NOT delivered (%s): %s" % (
+                    name, "verdict too late, the sender already saw a failure" if late else
+                    "the sender sees a failed send", ev.get("err")))
+            elif pend is not None and time.monotonic() - pend[2] > VERDICT_WAIT:
+                log("message to %s delivered after the sender had given up (it saw a failure)" % name)
+            if pend is not None:
+                pend[0].verdict(pend[1], ok)
         elif op == "log":
             log("ps: %s" % str(ev.get("text"))[:400])
 
@@ -1050,18 +1144,27 @@ class Daemon(object):
         return None
 
     # -- message paths --------------------------------------------------------
-    def to_windows(self, holder, data):
+    def to_windows(self, holder, data, cid=None):
         """Bytes a WSL session wrote into a holder: drop any auth line, swap the
-        sender's WSL inbox for its Windows mirror pipe, send to the Windows session."""
+        sender's WSL inbox for its Windows mirror pipe, send to the Windows session.
+        The holder gets the verdict for connection cid when the PowerShell half reports
+        it (see VERDICT_WAIT); until then the WSL sender waits."""
         data = strip_auth(data)
         data = rewrite_lines(data, self.mirror_for_sock)
         if not data.strip():
+            holder.verdict(cid, True)
             return
         win = holder.win
         rid = self._id()
-        if not self.send_ps({"op": "send", "id": rid, "pid": win.get("pid"),
+        with self.lock:
+            self.pending[rid] = (holder, cid, time.monotonic())
+        if not self.send_ps({"op": "send", "id": rid, "pid": win.get("pid"), "ttl": SEND_TTL_MS,
                              "pipe": win.get("messagingSocketPath"), "data": b64(data)}):
-            log("message to %s dropped: the PowerShell half is not running" % holder.name)
+            with self.lock:
+                self.pending.pop(rid, None)
+            log("message to %s NOT delivered (the sender sees a failed send): the PowerShell half "
+                "is not running" % holder.name)
+            holder.verdict(cid, False)
 
     def to_wsl(self, key, data):
         """Bytes a Windows session wrote into the mirror pipe of WSL session `key`
@@ -1102,6 +1205,10 @@ class Daemon(object):
         if not force and now - self.last_list < self.interval:
             return
         self.last_list = now
+        with self.lock:
+            # verdicts that never came (PowerShell half restarted): the holders gave up
+            for rid in [r for r, p in self.pending.items() if now - p[2] > 60.0]:
+                del self.pending[rid]
         if not self.ps_ready:
             return
         self.send_ps({"op": "list", "id": self._id()})

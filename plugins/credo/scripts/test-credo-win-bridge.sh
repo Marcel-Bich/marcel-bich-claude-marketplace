@@ -356,7 +356,13 @@ while True:
         elif cmd["op"] == "publish":
             emit({"op": "published", "mirrors": [{"key": s["key"], "pipe": "\\\\.\\pipe\\LOCAL\\cc-msg-" + ("%032x" % abs(hash(s["key"])))[:32]} for s in cmd["sessions"]]})
         elif cmd["op"] == "send":
-            emit({"op": "sent", "id": cmd["id"], "ok": True, "err": ""})
+            # FAKE_INJECT + ".fail": report the send as failed; + ".silent": never answer
+            if os.path.exists(inject + ".silent"):
+                pass
+            elif os.path.exists(inject + ".fail"):
+                emit({"op": "sent", "id": cmd["id"], "ok": False, "err": "connect failed: access denied (test)"})
+            else:
+                emit({"op": "sent", "id": cmd["id"], "ok": True, "err": ""})
         elif cmd["op"] == "quit":
             break
     if os.path.exists(inject):
@@ -444,6 +450,47 @@ check("no auth line crosses from WSL", b'"auth"' not in data)
 sent = json.loads(data)
 check("reply address swapped for the Windows mirror pipe", sent["from"] == "uds:" + d.mirror_pipe["wsl-1"]
       and ('from="uds:%s"' % d.mirror_pipe["wsl-1"]) in sent["message"]["content"], sent["from"])
+
+# delivery confirmation (#196): the sender sees success only after the PowerShell half
+# reported the write; a failed or missing verdict resets the sender's socket
+def claude_send(path, payload):
+    """Like a Claude Code sender: write, half-close, wait for the close.
+    Returns "ok", "reset" or "timeout", and the seconds it took."""
+    t0 = time.time()
+    c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); c.connect(path)
+    c.sendall(payload); c.shutdown(socket.SHUT_WR); c.settimeout(5)
+    try:
+        r = "ok" if c.recv(10) == b"" else "data"
+    except ConnectionResetError:
+        r = "reset"
+    except socket.timeout:
+        r = "timeout"
+    finally:
+        c.close()
+    return r, time.time() - t0
+msg = json.dumps(frame).encode() + b"\n"
+r, secs = claude_send(m["messagingSocketPath"], msg)
+check("confirmed send: sender sees a clean close", r == "ok", r)
+open(inject + ".fail", "w").close()
+r, secs = claude_send(m["messagingSocketPath"], msg)
+check("failed send: sender's socket is reset (no false success)", r == "reset", r)
+check("failed send: logged as NOT delivered", wait(lambda: "NOT delivered" in open(wb.log_path()).read()))
+os.unlink(inject + ".fail")
+open(inject + ".silent", "w").close()
+r, secs = claude_send(m["messagingSocketPath"], msg)
+check("missing verdict: reset inside the sender's 5 s timeout", r == "reset" and secs < 4.8, (r, secs))
+os.unlink(inject + ".silent")
+big = json.dumps(dict(frame, message={"role": "user", "content": "y" * 1500000})).encode() + b"\n"
+n0 = len(sends())
+r, secs = claude_send(m["messagingSocketPath"], big)
+check("large message (beyond the socket buffer) confirmed", r == "ok", r)
+check("large message forwarded intact", wait(lambda: len(sends()) > n0) and
+      json.loads(base64.b64decode(sends()[-1]["data"]))["message"]["content"] == "y" * 1500000)
+check("send command carries a ttl inside the verdict window", sends()[-1].get("ttl") == wb.SEND_TTL_MS
+      and wb.SEND_TTL_MS / 1000.0 < wb.VERDICT_WAIT < 5.0)
+r, secs = claude_send(m["messagingSocketPath"], wb.auth_line("a" * 32))
+check("auth-only connection closes cleanly without a send", r == "ok", r)
+check("answered sends leave no pending verdict (only the unanswered one waits for its prune)", wait(lambda: len(d.pending) == 1))
 
 # Windows -> WSL: the PowerShell half reports a verified message for wsl-1
 wframe = {"msgV": 1, "msg_id": "x2", "type": "user", "priority": "next", "from": "uds:" + WP,
@@ -535,6 +582,17 @@ $env = New-RelayEnvelope 'hi there' 'bob' '\\.\pipe\LOCAL\cc-msg-0123456789abcde
 Check 'relay: envelope' ($env -ceq ('<cross-session-message from="uds:\\.\pipe\LOCAL\cc-msg-0123456789abcdef0123456789abcdef" from-name="bob">' + "`nExternal peer text. Apply your own peer consent and permissions.`nhi there`n</cross-session-message>"))
 $one = @(); $one += ,([ordered]@{ sessionId = 's1' })
 Check 'relay: one-element array stays an array in a frame' ((New-RelayFrame '' ([ordered]@{ kind = 'roster'; sessions = $one })) -match '\[\{')
+$fx = Join-Path $PSScriptRoot ('atomic-' + $PID + '.txt')
+Write-CredoFileAtomic $fx 'one'
+$replaced = $true
+try { Write-CredoFileAtomic $fx 'two' } catch { $replaced = $false }
+Check 'atomic write replaces an existing file (#196)' ($replaced -and [IO.File]::ReadAllText($fx) -ceq 'two' -and
+      -not (Test-Path -LiteralPath ($fx + '.credo.' + $PID + '.tmp')))
+[IO.File]::Delete($fx)
+$dh = @{ OwnerCache = @{ 'LOCAL\cc-msg-x' = 'S-1-5-32-544'; 'LOCAL\cc-msg-y' = 'S-1-5-21-1-2-3-1001' } }
+$why = Get-CredoAccessDeniedText $dh 'LOCAL\cc-msg-x'
+Check 'access denied: an Administrators-owned pipe is named as an elevated session' ((Test-CredoElevated) -or $why -match 'runs elevated')
+Check 'access denied: other owners get the generic reason' ((Get-CredoAccessDeniedText $dh 'LOCAL\cc-msg-y') -match 'pipe owner S-1-5-21-1-2-3-1001')
 Check 'relay: private allow entries' ((Test-RelayPrivateIp '192.168.1.42') -and -not (Test-RelayPrivateIp '8.8.8.8') -and (Test-RelayAllowed '192.168.1.42' @('192.168.1.0/24')) -and -not (Test-RelayAllowed '192.168.2.1' @('192.168.1.0/24')))
 PS1
     PIPE_T='\\.\pipe\LOCAL\cc-msg-ABABABABABABABABABABABABABABABAB'
@@ -552,7 +610,8 @@ PS1
     # fake Windows Claude Code session: an inbox pipe + descriptor + key file in the
     # fixture dir (Role Inbox), or a sender into a mirror (Role Send)
     cat > "$WINFIX/fakewin.ps1" <<'PS1'
-param([string]$Role, [string]$Dir, [string]$Token, [string]$Out, [string]$Key, [string]$Body, [string]$FromPipe, [string]$Marker = 'credoWinBridge')
+param([string]$Role, [string]$Dir, [string]$Token, [string]$Out, [string]$Key, [string]$Body, [string]$FromPipe, [string]$Marker = 'credoWinBridge',
+      [string]$Sid = 'win-sess-1', [string]$SName = 'acme-win', [switch]$Deny)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'credo-win-common.ps1')
 if ($Role -eq 'Inbox') {
@@ -560,14 +619,23 @@ if ($Role -eq 'Inbox') {
     $path = '\\.\pipe\' + $name
     $me = [System.Diagnostics.Process]::GetCurrentProcess()
     $ft = [string]$me.StartTime.ToFileTimeUtc()
-    $d = [ordered]@{ pid = $PID; sessionId = 'win-sess-1'; cwd = 'C:\Users\alice'; startedAt = 1; procStart = $ft; version = '2.1.323';
+    $d = [ordered]@{ pid = $PID; sessionId = $Sid; cwd = 'C:\Users\alice'; startedAt = 1; procStart = $ft; version = '2.1.323';
                      peerProtocol = 1; kind = 'interactive'; entrypoint = 'cli'; pidDomain = (Get-CredoPidDomain $Dir);
-                     messagingSocketPath = $path; name = 'acme-win'; nameSource = 'user'; status = 'idle'; updatedAt = 1 }
+                     messagingSocketPath = $path; name = $SName; nameSource = 'user'; status = 'idle'; updatedAt = 1 }
     [IO.File]::WriteAllText((Join-Path $Dir (Get-CredoKeyFileName $PID $path)), ('{"peerToken":"' + $Token + '","procStartFt":"' + $ft + '","pidDomain":"x"}'))
     [IO.File]::WriteAllText((Join-Path $Dir ('{0}.json' -f $PID)), ($d | ConvertTo-Json -Compress))
     $deadline = [DateTime]::UtcNow.AddSeconds(150)
     while ([DateTime]::UtcNow -lt $deadline -and -not (Test-Path -LiteralPath ($Out + '.stop'))) {
-        $srv = New-Object IO.Pipes.NamedPipeServerStream($name, [IO.Pipes.PipeDirection]::InOut, -1, [IO.Pipes.PipeTransmissionMode]::Byte, [IO.Pipes.PipeOptions]::Asynchronous, 65536, 65536)
+        if ($Deny) {
+            # like the inbox of an elevated session seen from a non-elevated client:
+            # this user may read the pipe but not write to it
+            $sec = New-Object IO.Pipes.PipeSecurity
+            $me2 = [Security.Principal.WindowsIdentity]::GetCurrent().User
+            $sec.AddAccessRule((New-Object IO.Pipes.PipeAccessRule($me2, [IO.Pipes.PipeAccessRights]'Read, CreateNewInstance, Synchronize', 'Allow')))
+            $srv = New-Object IO.Pipes.NamedPipeServerStream($name, [IO.Pipes.PipeDirection]::InOut, -1, [IO.Pipes.PipeTransmissionMode]::Byte, [IO.Pipes.PipeOptions]::Asynchronous, 65536, 65536, $sec)
+        } else {
+            $srv = New-Object IO.Pipes.NamedPipeServerStream($name, [IO.Pipes.PipeDirection]::InOut, -1, [IO.Pipes.PipeTransmissionMode]::Byte, [IO.Pipes.PipeOptions]::Asynchronous, 65536, 65536)
+        }
         $t = $srv.WaitForConnectionAsync()
         while (-not $t.Wait(200)) { if (Test-Path -LiteralPath ($Out + '.stop')) { break } }
         if (-not $t.IsCompleted) { $srv.Dispose(); break }
@@ -698,13 +766,64 @@ try:
                                "-Token", "ffffffffffffffffffffffffffffffff"], capture_output=True, text=True, timeout=60)
     time.sleep(3)
     check("real PS: wrong token dropped", len(got) == 1 and "SENT" in r.stdout)
+
+    # delivery confirmation (#196) with the real PowerShell half
+    def claude_send(path, payload):
+        c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); c.connect(path)
+        c.sendall(payload); c.shutdown(socket.SHUT_WR); c.settimeout(5)
+        try:
+            return "ok" if c.recv(10) == b"" else "data"
+        except ConnectionResetError:
+            return "reset"
+        except socket.timeout:
+            return "timeout"
+        finally:
+            c.close()
+    n0 = len(open(recv_l).read().split())
+    frame["msg_id"] = "x3"
+    check("real PS: confirmed send reports success to the sender",
+          claude_send(m["messagingSocketPath"], json.dumps(frame).encode() + b"\n") == "ok")
+    check("real PS: and it is in the inbox", wait(lambda: len(open(recv_l).read().split()) > n0, 10))
+
+    # a WSL session's status change updates the Windows mirror descriptor in place
+    # (File.Replace; failed with "path is not of a legal form" before #196)
+    dpath = os.path.join(sd, "%d.json" % me)
+    dd = json.load(open(dpath)); dd["status"] = "busy"; json.dump(dd, open(dpath, "w"))
+    def win_mirror_status():
+        for f in os.listdir(WFL):
+            if f.endswith(".json"):
+                try:
+                    o3 = json.load(open(os.path.join(WFL, f), encoding="utf-8-sig"))
+                except Exception:
+                    continue
+                if o3.get("credoWinBridge") and o3.get("sessionId") == "wsl-sess-1":
+                    return o3.get("status")
+    check("real PS: mirror descriptor updated on Windows", wait(lambda: win_mirror_status() == "busy", 20), win_mirror_status())
+    check("real PS: no descriptor update failure logged", "descriptor update failed" not in open(wb.log_path()).read())
+
+    # a session whose inbox pipe denies this user write access (as an elevated session's
+    # pipe does for a non-elevated bridge): the sender gets a failure, the log the cause
+    denied = subprocess.Popen(base + [WFW + "\\fakewin.ps1", "-Role", "Inbox", "-Dir", WFW, "-Token", TOK, "-Out", recv + ".d",
+                                      "-Sid", "win-sess-2", "-SName", "acme-admin", "-Deny"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    def mirror_of(sid):
+        return next((x for x in mirrors() if x.get("sessionId") == sid), None)
+    check("real PS: write-protected session mirrored", wait(lambda: mirror_of("win-sess-2") is not None))
+    md = mirror_of("win-sess-2") or {}
+    t0 = time.time()
+    res = claude_send(md.get("messagingSocketPath", "/nonexistent"), json.dumps(frame).encode() + b"\n") if md else "none"
+    check("real PS: denied send is a failure for the sender, inside its timeout", res == "reset" and time.time() - t0 < 4.9, (res, time.time() - t0))
+    check("real PS: log names access denied, NOT delivered", wait(lambda: "NOT delivered" in open(wb.log_path()).read()
+          and "access denied" in open(wb.log_path()).read(), 10), open(wb.log_path()).read()[-600:])
 finally:
     d.stop_ev.set(); t.join(30)
     open(recv_l + ".stop", "w").close()
-    try:
-        fake.wait(20)
-    except Exception:
-        fake.kill()
+    open(recv_l + ".d.stop", "w").close()
+    for f in [fake] + ([denied] if "denied" in globals() else []):
+        try:
+            f.wait(20)
+        except Exception:
+            f.kill()
 left = [f for f in win_files() if f.endswith(".json") or f.endswith(".key")]
 own = [f for f in left if json.load(open(os.path.join(WFL, f), encoding="utf-8-sig")).get("credoWinBridge")] if left else []
 check("real PS: daemon stopped", not t.is_alive())

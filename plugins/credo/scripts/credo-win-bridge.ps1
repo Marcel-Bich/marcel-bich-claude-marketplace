@@ -10,7 +10,10 @@
              files are never read for this).
   - send:    write a message into a Windows session's pipe, after the auth line built
              from that session's own key file. The token is read here, on Windows, and
-             only ever written into that pipe.
+             only ever written into that pipe. Transient connect failures are retried
+             within the command's ttl (ms); the {"op":"sent"} verdict says whether the
+             bytes reached the pipe (access denied names its cause, e.g. an elevated
+             target session).
   - publish: keep one mirror per offered WSL session in %USERPROFILE%\.claude\sessions
              (holder process, named pipe, descriptor, own key file with a random token,
              marker credoWinBridge). Connections to a mirror pipe must start with the
@@ -111,10 +114,15 @@ function Invoke-BridgeCommand($Hub, [string]$Line) {
             if ($null -eq $data -or $data.Length -eq 0 -or $null -eq $tpid) {
                 Send-BridgeEvent ([ordered]@{ op = 'sent'; id = $id; ok = $false; err = 'bad send command' })
             } else {
+                # ttl: the WSL holder keeps its sender waiting for this verdict, so the
+                # send (with its connect retries) must end well inside that window
+                $ttl = 3000
+                $t = Get-CredoProp $cmd 'ttl'
+                if ($t -is [int] -or $t -is [long]) { $ttl = [int][Math]::Min(10000, [Math]::Max(200, [long]$t)) }
                 Start-CredoSend $Hub ([long]$tpid) ([string](Get-CredoProp $cmd 'pipe')) $data $id {
                     param($i, $ok, $err)
                     Send-BridgeEvent ([ordered]@{ op = 'sent'; id = $i; ok = $ok; err = $err })
-                }
+                } $ttl
             }
         }
         'publish' { Sync-BridgeMirrors $Hub (Get-CredoProp $cmd 'sessions') }

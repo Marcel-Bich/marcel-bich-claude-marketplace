@@ -736,6 +736,20 @@ plugin dir; nothing is installed on Windows).
   WSL session writes into it goes to the PowerShell half, which reads the target's key
   file (`<pid>.<sha256 of the lowercased pipe path>.key`) on Windows and writes the auth
   line `{"type":"auth","token":"..."}` plus the message into the target pipe.
+- **Delivery is confirmed.** The holder keeps the WSL sender waiting (well inside its
+  5 s send timeout) until the PowerShell half reports the write into the Windows pipe.
+  Transient connect failures are retried within about 3 s. Only a confirmed write closes
+  the sender's connection cleanly ("sent"); otherwise the holder resets it, so
+  `SendMessage` reports a failure instead of a false success, and the bridge log records
+  `message to <name> NOT delivered: <reason>`.
+- **Elevated Windows sessions (known limit).** A Claude Code session that runs as
+  administrator creates its inbox pipe with the default DACL of an elevated token (owner
+  Administrators; full access for Administrators and SYSTEM, read-only for Everyone). The
+  PowerShell half started over WSL interop is normally not elevated, so Windows denies it
+  write access and WSL -> Windows messages to that session fail (logged as "the target
+  Windows session runs elevated ..."). The other direction still works. To message such
+  a session from WSL, run it without elevation, or run the bridge from an elevated WSL
+  console. No workaround that crosses the elevation boundary is built in.
 - **WSL sessions on Windows.** Every live WSL session of every profile, and every
   LAN-relay mirror, gets a Windows-side mirror: a holder process (`waitfor.exe` on a
   random signal), a named pipe served by the PowerShell half, a descriptor (procStart =

@@ -197,8 +197,16 @@ function Stop-CredoHolder([long]$ProcessId, [string]$Ft) {
 function Write-CredoFileAtomic([string]$Path, [string]$Text) {
     $tmp = $Path + '.credo.' + $PID + '.tmp'
     [System.IO.File]::WriteAllText($tmp, $Text, $script:Utf8)
-    if ([System.IO.File]::Exists($Path)) { [System.IO.File]::Replace($tmp, $Path, $null) }
-    else { [System.IO.File]::Move($tmp, $Path) }
+    try {
+        # [NullString]::Value, not $null: PowerShell turns $null into '' for a string
+        # parameter, and File.Replace rejects '' as a backup path ("the path is not of a
+        # legal form") - every descriptor UPDATE failed that way (item #196)
+        if ([System.IO.File]::Exists($Path)) { [System.IO.File]::Replace($tmp, $Path, [NullString]::Value) }
+        else { [System.IO.File]::Move($tmp, $Path) }
+    } catch {
+        try { [System.IO.File]::Delete($tmp) } catch {}
+        throw
+    }
 }
 
 function Read-CredoJsonFile([string]$Path) {
@@ -505,9 +513,74 @@ function Push-CredoConnLines($Hub, $Conn, [bool]$Final) {
     if ($out.Length -gt 0 -and $null -ne $Hub.OnMessage) { & $Hub.OnMessage $Conn.Mirror ($out.ToArray()) }
 }
 
-function Start-CredoSend($Hub, [long]$TargetPid, [string]$PipePath, [byte[]]$Data, $Id, [scriptblock]$Done) {
+function Test-CredoElevated {
+    try {
+        $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        return (New-Object System.Security.Principal.WindowsPrincipal $id).IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch { return $false }
+}
+
+function Get-CredoPipeOwnerSid([string]$Name) {
+    # owner SID of a pipe's security descriptor ($null when unreadable). Opens one
+    # read-only client connection that sends nothing (a Claude Code inbox closes it at
+    # its first-line deadline), so it is only used after an access-denied failure.
+    try {
+        $c = New-Object System.IO.Pipes.NamedPipeClientStream('.', $Name,
+            [System.IO.Pipes.PipeAccessRights]'Read, ReadPermissions', [System.IO.Pipes.PipeOptions]::None,
+            [System.Security.Principal.TokenImpersonationLevel]::None, [System.IO.HandleInheritability]::None)
+        try {
+            $c.Connect(500)
+            return $c.GetAccessControl().GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+        } finally { $c.Dispose() }
+    } catch { return $null }
+}
+
+function Get-CredoAccessDeniedText($Hub, [string]$Name) {
+    # why Windows refused write access to a session inbox. A Claude Code session that
+    # runs elevated creates its pipe with the default DACL of an elevated token: owner
+    # BUILTIN\Administrators, full access for Administrators and SYSTEM, only READ for
+    # Everyone. A non-elevated client (the bridge started through WSL interop) has the
+    # Administrators group as deny-only and gets "access denied" for write.
+    if (-not $Hub.ContainsKey('OwnerCache')) { $Hub.OwnerCache = @{} }
+    if (-not $Hub.OwnerCache.ContainsKey($Name)) { $Hub.OwnerCache[$Name] = Get-CredoPipeOwnerSid $Name }
+    $owner = $Hub.OwnerCache[$Name]
+    if ($owner -eq 'S-1-5-32-544' -and -not (Test-CredoElevated)) {
+        return ('access denied: the target Windows session runs elevated (as administrator) and this bridge does ' +
+                'not; Windows only lets elevated processes write into an elevated session''s inbox pipe, so it ' +
+                'cannot be messaged from here (run that session without elevation, or run the bridge elevated)')
+    }
+    return ('access denied to the session inbox pipe (pipe owner ' + $(if ($owner) { $owner } else { 'unknown' }) + ')')
+}
+
+function Start-CredoSendConnect($Send) {
+    $left = [int][Math]::Max(100, ($Send.Deadline - [DateTime]::UtcNow).TotalMilliseconds)
+    $Send.Attempts++
+    $Send.Client = New-Object System.IO.Pipes.NamedPipeClientStream('.', $Send.Name, [System.IO.Pipes.PipeDirection]::InOut,
+        [System.IO.Pipes.PipeOptions]::Asynchronous)
+    $Send.Stage = 'connect'
+    $Send.Task = $Send.Client.ConnectAsync($left)
+}
+
+function Stop-CredoSend($Hub, $Send, [bool]$Ok, [string]$Err) {
+    [Array]::Clear($Send.Payload, 0, $Send.Payload.Length)
+    if ($Ok) {
+        $Send.Stage = 'linger'
+        $Send.Task = $null
+        # close shortly after the write, like a Claude Code sender: the inbox reads what
+        # is in the pipe, closing at once has lost nothing in tests either
+        $Send.CloseAt = [DateTime]::UtcNow.AddMilliseconds(300)
+    } else {
+        if ($null -ne $Send.Client) { try { $Send.Client.Dispose() } catch {} }
+        $Hub.Sends.Remove($Send)
+    }
+    & $Send.Done $Send.Id $Ok $Err
+}
+
+function Start-CredoSend($Hub, [long]$TargetPid, [string]$PipePath, [byte[]]$Data, $Id, [scriptblock]$Done, [int]$TtlMs = 10000) {
     # connect to a local Windows inbox, write the auth line from its key file plus Data,
-    # close shortly after. Done is called as & $Done $Id $ok $err.
+    # close shortly after. Done is called exactly once as & $Done $Id $ok $err; ok means
+    # the bytes were written into the inbox pipe. A transient connect failure is retried
+    # until TtlMs is used up; access denied is final and reported with its cause.
     $name = Get-CredoPipeName $PipePath
     if (-not (Test-CredoCcPipeName $name)) { & $Done $Id $false 'not a Claude Code pipe address'; return }
     $tok = Find-CredoToken $Hub.SessDir $TargetPid $PipePath
@@ -518,17 +591,31 @@ function Start-CredoSend($Hub, [long]$TargetPid, [string]$PipePath, [byte[]]$Dat
     [Array]::Copy($auth, 0, $payload, 0, $auth.Length)
     [Array]::Copy($Data, 0, $payload, $auth.Length, $Data.Length)
     [Array]::Clear($auth, 0, $auth.Length)
-    try {
-        $client = New-Object System.IO.Pipes.NamedPipeClientStream('.', $name, [System.IO.Pipes.PipeDirection]::InOut,
-            [System.IO.Pipes.PipeOptions]::Asynchronous)
-        $task = $client.ConnectAsync(5000)
-    } catch {
-        [Array]::Clear($payload, 0, $payload.Length)
-        & $Done $Id $false ('connect failed: ' + $_.Exception.Message)
+    $s = @{ Name = $name; Client = $null; Task = $null; Stage = 'connect'; Payload = $payload; Id = $Id; Done = $Done;
+            Deadline = [DateTime]::UtcNow.AddMilliseconds([Math]::Max(200, $TtlMs)); CloseAt = $null; RetryAt = $null;
+            Attempts = 0; LastErr = '' }
+    [void]$Hub.Sends.Add($s)
+    try { Start-CredoSendConnect $s } catch { Step-CredoSendFailure $Hub $s $_.Exception }
+}
+
+function Step-CredoSendFailure($Hub, $Send, $Ex) {
+    # a failed connect: final for access denied (or a used-up deadline), else retry soon
+    while ($null -ne $Ex.InnerException -and ($Ex -is [System.AggregateException] -or
+           $Ex -is [System.Management.Automation.MethodInvocationException])) { $Ex = $Ex.InnerException }
+    if ($null -ne $Send.Client) { try { $Send.Client.Dispose() } catch {}; $Send.Client = $null }
+    $Send.Task = $null
+    if ($Ex -is [System.UnauthorizedAccessException]) {
+        Stop-CredoSend $Hub $Send $false (Get-CredoAccessDeniedText $Hub $Send.Name)
         return
     }
-    [void]$Hub.Sends.Add(@{ Client = $client; Task = $task; Stage = 'connect'; Payload = $payload; Id = $Id; Done = $Done;
-                            Deadline = [DateTime]::UtcNow.AddSeconds(10); CloseAt = $null })
+    $Send.LastErr = $Ex.Message
+    $retryAt = [DateTime]::UtcNow.AddMilliseconds(250)
+    if ($retryAt.AddMilliseconds(100) -ge $Send.Deadline) {
+        Stop-CredoSend $Hub $Send $false ('connect failed after ' + $Send.Attempts + ' attempt(s): ' + $Ex.Message)
+        return
+    }
+    $Send.Stage = 'retry'
+    $Send.RetryAt = $retryAt
 }
 
 function Get-CredoHubTasks($Hub) {
@@ -585,13 +672,20 @@ function Invoke-CredoHubPoll($Hub) {
             if ($now -ge $s.CloseAt) { try { $s.Client.Dispose() } catch {}; $Hub.Sends.Remove($s) }
             continue
         }
+        if ($s.Stage -eq 'retry') {
+            if ($now -ge $s.RetryAt) { try { Start-CredoSendConnect $s } catch { Step-CredoSendFailure $Hub $s $_.Exception } }
+            continue
+        }
         if ($s.Task.IsCompleted) {
             if ($s.Task.IsFaulted -or $s.Task.IsCanceled) {
+                if ($s.Stage -eq 'connect') {
+                    $ex = if ($s.Task.Exception) { $s.Task.Exception } else { New-Object System.OperationCanceledException }
+                    Step-CredoSendFailure $Hub $s $ex
+                    continue
+                }
+                # a failed write is never retried: part of it may be in the inbox already
                 $err = if ($s.Task.Exception) { $s.Task.Exception.InnerException.Message } else { 'canceled' }
-                [Array]::Clear($s.Payload, 0, $s.Payload.Length)
-                try { $s.Client.Dispose() } catch {}
-                $Hub.Sends.Remove($s)
-                & $s.Done $s.Id $false ($s.Stage + ' failed: ' + $err)
+                Stop-CredoSend $Hub $s $false ($s.Stage + ' failed: ' + $err)
                 continue
             }
             if ($s.Stage -eq 'connect') {
@@ -599,20 +693,12 @@ function Invoke-CredoHubPoll($Hub) {
                 $s.Task = $s.Client.WriteAsync($s.Payload, 0, $s.Payload.Length)
                 continue
             }
-            [Array]::Clear($s.Payload, 0, $s.Payload.Length)
-            $s.Stage = 'linger'
-            $s.Task = $null
-            # close shortly after the write, like a Claude Code sender: the inbox reads
-            # what is in the pipe, closing at once has lost nothing in tests either
-            $s.CloseAt = $now.AddMilliseconds(300)
-            & $s.Done $s.Id $true ''
+            Stop-CredoSend $Hub $s $true ''
             continue
         }
-        if ($now -gt $s.Deadline) {
-            [Array]::Clear($s.Payload, 0, $s.Payload.Length)
-            try { $s.Client.Dispose() } catch {}
-            $Hub.Sends.Remove($s)
-            & $s.Done $s.Id $false ($s.Stage + ' timed out')
+        if ($now -gt $s.Deadline.AddMilliseconds(1000)) {
+            $why = if ($s.LastErr) { ' (last error: ' + $s.LastErr + ')' } else { '' }
+            Stop-CredoSend $Hub $s $false ($s.Stage + ' timed out' + $why)
         }
     }
 }
