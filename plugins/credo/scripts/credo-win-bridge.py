@@ -112,9 +112,12 @@ PS_RESTART_MAX = 60.0
 # until the PowerShell half reports the verdict: delivered -> drain and close cleanly;
 # not delivered -> close with that byte unread, which makes the kernel reset the
 # sender's socket (ECONNRESET), so the sender reports a failure instead of success.
-# The whole verdict must arrive inside the sender's 5 s idle timeout.
+# The whole verdict must arrive inside the sender's 5 s idle timeout, and the PowerShell
+# send (hard-bounded by its ttl, connect retries and write included) must end before the
+# holder gives up: SEND_TTL_MS + poll granularity (250 ms) + interop latency stays well
+# below VERDICT_WAIT.
 VERDICT_WAIT = 3.8
-SEND_TTL_MS = 3000
+SEND_TTL_MS = 2500
 PS_SCRIPT = "credo-win-bridge.ps1"
 
 # messagingSocketPath of a Windows session (same rule as Claude Code's own parser:
@@ -663,11 +666,17 @@ def unb64(text):
 # holder: one per Windows session (a live local process for the descriptor)
 # ---------------------------------------------------------------------------
 def run_holder(sock_path):
-    """Listen on sock_path for WSL senders; every connection is read to EOF (or
-    CONN_TIMEOUT), closed, and its bytes go to the daemon as {"op":"in"}. Daemon
-    commands on stdin: {"op":"write","target":path,"data":b64} writes into a WSL inbox
-    from THIS process (so the receiver sees this holder's pid). Exits on stdin EOF or
-    when the parent changes."""
+    """Listen on sock_path for WSL senders. Every connection is read up to the
+    sender's half-close (or CONN_TIMEOUT) with its last byte held back unread
+    (read_held), and its bytes go to the daemon as {"op":"in","id":cid,"data":b64}.
+    The holder then waits up to VERDICT_WAIT for {"op":"verdict","id":cid,"ok":bool} on
+    stdin: ok drains the held byte and closes cleanly (the sender sees "sent"); not ok,
+    or no verdict in time, closes with the byte unread, which resets the sender's
+    socket (ECONNRESET, a failed send). A timeout or oversize message while reading is
+    reset the same way; an empty one is closed cleanly without an "in" event.
+    Other daemon command: {"op":"write","target":path,"data":b64} writes into a WSL
+    inbox from THIS process (so the receiver sees this holder's pid), answered with
+    {"op":"wrote"}. Exits on stdin EOF or when the parent changes."""
     parent = os.getppid()
     out_lock = threading.Lock()
 

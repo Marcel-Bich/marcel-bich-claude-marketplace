@@ -738,7 +738,7 @@ plugin dir; nothing is installed on Windows).
   line `{"type":"auth","token":"..."}` plus the message into the target pipe.
 - **Delivery is confirmed.** The holder keeps the WSL sender waiting (well inside its
   5 s send timeout) until the PowerShell half reports the write into the Windows pipe.
-  Transient connect failures are retried within about 3 s. Only a confirmed write closes
+  Transient connect failures are retried within about 2.5 s. Only a confirmed write closes
   the sender's connection cleanly ("sent"); otherwise the holder resets it, so
   `SendMessage` reports a failure instead of a false success, and the bridge log records
   `message to <name> NOT delivered: <reason>`.

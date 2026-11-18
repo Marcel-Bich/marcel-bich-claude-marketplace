@@ -490,6 +490,39 @@ check("send command carries a ttl inside the verdict window", sends()[-1].get("t
       and wb.SEND_TTL_MS / 1000.0 < wb.VERDICT_WAIT < 5.0)
 r, secs = claude_send(m["messagingSocketPath"], wb.auth_line("a" * 32))
 check("auth-only connection closes cleanly without a send", r == "ok", r)
+# read_held edge cases: exact bytes back, last byte still queued (so a reset is possible)
+for payload in (b"", b"x", b"xy", b"hello\n"):
+    a, b2 = socket.socketpair()
+    a.sendall(payload); a.shutdown(socket.SHUT_WR)
+    got_b = wb.read_held(b2, timeout=2)
+    try:
+        left = b2.recv(10, socket.MSG_PEEK | socket.MSG_DONTWAIT)
+    except BlockingIOError:
+        left = b""
+    check("read_held returns %d-byte message intact, last byte unread" % len(payload),
+          got_b == payload and left == payload[-1:], (got_b, left))
+    a.close(); b2.close()
+n1 = len(sends())
+check("empty connection closes cleanly without a send", claude_send(m["messagingSocketPath"], b"")[0] == "ok")
+check("blank 1-byte message closes cleanly without a send", claude_send(m["messagingSocketPath"], b"\n")[0] == "ok")
+time.sleep(0.5)
+check("no send for empty or blank messages", len(sends()) == n1, len(sends()) - n1)
+check("1-byte message is confirmed", claude_send(m["messagingSocketPath"], b"x")[0] == "ok")
+res = {}
+def conc(i):
+    res[i] = claude_send(m["messagingSocketPath"], json.dumps(dict(frame, msg_id="c%d" % i)).encode() + b"\n")[0]
+ths = [threading.Thread(target=conc, args=(i,)) for i in range(2)]
+[x.start() for x in ths]; [x.join(10) for x in ths]
+check("two concurrent senders both confirmed", res == {0: "ok", 1: "ok"}, res)
+def msg_ids(items):
+    out = []
+    for x in items:
+        try:
+            out.append(json.loads(base64.b64decode(x["data"])).get("msg_id", ""))
+        except Exception:
+            pass
+    return sorted(out)
+check("both concurrent messages forwarded", wait(lambda: msg_ids(sends()[n1:]) == ["c0", "c1"]), msg_ids(sends()[n1:]))
 check("answered sends leave no pending verdict (only the unanswered one waits for its prune)", wait(lambda: len(d.pending) == 1))
 
 # Windows -> WSL: the PowerShell half reports a verified message for wsl-1

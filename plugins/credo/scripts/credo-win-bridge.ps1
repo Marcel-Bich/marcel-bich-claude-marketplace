@@ -116,7 +116,7 @@ function Invoke-BridgeCommand($Hub, [string]$Line) {
             } else {
                 # ttl: the WSL holder keeps its sender waiting for this verdict, so the
                 # send (with its connect retries) must end well inside that window
-                $ttl = 3000
+                $ttl = 2500
                 $t = Get-CredoProp $cmd 'ttl'
                 if ($t -is [int] -or $t -is [long]) { $ttl = [int][Math]::Min(10000, [Math]::Max(200, [long]$t)) }
                 Start-CredoSend $Hub ([long]$tpid) ([string](Get-CredoProp $cmd 'pipe')) $data $id {

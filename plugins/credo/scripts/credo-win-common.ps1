@@ -544,6 +544,7 @@ function Get-CredoAccessDeniedText($Hub, [string]$Name) {
     if (-not $Hub.ContainsKey('OwnerCache')) { $Hub.OwnerCache = @{} }
     if (-not $Hub.OwnerCache.ContainsKey($Name)) { $Hub.OwnerCache[$Name] = Get-CredoPipeOwnerSid $Name }
     $owner = $Hub.OwnerCache[$Name]
+    if ($null -eq $owner) { $Hub.OwnerCache.Remove($Name) }   # unreadable now: try again next time
     if ($owner -eq 'S-1-5-32-544' -and -not (Test-CredoElevated)) {
         return ('access denied: the target Windows session runs elevated (as administrator) and this bridge does ' +
                 'not; Windows only lets elevated processes write into an elevated session''s inbox pipe, so it ' +
@@ -696,7 +697,9 @@ function Invoke-CredoHubPoll($Hub) {
             Stop-CredoSend $Hub $s $true ''
             continue
         }
-        if ($now -gt $s.Deadline.AddMilliseconds(1000)) {
+        # hard end at the deadline, also for a pending write: the caller (the WSL
+        # holder) stops waiting for the verdict soon after it
+        if ($now -gt $s.Deadline) {
             $why = if ($s.LastErr) { ' (last error: ' + $s.LastErr + ')' } else { '' }
             Stop-CredoSend $Hub $s $false ($s.Stage + ' timed out' + $why)
         }
