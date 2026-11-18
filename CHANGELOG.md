@@ -2,31 +2,19 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-11
 
-## limit
-
-### v2
-
-#### v2.37
-
-##### v2.37.3
-
-###### Fixed
-
-- Native Windows (Git Bash): the 5h and weekly figures show again. The usage response is now saved through a command-line path that Git Bash translates; before, the native curl wrote it to the drive root (`C:\tmp`) and the shared cache stayed empty
-- Highscore and token figures no longer need `bc` (missing in Git Bash); they use bash integer math with the same one-decimal truncation
-- Background refresh, ledger scan, plan detection and the provider hand-off start the running bash instead of a `bash` looked up on PATH, which on native Windows can be the WSL launcher (`System32\bash.exe`)
-
-##### v2.37.2
-
-###### Fixed
-
-- A plan without a 5h limit (five_hour.utilization null, weekly only) no longer shows `invalid_response`; the 5h line is left out and the weekly lines render
-
 ## dogma
 
 ### v1
 
 #### v1.47
+
+##### v1.47.8
+
+###### Fixed
+
+- A harmless `2>/dev/null` or `>/dev/null` is no longer blocked on native Windows as "overwrite of a protected path (C:devnull)". File protection (and git permissions and dependency verification, through the shared findings helper) ran the shell-aware analysis through `python3` by name; with a native Windows Python that analysis resolved `/dev/null` to `C:\dev\null`. The analysis now runs only under a POSIX Python 3 (otherwise the text rules decide), refuses to judge under a native Windows Python, and treats the literal redirect targets `/dev/null`, `/dev/stdout`, `/dev/stderr` and `/dev/fd/N` as no files on every platform.
+- The delete guard's text fallback (no POSIX Python 3) now also blocks redirects and `tee` onto protected paths (`> /etc/passwd`, `>> ~/.bashrc`, the home level, system dirs, devices, Windows system and profile config paths); deletes stay blocked as before.
+- No dogma hook or helper needs a binary named `python3` any more: Python is looked up as `python3`, then `python`, then `py -3` (python.org ships no `python3.exe`), the Microsoft Store stub is still rejected. The notice hook, `notices-pending.sh`, `source-cache.sh`, `permissions-summary.sh` and `worktree-files.sh` only parse JSON or text and also accept a native Windows Python (UTF-8 I/O, CRLF output turned into LF).
 
 ##### v1.47.7
 
@@ -62,6 +50,26 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 ###### Fixed
 
 - Redirect-like text in an unquoted heredoc body of `cat` or `tee` (`see <dogma>/x`, `a>/x`) is no longer denied as a redirect onto a critical path; command substitutions and backticks in the body are still checked
+
+## limit
+
+### v2
+
+#### v2.37
+
+##### v2.37.3
+
+###### Fixed
+
+- Native Windows (Git Bash): the 5h and weekly figures show again. The usage response is now saved through a command-line path that Git Bash translates; before, the native curl wrote it to the drive root (`C:\tmp`) and the shared cache stayed empty
+- Highscore and token figures no longer need `bc` (missing in Git Bash); they use bash integer math with the same one-decimal truncation
+- Background refresh, ledger scan, plan detection and the provider hand-off start the running bash instead of a `bash` looked up on PATH, which on native Windows can be the WSL launcher (`System32\bash.exe`)
+
+##### v2.37.2
+
+###### Fixed
+
+- A plan without a 5h limit (five_hour.utilization null, weekly only) no longer shows `invalid_response`; the 5h line is left out and the weekly lines render
 
 ## credo
 
