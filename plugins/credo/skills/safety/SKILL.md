@@ -134,6 +134,14 @@ owner and carry on. `credo-cleanup.py report` lists what the ledger recorded. Th
 against the same user on purpose (string building or a script gets past a text check); the
 deletion rules above therefore never rely on the ledger alone.
 
+Native Windows (Claude Code native, hooks through Git Bash, a real CPython): the ledger records
+(NTFS creation time, volume serial + file id, known-folder temp dir) and every helper command
+runs its checks, but own-rm, purge and sweep only report: Windows has no equally strong check for
+other processes' open files and working directories. A junction, symlink or any other reparse
+point is never followed, recursed into or deleted (its tree is report-only), and anything off a
+local fixed NTFS/ReFS drive is report-only. So on Windows: list what the report names for the
+owner instead of deleting it by other means.
+
 Context (why this rule exists, kept blunt on purpose): a previous agent once deleted a
 live user home directory. This rule exists so that never happens again.
 

@@ -55,6 +55,7 @@ try:
     import credo_peer_meta as peer_meta
 except ImportError:  # metadata is optional; the check works without it
     peer_meta = None
+import credo_platform
 import credo_session_name as session_name
 
 MAX_DESCRIPTOR_BYTES = 65536
@@ -113,6 +114,8 @@ def sock_dirs():
 
 
 def proc_start(pid):
+    if credo_platform.is_nt():  # no /proc: creation FILETIME (= the descriptor's procStart)
+        return credo_platform.proc_start(pid) or None
     try:
         with open("/proc/%d/stat" % pid) as fh:
             data = fh.read()
@@ -180,6 +183,8 @@ def bound_unix_paths():
 
 def proc_started_at(pid):
     """Epoch seconds the process started (boot time + starttime ticks), or None."""
+    if credo_platform.is_nt():
+        return credo_platform.filetime_to_epoch(proc_start(pid))
     try:
         ticks = int(proc_start(pid))
         with open("/proc/stat") as fh:
@@ -226,6 +231,10 @@ def live_sockets():
 
 def proc_children():
     kids = {}
+    if credo_platform.is_nt():
+        for pid, (ppid, _name) in (credo_platform.proc_table() or {}).items():
+            kids.setdefault(ppid, []).append(pid)
+        return kids
     for e in os.listdir("/proc"):
         if not e.isdigit():
             continue
@@ -249,14 +258,21 @@ def descendants(pid, kids):
 
 
 def is_codex_proc(pid):
-    try:
-        with open("/proc/%d/cmdline" % pid, "rb") as fh:
-            argv = [a.decode("utf-8", "replace") for a in fh.read().split(b"\0") if a]
-    except OSError:
-        return False
+    if credo_platform.is_nt():
+        argv = credo_platform.proc_cmdline(pid)
+    else:
+        try:
+            with open("/proc/%d/cmdline" % pid, "rb") as fh:
+                argv = [a.decode("utf-8", "replace") for a in fh.read().split(b"\0") if a]
+        except OSError:
+            return False
     if not argv or any("app-server" in a for a in argv):
         return False
-    names = [os.path.basename(a) for a in argv[:2]]
+    if credo_platform.is_nt():  # C:\\...\\codex.exe
+        names = [os.path.basename(a.replace("\\", "/")) for a in argv[:2]]
+        names += [n[:-4] for n in names if n.lower().endswith(".exe")]
+    else:
+        names = [os.path.basename(a) for a in argv[:2]]
     return "codex" in names
 
 

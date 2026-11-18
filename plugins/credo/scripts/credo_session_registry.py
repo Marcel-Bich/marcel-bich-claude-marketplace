@@ -8,7 +8,8 @@ Layout (per profile: CLAUDE_CONFIG_DIR, else ~/.claude):
   <profile>/credo/session-registry/<session_id>.json   one file per session id, mode 0600
 
 Entry keys (exactly these; no environment values, no secrets):
-  session_id, harness ("claude"), name, host, pid, pid_start (/proc start time),
+  session_id, harness ("claude"), name, host, pid, pid_start (/proc start time; on native
+  Windows the creation FILETIME, the same value as the descriptor's procStart),
   mode (credo session mode or null), tmux (null or {socket, pane, session, owner_pid,
   owner_start}), updated (ISO time of the last change; a file is rewritten only on change).
 
@@ -30,6 +31,8 @@ a day. Nothing else is ever deleted.
 Reuse: process facts and the owner check from credo-self-restart.py, the pane lookup from
 credo_pane_guard.py, the name fallback from credo_session_name.py, the mode from
 credo_peer_meta.py, and the profile list and descriptor reader from credo-peer-check.py.
+On native Windows (no /proc, no tmux) the process facts come from credo_platform.py (ctypes:
+Toolhelp parent chain, GetProcessTimes start time) and no pane is recorded.
 """
 import datetime
 import glob
@@ -46,6 +49,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import credo_pane_guard as pane_guard  # noqa: E402
+import credo_platform  # noqa: E402
 import credo_peer_meta as peer_meta  # noqa: E402
 import credo_session_name as session_name  # noqa: E402
 
@@ -156,8 +160,30 @@ def load_entries(profiles):
 
 # --------------------------------------------------------------------------- recording
 
+def _proc_start(pid):
+    if credo_platform.is_nt():
+        return credo_platform.proc_start(pid)
+    return restart.proc_start(pid)
+
+
+def _alive(pid, start=""):
+    """Alive (not a zombie) and, when given, with the same start time."""
+    if credo_platform.is_nt():
+        return credo_platform.proc_alive(pid, start)
+    return restart.alive(pid, start)
+
+
+def _gone(pid):
+    if credo_platform.is_nt():
+        return not credo_platform.proc_start(pid)
+    st = restart.read_stat(pid)
+    return st is None or st[0] in ("Z", "X")
+
+
 def process_chain():
     """This process and its ancestors (the hook runs as a child of the session process)."""
+    if credo_platform.is_nt():
+        return credo_platform.ancestors(os.getpid())
     return restart.ancestors(os.getpid())
 
 
@@ -168,7 +194,7 @@ def find_agent(profile, sid, pids):
         desc = descriptor(profile, pid)
         if not desc or desc.get("sessionId") != sid:
             continue
-        start = restart.proc_start(pid)
+        start = _proc_start(pid)
         if not start:
             continue
         if desc.get("procStart") not in (None, "") and str(desc["procStart"]) != start:
@@ -192,7 +218,9 @@ def session_of_pane(pane, server):
 
 def pane_of(agent, start):
     """The tmux record of the session process, or None: no pane, a pane the process tree
-    does not confirm, or a daemon link that fails closed."""
+    does not confirm, or a daemon link that fails closed. Native Windows: no tmux, None."""
+    if credo_platform.is_nt():
+        return None
     link = restart.daemon_link(agent)
     if link.get("error"):
         return None
@@ -258,7 +286,7 @@ def prune(profile, now=None):
         if entry is None:
             continue
         pid = entry.get("pid")
-        if isinstance(pid, int) and restart.alive(pid, str(entry.get("pid_start", ""))):
+        if isinstance(pid, int) and _alive(pid, str(entry.get("pid_start", ""))):
             continue
         try:
             age = now - os.lstat(path).st_mtime
@@ -299,10 +327,9 @@ def verify(profile, file_sid, entry):
     if not well_formed(file_sid, entry):
         return "stale", "invalid entry"
     pid, start, sid = entry["pid"], entry["pid_start"], entry["session_id"]
-    st = restart.read_stat(pid)
-    if st is None or st[0] in ("Z", "X"):
+    if _gone(pid):
         return "stale", "process %d is gone" % pid
-    if not restart.alive(pid, start):
+    if not _alive(pid, start):
         return "stale", "pid %d was reused (start time differs)" % pid
     desc = descriptor(profile, pid)
     if desc is None:

@@ -22,7 +22,9 @@ exception is the CAPTION itself: claude_caption() is also what the LAN relay sen
 trust key from_caption (see credo-peer-lan.py, trusted peers); kitty / tmux labels and
 short ids never take part in trust.
 
-Process facts come from PROC_ROOT (a module attribute, only tests point it elsewhere).
+Process facts come from PROC_ROOT (a module attribute, only tests point it elsewhere); on
+native Windows from credo_platform.py (ctypes: verified Toolhelp parent chain, image path; the
+environment of another process is not read there, and there is no daemon link).
 """
 import glob
 import importlib.util
@@ -33,6 +35,8 @@ import stat
 import subprocess
 import time
 import unicodedata
+
+import credo_platform
 
 NAME_MAX = 20        # cap of every name: caption, kitty label, tmux label
 NAME_PUNCT = " ._-"  # the only non-alphanumeric characters a name keeps
@@ -248,6 +252,8 @@ def codex_caption(thread_id, codex_home=None, uid=None):
 # --------------------------------------------------------------------------- processes
 
 def _ppid(pid):
+    if credo_platform.is_nt():
+        return credo_platform.proc_ppid(pid)
     try:
         with open("%s/%d/stat" % (PROC_ROOT, pid)) as fh:
             return int(fh.read().rsplit(")", 1)[-1].split()[1])
@@ -266,6 +272,9 @@ def ancestors(pid, limit=64):
 
 
 def _is_kitty(pid):
+    if credo_platform.is_nt():
+        exe = credo_platform.proc_exe(pid).replace("\\", "/")
+        return os.path.basename(exe).lower() in ("kitty", "kitty.exe")
     try:
         with open("%s/%d/comm" % (PROC_ROOT, pid)) as fh:
             if fh.read().strip() == "kitty":
@@ -287,6 +296,8 @@ def _kitty_window_pid(chain):
 
 
 def _environ_value(pid, key):
+    if credo_platform.is_nt():  # another process's environment is not read on Windows
+        return None
     try:
         with open("%s/%d/environ" % (PROC_ROOT, pid), "rb") as fh:
             for item in fh.read().split(b"\0"):
@@ -300,7 +311,9 @@ def _environ_value(pid, key):
 
 def _daemon_client(pid):
     """Client TUI pid of a daemon-hosted session (credo-self-restart.py daemon_link,
-    which verifies the link), else None. Any problem -> None."""
+    which verifies the link), else None. Any problem -> None. Native Windows: None."""
+    if credo_platform.is_nt():
+        return None
     try:
         if "restart" not in _MODULES:
             path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "credo-self-restart.py")

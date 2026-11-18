@@ -136,9 +136,9 @@ done
 run "$TMP/empty-dir" "$(pre_input "$SA")" "$LAUNCHER" "$LEDGER" pre
 check "ledger pre via launcher, real python (CREDO_LEDGER=0): exit 0, silent" "0||" "$RC|$OUT|$ERR"
 
-# non-POSIX Python: exits 0 before reading anything
+# Windows-flavoured Python with unreadable input: exits 0, silent
 OUT="$(printf 'not json' | "$REAL_PY" -c 'import os, runpy, sys; os.name = "nt"; sys.argv = [sys.argv[1], "pre"]; runpy.run_path(sys.argv[0], run_name="__main__")' "$LEDGER" 2>&1)"
-check "ledger: non-POSIX python exits 0, silent" "0|" "$?|$OUT"
+check "ledger: os.name nt, bad input: exits 0, silent" "0|" "$?|$OUT"
 # library that cannot load: exits 0
 mkdir -p "$TMP/lonely"
 cp "$LEDGER" "$TMP/lonely/credo-ledger.py"
@@ -192,10 +192,10 @@ with open(sys.argv[2] + "/w.lock", "a") as fh:
     nb = credo_lock.lock(fh, blocking=False)
 print(credo_lock.AVAILABLE, calls[:2], nb)' "$SCRIPT_DIR" "$TMP" 2>&1)"
 check "credo_lock: msvcrt fallback locks and unlocks byte 0, busy = False" "True [(2, 1), (0, 1)] False" "$OUT"
-OUT="$("$REAL_PY" -I -c 'import os, runpy, sys, shutil, subprocess, zipfile, glob, tempfile; sys.path.insert(0, os.path.dirname(sys.argv[1])); import credo_cleanup_lib; os.name = "nt"; sys.argv = [sys.argv[1], "sweep"]; runpy.run_path(sys.argv[0], run_name="__main__")' "$SCRIPT_DIR/credo-cleanup.py" 2>&1)"
-RC=$?
-check "cleanup: non-POSIX python exits 0" "0" "$RC"
-contains "cleanup: non-POSIX python says why" "not supported on native Windows" "$OUT"
+# cleanup helper and ledger: no POSIX-only early exit any more (#194); their Windows behaviour
+# is covered by test-credo-cleanup-nt.sh (simulated) and the live Git Bash check
+check "cleanup/ledger: no POSIX-only exit left" "0" \
+    "$(grep -c -E 'not supported on native Windows|if os.name != "posix"' "$SCRIPT_DIR/credo-cleanup.py" "$SCRIPT_DIR/credo-ledger.py" | awk -F: '{s += $2} END {print s}')"
 
 # peer-lan relay is POSIX only: a native Windows Python 3 must not start or offer it
 NT="$TMP/nt-bin"

@@ -25,21 +25,24 @@ had a tool call running is marked "ambiguous" with those session ids; the helper
 ambiguous window-only entry.
 
 Never blocks: every error exits 0 without output (the deny cases are intentional). Off with
-CREDO_LEDGER=0 or the local config key cleanup.enabled: false. Not POSIX (native Windows Python)
-or a library that cannot load: exits 0 at once. Hooks start it through hooks/credo-py.sh, which
-probes for a working Python 3 first.
+CREDO_LEDGER=0 or the local config key cleanup.enabled: false. A library that cannot load: exits
+0 at once. Hooks start it through hooks/credo-py.sh, which probes for a working Python 3 first.
+
+Native Windows (a real CPython under Git Bash, Claude Code native): the same modes with the
+Windows facts of credo_cleanup_lib.py. The temp root scanned after a Bash call is the per-user
+<LocalAppData>\\Temp (from the known-folder API) plus the repo's .credo/sandbox-tmp and
+<main>-worktrees; birth time is the NTFS creation time, device+inode the volume serial + file id;
+junctions and other reparse points are recorded as such but never entered; the home scan skips
+AppData like the dot dirs. TMPDIR and CREDO_CLEANUP are exported with forward slashes (Git Bash
+and Windows programs both read that form). Paths in a Bash command in Git Bash form (/c/...,
+/tmp/...) count as command evidence like their Windows form.
 """
 import os
 import sys
 
-# The ledger relies on Linux features (/proc, statx birth time, POSIX paths). On any other
-# platform (a native Windows Python under Git Bash) or when its library cannot load, it does
-# nothing and exits 0, so a hook never fails visibly because of it.
-if os.name != "posix":
-    sys.exit(0)
-
 try:
     import json
+    import ntpath
     import re
     import shlex
     import stat
@@ -75,6 +78,14 @@ WRITE_CMD_RE = re.compile(r"(>|\btee\b|\b(cp|mv|rm|rmdir|unlink|truncate|dd|inst
                           r"\bperl\b|\bnode\b|\bruby\b)")
 
 
+def msys_form(p):
+    """C:\\x\\y -> /c/x/y (how Git Bash writes a Windows path), else None."""
+    drive, rest = ntpath.splitdrive(p)
+    if len(drive) != 2 or drive[1] != ":":
+        return None
+    return "/" + drive[0].lower() + rest.replace("\\", "/")
+
+
 def protected_forms():
     """Text forms of the hook-only paths as they may appear in a command: the ledger dir and the
     keep list (the cleanup log beside the ledger stays readable)."""
@@ -85,27 +96,48 @@ def protected_forms():
         if L.is_under(p, h):
             rest = p[len(h):]
             forms.update({"~" + rest, "$HOME" + rest, "${HOME}" + rest})
+    if L.NT:  # forward slashes and the Git Bash forms (/c/..., /tmp/...) of every form above
+        try:
+            tmp = L.nt_temp_dir()
+        except OSError:
+            tmp = None
+        for f in list(forms):
+            forms.add(f.replace("\\", "/"))
+            m = msys_form(f)
+            if m:
+                forms.add(m)
+            if tmp and L.is_under(f, tmp) and not L.same_path(f, tmp):
+                forms.add("/tmp" + f[len(tmp):].replace("\\", "/"))
     return forms
+
+
+def protected_hit(cmd, forms):
+    if not L.NT:
+        return [f for f in forms if f in cmd]
+    low = cmd.lower()
+    return [f for f in forms if f.lower() in low]
 
 
 def credo_worktree_violation(path):
     """Main-checkout path suggestion when path is under a real .credo/ of a linked worktree."""
     ab = os.path.abspath(path)
-    idx = ab.find("/.credo/")
+    sep = os.sep
+    look = L.norm(ab) if L.NT else ab  # Windows: case-insensitive, same length as ab
+    idx = look.find(sep + ".credo" + sep)
     if idx < 0:
-        if ab.endswith("/.credo"):
-            idx = len(ab) - len("/.credo")
+        if look.endswith(sep + ".credo"):
+            idx = len(ab) - len(sep + ".credo")
         else:
             return None
-    wt = ab[:idx] or "/"
+    wt = ab[:idx] or sep
     if not os.path.isfile(os.path.join(wt, ".git")):
         return None  # not a linked worktree
     link = os.path.join(wt, ".credo")
-    if os.path.islink(link):
-        return None  # the setup symlink into the main checkout
+    if L.link_like(link):
+        return None  # the setup symlink (Windows: also a junction) into the main checkout
     main = L.main_checkout_of(wt)
-    rest = ab[idx + len("/.credo"):]
-    return (main + "/.credo" + rest) if main else "the main checkout's .credo/"
+    rest = ab[idx + len(sep + ".credo"):]
+    return (main + sep + ".credo" + rest) if main else "the main checkout's .credo/"
 
 
 REDIR_RE = re.compile(r"""(?:>>?|\btee\s+(?:-a\s+)?)\s*["']?([^\s"'|;&<>()]*\.credo(?:/[^\s"'|;&<>()]*)?)""")
@@ -121,7 +153,7 @@ def guard(data):
             return None
         ab = os.path.join(cwd, os.path.expanduser(fp))
         p = L.real_target(ab) or ab
-        if L.is_under(p, L.state_dir()) or p == L.keep_list_path():
+        if L.is_under(p, L.state_dir()) or L.same_path(p, L.keep_list_path()):
             return ("the provenance ledger and the keep list are written by credo hooks and "
                     "credo-cleanup.py only; read them with credo-cleanup.py report")
         sugg = credo_worktree_violation(ab)
@@ -136,7 +168,7 @@ def guard(data):
         # A guard against mistakes, not against the same user on purpose: string building,
         # python -c or a script written first all get past a text check (documented). Only a
         # command that names the ledger / keep list AND writes or deletes is denied.
-        hit = [f for f in protected_forms() if f in cmd]
+        hit = protected_hit(cmd, protected_forms())
         # cd into the state tree plus a relative path (best effort)
         if not hit and ".local/state" in cmd and re.search(r"(^|[\s/'\"])cleanup/ledger", cmd):
             hit = [".local/state ... cleanup/ledger"]
@@ -300,7 +332,8 @@ def close_window(sid, t0, t1):
 def excluded(path):
     if os.path.basename(path) == ".git" or L.in_claude_profile(path):
         return True
-    for root in (L.state_dir(), L.keep_root(), L.tmp_base(), "/tmp/claude-%d" % os.getuid()):
+    scratch = L.scratch_base() if L.NT else "/tmp/claude-%d" % os.getuid()
+    for root in (L.state_dir(), L.keep_root(), L.tmp_base(), scratch):
         if L.is_under(path, root):
             return True
     return False
@@ -310,7 +343,7 @@ def scan_root(root, t0, t1, home_mode=False):
     """[(path, lstat, btime)] of entries born in [t0, t1] at depth 1..2 below root. A depth-1
     entry born in the window is reported alone (its children are covered by it)."""
     found = []
-    uid = os.getuid()
+    uid = None if L.NT else os.getuid()  # Windows: no uids; the scanned roots are per-user
 
     def born(path, st):
         bt = L.birth_time(path)
@@ -326,10 +359,10 @@ def scan_root(root, t0, t1, home_mode=False):
         if excluded(de.path) or (home_mode and de.name.startswith(".claude")):
             continue
         try:
-            st = de.stat(follow_symlinks=False)
+            st = L.lstat_entry(de)
         except OSError:
             continue
-        if st.st_uid != uid or st.st_dev != root_dev or de.path in mounts:
+        if (uid is not None and st.st_uid != uid) or st.st_dev != root_dev or de.path in mounts:
             continue
         bt, new = born(de.path, st)
         if new:
@@ -337,8 +370,10 @@ def scan_root(root, t0, t1, home_mode=False):
             continue
         if not de.is_dir(follow_symlinks=False) or st.st_mtime < t0:
             continue  # no new child: creating an entry updates its parent's mtime
-        if home_mode and de.name.startswith("."):
-            continue  # caches and tool state below dot dirs of the home are not scanned
+        if L.NT and L.is_reparse(st):
+            continue  # a junction or other reparse point is never entered
+        if home_mode and (de.name.startswith(".") or (L.NT and de.name.lower() == "appdata")):
+            continue  # caches and tool state below dot dirs (and AppData) are not scanned
         try:
             kids = list(os.scandir(de.path))
         except OSError:
@@ -347,10 +382,10 @@ def scan_root(root, t0, t1, home_mode=False):
             if excluded(k.path):
                 continue
             try:
-                kst = k.stat(follow_symlinks=False)
+                kst = L.lstat_entry(k)
             except OSError:
                 continue
-            if kst.st_uid != uid or kst.st_dev != root_dev or k.path in mounts:
+            if (uid is not None and kst.st_uid != uid) or kst.st_dev != root_dev or k.path in mounts:
                 continue
             kbt, knew = born(k.path, kst)
             if knew:
@@ -361,14 +396,14 @@ def scan_root(root, t0, t1, home_mode=False):
 def temp_scan_roots(cwd):
     if L.ov("roots") is not None:
         return [os.path.realpath(r) for r in L.ov("roots")]
-    roots = ["/tmp", "/dev/shm"]
+    roots = [L.nt_temp_dir()] if L.NT else ["/tmp", "/dev/shm"]
     top, linked = L.git_top(os.path.realpath(cwd)) if cwd else (None, False)
     if top:
         main = (L.main_checkout_of(top) if linked else top) or top
         sb = os.path.join(main, ".credo", "sandbox-tmp")
         if os.path.isdir(sb):
             roots.append(os.path.realpath(sb))
-        wtr = main.rstrip("/") + "-worktrees"
+        wtr = L.strip_sep(main) + "-worktrees"
         if os.path.isdir(wtr):
             roots.append(os.path.realpath(wtr))
     return roots
@@ -388,10 +423,32 @@ def command_tokens(cmd):
     return out
 
 
+def win_token(t):
+    """Windows: a Git Bash path token (/c/x, /tmp/x) in its Windows form; others unchanged."""
+    m = re.match(r"^/([a-zA-Z])(/.*)?$", t)
+    if m:
+        return m.group(1).upper() + ":" + (m.group(2) or "/")
+    if t == "/tmp" or t.startswith("/tmp/"):
+        return L.nt_temp_dir() + t[4:]
+    return t
+
+
 def evidence_for(path, cmd, cwd=""):
     """"command" only when a whole shell token of the command is the full path (absolute, or
     relative to the call's cwd); a name that merely appears inside the text is no evidence."""
     if not cmd:
+        return "window"
+    if L.NT:
+        for t in command_tokens(cmd):
+            if "$" in t or "`" in t or "%" in t:
+                continue
+            cand = os.path.expanduser(win_token(t))
+            if not os.path.isabs(cand):
+                if not cwd:
+                    continue
+                cand = os.path.join(cwd, cand)
+            if L.same_path(L.strip_sep(os.path.normpath(cand)), L.strip_sep(path)):
+                return "command"
         return "window"
     for t in command_tokens(cmd):
         if "$" in t or "`" in t:
@@ -536,10 +593,15 @@ def session_start(data):
         L.log("session-start: %s is not a private dir of this user, no session TMPDIR" % stmp)
         return
     helper = os.path.join(HERE, "credo-cleanup.py")
+    py = "python3"
+    if L.NT:  # Git Bash and Windows programs both read C:/x/y; python3 may be the Store stub
+        helper, stmp_env, py = helper.replace("\\", "/"), stmp.replace("\\", "/"), "python"
+    else:
+        stmp_env = stmp
     envf = os.environ.get("CLAUDE_ENV_FILE")
     lines = ["export CREDO_CLEANUP=%s" % shell_quote(helper)]
     if cfg.get("session_tmpdir") is not False:
-        lines.append("export TMPDIR=%s" % shell_quote(stmp))
+        lines.append("export TMPDIR=%s" % shell_quote(stmp_env))
     wrote = False
     if envf:
         try:
@@ -561,12 +623,18 @@ def session_start(data):
     if wrote or envf is None:
         sys.stdout.write(
             "[credo-cleanup] Own temp dir of this session: %s%s. Put throwaway output there. Delete "
-            "own leftovers without a prompt only through: python3 %s own-rm <path>... (only inside "
+            "own leftovers without a prompt only through: %s %s own-rm <path>... (only inside "
             "this TMPDIR or the session scratchpad, single files the Write tool created in a temp dir, or "
             "build-output dirs such as node_modules of a worktree this session created; everything else "
             "is report-only; never rm -rf "
-            "outside the cwd). What the session left: python3 %s report\n"
-            % (stmp, " (exported as $TMPDIR)" if wrote else "", helper, helper))
+            "outside the cwd). What the session left: %s %s report%s\n"
+            % (stmp_env, " (exported as $TMPDIR)" if wrote else "", py, helper, py, helper,
+               WIN_NOTE if L.NT else ""))
+
+
+WIN_NOTE = (". On native Windows own-rm, purge and sweep only report (no equivalent of the "
+            "open-file and cwd check of other processes); remove what the report lists with the "
+            "owner's consent")
 
 
 def shell_quote(s):

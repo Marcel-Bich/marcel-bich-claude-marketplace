@@ -24,11 +24,28 @@ Layout (all local, never versioned):
   session tmp /tmp/credo-tmp-<uid> (private, 0700); one dir per session id (a UUID)
 
 Everything here fails soft: callers catch exceptions; a hook never blocks on an error.
+
+Native Windows (NT, a real CPython under Git Bash; stdlib + ctypes only). Same rules, Windows
+facts: the home and the temp dirs come from the known-folder API (never from the environment);
+the session tmp base is <LocalAppData>\\Temp\\credo-tmp, the scratchpads live in
+<LocalAppData>\\Temp\\claude; birth time is the NTFS creation time (st_birthtime), device+inode
+the volume serial + file id (os.lstat, never a cached DirEntry, whose ids are 0 there); "owned by
+this user" is the owner SID of the object, "private" additionally a location inside the user's
+LocalAppData (per-user ACL). Paths compare case-insensitively (normcase). Only local fixed
+NTFS/ReFS volumes count; anything else (network share, UNC, removable, FAT) is report-only. A
+junction, symlink or any other reparse point is never followed, never recursed into and never
+deleted: a tree that holds one is report-only. There is no equally strong Windows equivalent of
+the open-file and cwd check of other processes (/proc), so every delete that needs it (own-rm,
+purge, sweep) is report-only on Windows; the delete itself works on handles opened without
+following reparse points, pins every directory on the way (no FILE_SHARE_DELETE, so nothing can
+be renamed or swapped meanwhile) and re-checks volume serial + file id before it marks an object
+for deletion.
 """
 import ctypes
 import ctypes.util
 import glob
 import json
+import ntpath
 import os
 import re
 import stat
@@ -48,6 +65,9 @@ if HERE not in sys.path:
 import credo_lock  # noqa: E402
 import credo_platform  # noqa: E402
 
+# Windows code paths; the nt-simulation tests flip this (with the ctypes helpers patched)
+NT = credo_platform.IS_NT
+
 # Claude Code session ids are UUIDs; nothing else is accepted, so an id can never name or escape
 # a directory (no "..", no "/", no ordinary folder names)
 SID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -66,8 +86,11 @@ def ov(key, default=None):
 
 
 def home():
-    """The user's home from the password database (not $HOME, which a command can prefix)."""
+    """The user's home from the password database (not $HOME, which a command can prefix);
+    on Windows from the known-folder API (not %USERPROFILE%)."""
     h = ov("home")
+    if not h and NT:
+        h = nt_known_folder("profile")
     if not h:
         try:
             h = pwd.getpwuid(os.getuid()).pw_dir
@@ -90,11 +113,19 @@ def keep_list_path():
 
 def tmp_base():
     """The session tmp base (absolute, NOT resolved: private_dir checks it is no symlink)."""
-    return os.path.abspath(ov("tmp_base") or "/tmp/credo-tmp-%d" % os.getuid())
+    if ov("tmp_base"):
+        return os.path.abspath(ov("tmp_base"))
+    if NT:
+        return os.path.join(nt_temp_dir(), "credo-tmp")
+    return os.path.abspath("/tmp/credo-tmp-%d" % os.getuid())
 
 
 def scratch_base():
-    return os.path.abspath(ov("scratch_base") or "/tmp/claude-%d" % os.getuid())
+    if ov("scratch_base"):
+        return os.path.abspath(ov("scratch_base"))
+    if NT:
+        return os.path.join(nt_temp_dir(), "claude")
+    return os.path.abspath("/tmp/claude-%d" % os.getuid())
 
 
 def session_tmp(sid):
@@ -107,11 +138,20 @@ def valid_sid(sid):
 
 def private_dir(path, mode_0700=True):
     """True when path (not resolved) is a real directory of this user, no symlink, and (with
-    mode_0700) not accessible to anybody else."""
+    mode_0700) not accessible to anybody else. Windows: no reparse point, owner SID is this
+    user, and with mode_0700 inside the user's LocalAppData (per-user ACL)."""
     try:
         st = os.lstat(path)
     except OSError:
         return False
+    if NT:
+        if not stat.S_ISDIR(st.st_mode) or is_reparse(st) or stat.S_ISLNK(st.st_mode):
+            return False
+        if mode_0700 and not nt_private_location(path):
+            return False
+        if not nt_owner_is_me(path):
+            return False
+        return norm(os.path.realpath(path)) == norm(path)
     if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
         return False
     if mode_0700 and stat.S_IMODE(st.st_mode) & 0o077:
@@ -148,6 +188,234 @@ def log(msg):
         pass
 
 
+# --------------------------------------------------------------------------- Windows facts
+
+FA_SYSTEM = 0x4
+FA_REPARSE_POINT = 0x400
+FA_OFFLINE = 0x1000
+FA_RECALL_ON_OPEN = 0x40000
+FA_RECALL_ON_DATA_ACCESS = 0x400000
+_NT_SPECIAL = FA_SYSTEM | FA_OFFLINE | FA_RECALL_ON_OPEN | FA_RECALL_ON_DATA_ACCESS
+_SEPS = "\\/"
+
+_KNOWN_FOLDERS = {  # FOLDERID_* GUIDs (KnownFolders.h)
+    "profile": "5E6C858F-0E22-4760-9AFE-EA3317B67173",
+    "local_appdata": "F1B32785-6FBA-4FCF-9D55-7B8E7F157091",
+    "roaming_appdata": "3EB685DB-65F9-4CF6-A03A-E3EF65729F3D",
+    "windows": "F38BF404-1D43-42F2-9305-67DE0B28FC23",
+    "program_files": "905E63B6-C1BF-494E-B29C-65B732D3D21A",
+    "program_files_x86": "7C5A40EF-A0FB-4BFC-874A-C0F2E0B9FA8E",
+    "program_data": "62AB5D82-FDC1-4DC3-A9DD-070D1D495D97",
+    "user_profiles": "0762D272-C50A-4BB0-A382-697DCD729B80",
+}
+_KF_CACHE = {}
+
+
+def norm(p):
+    """Comparison form of a path: Windows case-insensitive (normcase), POSIX unchanged."""
+    if NT:
+        return os.path.normcase(os.path.normpath(p))
+    return p
+
+
+def strip_sep(p):
+    """p without trailing separators (a root keeps its own form)."""
+    q = p.rstrip(_SEPS if NT else "/")
+    return q or p
+
+
+def same_path(a, b):
+    return norm(a) == norm(b) if NT else a == b
+
+
+def attrs(st):
+    return getattr(st, "st_file_attributes", 0) or 0
+
+
+def is_reparse(st):
+    """A junction, symlink, mount point, cloud placeholder, AF_UNIX socket or any other
+    reparse point (Windows attribute; a POSIX symlink is S_ISLNK, not this)."""
+    return bool(attrs(st) & FA_REPARSE_POINT)
+
+
+def link_like(path):
+    """A symlink, or on Windows any reparse point (a junction is no symlink to islink)."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISLNK(st.st_mode) or (NT and is_reparse(st))
+
+
+def lstat_entry(de):
+    """lstat of a scandir entry. Windows: a fresh os.lstat, since a DirEntry's cached stat
+    has st_dev = st_ino = 0 there."""
+    if NT:
+        return os.lstat(de.path)
+    return de.stat(follow_symlinks=False)
+
+
+def owned_by_me(path, st):
+    if NT:
+        return nt_owner_is_me(path)
+    return st.st_uid == os.getuid()
+
+
+def nt_known_folder(name):
+    """Path of a Windows known folder (SHGetKnownFolderPath), independent of the environment.
+    Raises OSError when unknown (callers fail closed)."""
+    if ov("nt_folders") and name in ov("nt_folders"):
+        return ov("nt_folders")[name]
+    if name in _KF_CACHE:
+        return _KF_CACHE[name]
+    import uuid
+    from ctypes import wintypes
+    guid = (ctypes.c_ubyte * 16).from_buffer_copy(uuid.UUID(_KNOWN_FOLDERS[name]).bytes_le)
+    shell32 = ctypes.WinDLL("shell32")
+    ole32 = ctypes.WinDLL("ole32")
+    shell32.SHGetKnownFolderPath.argtypes = (ctypes.c_void_p, wintypes.DWORD, wintypes.HANDLE,
+                                             ctypes.POINTER(ctypes.c_wchar_p))
+    shell32.SHGetKnownFolderPath.restype = ctypes.c_long
+    ole32.CoTaskMemFree.argtypes = (ctypes.c_void_p,)
+    out = ctypes.c_wchar_p()
+    hr = shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(out))
+    try:
+        if hr != 0 or not out.value:
+            raise OSError("known folder %s unavailable (0x%x)" % (name, hr & 0xFFFFFFFF))
+        _KF_CACHE[name] = out.value
+    finally:
+        if out:
+            ole32.CoTaskMemFree(out)
+    return _KF_CACHE[name]
+
+
+def nt_temp_dir():
+    """<LocalAppData>\\Temp, the per-user temp dir (not %TEMP%, which a command can prefix)."""
+    return os.path.join(nt_known_folder("local_appdata"), "Temp")
+
+
+def nt_private_location(path):
+    """Windows stand-in for mode 0700: below the user's LocalAppData, whose default ACL grants
+    only this user, SYSTEM and administrators access."""
+    try:
+        la = nt_known_folder("local_appdata")
+    except OSError:
+        return False
+    return is_under(path, la) and not same_path(path, la)
+
+
+def nt_owner_is_me(path):
+    """True when the owner SID of path (not followed) is this process's user SID, or the
+    default owner SID of its access token (what this process itself would own). Any error ->
+    False."""
+    if ov("nt_owner_is_me") is not None:
+        return bool(ov("nt_owner_is_me"))
+    try:
+        from ctypes import wintypes
+        advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        advapi.GetNamedSecurityInfoW.argtypes = (
+            wintypes.LPCWSTR, ctypes.c_int, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p))
+        advapi.GetNamedSecurityInfoW.restype = wintypes.DWORD
+        advapi.OpenProcessToken.argtypes = (wintypes.HANDLE, wintypes.DWORD,
+                                            ctypes.POINTER(wintypes.HANDLE))
+        advapi.GetTokenInformation.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                               wintypes.DWORD, ctypes.POINTER(wintypes.DWORD))
+        advapi.EqualSid.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
+        advapi.IsValidSid.argtypes = (ctypes.c_void_p,)
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        k32.LocalFree.argtypes = (ctypes.c_void_p,)
+        owner, sd = ctypes.c_void_p(), ctypes.c_void_p()
+        # SE_FILE_OBJECT = 1, OWNER_SECURITY_INFORMATION = 1; a reparse point is not followed
+        # only when opened as such, so callers have already refused reparse points
+        if advapi.GetNamedSecurityInfoW(path, 1, 1, ctypes.byref(owner), None, None, None,
+                                        ctypes.byref(sd)) != 0:
+            return False
+        try:
+            tok = wintypes.HANDLE()
+            if not advapi.OpenProcessToken(k32.GetCurrentProcess(), 0x0008, ctypes.byref(tok)):
+                return False
+            try:
+                if not owner.value or not advapi.IsValidSid(owner):
+                    return False
+                # TokenUser (1): this user; TokenOwner (4): the default owner of what this
+                # process creates (an elevated admin process creates objects owned by the
+                # Administrators group, as root on Linux owns what it creates)
+                for cls in (1, 4):
+                    need = wintypes.DWORD(0)
+                    advapi.GetTokenInformation(tok, cls, None, 0, ctypes.byref(need))
+                    buf = ctypes.create_string_buffer(max(need.value, 64))
+                    if not advapi.GetTokenInformation(tok, cls, buf, len(buf), ctypes.byref(need)):
+                        continue
+                    sid = ctypes.c_void_p.from_buffer(buf).value  # first field: the PSID
+                    if sid and advapi.EqualSid(owner, ctypes.c_void_p(sid)):
+                        return True
+                return False
+            finally:
+                k32.CloseHandle(tok)
+        finally:
+            k32.LocalFree(sd)
+    except (OSError, AttributeError, ValueError):
+        return False
+
+
+def nt_volume_refusal(p):
+    """Reason when p is not on a local fixed NTFS/ReFS volume (drive letter path), else None.
+    Network shares, UNC and device paths, removable media and file systems without stable file
+    ids (FAT, exFAT) are report-only on Windows."""
+    if ov("nt_volume_ok") is not None:
+        return None if ov("nt_volume_ok") else "not a local fixed NTFS/ReFS volume (test)"
+    drive, _ = ntpath.splitdrive(os.path.abspath(p))
+    if len(drive) != 2 or drive[1] != ":":
+        return "not on a local drive letter (UNC, network or device path): report only on Windows"
+    root = drive + "\\"
+    try:
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.GetDriveTypeW.argtypes = (wintypes.LPCWSTR,)
+        k32.GetVolumeInformationW.argtypes = (
+            wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD), wintypes.LPWSTR,
+            wintypes.DWORD)
+        if k32.GetDriveTypeW(root) != 3:  # DRIVE_FIXED
+            return "%s is no local fixed drive (network, removable or absent): report only" % drive
+        fs = ctypes.create_unicode_buffer(64)
+        if not k32.GetVolumeInformationW(root, None, 0, None, None, None, fs, 64):
+            return "%s: volume information unreadable: report only" % drive
+        if fs.value not in ("NTFS", "ReFS"):
+            return "%s is %s, not NTFS/ReFS (no stable file ids): report only" % (drive, fs.value)
+    except (OSError, AttributeError, ValueError):
+        return "volume of %s unknown: report only" % drive
+    return None
+
+
+def nt_system_refusal(p):
+    """Windows counterpart of SYSTEM_DENY: drive roots and their first level, the Windows,
+    Program Files and ProgramData trees, and the per-user AppData / temp roots themselves."""
+    drive, rest = ntpath.splitdrive(os.path.abspath(p))
+    if len([c for c in rest.split(os.sep) if c]) <= 1:
+        return "system or root-level path"
+    for name in ("windows", "program_files", "program_files_x86", "program_data"):
+        try:
+            root = nt_known_folder(name)
+        except (OSError, KeyError):
+            continue
+        if is_under(p, root) or is_under(root, p):
+            return "system path (%s)" % root
+    try:
+        la = nt_known_folder("local_appdata")
+        roots = [la, os.path.dirname(la), nt_known_folder("roaming_appdata"), nt_temp_dir()]
+    except OSError:
+        return "known folders unavailable: report only"
+    for root in roots:
+        if is_under(root, p):
+            return "a per-user AppData or temp root, or one of its parents"
+    return None
+
+
 # --------------------------------------------------------------------------- statx
 
 _STATX_BTIME = 0x800
@@ -172,9 +440,25 @@ def _statx_fn():
     return _libc.statx if _statx_ok else None
 
 
+def birth_of(st):
+    """Birth time from a Windows stat result: st_birthtime (Python 3.12+), else st_ctime, which
+    is the creation time on Windows before 3.12. None when unknown."""
+    bt = getattr(st, "st_birthtime", None)
+    if bt is None and NT:
+        bt = st.st_ctime
+    return bt if bt and bt > 0 else None
+
+
 def birth_time(path, dir_fd=None):
     """Birth time of path (relative to dir_fd when given; no symlink follow) in seconds, or None
-    when unknown."""
+    when unknown. Windows: the NTFS creation time of the object itself (os.lstat)."""
+    if NT:
+        if ov("no_btime"):
+            return None
+        try:
+            return birth_of(os.lstat(path))
+        except OSError:
+            return None
     fn = _statx_fn()
     if fn is None:
         return None
@@ -194,6 +478,8 @@ def birth_time(path, dir_fd=None):
 
 
 def kind_of(st):
+    if NT and is_reparse(st) and not stat.S_ISLNK(st.st_mode):
+        return "reparse"
     if stat.S_ISLNK(st.st_mode):
         return "link"
     if stat.S_ISDIR(st.st_mode):
@@ -347,6 +633,8 @@ def pid_alive(pid):
 
 
 def ancestor_pids():
+    if NT:
+        return set(credo_platform.ancestors(os.getpid()))
     pids, pid = [], os.getpid()
     for _ in range(64):
         pids.append(pid)
@@ -377,6 +665,8 @@ def sid_bound(sid):
                 continue
             if d.get("sessionId") != sid:
                 continue
+            if NT and pid in mine and str(d.get("procStart") or "") != credo_platform.proc_start(pid):
+                continue  # Windows reuses pids: the descriptor must carry this process's start
             if pid in mine:
                 return True, None
             if pid_alive(pid):
@@ -432,6 +722,9 @@ def local_config(timeout=3):
 
 
 def is_under(path, root):
+    if NT:
+        a, b = strip_sep(norm(path)), strip_sep(norm(root))
+        return a == b or a.startswith(b.rstrip(_SEPS) + os.sep)
     return path == root or path.startswith(root.rstrip("/") + "/")
 
 
@@ -495,6 +788,11 @@ def claude_profile_roots():
 
 def in_claude_profile(p):
     h = home()
+    if NT:
+        if is_under(p, h) and not same_path(p, h) and \
+                norm(os.path.relpath(p, h)).split(os.sep)[0].startswith(".claude"):
+            return True
+        return any(is_under(p, r) for r in claude_profile_roots())
     if is_under(p, h) and p != h and os.path.relpath(p, h).split("/")[0].startswith(".claude"):
         return True
     return any(is_under(p, r) for r in claude_profile_roots())
@@ -504,8 +802,11 @@ _MOUNTS = None
 
 
 def mount_points():
-    """All mount points from /proc/self/mountinfo (same-device bind mounts included)."""
+    """All mount points from /proc/self/mountinfo (same-device bind mounts included). Windows:
+    none listed; volume mount points are reparse points, refused wherever they are met."""
     global _MOUNTS
+    if NT:
+        return set()
     if _MOUNTS is None:
         mounts = set()
         try:
@@ -525,6 +826,8 @@ def mount_points():
 def fstab_mounts():
     """Mount points configured in /etc/fstab (field 2)."""
     out = set()
+    if NT:
+        return out
     try:
         with open(ov("fstab") or "/etc/fstab", encoding="utf-8", errors="replace") as fh:
             for line in fh:
@@ -538,7 +841,10 @@ def fstab_mounts():
 
 def on_unavailable_mount(p):
     """True when p lies under /mnt or /media, or under an fstab mount point that is not mounted
-    right now: a missing path there may only be unreachable, not gone."""
+    right now: a missing path there may only be unreachable, not gone. Windows: a path that is
+    not on a local fixed NTFS/ReFS drive (UNC, network, removable, absent drive)."""
+    if NT:
+        return nt_volume_refusal(p) is not None
     if is_under(p, "/mnt") or is_under(p, "/media"):
         return True
     mounted = mount_points()
@@ -546,7 +852,15 @@ def on_unavailable_mount(p):
 
 
 def mount_at_or_below(p):
-    """A mount point at p or anywhere below it, else None."""
+    """A mount point at or below p, else None. Windows: p itself when it is a reparse point
+    or a volume root (deeper reparse points are refused by the tree walks)."""
+    if NT:
+        try:
+            if is_reparse(os.lstat(p)) or os.path.ismount(p):
+                return p
+        except OSError:
+            pass
+        return None
     for m in mount_points():
         if m != "/" and is_under(m, p):
             return m
@@ -563,7 +877,11 @@ SYSTEM_DENY = ["/", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64", 
 def hard_refusal(p, cfg_keep_paths=()):
     """Reason string when p is on the hard denylist (whatever the ledger says), else None."""
     h = home()
-    if p in SYSTEM_DENY:
+    if NT:
+        why = nt_volume_refusal(p) or nt_system_refusal(p)
+        if why:
+            return why
+    elif p in SYSTEM_DENY:
         return "system or root-level path"
     if is_under(h, p):
         return "the home directory or one of its parents"
@@ -573,13 +891,15 @@ def hard_refusal(p, cfg_keep_paths=()):
         return "the provenance ledger itself"
     if p == keep_root() or p == keep_list_path() or is_under(keep_root(), p):
         return "the keep store or its parents"
-    for top in ("/mnt", "/media"):
+    for top in ("/mnt", "/media") if not NT else ():
         if is_under(p, top) and p.count("/") <= 4:
             return "mounted storage (depth <= 4)"
     try:
         st = os.lstat(p)
     except OSError:
         st = None
+    if NT and st is not None and is_reparse(st):
+        return "a junction, symlink or other reparse point (never followed or deleted on Windows)"
     if st is not None and stat.S_ISDIR(st.st_mode):
         m = mount_at_or_below(p)
         if m:
@@ -594,13 +914,20 @@ def hard_refusal(p, cfg_keep_paths=()):
 
 
 def temp_roots():
+    if NT:
+        roots = [nt_temp_dir(), tmp_base()]
+        return roots + [os.path.realpath(r) for r in ov("temp_roots", [])]
     roots = ["/tmp", "/var/tmp", "/dev/shm", tmp_base()]
     roots += [os.path.realpath(r) for r in ov("temp_roots", [])]
     return roots
 
 
 def in_temp_root(p):
-    """Below a temp root and not inside the home (a home under /tmp never counts as temp)."""
+    """Below a temp root and not inside the home (a home under /tmp never counts as temp).
+    Windows: the per-user temp dir lies inside the home by design; only the known-folder temp
+    roots count there (never %TEMP%)."""
+    if NT:
+        return any(not same_path(p, r) and is_under(p, r) for r in temp_roots())
     if is_under(p, home()):
         return False
     return any(p != r and is_under(p, r) for r in temp_roots())
@@ -661,6 +988,12 @@ def inspect_tree(p, st, since, limit_s=30.0):
         path, pst = stack.pop()
         info.count += 1
         info.newest = max(info.newest, pst.st_mtime, pst.st_ctime)
+        if NT:
+            why = nt_node_refusal(path, pst)
+            if why:
+                return why, info
+            if attrs(pst) & _NT_SPECIAL:
+                info.special = info.special or path
         if not (stat.S_ISDIR(pst.st_mode) or stat.S_ISREG(pst.st_mode) or stat.S_ISLNK(pst.st_mode)):
             info.special = info.special or path
         why = foreign_inode(pst, birth_time(path), since)
@@ -681,7 +1014,7 @@ def inspect_tree(p, st, since, limit_s=30.0):
             return "%s cannot be read (%s)" % (path, exc.strerror or exc), info
         for de in it:
             try:
-                cst = de.stat(follow_symlinks=False)
+                cst = lstat_entry(de)
             except OSError as exc:
                 return "%s cannot be read (%s)" % (de.path, exc.strerror or exc), info
             stack.append((de.path, cst))
@@ -713,9 +1046,15 @@ def inspect_tree_structure(p, st, limit_s=30.0):
             return "%s cannot be read (%s)" % (d, exc.strerror or exc), info
         for de in it:
             try:
-                cst = de.stat(follow_symlinks=False)
+                cst = lstat_entry(de)
             except OSError:
                 return "%s cannot be read" % de.path, info
+            if NT:
+                why = nt_node_refusal(de.path, cst)
+                if why:
+                    return why, info
+                if attrs(cst) & _NT_SPECIAL:
+                    info.special = info.special or de.path
             info.newest = max(info.newest, cst.st_mtime, cst.st_ctime)
             if stat.S_ISDIR(cst.st_mode):
                 if cst.st_dev != st.st_dev:
@@ -729,7 +1068,10 @@ def inspect_tree_structure(p, st, limit_s=30.0):
 
 def held_open(p, limit_s=5.0):
     """A pid whose cwd or an open file lies at or below p (from /proc; only readable processes),
-    'unknown' when the scan did not finish, else None."""
+    'unknown' when the scan did not finish, 'unsupported' on Windows (no /proc; no equally
+    strong way to see other processes' cwd and open files there), else None."""
+    if NT:
+        return "unsupported"
     t_end = now() + limit_s
     try:
         pids = [n for n in os.listdir("/proc") if n.isdigit()]
@@ -765,6 +1107,8 @@ def git_tracked(p):
     if not top or p == top:
         return False
     rel = os.path.relpath(p, top)
+    if NT:
+        rel = rel.replace(os.sep, "/")
     try:
         out = subprocess.run(["git", "-C", top, "ls-files", "-z", "--", rel], capture_output=True,
                              timeout=20)
@@ -859,6 +1203,10 @@ def transcript_wrote(sid, path):
         if f not in _TRANSCRIPTS:
             _TRANSCRIPTS[f] = _written_paths(f)
         paths = _TRANSCRIPTS[f]
+        if NT:
+            if any(same_path(q, path) or same_path(real_target(q) or q, path) for q in paths):
+                return True
+            continue
         if path in paths or any((real_target(q) or q) == path for q in paths):
             return True
     return False
@@ -978,7 +1326,10 @@ def delete_path(p, st, since=False):
     descriptors opened without following symlinks, so a path component swapped for a symlink
     after the check fails instead of redirecting the delete. since: the provenance start that
     every inode is checked against again right before its removal (False = no birth check,
-    for owner-approved keep entries). Returns error strings (empty = removed)."""
+    for owner-approved keep entries). Returns error strings (empty = removed). Windows: see
+    delete_path_nt (handles, no reparse point is ever followed or deleted)."""
+    if NT:
+        return delete_path_nt(p, st, since)
     errors = []
     parent, name = os.path.split(p)
     try:
@@ -1019,6 +1370,193 @@ def delete_path(p, st, since=False):
     return errors
 
 
+# --------------------------------------------------------------------------- Windows delete
+
+
+def nt_node_refusal(path, st):
+    """Windows: reason when one node of a tree forbids touching the tree, else None."""
+    if is_reparse(st) or stat.S_ISLNK(st.st_mode):
+        return ("%s is a junction, symlink or other reparse point (report only on Windows, never "
+                "followed or deleted)" % path)
+    if not st.st_ino:
+        return "%s has no stable file id (report only on Windows)" % path
+    return None
+
+
+_NT_DELETE = 0x00010000
+_NT_READ_ATTRIBUTES = 0x80
+_NT_LIST_DIRECTORY = 0x1          # FILE_READ_DATA: makes the share mode count (pins the object)
+_NT_SYNCHRONIZE = 0x00100000
+_NT_SHARE_READ_WRITE = 0x1 | 0x2  # never FILE_SHARE_DELETE: nobody may rename or delete it
+_NT_OPEN_EXISTING = 3
+_NT_FLAGS = 0x02000000 | 0x00200000  # BACKUP_SEMANTICS (dirs) | OPEN_REPARSE_POINT (no follow)
+_NT_DISPOSITION_EX = 21           # FileDispositionInfoEx
+_NT_DISPOSITION = 4               # FileDispositionInfo
+_NT_DISP_FLAGS = 0x1 | 0x2 | 0x10  # DELETE | POSIX_SEMANTICS | IGNORE_READONLY_ATTRIBUTE
+
+
+def _nt_k32():
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    k32.SetFileInformationByHandle.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                               wintypes.DWORD)
+    return k32
+
+
+def _nt_open(path, access):
+    """CRT fd of a handle on path itself (a reparse point is opened, never followed), share mode
+    read+write only. Raises OSError."""
+    import msvcrt
+    ab = os.path.abspath(path)
+    drive, _ = ntpath.splitdrive(ab)
+    if len(drive) != 2 or drive[1] != ":":
+        raise OSError("not a drive letter path: %s" % path)
+    k32 = _nt_k32()
+    h = k32.CreateFileW("\\\\?\\" + ab, access, _NT_SHARE_READ_WRITE, None, _NT_OPEN_EXISTING,
+                        _NT_FLAGS, None)
+    if not h or h == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return msvcrt.open_osfhandle(h, os.O_RDONLY)
+    except OSError:
+        k32.CloseHandle(h)
+        raise
+
+
+def _nt_mark_delete(fd):
+    """Delete the object behind fd (POSIX semantics: the name goes at once; a read-only
+    attribute does not stop it). Falls back to the classic disposition. Raises OSError."""
+    import msvcrt
+    k32 = _nt_k32()
+    h = msvcrt.get_osfhandle(fd)
+    flags = ctypes.c_ulong(_NT_DISP_FLAGS)
+    if k32.SetFileInformationByHandle(h, _NT_DISPOSITION_EX, ctypes.byref(flags), 4):
+        return
+    err = ctypes.get_last_error()
+    if err in (1, 50, 87):  # not supported by this Windows / file system: classic disposition
+        flag = ctypes.c_ubyte(1)
+        if k32.SetFileInformationByHandle(h, _NT_DISPOSITION, ctypes.byref(flag), 1):
+            return
+        err = ctypes.get_last_error()
+    raise ctypes.WinError(err)
+
+
+def _nt_pin_dirs(parent):
+    """fds that pin every directory from the drive root down to parent (no share delete, so
+    none of them can be renamed, deleted or swapped for a junction while they are held). Each
+    must be a real directory, no reparse point. Raises OSError."""
+    ab = os.path.abspath(parent)
+    drive, rest = ntpath.splitdrive(ab)
+    cur = drive + os.sep
+    fds = []
+    try:
+        for comp in [""] + [c for c in rest.split(os.sep) if c]:
+            cur = os.path.join(cur, comp) if comp else cur
+            fd = _nt_open(cur, _NT_LIST_DIRECTORY | _NT_READ_ATTRIBUTES | _NT_SYNCHRONIZE)
+            fds.append(fd)
+            fst = os.fstat(fd)
+            if not stat.S_ISDIR(fst.st_mode) or (comp and is_reparse(fst)):
+                raise OSError("%s is no plain directory (reparse point or file)" % cur)
+    except OSError:
+        for fd in fds:
+            os.close(fd)
+        raise
+    return fds
+
+
+def _nt_remove(path, expect, top_dev, since, errors):
+    """Remove path, which must still be the object expect (volume serial + file id). Directories
+    are emptied first while their handle pins them. Errors are appended; True when removed."""
+    is_dir = stat.S_ISDIR(expect.st_mode)
+    access = _NT_DELETE | _NT_READ_ATTRIBUTES | _NT_SYNCHRONIZE | (_NT_LIST_DIRECTORY if is_dir else 0)
+    try:
+        fd = _nt_open(path, access)
+    except OSError as exc:
+        errors.append("%s: %s" % (path, exc.strerror or exc))
+        return False
+    try:
+        fst = os.fstat(fd)
+        if (fst.st_dev, fst.st_ino) != (expect.st_dev, expect.st_ino) or not fst.st_ino:
+            errors.append("%s: replaced since the check, left alone" % path)
+            return False
+        why = nt_node_refusal(path, fst)
+        if why:
+            errors.append(why + ", left alone")
+            return False
+        if since is not False:
+            why = foreign_inode(fst, birth_of(fst), since)
+            if why:
+                errors.append("%s: %s, left alone" % (path, why))
+                return False
+        if is_dir:
+            _nt_rm_contents(path, top_dev, since, errors)
+        try:
+            _nt_mark_delete(fd)
+        except OSError as exc:
+            errors.append("%s: %s" % (path, exc.strerror or exc))
+            return False
+        return True
+    finally:
+        os.close(fd)
+
+
+def _nt_rm_contents(path, top_dev, since, errors):
+    try:
+        names = [de.name for de in os.scandir(path)]
+    except OSError as exc:
+        errors.append("%s: %s" % (path, exc.strerror or exc))
+        return
+    for name in names:
+        cpath = os.path.join(path, name)
+        try:
+            cst = os.lstat(cpath)
+        except OSError as exc:
+            errors.append("%s: %s" % (cpath, exc.strerror or exc))
+            continue
+        why = nt_node_refusal(cpath, cst)
+        if why:
+            errors.append(why + ", left alone")
+            continue
+        if since is not False:
+            why = foreign_inode(cst, birth_of(cst), since)
+            if why:
+                errors.append("%s: %s, left alone" % (cpath, why))
+                continue
+        if stat.S_ISDIR(cst.st_mode) and cst.st_dev != top_dev:
+            errors.append("%s: other volume inside, left alone" % cpath)
+            continue
+        _nt_remove(cpath, cst, top_dev, since, errors)
+
+
+def delete_path_nt(p, st, since=False):
+    """Windows delete_path: pins every parent directory, opens p itself (never following a
+    reparse point), checks it is still the inode st, empties a directory child by child with
+    the same checks (each child re-checked on its own handle right before removal), then marks
+    p for deletion. A reparse point anywhere is left alone. Returns error strings."""
+    errors = []
+    why = nt_node_refusal(p, st)
+    if why:
+        return [why]
+    try:
+        pins = _nt_pin_dirs(os.path.dirname(os.path.abspath(p)))
+    except OSError as exc:
+        return ["%s: parent cannot be pinned without following links (%s)" % (p, exc.strerror or exc)]
+    try:
+        sub = []
+        removed = _nt_remove(p, st, st.st_dev, since, sub)
+        errors += sub
+        if not removed and not sub:
+            errors.append("%s: not removed" % p)
+    finally:
+        for fd in pins:
+            os.close(fd)
+    return errors
+
+
 def dir_size(path, limit_s=10.0):
     """Bytes below path (no symlink follow, same device), best effort within limit_s."""
     total = 0
@@ -1035,14 +1573,16 @@ def dir_size(path, limit_s=10.0):
         try:
             for de in os.scandir(d):
                 try:
-                    st = de.stat(follow_symlinks=False)
+                    st = lstat_entry(de)
                 except OSError:
                     continue
+                if NT and is_reparse(st):
+                    continue  # never followed
                 if stat.S_ISDIR(st.st_mode):
                     if st.st_dev == top_dev:
                         stack.append(de.path)
                 else:
-                    total += st.st_blocks * 512
+                    total += st.st_blocks * 512 if hasattr(st, "st_blocks") else st.st_size
         except OSError:
             continue
     return total
@@ -1052,6 +1592,11 @@ def detach(argv, logfile=None):
     """Start argv detached (own session, no stdin, output to logfile or /dev/null)."""
     out = open(logfile, "a") if logfile else subprocess.DEVNULL
     try:
+        if NT:  # no setsid: a detached process without a console in its own group
+            flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED | NEW_GROUP | NO_WINDOW
+            subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+                             creationflags=flags, close_fds=True)
+            return
         subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
                          start_new_session=True, close_fds=True)
     finally:

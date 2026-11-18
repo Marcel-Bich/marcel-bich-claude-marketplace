@@ -30,6 +30,12 @@ Usage (the session id comes from $CLAUDE_CODE_SESSION_ID):
 Output: one line per path ("removed <p>", "refused <p>: <reason>", "failed <p>: <error>",
 "gone <p>"). Exit 0 also when something was refused (refusals are reports, never blockers);
 exit 2 on a usage error.
+
+Native Windows (a real CPython under Git Bash): every command runs with the Windows facts of
+credo_cleanup_lib.py. own-rm, purge and sweep run every check and report, but delete nothing:
+Windows has no equally strong equivalent of the open-file and cwd check of other processes.
+The merged-worktree cleanup only reports there (its in-use check needs /proc). keep and
+playwright-prune work, with reparse points never followed or deleted.
 """
 import argparse
 import glob
@@ -46,6 +52,7 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import credo_cleanup_lib as L  # noqa: E402
+import credo_platform  # noqa: E402
 
 IDLE_MINUTES_DEFAULT = 30
 EXPLICIT_IDLE_S = 120          # explicit own-rm: nothing changed in the tree for 2 minutes
@@ -131,7 +138,8 @@ def _hydra_worktree(top):
     if os.path.basename(os.path.dirname(gd)) != "worktrees":
         return None  # a submodule (.git/modules/...) or anything else
     main = L.main_checkout_of(top)
-    if not main or not L.is_under(top, main.rstrip("/") + "-worktrees") or top == main.rstrip("/") + "-worktrees":
+    if not main or not L.is_under(top, L.strip_sep(main) + "-worktrees") or \
+            L.same_path(top, L.strip_sep(main) + "-worktrees"):
         return None
     return main
 
@@ -139,9 +147,9 @@ def _hydra_worktree(top):
 def _created_by_session(top, main, entries):
     """True when this session's ledger recorded the creation of the worktree dir (or of its
     parent dir inside <main>-worktrees) with the same dev+inode+birth and no ambiguity."""
-    root = main.rstrip("/") + "-worktrees"
+    root = L.strip_sep(main) + "-worktrees"
     d = top
-    while L.is_under(d, root) and d != root:
+    while L.is_under(d, root) and not L.same_path(d, root):
         e = entries.get(d)
         if e is not None and not e.get("ambiguous"):
             try:
@@ -178,6 +186,8 @@ def own_worktree_output(p, st, entries):
             return False, None, "report only: a repository or submodule lies in between"
         d = os.path.dirname(d)
     rel = os.path.relpath(p, top)
+    if L.NT:
+        rel = rel.replace(os.sep, "/")
     try:
         q = subprocess.run(["git", "-C", top, "check-ignore", "-q", "--", rel], capture_output=True,
                            timeout=20)
@@ -265,6 +275,9 @@ def auto_refusal(t, idle_s):
     if time.time() - t.info.newest < idle_s:
         return "changed in the last %ds (deepest change counts): may be in use" % idle_s
     pid = L.held_open(t.p)
+    if pid == "unsupported":
+        return ("Windows has no equally strong check for other processes' open files and working "
+                "directories (no /proc), so nothing is deleted there")
     if pid == "unknown":
         return "open-file check did not finish: may be in use"
     if pid:
@@ -562,7 +575,9 @@ def sweep(args):
             st = os.lstat(p)
         except OSError:
             continue
-        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or now - st.st_mtime < 600:
+        if L.NT and L.is_reparse(st):
+            continue  # a junction or other reparse point is never entered
+        if not stat.S_ISDIR(st.st_mode) or not L.owned_by_me(p, st) or now - st.st_mtime < 600:
             continue
         if L.hard_refusal(p):
             continue
@@ -613,17 +628,20 @@ def sweep(args):
 def worktrees(args):
     d = args.dir or os.getcwd()
     script = os.path.join(HERE, "credo-worktree-cleanup.sh")
+    sh = [credo_platform.bash_exe()] if L.NT else []  # a .sh is not executable for Windows
     mode = "deny"
     try:
-        r = subprocess.run([os.path.join(HERE, "credo-dogma-mode.sh"), "--id", "36ch", "Hydra",
+        r = subprocess.run(sh + [os.path.join(HERE, "credo-dogma-mode.sh"), "--id", "36ch", "Hydra",
                             "clean up merged worktrees automatically", d], capture_output=True, text=True,
                            timeout=30)
         mode = (r.stdout or "").strip() or "deny"
     except (OSError, subprocess.SubprocessError):
         pass
-    argv = [script, "--details", "--background"]
-    if mode != "auto":
-        argv.append("--dry-run")  # only the owner setting [x] removes; otherwise report
+    argv = sh + [script, "--details", "--background"]
+    if mode != "auto" or L.NT:
+        # only the owner setting [x] removes; otherwise report. Windows: always report, the
+        # script's in-use check (a process with its cwd or an open file inside) needs /proc
+        argv.append("--dry-run")
     try:
         r = subprocess.run(argv + [d], capture_output=True, text=True, timeout=600)
         sys.stdout.write(r.stdout)
@@ -686,7 +704,7 @@ def rescue_credo(args):
     overwrite). Exit 3 when a conflict (or no main .credo) remains: the worktree must be kept."""
     wt = os.path.realpath(args.worktree)
     wc = os.path.join(wt, ".credo")
-    if os.path.islink(wc) or not os.path.isdir(wc):
+    if L.link_like(wc) or not os.path.isdir(wc):
         return 0
     main = L.main_checkout_of(wt)
     if not main or not os.path.isdir(os.path.join(main, ".credo")) or os.path.realpath(main) == wt:
@@ -786,11 +804,19 @@ def pw_cache_dir(args):
     if env and env != "0":
         d = os.path.realpath(os.path.expanduser(env))
         return d if os.path.isdir(os.path.join(d, ".links")) else None
+    if L.NT:
+        return os.path.join(L.nt_known_folder("local_appdata"), "ms-playwright")
     return os.path.join(L.home(), ".cache", "ms-playwright")
 
 
 def default_search_roots():
     roots = [L.home()]
+    if L.NT:
+        try:
+            roots.append(os.path.join(L.nt_known_folder("program_files"), "nodejs", "node_modules"))
+        except OSError:
+            pass
+        return [r for r in roots if os.path.isdir(r)]
     for pat in ("/usr/lib/node_modules", "/usr/local/lib/node_modules", "/opt/homebrew/lib/node_modules",
                 "/usr/lib/python3*", "/usr/local/lib/python3*", "/opt/*/lib/python3*"):
         roots += glob.glob(pat)
@@ -843,11 +869,13 @@ def find_installations(roots, limit_s, cache):
                 if de.name in SKIP_NAMES:
                     continue
                 try:
-                    st = de.stat(follow_symlinks=False)
+                    st = L.lstat_entry(de)
                 except OSError as exc:
                     raise Unclear("%s unreadable (%s)" % (de.path, exc.strerror or exc))
+                if L.NT and L.is_reparse(st):
+                    continue  # junctions and other reparse points are never followed
                 if stat.S_ISDIR(st.st_mode):
-                    if st.st_dev != rst.st_dev or de.path in L.mount_points() or de.path == cache:
+                    if st.st_dev != rst.st_dev or de.path in L.mount_points() or L.same_path(de.path, cache):
                         continue
                     if de.name == "projects" and os.path.basename(d).startswith(".claude"):
                         continue
@@ -876,9 +904,42 @@ def find_installations(roots, limit_s, cache):
     return refs, files
 
 
+# Windows: a process whose image path and command line cannot be read (another user's, a
+# protected one) is unclear when its image name could be a Playwright browser or tool
+PW_EXE_NAMES = {"chrome.exe", "chrome-headless-shell.exe", "headless_shell.exe", "firefox.exe",
+                "playwright.exe", "minibrowser.exe", "pw_run.exe"}
+
+
+def revisions_in_use_nt(cache):
+    """revisions_in_use on Windows: image path (QueryFullProcessImageNameW) and command line of
+    every process (ctypes, credo_platform). Names are compared case-insensitively (lowercase)."""
+    table = credo_platform.proc_table()
+    if table is None:
+        raise Unclear("the process list cannot be read")
+    used = set()
+    prefix = L.norm(cache).rstrip("\\/") + os.sep
+    for pid, (_ppid, name) in sorted(table.items()):
+        if pid in (0, 4):  # System Idle Process, System
+            continue
+        texts = [credo_platform.proc_exe(pid)] + credo_platform.proc_cmdline(pid)
+        if not any(texts):
+            nm = (name or "").lower()
+            if nm in PW_EXE_NAMES or nm.startswith("ffmpeg"):
+                raise Unclear("process %d (%s) cannot be inspected" % (pid, name))
+            continue
+        for t in texts:
+            nt_ = L.norm(t) if t else ""
+            i = nt_.find(prefix)
+            if i >= 0:
+                used.add(nt_[i + len(prefix):].split(os.sep)[0].split("/")[0])
+    return used
+
+
 def revisions_in_use(cache):
     """Revision dir names a running process uses (its executable or a command-line argument lies
     below cache/<rev>). Raises Unclear when /proc cannot be listed."""
+    if L.NT:
+        return revisions_in_use_nt(cache)
     used = set()
     try:
         pids = [n for n in os.listdir("/proc") if n.isdigit()]
@@ -964,12 +1025,12 @@ def playwright_prune(args):
             st = os.lstat(p)
         except OSError:
             continue
-        if not stat.S_ISDIR(st.st_mode):
+        if not stat.S_ISDIR(st.st_mode) or (L.NT and L.is_reparse(st)):
             continue
-        if n in refs:
+        if n in refs or (L.NT and n.lower() in {r.lower() for r in refs}):
             out("referenced %s" % n)
             continue
-        if n in used:
+        if n in used or (L.NT and n.lower() in used):
             out("in-use %s (a running process uses it, kept)" % n)
             continue
         if now - st.st_mtime < 2 * 3600:
@@ -1035,12 +1096,6 @@ def maintenance(args):
 
 
 def main():
-    if os.name != "posix":
-        # birth times, /proc, mounts and the ledger are POSIX only; a native Windows Python
-        # gets a clear note, never a traceback
-        print("credo-cleanup: not supported on native Windows (POSIX only), nothing done",
-              file=sys.stderr)
-        return 0
     ap = argparse.ArgumentParser(prog="credo-cleanup.py", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("own-rm")
