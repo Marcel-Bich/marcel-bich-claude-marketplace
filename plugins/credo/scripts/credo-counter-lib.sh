@@ -31,9 +31,13 @@ credo_counter_lock() {
     fi
     local lockdir="$1.d" i=0 mtime now
     while ! mkdir "$lockdir" 2>/dev/null; do
-        mtime="$(stat -c %Y "$lockdir" 2>/dev/null || stat -f %m "$lockdir" 2>/dev/null || echo 0)"
+        # The holder may release between mkdir and stat: then there is no age, just
+        # retry. Never treat a failed stat as "old" - that would remove a lock another
+        # process has just taken and let two draws run at once.
+        mtime="$(stat -c %Y "$lockdir" 2>/dev/null)" || mtime="$(stat -f %m "$lockdir" 2>/dev/null)" || mtime=""
+        case "$mtime" in ''|*[!0-9]*) mtime="" ;; esac
         now="$(date +%s)"
-        if [ $((now - mtime)) -gt 30 ]; then
+        if [ -n "$mtime" ] && [ $((now - mtime)) -gt 30 ]; then
             rmdir "$lockdir" 2>/dev/null || return 1
             continue
         fi

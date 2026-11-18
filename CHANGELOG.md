@@ -2,56 +2,25 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-11
 
-## hydra
-
-### v0
-
-#### v0.4
-
-##### v0.4.0
-
-###### Added
-
-- Windows test suite `scripts/test-windows.sh` (Python probe, guard without Python, Windows path handling, native symlink setup).
-
-###### Fixed
-
-- The worktree guard no longer switches itself off silently on native Windows: Python is found as `python3`, then `python`, then `py -3` (the Microsoft Store stub is rejected). Without any Python 3 it denies the worktree creations it cannot check and shows a one-time message.
-- The worktree guard compares MSYS (`/c/...`) and Windows (`C:/...`, `C:\...`) paths correctly and case-insensitively; a `git worktree add` destination on another drive is denied instead of passing through a relpath error.
-- `worktree-setup.sh` creates native Windows symlinks in Git Bash instead of silently copying the linked paths; when Windows refuses symlinks it skips the path with a Developer Mode hint. It no longer needs Python for relative link targets (`realpath --relative-to`), runs dogma's list script through `${BASH:-bash}` (a bare `bash` can be the WSL launcher on Windows), reads Windows `installPath` entries, and no longer exits silently when the last installed dogma version lacks `worktree-files.sh`.
-- `/hydra:watch` uses the output file path the tools report instead of a hard-coded `/tmp/claude` path.
-
-#### v0.3
-
-##### v0.3.1
-
-###### Changed
-
-- `/hydra:cleanup` names the lossless case: a merged worktree whose only leftovers are setup symlinks into the main checkout or `.credo/` changes already present in the main checkout is removed too, under credo's owner setting
-
-## signal
-
-### v1
-
-#### v1.7
-
-##### v1.7.0
-
-###### Added
-
-- Native Windows support (Claude Code native, hooks run by Git Bash / MSYS2): detected by `uname -s` `MINGW*` or `MSYS*`, toasts, sounds, the Action Center cleanup at session start and the toast preflight now use the same PowerShell path as WSL2. `powershell.exe` comes from `PATH`, else the cached path, else `%SystemRoot%` (via `cygpath -u`); MSYS argument conversion is switched off for the `powershell.exe` run.
-- On native Windows a hook resolves the state dir and `powershell.exe` once per run and skips the tmux and kitty process lookups, so the hooks stay well inside their timeouts despite the slow process start there.
-- README section "Windows limitations": kitty tab indicator, tmux label, user-set session name in the title and `flock` are not available on native Windows.
-
-###### Fixed
-
-- Sound volume math no longer needs `bc` (now `awk` in the C locale): without `bc` the Windows sound fell back to a fixed volume and the Linux `paplay`, `pw-play` and `ffplay` sounds were skipped entirely. A volume that is not a plain non-negative number counts as off on Linux and as the default 0.05 on Windows.
-
 ## credo
 
 ### v0
 
 #### v0.85
+
+##### v0.85.3
+
+###### Added
+
+- Provenance ledger, cleanup helper and process identity on native Windows (Claude Code native, hooks through Git Bash, a real CPython; stdlib plus ctypes, nothing installed). The ledger records with NTFS facts (creation time, volume serial and file id) in the per-user temp dir from the known-folder API, exports the session TMPDIR with forward slashes and binds a session id through the verified Windows parent chain plus the descriptor's `procStart`.
+- Windows safety rules: `own-rm`, `purge` and `sweep` run every check but only report (no equally strong check for other processes' open files and working directories); junctions, symlinks and other reparse points are never followed, recursed into or deleted; anything off a local fixed NTFS/ReFS drive, system trees and the merged-worktree cleanup are report-only. `keep` and `playwright-prune` delete through handles that never follow reparse points, pin every parent directory and re-check the file id first.
+- Session registry, peer check and session names read process facts on Windows through ctypes (Toolhelp parent chain, GetProcessTimes, QueryFullProcessImageNameW, the process command line) instead of `/proc`.
+- Tests: `test-credo-cleanup-nt.sh` (Windows simulated on Linux) and `test-credo-cleanup-windows.sh` (live under Git Bash with python.exe, fixtures only).
+
+###### Fixed
+
+- The id/code counter lock without `flock` (Git Bash, macOS) could hand out a number twice: a failed age check of a just-released lock was taken as stale and broke another process's fresh lock. A failed check now just retries.
+- `credo-ledger.py` and `credo-cleanup.py` no longer exit early on native Windows.
 
 ##### v0.85.2
 
@@ -564,6 +533,51 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 - A bound network whose Windows network category is Public (outside `windows_profiles`) gets the same hint, telling the user where to switch the network to Private.
 - `check` prints a hint line for both cases, and the new `network-hint` subcommand prints the pending agent text for the SessionStart hook.
 - A router refused for a subnet cannot be bound again: `bind` refuses it and `init` offers no bind command for it. `bind` also refuses a profile name that another router already uses, instead of overwriting that profile.
+
+## hydra
+
+### v0
+
+#### v0.4
+
+##### v0.4.0
+
+###### Added
+
+- Windows test suite `scripts/test-windows.sh` (Python probe, guard without Python, Windows path handling, native symlink setup).
+
+###### Fixed
+
+- The worktree guard no longer switches itself off silently on native Windows: Python is found as `python3`, then `python`, then `py -3` (the Microsoft Store stub is rejected). Without any Python 3 it denies the worktree creations it cannot check and shows a one-time message.
+- The worktree guard compares MSYS (`/c/...`) and Windows (`C:/...`, `C:\...`) paths correctly and case-insensitively; a `git worktree add` destination on another drive is denied instead of passing through a relpath error.
+- `worktree-setup.sh` creates native Windows symlinks in Git Bash instead of silently copying the linked paths; when Windows refuses symlinks it skips the path with a Developer Mode hint. It no longer needs Python for relative link targets (`realpath --relative-to`), runs dogma's list script through `${BASH:-bash}` (a bare `bash` can be the WSL launcher on Windows), reads Windows `installPath` entries, and no longer exits silently when the last installed dogma version lacks `worktree-files.sh`.
+- `/hydra:watch` uses the output file path the tools report instead of a hard-coded `/tmp/claude` path.
+
+#### v0.3
+
+##### v0.3.1
+
+###### Changed
+
+- `/hydra:cleanup` names the lossless case: a merged worktree whose only leftovers are setup symlinks into the main checkout or `.credo/` changes already present in the main checkout is removed too, under credo's owner setting
+
+## signal
+
+### v1
+
+#### v1.7
+
+##### v1.7.0
+
+###### Added
+
+- Native Windows support (Claude Code native, hooks run by Git Bash / MSYS2): detected by `uname -s` `MINGW*` or `MSYS*`, toasts, sounds, the Action Center cleanup at session start and the toast preflight now use the same PowerShell path as WSL2. `powershell.exe` comes from `PATH`, else the cached path, else `%SystemRoot%` (via `cygpath -u`); MSYS argument conversion is switched off for the `powershell.exe` run.
+- On native Windows a hook resolves the state dir and `powershell.exe` once per run and skips the tmux and kitty process lookups, so the hooks stay well inside their timeouts despite the slow process start there.
+- README section "Windows limitations": kitty tab indicator, tmux label, user-set session name in the title and `flock` are not available on native Windows.
+
+###### Fixed
+
+- Sound volume math no longer needs `bc` (now `awk` in the C locale): without `bc` the Windows sound fell back to a fixed volume and the Linux `paplay`, `pw-play` and `ffplay` sounds were skipped entirely. A volume that is not a plain non-negative number counts as off on Linux and as the default 0.05 on Windows.
 
 ## dogma
 
