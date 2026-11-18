@@ -817,7 +817,8 @@ try:
     check("real PS: mirror describes the fake Windows session", m.get("sessionId") == "win-sess-1" and "`acme-win`+" in m.get("name", ""))
     check("real PS: WSL session mirrored on Windows", wait(lambda: "wsl-sess-1" in d.mirror_pipe))
     mp = d.mirror_pipe.get("wsl-sess-1", "")
-    wm = [f for f in win_files() if f.endswith(".json")]
+    # session descriptors only (<pid>.json): the bridge alive file lives in this fixture dir too
+    wm = [f for f in win_files() if f.endswith(".json") and f[:-5].isdigit()]
     keys = [f for f in win_files() if f.endswith(".key")]
     check("real PS: Windows mirror has descriptor + own key file", len(wm) == 2 and len(keys) == 2, win_files())
     mdesc = None
