@@ -33,6 +33,12 @@
 #   - a linked directory that is ignored in the main checkout only via a "dir/" pattern
 #     gets an anchored "/dir" line in the shared info/exclude (a "dir/" pattern does
 #     not match a symlink)
+#   - native Windows (Git Bash): links are native Windows symlinks (MSYS winsymlinks:
+#     nativestrict); a plain `ln -s` there silently makes a deep copy. When Windows refuses
+#     symlinks (no Developer Mode, no admin), the path is skipped with a hint - never a
+#     silent copy. Directory junctions are NOT used: Git for Windows treats a junction as a
+#     plain directory, so a forced worktree removal would delete the main checkout's files
+#     through it.
 #
 # Usage:
 #   worktree-setup.sh <worktree-path> [main-checkout]
@@ -51,6 +57,11 @@
 # Exit codes: 0 done, 1 bad arguments, 2 not a secondary worktree of a git repo.
 
 set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib-python.sh
+. "$HERE/lib-python.sh"
+case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) ON_WINDOWS=1 ;; *) ON_WINDOWS="" ;; esac
 
 die() { echo "worktree-setup: $1" >&2; exit "${2:-1}"; }
 warn() { echo "worktree-setup: $1" >&2; }
@@ -84,10 +95,11 @@ link .credo/"
 find_plugin_file() { # plugin-name relative-file
     local cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" d
     {
-        python3 - "$cfg/plugins/installed_plugins.json" "$1" 2>/dev/null <<'PY' || true
+        if hydra_find_python; then
+            hydra_python - "$cfg/plugins/installed_plugins.json" "$1" 2>/dev/null <<'PY' || true
 import json, sys
 try:
-    data = json.load(open(sys.argv[1]))
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
 except Exception:
     sys.exit(0)
 for key, entries in (data.get("plugins") or {}).items():
@@ -96,12 +108,26 @@ for key, entries in (data.get("plugins") or {}).items():
             if isinstance(e, dict) and e.get("installPath"):
                 print(e["installPath"])
 PY
+        fi
         for d in "$cfg"/plugins/cache/*/"$1"/*/; do
             [ -d "$d" ] && echo "${d%/}"
         done
     } | while IFS= read -r d; do
+        d="$(posix_path "$d")"
         [ -f "$d/$2" ] && printf '%s\t%s\n' "$(basename "$d")" "$d/$2"
     done | sort -V -k1,1 | tail -n1 | cut -f2
+}
+
+posix_path() { # a Windows path (C:\x or C:/x) from a JSON file in Git Bash form (/c/x)
+    case "$1" in
+        [A-Za-z]:[\\/]*)
+            if [ -n "$ON_WINDOWS" ] && command -v cygpath >/dev/null 2>&1; then
+                cygpath -u -- "$1"
+                return 0
+            fi
+            ;;
+    esac
+    printf '%s\n' "$1"
 }
 
 find_dogma_script() {
@@ -114,9 +140,11 @@ find_dogma_script() {
 
 SOURCE="default"
 LIST=""
-DOGMA_SCRIPT="$(find_dogma_script)"
+# "|| true": a last candidate dir without the file must not end the script (set -e, pipefail)
+DOGMA_SCRIPT="$(find_dogma_script || true)"
 if [ -n "$DOGMA_SCRIPT" ] && [ -f "$DOGMA_SCRIPT" ]; then
-    if LIST="$(bash "$DOGMA_SCRIPT" "$MAIN")" && [ -n "$LIST" ]; then
+    # ${BASH:-bash}: on Windows a bare "bash" can be the System32 WSL launcher
+    if LIST="$("${BASH:-bash}" "$DOGMA_SCRIPT" "$MAIN")" && [ -n "$LIST" ]; then
         SOURCE="dogma"
     else
         warn "dogma worktree-files.sh failed - using the built-in default list"
@@ -134,8 +162,23 @@ is_ignored() { # rel - ignored in the worktree or in the main checkout
     git -C "$WT" check-ignore -q -- "$1" 2>/dev/null || git -C "$MAIN" check-ignore -q -- "$1" 2>/dev/null
 }
 
-relpath() { # target-abs from-dir-abs
-    python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$1" "$2" 2>/dev/null || echo "$1"
+relpath() { # target-abs from-dir-abs (symlinks in target are kept, not resolved)
+    realpath -s -m --relative-to="$2" -- "$1" 2>/dev/null && return 0
+    # no GNU realpath (e.g. macOS): Python, else the absolute path
+    if hydra_find_python; then
+        hydra_python -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$1" "$2" 2>/dev/null && return 0
+    fi
+    echo "$1"
+}
+
+# make_link target-rel dst: on Windows only a native symlink counts (exit 1 when Windows
+# refuses one) - Git Bash's default `ln -s` would silently copy instead
+make_link() {
+    if [ -n "$ON_WINDOWS" ]; then
+        MSYS="${MSYS:+$MSYS }winsymlinks:nativestrict" ln -s -- "$1" "$2" 2>/dev/null
+    else
+        ln -s -- "$1" "$2"
+    fi
 }
 
 # A directory pattern like "CLAUDE/" does not match a symlink, so a linked directory
@@ -148,7 +191,7 @@ ensure_link_ignored() { # rel
     git -C "$WT" check-ignore -q -- "$rel" 2>/dev/null && return 0
     if git -C "$MAIN" check-ignore -q -- "$rel" 2>/dev/null; then
         exclude="$(git -C "$MAIN" rev-parse --git-common-dir)/info/exclude"
-        case "$exclude" in /*) ;; *) exclude="$MAIN/$exclude" ;; esac
+        case "$exclude" in /*|[A-Za-z]:[\\/]*) ;; *) exclude="$MAIN/$exclude" ;; esac
         mkdir -p "$(dirname "$exclude")"
         if ! grep -qxF -- "/$rel" "$exclude" 2>/dev/null; then
             grep -qxF -- "$EXCLUDE_MARK" "$exclude" 2>/dev/null || printf '%s\n' "$EXCLUDE_MARK" >> "$exclude"
@@ -175,7 +218,11 @@ apply_one() { # kind rel
         cp -a -- "$src" "$dst"
         echo "copied $rel"
     else
-        ln -s -- "$(relpath "$src" "$(cd "$(dirname "$dst")" && pwd -P)")" "$dst"
+        if ! make_link "$(relpath "$src" "$(cd "$(dirname "$dst")" && pwd -P)")" "$dst"; then
+            echo "skipped $rel (no symlink possible - read it in the main checkout)"
+            warn "Windows refused a symlink for $rel - not linked (no copy: it would silently diverge). Turn on Developer Mode (Settings > System > For developers) or run as administrator, then rerun worktree-setup.sh; until then read it in the main checkout ($MAIN)"
+            return 0
+        fi
         echo "linked $rel"
         ensure_link_ignored "$rel"
     fi

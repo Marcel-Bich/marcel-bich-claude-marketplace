@@ -69,7 +69,7 @@ print(json.dumps({"hook_event_name": "PreToolUse", "session_id": "test", "cwd": 
 PY
 }
 
-run_hook() { printf '%s' "$1" | bash "$HOOK"; } # the wrapper, as Claude Code runs it
+run_hook() { printf '%s' "$1" | "${BASH:-bash}" "$HOOK"; } # the wrapper, as Claude Code runs it
 verdict() { # json -> deny | allow
     if run_hook "$1" | grep -q '"permissionDecision": "deny"'; then echo deny; else echo allow; fi
 }

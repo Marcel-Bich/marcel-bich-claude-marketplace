@@ -15,6 +15,11 @@
 #
 # Reads the hook JSON on stdin. Prints a PreToolUse deny decision as one JSON line, or
 # nothing (allow). Fails open: any internal error allows the tool call. No network.
+#
+# Native Windows (Git Bash with a python.org Python, os.name nt): commands use MSYS paths
+# (/c/Users/...) while git and Python use C:/Users/...; both are brought to the Windows form
+# before they are compared, compared case-insensitively, and a destination on another drive
+# counts as outside the hydra folder (instead of the relpath ValueError that allowed it).
 
 import json
 import os
@@ -23,7 +28,16 @@ import shlex
 import subprocess
 import sys
 
-SETUP = os.path.join(os.path.dirname(os.path.realpath(__file__)), "worktree-setup.sh")
+NT = os.name == "nt"
+MSYS_DRIVE = re.compile(r"^/(?:cygdrive/)?([A-Za-z])(?=/|$)")
+
+
+def shown(path, nt=NT):
+    """Path as shown in messages and pasted into Git Bash: forward slashes on Windows."""
+    return path.replace("\\", "/") if nt else path
+
+
+SETUP = shown(os.path.join(os.path.dirname(os.path.realpath(__file__)), "worktree-setup.sh"))
 PERM_FILE = "DOGMA-PERMISSIONS.md"
 HYDRA_ID = "xw1i"
 HYDRA_TEXT = r"use Hydra for 2\+ independent tasks"
@@ -134,6 +148,29 @@ def find_up(start):
     return None
 
 
+def cygpath(path):
+    """Windows form of a POSIX path from Git Bash's cygpath (/tmp -> C:/.../Temp), or None."""
+    try:
+        done = subprocess.run(["cygpath", "-m", path], capture_output=True, text=True,
+                              timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    out = done.stdout.strip()
+    return out if done.returncode == 0 and out else None
+
+
+def native(path, nt=NT):
+    """The path in the form a native Windows Python understands: /c/x and /cygdrive/c/x become
+    C:/x, other absolute POSIX paths (/tmp, /usr) go through cygpath when it is available.
+    Unchanged outside Windows (there /c/x is an ordinary path)."""
+    if not nt or not path.startswith("/") or path.startswith("//"):
+        return path
+    m = MSYS_DRIVE.match(path)
+    if m:
+        return m.group(1).upper() + ":/" + path[m.end():].lstrip("/")
+    return cygpath(path) or path
+
+
 def git(directory, *args):
     try:
         done = subprocess.run(["git", "-C", directory, *args], capture_output=True,
@@ -173,7 +210,7 @@ def resolve(base, arg):
     """Absolute path git would use for arg, or None when it is not literal or base is unknown."""
     if NON_LITERAL.search(arg):
         return None
-    path = os.path.expanduser(arg)
+    path = native(os.path.expanduser(arg))
     if os.path.isabs(path):
         return os.path.normpath(path)
     if base is None:
@@ -374,15 +411,21 @@ def add_path(args):
     return positionals[0] if positionals else None
 
 
-def hydra_dir_of(root):
-    return os.path.join(os.path.dirname(root), os.path.basename(root) + "-worktrees")
+def hydra_dir_of(root, pm=os.path):
+    return pm.join(pm.dirname(root), pm.basename(root) + "-worktrees")
 
 
-def inside_hydra(target, root):
-    hydra = os.path.realpath(hydra_dir_of(root))
-    real = os.path.join(os.path.realpath(os.path.dirname(target)), os.path.basename(target))
-    rel = os.path.relpath(real, hydra)
-    return rel not in (".", "..") and not rel.startswith(".." + os.sep) and not os.path.isabs(rel)
+def inside_hydra(target, root, pm=os.path):
+    """True when target lies strictly below <root>-worktrees/. pm is the path module (ntpath on
+    Windows): compared after normcase (case-insensitive there), another drive is outside."""
+    hydra = pm.normcase(pm.realpath(hydra_dir_of(root, pm)))
+    real = pm.normcase(pm.join(pm.realpath(pm.dirname(target)), pm.basename(target)))
+    try:
+        rel = pm.relpath(real, hydra)
+    except ValueError:  # Windows: different drives, no relative path exists
+        return False
+    return (rel not in (pm.curdir, pm.pardir) and not rel.startswith(pm.pardir + pm.sep)
+            and not pm.isabs(rel))
 
 
 def check_bash(command, cwd):
@@ -408,8 +451,8 @@ def check_bash(command, cwd):
         target = resolve(dest, path)
         if not inside_hydra(target, root):
             hydra = hydra_dir_of(root)
-            return deny(PREFIX + "git worktree add would create " + target + ", outside the hydra "
-                        "folder " + hydra + "/<name>. " + HOW)
+            return deny(PREFIX + "git worktree add would create " + shown(target) + ", outside the "
+                        "hydra folder " + shown(hydra) + "/<name>. " + HOW)
     return None
 
 
@@ -421,6 +464,7 @@ def decide(payload):
     cwd = payload.get("cwd")
     if not isinstance(cwd, str) or not cwd:
         cwd = os.getcwd()
+    cwd = native(cwd)
     if tool in ("Agent", "Task"):
         if tin.get("isolation") != "worktree" or not hydra_on(cwd):
             return None

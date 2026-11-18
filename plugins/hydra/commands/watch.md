@@ -27,10 +27,20 @@ Monitor multiple background agents running in parallel:
 
 ### 1. Find Running Agents
 
+Use the output file paths the tools reported. When a background agent or shell starts, its
+tool result names the file its output is written to (for example "output_file: <path>" or
+"Output is being written to: <path>"). Never build or guess that path (no hard-coded
+`/tmp/claude/...`): the location differs per platform (a native Windows install writes
+under the Windows temp dir) and per Claude Code version.
+
+- Collect every reported `.output` path of this session.
+- None reported in this conversation: say so ("No background agents started in this
+  session") and stop; do not search the file system for other sessions' files.
+- `TaskOutput` with the task id also works without any path.
+
 ```bash
-# Get project path for task directory
-PROJECT_PATH=$(pwd | sed 's|/|\\-|g' | sed 's|^\\-||')
-TASK_DIR="/tmp/claude/${PROJECT_PATH}/tasks"
+# TASK_DIR = the directory of a reported output path (all agents of a session share it)
+TASK_DIR="$(dirname "<reported output path>")"
 
 # List all agent output files
 ls -la "$TASK_DIR"/*.output 2>/dev/null || echo "No agents found"
@@ -106,7 +116,7 @@ WARNINGS DETECTED:
 
 Suggested actions:
   - Resume blocked agent: TaskOutput with resume
-  - Check full output: Read /tmp/claude/.../tasks/{id}.output
+  - Check full output: Read <reported output path of {id}>
   - Adjust permissions: Edit DOGMA-PERMISSIONS.md
 ```
 
