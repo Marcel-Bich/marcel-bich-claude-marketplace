@@ -22,10 +22,12 @@ WSL side (this script)
   interop, stdio protocol below). It reads the target session's own key file LOCALLY on
   Windows, writes the auth line the Windows inbox requires, then the message bytes.
   The WSL sender only sees success once that write succeeded; otherwise its socket is
-  reset and SendMessage reports a failure (see VERDICT_WAIT). Known limit: a Windows
-  session that runs elevated (as administrator) cannot be written to by a non-elevated
-  bridge - its inbox pipe grants write only to Administrators and SYSTEM - so such
-  sends fail with that reason instead of being lost.
+  reset and SendMessage reports a failure (see VERDICT_WAIT). A Windows session that
+  runs elevated (as administrator) has an inbox pipe that only Administrators and SYSTEM
+  may write to; the PowerShell half (normally not elevated) then hands the prepared bytes
+  to the elevated sender helper (credo-win-elevsend.ps1, a scheduled task installed once
+  with `elevsend-install`, started on demand, idle exit). Without the helper such sends
+  fail with that reason and the install hint instead of being lost.
 - The other direction: the PowerShell half offers one named pipe per live WSL session
   (and per LAN-relay mirror, so LAN peers reach Windows sessions too), with a mirror
   descriptor and its OWN key file (random token) in %USERPROFILE%\\.claude\\sessions.
@@ -62,7 +64,8 @@ stdio protocol with the PowerShell half (one JSON object per line, UTF-8):
            {"op":"msg","key":sid,"data":"<b64 of the bytes after the auth line>"}
            {"op":"log","text":"..."}
 
-Usage: credo-win-bridge.py ensure | daemon | stop | status | enabled
+Usage: credo-win-bridge.py ensure | daemon | stop | status | enabled | elevsend-install |
+       elevsend-uninstall
 Python 3 stdlib only.
 """
 
@@ -119,6 +122,9 @@ PS_RESTART_MAX = 60.0
 VERDICT_WAIT = 3.8
 SEND_TTL_MS = 2500
 PS_SCRIPT = "credo-win-bridge.ps1"
+ELEV_SCRIPT = "credo-win-elevsend.ps1"
+ELEV_TASK = "credo-win-elevsend"
+ELEV_TIMEOUT = 300.0
 
 # messagingSocketPath of a Windows session (same rule as Claude Code's own parser:
 # \\.\pipe\[LOCAL\]<name>, either slash, "." or "?" after the two leading slashes)
@@ -1401,10 +1407,93 @@ def cmd_stop():
     return 0
 
 
+# ---------------------------------------------------------------------------
+# elevated sender helper (credo-win-elevsend.ps1): one-time install / removal
+# ---------------------------------------------------------------------------
+def elevsend_versions():
+    """(shipped version, installed version or None, ProgramData credo dir or None)."""
+    m = lan()
+    shipped = m.ps_script_version(os.path.join(HERE, ELEV_SCRIPT))
+    pd = m.win_programdata_dir()
+    installed = m.ps_script_version(os.path.join(pd, ELEV_SCRIPT)) if pd else None
+    return shipped, installed, pd
+
+
+def elevsend_status_line(shipped, installed, pd):
+    """One status line about the helper, so a leftover or an outdated copy is visible."""
+    if pd is None:
+        return "elevated sender helper: unknown (cannot resolve %ProgramData%)"
+    if installed is None:
+        return ("elevated sender helper: not installed (needed only to message Windows "
+                "sessions that run as administrator: `credo-win-bridge.py elevsend-install`)")
+    if shipped is not None and installed < shipped:
+        return ("elevated sender helper: installed v%d, OUTDATED (shipped v%d): run "
+                "`credo-win-bridge.py elevsend-install` once" % (installed, shipped))
+    return ("elevated sender helper: installed v%d (task %s, started on demand; remove with "
+            "`credo-win-bridge.py elevsend-uninstall`)" % (installed, ELEV_TASK))
+
+
+def elevsend_command(script_win, action):
+    """PowerShell text that runs the helper's -Install or -Uninstall elevated (one UAC
+    prompt), like the LAN relay's winproxy wrapper: the script is copied to %TEMP% first
+    (an elevated -File from the WSL UNC path can close at once), runs with -ResultFile,
+    and its result line is printed; a declined prompt is reported as FAILED."""
+    if action not in ("Install", "Uninstall"):
+        raise ValueError("bad action")
+    if not re.fullmatch(r"[^'\"`$\r\n]+", script_win or ""):
+        raise ValueError("unsafe script path")
+    return (
+        "$s = Join-Path $env:TEMP ('credo-win-elevsend-' + [guid]::NewGuid().ToString('N') + '.ps1'); "
+        "Copy-Item -LiteralPath '{src}' -Destination $s -Force; "
+        "$r = Join-Path $env:TEMP ('credo-win-elevsend-result-' + [guid]::NewGuid().ToString('N') + '.txt'); "
+        "try {{ $p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList "
+        "'-NoProfile','-ExecutionPolicy','Bypass','-File',('\"' + $s + '\"'),'-{act}',"
+        "'-ResultFile',('\"' + $r + '\"') }} "
+        "catch {{ Write-Host ('-{act} FAILED: elevation was declined or could not start (' + "
+        "$_.Exception.Message + ')'); exit 1 }}; "
+        "if (Test-Path -LiteralPath $r) {{ Get-Content -LiteralPath $r; exit $p.ExitCode }} "
+        "else {{ Write-Host ('-{act} FAILED: the elevated run wrote no result line (exit code ' + "
+        "$p.ExitCode + ')'); exit 1 }}"
+    ).format(src=script_win, act=action)
+
+
+def cmd_elevsend(action):
+    """elevsend-install / elevsend-uninstall: one elevated run (the user confirms UAC)."""
+    m = lan()
+    ps_exe = m.win_tool("powershell.exe")
+    script = os.path.join(HERE, ELEV_SCRIPT)
+    if not ps_exe or not os.path.isfile(script):
+        print("powershell.exe or %s not found (Windows interop needed)" % ELEV_SCRIPT)
+        return 1
+    try:
+        win = subprocess.run(["wslpath", "-w", script], capture_output=True, text=True,
+                             timeout=10).stdout.strip()
+        command = elevsend_command(win, action)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        print("could not prepare the elevated run: %s" % exc)
+        return 1
+    print("Starting the elevated -%s of the sender helper; confirm the one UAC prompt." % action)
+    encoded = base64.b64encode(command.encode("utf-16-le")).decode("ascii")
+    try:
+        proc = subprocess.run([ps_exe, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              timeout=ELEV_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        print("the elevated run did not finish within %d s" % ELEV_TIMEOUT)
+        return 1
+    except (OSError, subprocess.SubprocessError) as exc:
+        print("the elevated run did not start (%s)" % exc)
+        return 1
+    lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+    print(lines[-1] if lines else "no result line (exit code %s)" % proc.returncode)
+    return 0 if proc.returncode == 0 else 1
+
+
 def cmd_status():
     rec = read_pidfile()
     on = enabled()
     print("switch: %s" % ("on" if on else "off (peer.win_bridge.enabled / CREDO_WIN_BRIDGE)"))
+    print_elevsend_status()
     if not daemon_alive(rec):
         print("daemon: not running")
         return 0
@@ -1423,10 +1512,18 @@ def cmd_status():
     return 0
 
 
+def print_elevsend_status():
+    try:
+        print(elevsend_status_line(*elevsend_versions()))
+    except Exception as exc:
+        print("elevated sender helper: unknown (%s)" % exc)
+
+
 def main(argv):
     if not argv:
         print(__doc__.split("\n\n")[0])
-        print("usage: credo-win-bridge.py ensure | daemon | stop | status | enabled")
+        print("usage: credo-win-bridge.py ensure | daemon | stop | status | enabled | "
+              "elevsend-install | elevsend-uninstall")
         return 2
     cmd = argv[0]
     if cmd == "holder":
@@ -1441,6 +1538,10 @@ def main(argv):
         return cmd_stop()
     if cmd == "status":
         return cmd_status()
+    if cmd == "elevsend-install":
+        return cmd_elevsend("Install")
+    if cmd == "elevsend-uninstall":
+        return cmd_elevsend("Uninstall")
     if cmd == "enabled":
         print("true" if enabled() else "false")
         return 0

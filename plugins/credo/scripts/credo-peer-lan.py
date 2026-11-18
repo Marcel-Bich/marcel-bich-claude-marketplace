@@ -7932,8 +7932,9 @@ def _win_plan_lines(port, task):
     return [
         "Windows (--full, one elevated UAC prompt, the setup's own -Uninstall): scheduled "
         "task '%s', firewall rule 'credo-peer-lan %d', portproxy 0.0.0.0:%d, the applied "
-        "state, and the installed copy in ProgramData\\credo unless another task still uses it."
-        % (task, port, port)
+        "state, and the installed copy in ProgramData\\credo unless another task still uses it; "
+        "also the WSL bridge's elevated sender helper (task 'credo-win-elevsend' and its "
+        "script) when it is installed." % (task, port, port)
     ]
 
 

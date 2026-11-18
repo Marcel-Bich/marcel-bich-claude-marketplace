@@ -47,7 +47,9 @@
 
 .PARAMETER Uninstall
   Remove the scheduled task, the firewall rule, the portproxy entry for Port and the
-  installed copy (REQUIRES an elevated / Administrator PowerShell).
+  installed copy (REQUIRES an elevated / Administrator PowerShell). It also removes the
+  WSL bridge's elevated sender helper (task "credo-win-elevsend", its copy and log in
+  %ProgramData%\credo), so one elevated run clears every credo leftover on Windows.
 
 .PARAMETER Refresh
   Apply the allowlist data file to the firewall rule and re-point the portproxy at the
@@ -94,7 +96,7 @@ $ErrorActionPreference = "Stop"
 # Version of THIS script. Bump it by hand whenever the script changes: the WSL relay
 # compares it with the copy installed in %ProgramData%\credo and tells the user to
 # re-run -Install once (one UAC prompt) when the installed copy is older.
-$ScriptVersion = 4
+$ScriptVersion = 5
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 $InstallDir = Join-Path $env:ProgramData "credo"
@@ -451,6 +453,7 @@ function Invoke-Uninstall {
 
     if ($DryRun) {
         Write-Plan ("remove task '{0}', firewall rule '{1}', the portproxy for {2}, the applied state {3} and the installed copy in {4} unless another task still uses it" -f $TaskName, $RuleName, $Port, $AppliedFile, $InstallDir)
+        Write-Plan ("remove the WSL bridge's elevated sender helper: task 'credo-win-elevsend' and credo-win-elevsend.ps1 in {0}" -f $InstallDir)
         return
     }
     if (-not (Test-Admin)) {
@@ -487,6 +490,18 @@ function Invoke-Uninstall {
         if (Test-Path -LiteralPath $InstalledScript -PathType Leaf) { Remove-Item -LiteralPath $InstalledScript -Force }
         Write-Host ("Installed copy removed from {0} (if any)." -f $InstallDir)
     }
+    # the WSL bridge's elevated sender helper (credo-win-elevsend.ps1, item #196)
+    $helperTask = 'credo-win-elevsend'
+    if (Get-ScheduledTask -TaskName $helperTask -ErrorAction SilentlyContinue) {
+        Stop-ScheduledTask -TaskName $helperTask -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $helperTask -Confirm:$false
+        Write-Host ("Scheduled task removed: '{0}'" -f $helperTask)
+    }
+    foreach ($n in 'credo-win-elevsend.ps1', 'win-elevsend.log', 'win-elevsend.log.1') {
+        $f = Join-Path $InstallDir $n
+        if (Test-Path -LiteralPath $f -PathType Leaf) { Remove-Item -LiteralPath $f -Force }
+    }
+    Write-Host ("Elevated sender helper removed from {0} (if any)." -f $InstallDir)
 }
 
 # -- dispatch ----------------------------------------------------------------

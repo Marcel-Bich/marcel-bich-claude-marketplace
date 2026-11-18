@@ -179,6 +179,23 @@ os.environ["CREDO_WIN_BRIDGE"] = "on"
 check("enabled() honors CREDO_WIN_BRIDGE=on", wb.enabled() is True)
 del os.environ["CREDO_WIN_BRIDGE"]
 
+# elevated sender helper (#196): the elevated install command and the status line
+cmd = wb.elevsend_command("C:\\Users\\alice\\x\\credo-win-elevsend.ps1", "Install")
+check("elevsend: runs the copied script elevated with -Install and a result file",
+      "-Verb RunAs" in cmd and "'-Install'" in cmd and "-ResultFile" in cmd and "Copy-Item" in cmd)
+check("elevsend: uninstall variant", "'-Uninstall'" in wb.elevsend_command("C:\\x\\a.ps1", "Uninstall"))
+for bad_path, bad_act in (("C:\\x\\it's.ps1", "Install"), ("C:\\x\\$a.ps1", "Install"), ("C:\\x\\a.ps1", "Serve")):
+    try:
+        wb.elevsend_command(bad_path, bad_act); refused = False
+    except ValueError:
+        refused = True
+    check("elevsend: refuses %r / %s" % (bad_path, bad_act), refused)
+check("elevsend status: not installed names the install command",
+      "elevsend-install" in wb.elevsend_status_line(1, None, "/pd") and "not installed" in wb.elevsend_status_line(1, None, "/pd"))
+check("elevsend status: outdated copy", "OUTDATED" in wb.elevsend_status_line(2, 1, "/pd"))
+check("elevsend status: installed names the removal command", "elevsend-uninstall" in wb.elevsend_status_line(1, 1, "/pd"))
+check("elevsend status: unknown ProgramData", "unknown" in wb.elevsend_status_line(1, None, None))
+
 # publish list, templates, descriptors, cleanup (temp profiles)
 root = tempfile.mkdtemp(dir=".")
 sd1 = os.path.join(root, ".claude", "sessions")
@@ -575,7 +592,7 @@ else
     WINFIX_W="${WT}credo-wbtest-$$-$RANDOM"
     WINFIX="$(wslpath -u "$WINFIX_W")"
     mkdir -p "$WINFIX"
-    cp "$SCRIPT_DIR/credo-win-common.ps1" "$SCRIPT_DIR/credo-peer-lan-win.ps1" "$WINFIX/" 2>/dev/null
+    cp "$SCRIPT_DIR/credo-win-common.ps1" "$SCRIPT_DIR/credo-peer-lan-win.ps1" "$SCRIPT_DIR/credo-win-elevsend.ps1" "$WINFIX/" 2>/dev/null
     # PowerShell helper checks, results as PASS/FAIL lines
     cat > "$WINFIX/unit.ps1" <<'PS1'
 param([string]$Pipe, [string]$PyKey)
@@ -626,6 +643,52 @@ $dh = @{ OwnerCache = @{ 'LOCAL\cc-msg-x' = 'S-1-5-32-544'; 'LOCAL\cc-msg-y' = '
 $why = Get-CredoAccessDeniedText $dh 'LOCAL\cc-msg-x'
 Check 'access denied: an Administrators-owned pipe is named as an elevated session' ((Test-CredoElevated) -or $why -match 'runs elevated')
 Check 'access denied: other owners get the generic reason' ((Get-CredoAccessDeniedText $dh 'LOCAL\cc-msg-y') -match 'pipe owner S-1-5-21-1-2-3-1001')
+# elevated sender helper (#196): fallback decision, request framing, target validation
+Check 'helper fallback: denied + Administrators owner + not elevated' (Test-CredoUseElevHelper $true 'S-1-5-32-544' $false)
+Check 'helper fallback: never when this process is elevated' (-not (Test-CredoUseElevHelper $true 'S-1-5-32-544' $true))
+Check 'helper fallback: never for a user-owned pipe' (-not (Test-CredoUseElevHelper $true 'S-1-5-21-1-2-3-1001' $false))
+Check 'helper fallback: never without a denial or an owner' (-not (Test-CredoUseElevHelper $false 'S-1-5-32-544' $false) -and -not (Test-CredoUseElevHelper $true $null $false))
+. (Join-Path $PSScriptRoot 'credo-win-elevsend.ps1')
+$tp = 'LOCAL\cc-msg-' + '0123456789abcdef' * 2
+Check 'helper target: a Claude Code inbox' (Test-ElevSendTarget $tp)
+Check 'helper target: refuses other pipes' (-not (Test-ElevSendTarget 'LOCAL\credo-elevsend-x') -and -not (Test-ElevSendTarget ('cc-msg-' + 'ab' * 16)) -and
+      -not (Test-ElevSendTarget ('LOCAL\cc-msg-' + 'AB' * 16)) -and -not (Test-ElevSendTarget ($tp + '\x')) -and -not (Test-ElevSendTarget ('\\srv\pipe\' + $tp)))
+$payload = $script:Utf8.GetBytes('{"type":"auth","token":"' + ('0' * 32) + '"}' + "`n" + '{"type":"user"}' + "`n")
+$reqLine = $script:Utf8.GetString((New-CredoElevSendRequest $tp $payload)).TrimEnd("`n")
+$req = ConvertFrom-ElevSendRequest $reqLine
+Check 'helper request: client framing parses on the helper side' ($null -eq $req.Err -and $req.Pipe -ceq $tp -and
+      [Convert]::ToBase64String($req.Data) -ceq [Convert]::ToBase64String($payload))
+$tpj = $tp.Replace('\', '\\')
+Check 'helper request: bad version refused' ($null -ne (ConvertFrom-ElevSendRequest ('{"v":2,"pipe":"' + $tpj + '","data":"eA=="}')).Err)
+Check 'helper request: foreign pipe refused' ($null -ne (ConvertFrom-ElevSendRequest '{"v":1,"pipe":"LOCAL\\other","data":"eA=="}').Err)
+Check 'helper request: non-base64 and empty data refused' ($null -ne (ConvertFrom-ElevSendRequest ('{"v":1,"pipe":"' + $tpj + '","data":"%%"}')).Err -and
+      $null -ne (ConvertFrom-ElevSendRequest ('{"v":1,"pipe":"' + $tpj + '","data":""}')).Err)
+Check 'helper request: not JSON refused' ($null -ne (ConvertFrom-ElevSendRequest 'nope').Err)
+$okr = Read-CredoElevSendReply (New-ElevSendReply $true '')
+$bad = Read-CredoElevSendReply (New-ElevSendReply $false 'no live session owns that inbox pipe')
+Check 'helper reply: ok and error round trip' ($okr.Ok -and -not $bad.Ok -and $bad.Err -eq 'no live session owns that inbox pipe')
+$now = [DateTime]::UtcNow
+Check 'helper lifetime: keeps serving while the bridge lives and requests come' (-not (Test-ElevSendShouldExit $true $now.AddMinutes(-1) $now 5))
+Check 'helper lifetime: exits when idle' (Test-ElevSendShouldExit $true $now.AddMinutes(-6) $now 5)
+Check 'helper lifetime: exits when the bridge is gone' (Test-ElevSendShouldExit $false $now $now 5)
+$myFt = [string]([System.Diagnostics.Process]::GetCurrentProcess().StartTime.ToFileTimeUtc())
+$af = Join-Path $PSScriptRoot ('alive-' + $PID + '.json')
+[IO.File]::WriteAllText($af, ('{"pid":' + $PID + ',"ft":"' + $myFt + '"}'))
+Check 'helper start gate: a live bridge alive file' (Test-ElevSendBridgeAlive $af)
+[IO.File]::WriteAllText($af, ('{"pid":' + $PID + ',"ft":"1"}'))
+Check 'helper start gate: a stale alive file (credo gone) is not alive' (-not (Test-ElevSendBridgeAlive $af))
+[IO.File]::Delete($af)
+Check 'helper start gate: no alive file is not alive' (-not (Test-ElevSendBridgeAlive $af))
+$sd = Join-Path $PSScriptRoot ('sess-' + $PID)
+[void](New-Item -ItemType Directory -Path $sd)
+$desc = '{"pid":' + $PID + ',"procStart":"' + $myFt + '","messagingSocketPath":"\\\\.\\pipe\\' + $tpj + '"}'
+[IO.File]::WriteAllText((Join-Path $sd ('{0}.json' -f $PID)), $desc)
+Check 'helper target: owned by a live session' (Test-ElevSendLiveSession $sd $tp)
+Check 'helper target: other pipe has no session' (-not (Test-ElevSendLiveSession $sd ('LOCAL\cc-msg-' + 'f' * 32)))
+[IO.File]::WriteAllText((Join-Path $sd ('{0}.json' -f $PID)), $desc.Replace('{"pid"', '{"credoWinBridge":true,"pid"'))
+Check 'helper target: a credo mirror does not count' (-not (Test-ElevSendLiveSession $sd $tp))
+[IO.File]::Delete((Join-Path $sd ('{0}.json' -f $PID)))
+[IO.Directory]::Delete($sd)
 Check 'relay: private allow entries' ((Test-RelayPrivateIp '192.168.1.42') -and -not (Test-RelayPrivateIp '8.8.8.8') -and (Test-RelayAllowed '192.168.1.42' @('192.168.1.0/24')) -and -not (Test-RelayAllowed '192.168.2.1' @('192.168.1.0/24')))
 PS1
     PIPE_T='\\.\pipe\LOCAL\cc-msg-ABABABABABABABABABABABABABABABAB'
@@ -706,7 +769,8 @@ root = os.path.abspath(tempfile.mkdtemp(dir="."))
 os.environ["CREDO_WIN_BRIDGE_STATE"] = os.path.join(root, "st")
 os.environ["CREDO_WIN_BRIDGE"] = "1"
 os.environ["CREDO_WIN_SESSIONS_DIR"] = WFW
-os.environ["WSLENV"] = "CREDO_WIN_SESSIONS_DIR"
+os.environ["CREDO_WIN_BRIDGE_ALIVE_FILE"] = WFW + "\\alive.json"   # never the real one
+os.environ["WSLENV"] = "CREDO_WIN_SESSIONS_DIR:CREDO_WIN_BRIDGE_ALIVE_FILE"
 sd = os.path.join(root, ".claude", "sessions"); os.makedirs(sd)
 wb.ensure_dirs()
 recv = WFW + "\\recv.txt"; recv_l = os.path.join(WFL, "recv.txt")
@@ -870,7 +934,8 @@ PY
 import json, os, subprocess, time
 from wbt import wb, check
 PS = os.environ["T_PS"]; WFW = os.environ["T_WINFIX_W"]; WFL = os.environ["T_WINFIX"]
-penv = dict(os.environ, CREDO_WIN_SESSIONS_DIR=WFW, WSLENV="CREDO_WIN_SESSIONS_DIR")
+penv = dict(os.environ, CREDO_WIN_SESSIONS_DIR=WFW, CREDO_WIN_BRIDGE_ALIVE_FILE=WFW + "\\alive.json",
+            WSLENV="CREDO_WIN_SESSIONS_DIR:CREDO_WIN_BRIDGE_ALIVE_FILE")
 script_w = subprocess.run(["wslpath", "-w", os.path.join(os.environ["CREDO_SCRIPTS"], "credo-win-bridge.ps1")],
                           capture_output=True, text=True).stdout.strip()
 p = subprocess.Popen([PS, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script_w, "-Mode", "Bridge"],
@@ -913,7 +978,8 @@ PY
 import json, os, subprocess
 from wbt import wb, check
 PS = os.environ["T_PS"]; WFW = os.environ["T_WINFIX_W"]; WFL = os.environ["T_WINFIX"]
-penv = dict(os.environ, CREDO_WIN_SESSIONS_DIR=WFW + "\\nosessions", WSLENV="CREDO_WIN_SESSIONS_DIR")
+penv = dict(os.environ, CREDO_WIN_SESSIONS_DIR=WFW + "\\nosessions", CREDO_WIN_BRIDGE_ALIVE_FILE=WFW + "\\alive.json",
+            WSLENV="CREDO_WIN_SESSIONS_DIR:CREDO_WIN_BRIDGE_ALIVE_FILE")
 script_w = subprocess.run(["wslpath", "-w", os.path.join(os.environ["CREDO_SCRIPTS"], "credo-win-bridge.ps1")],
                           capture_output=True, text=True).stdout.strip()
 r = subprocess.run([PS, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script_w, "-Mode", "Bridge"],

@@ -140,6 +140,7 @@ function Start-Bridge {
     } { param($t) Send-BridgeLog $t }
     Remove-CredoStaleMirrors $hub
     Start-CredoWatchdog $hub
+    Set-CredoBridgeAlive $hub
     $in = New-Object System.IO.StreamReader([Console]::OpenStandardInput(), (New-Object System.Text.UTF8Encoding($false)))
     Send-BridgeEvent ([ordered]@{ op = 'ready'; pid = $PID; host = [System.Net.Dns]::GetHostName(); user = $env:USERNAME;
                                   pidDomain = $hub.PidDomain; sessionsDir = $sessDir })
@@ -165,11 +166,13 @@ function Start-Bridge {
                 if ([DateTime]::UtcNow -gt $nextCheck) {
                     $nextCheck = [DateTime]::UtcNow.AddSeconds(10)
                     Test-CredoHolders $hub
+                    if (-not (Test-Path -LiteralPath (Get-CredoBridgeAliveFile))) { Set-CredoBridgeAlive $hub }
                 }
             } catch { Send-BridgeLog ('poll failed: ' + $_.Exception.Message) }
         }
     } finally {
         Remove-CredoAllMirrors $hub
+        Clear-CredoBridgeAlive $hub
     }
 }
 

@@ -7690,7 +7690,7 @@ fails = []
 def need(cond, msg):
     if not cond:
         fails.append(msg)
-need('$ScriptVersion = 4' in ps, "script version bumped (installed copies are told to re-run -Install)")
+need('$ScriptVersion = 5' in ps, "script version bumped (installed copies are told to re-run -Install)")
 branch = ps[ps.index("if ($Install) {"):ps.index("elseif ($Uninstall)")]
 need("-Install OK" in branch, "explicit success line in the -Install branch")
 need("-Install FAILED" in branch, "explicit failure line with the reason in the -Install branch")

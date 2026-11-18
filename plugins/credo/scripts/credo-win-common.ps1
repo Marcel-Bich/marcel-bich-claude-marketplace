@@ -535,22 +535,157 @@ function Get-CredoPipeOwnerSid([string]$Name) {
     } catch { return $null }
 }
 
+function Get-CredoInboxOwner($Hub, [string]$Name) {
+    # owner SID of an inbox pipe, cached per pipe; an unreadable owner is not cached
+    if (-not $Hub.ContainsKey('OwnerCache')) { $Hub.OwnerCache = @{} }
+    if (-not $Hub.OwnerCache.ContainsKey($Name)) { $Hub.OwnerCache[$Name] = Get-CredoPipeOwnerSid $Name }
+    $owner = $Hub.OwnerCache[$Name]
+    if ($null -eq $owner) { $Hub.OwnerCache.Remove($Name) }
+    return $owner
+}
+
+function Test-CredoUseElevHelper([bool]$Denied, [string]$Owner, [bool]$SelfElevated) {
+    # the elevated sender helper is used only for what it exists for: write access denied
+    # to an inbox owned by Administrators (an elevated session) while this process is not
+    # elevated. Every other failure keeps its own honest reason.
+    return ($Denied -and $Owner -eq 'S-1-5-32-544' -and -not $SelfElevated)
+}
+
 function Get-CredoAccessDeniedText($Hub, [string]$Name) {
     # why Windows refused write access to a session inbox. A Claude Code session that
     # runs elevated creates its pipe with the default DACL of an elevated token: owner
     # BUILTIN\Administrators, full access for Administrators and SYSTEM, only READ for
     # Everyone. A non-elevated client (the bridge started through WSL interop) has the
     # Administrators group as deny-only and gets "access denied" for write.
-    if (-not $Hub.ContainsKey('OwnerCache')) { $Hub.OwnerCache = @{} }
-    if (-not $Hub.OwnerCache.ContainsKey($Name)) { $Hub.OwnerCache[$Name] = Get-CredoPipeOwnerSid $Name }
-    $owner = $Hub.OwnerCache[$Name]
-    if ($null -eq $owner) { $Hub.OwnerCache.Remove($Name) }   # unreadable now: try again next time
+    $owner = Get-CredoInboxOwner $Hub $Name
     if ($owner -eq 'S-1-5-32-544' -and -not (Test-CredoElevated)) {
         return ('access denied: the target Windows session runs elevated (as administrator) and this bridge does ' +
-                'not; Windows only lets elevated processes write into an elevated session''s inbox pipe, so it ' +
-                'cannot be messaged from here (run that session without elevation, or run the bridge elevated)')
+                'not; Windows only lets elevated processes write into an elevated session''s inbox pipe')
     }
     return ('access denied to the session inbox pipe (pipe owner ' + $(if ($owner) { $owner } else { 'unknown' }) + ')')
+}
+
+# --- elevated sender helper (credo-win-elevsend.ps1, item #196) ------------------------
+$script:ElevTask = 'credo-win-elevsend'
+$script:ElevInstallHint = 'install the elevated sender helper once from WSL with `credo-win-bridge.py elevsend-install` (one UAC prompt)'
+
+function Get-CredoUserSid {
+    return [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+}
+
+function Get-CredoElevSendPipeName {
+    return ('LOCAL\credo-elevsend-' + (Get-CredoUserSid))
+}
+
+function Test-CredoElevSendInstalled {
+    if ($env:CREDO_WIN_ELEVSEND_INSTALLED) { return ($env:CREDO_WIN_ELEVSEND_INSTALLED -eq '1') }
+    return (Test-Path -LiteralPath (Join-Path $env:ProgramData 'credo\credo-win-elevsend.ps1'))
+}
+
+function Test-CredoElevSendRunning {
+    # the helper holds a session-local mutex; a non-elevated process may not open it, so
+    # "access denied" means it exists
+    try {
+        $m = [System.Threading.Mutex]::OpenExisting('Local\credo-elevsend-' + (Get-CredoUserSid))
+        $m.Dispose()
+        return $true
+    } catch [System.UnauthorizedAccessException] { return $true } catch { return $false }
+}
+
+function Start-CredoElevSendTask($Hub) {
+    # start the helper's scheduled task (no UAC: the elevation is in the task), at most
+    # every 30 s
+    $now = [DateTime]::UtcNow
+    if ($Hub.ContainsKey('ElevStartAt') -and $now -lt $Hub.ElevStartAt) { return $false }
+    $Hub.ElevStartAt = $now.AddSeconds(30)
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = Join-Path $env:SystemRoot 'System32\schtasks.exe'
+        $psi.Arguments = '/Run /TN ' + $script:ElevTask
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $p.Dispose()
+        Write-CredoHubLog $Hub 'elevated sender helper was not running: started its task'
+        return $true
+    } catch {
+        Write-CredoHubLog $Hub ('could not start the elevated sender helper: ' + $_.Exception.Message)
+        return $false
+    }
+}
+
+function Get-CredoBridgeAliveFile {
+    if ($env:CREDO_WIN_BRIDGE_ALIVE_FILE) { return $env:CREDO_WIN_BRIDGE_ALIVE_FILE }
+    return (Join-Path $env:LOCALAPPDATA 'credo\win-bridge-alive.json')
+}
+
+function Set-CredoBridgeAlive($Hub) {
+    # tells the elevated sender helper that a credo bridge runs (pid + creation time);
+    # without it the helper exits at once and never opens its pipe
+    try {
+        $p = Get-CredoBridgeAliveFile
+        $d = Split-Path -Parent $p
+        if (-not (Test-Path -LiteralPath $d)) { [void](New-Item -ItemType Directory -Path $d) }
+        Write-CredoFileAtomic $p ('{"pid":' + $Hub.OwnerPid + ',"ft":"' + $Hub.OwnerFt + '"}')
+    } catch { Write-CredoHubLog $Hub ('alive file not written: ' + $_.Exception.Message) }
+}
+
+function Clear-CredoBridgeAlive($Hub) {
+    # remove the alive file, but only while it is still this process's
+    try {
+        $p = Get-CredoBridgeAliveFile
+        $o = Read-CredoJsonFile $p
+        if ($null -ne $o -and [string](Get-CredoProp $o 'pid') -eq [string]$Hub.OwnerPid) { [System.IO.File]::Delete($p) }
+    } catch {}
+}
+
+function New-CredoElevSendRequest([string]$Name, [byte[]]$Payload) {
+    # one request line for the helper: {"v":1,"pipe":<inbox pipe name>,"data":<base64>}
+    $line = '{"v":1,"pipe":' + (ConvertTo-Json -InputObject $Name -Compress) + ',"data":"' +
+            [Convert]::ToBase64String($Payload) + '"}' + "`n"
+    return $script:Utf8.GetBytes($line)
+}
+
+function Read-CredoElevSendReply([byte[]]$Line) {
+    # @{ Ok; Err } of a helper reply line
+    try { $o = $script:Utf8.GetString($Line).Trim() | ConvertFrom-Json } catch { return @{ Ok = $false; Err = 'unreadable helper reply' } }
+    if ($null -eq $o -or $o -isnot [System.Management.Automation.PSCustomObject]) { return @{ Ok = $false; Err = 'unreadable helper reply' } }
+    $ok = $o.PSObject.Properties['ok']
+    if ($null -ne $ok -and $ok.Value -eq $true) { return @{ Ok = $true; Err = '' } }
+    $e = $o.PSObject.Properties['err']
+    return @{ Ok = $false; Err = $(if ($null -ne $e) { [string]$e.Value } else { 'helper refused' }) }
+}
+
+function Start-CredoElevSendPath($Hub, $Send) {
+    # hand the prepared bytes (auth line + message) to the elevated helper
+    if (-not (Test-CredoElevSendRunning)) {
+        if (-not (Test-CredoElevSendInstalled)) {
+            Stop-CredoSend $Hub $Send $false ((Get-CredoAccessDeniedText $Hub $Send.Name) + '; ' + $script:ElevInstallHint)
+            return
+        }
+        [void](Start-CredoElevSendTask $Hub)
+        $Send.ElevStarted = $true
+    }
+    $Send.Via = 'helper'
+    $Send.Attempts++
+    $left = [int][Math]::Max(100, ($Send.Deadline - [DateTime]::UtcNow).TotalMilliseconds)
+    # explicit rights: read/write data plus read permissions (for the owner check);
+    # never FILE_CREATE_PIPE_INSTANCE, which the helper pipe grants nobody but admins
+    $Send.Client = New-Object System.IO.Pipes.NamedPipeClientStream('.', (Get-CredoElevSendPipeName),
+        [System.IO.Pipes.PipeAccessRights]'ReadData, WriteData, ReadAttributes, ReadPermissions',
+        [System.IO.Pipes.PipeOptions]::Asynchronous, [System.Security.Principal.TokenImpersonationLevel]::Identification,
+        [System.IO.HandleInheritability]::None)
+    $Send.Stage = 'hconnect'
+    $Send.Task = $Send.Client.ConnectAsync($left)
+}
+
+function Test-CredoElevSendOwner($Client) {
+    # only a helper pipe owned by Administrators is trusted: a non-elevated process that
+    # squats the name cannot set that owner, so it never receives the message
+    try { return ($Client.GetAccessControl().GetOwner([System.Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-32-544') }
+    catch { return $false }
 }
 
 function Start-CredoSendConnect($Send) {
@@ -594,7 +729,7 @@ function Start-CredoSend($Hub, [long]$TargetPid, [string]$PipePath, [byte[]]$Dat
     [Array]::Clear($auth, 0, $auth.Length)
     $s = @{ Name = $name; Client = $null; Task = $null; Stage = 'connect'; Payload = $payload; Id = $Id; Done = $Done;
             Deadline = [DateTime]::UtcNow.AddMilliseconds([Math]::Max(200, $TtlMs)); CloseAt = $null; RetryAt = $null;
-            Attempts = 0; LastErr = '' }
+            Attempts = 0; LastErr = ''; Via = 'direct'; ElevStarted = $false; Request = $null; Reply = $null; Buf = $null }
     [void]$Hub.Sends.Add($s)
     try { Start-CredoSendConnect $s } catch { Step-CredoSendFailure $Hub $s $_.Exception }
 }
@@ -606,6 +741,12 @@ function Step-CredoSendFailure($Hub, $Send, $Ex) {
     if ($null -ne $Send.Client) { try { $Send.Client.Dispose() } catch {}; $Send.Client = $null }
     $Send.Task = $null
     if ($Ex -is [System.UnauthorizedAccessException]) {
+        if (Test-CredoUseElevHelper $true (Get-CredoInboxOwner $Hub $Send.Name) (Test-CredoElevated)) {
+            try { Start-CredoElevSendPath $Hub $Send } catch {
+                Stop-CredoSend $Hub $Send $false ('elevated sender helper not usable: ' + $_.Exception.Message)
+            }
+            return
+        }
         Stop-CredoSend $Hub $Send $false (Get-CredoAccessDeniedText $Hub $Send.Name)
         return
     }
@@ -617,6 +758,53 @@ function Step-CredoSendFailure($Hub, $Send, $Ex) {
     }
     $Send.Stage = 'retry'
     $Send.RetryAt = $retryAt
+}
+
+function Step-CredoElevSend($Hub, $Send) {
+    # one completed stage of a send through the elevated helper
+    $t = $Send.Task
+    if ($t.IsFaulted -or $t.IsCanceled) {
+        $err = if ($t.Exception) { $t.Exception.InnerException.Message } else { 'canceled' }
+        if ($Send.Stage -eq 'hconnect') {
+            $err = 'elevated sender helper not reachable: ' + $err
+            if ($Send.ElevStarted) { $err += ' (its task was just started; send again in a few seconds)' }
+        } else { $err = 'elevated sender helper ' + $Send.Stage + ' failed: ' + $err }
+        Stop-CredoSend $Hub $Send $false $err
+        return
+    }
+    switch ($Send.Stage) {
+        'hconnect' {
+            if (-not (Test-CredoElevSendOwner $Send.Client)) {
+                Stop-CredoSend $Hub $Send $false 'the elevated sender helper pipe is not owned by Administrators - refused, nothing sent'
+                return
+            }
+            $req = New-CredoElevSendRequest $Send.Name $Send.Payload
+            $Send.Request = $req
+            $Send.Stage = 'hwrite'
+            $Send.Task = $Send.Client.WriteAsync($req, 0, $req.Length)
+        }
+        'hwrite' {
+            [Array]::Clear($Send.Request, 0, $Send.Request.Length)
+            $Send.Reply = New-Object System.IO.MemoryStream
+            $Send.Buf = New-Object byte[] 4096
+            $Send.Stage = 'hread'
+            $Send.Task = $Send.Client.ReadAsync($Send.Buf, 0, $Send.Buf.Length)
+        }
+        'hread' {
+            $n = $t.Result
+            if ($n -gt 0) { $Send.Reply.Write($Send.Buf, 0, $n) }
+            $data = $Send.Reply.ToArray()
+            $nl = Get-CredoIndexOfNewline $data 0
+            if ($nl -lt 0 -and $n -gt 0 -and $data.Length -lt 65536) {
+                $Send.Task = $Send.Client.ReadAsync($Send.Buf, 0, $Send.Buf.Length)
+                return
+            }
+            $line = if ($nl -ge 0) { Split-CredoBytes $data 0 $nl } else { $data }
+            $r = Read-CredoElevSendReply $line
+            $err = if ($r.Ok) { '' } else { 'elevated sender helper: ' + $r.Err }
+            Stop-CredoSend $Hub $Send $r.Ok $err
+        }
+    }
 }
 
 function Get-CredoHubTasks($Hub) {
@@ -675,6 +863,10 @@ function Invoke-CredoHubPoll($Hub) {
         }
         if ($s.Stage -eq 'retry') {
             if ($now -ge $s.RetryAt) { try { Start-CredoSendConnect $s } catch { Step-CredoSendFailure $Hub $s $_.Exception } }
+            continue
+        }
+        if ($s.Via -eq 'helper' -and $null -ne $s.Task -and $s.Task.IsCompleted) {
+            Step-CredoElevSend $Hub $s
             continue
         }
         if ($s.Task.IsCompleted) {

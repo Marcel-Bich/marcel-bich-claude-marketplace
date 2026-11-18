@@ -2,7 +2,7 @@
 description: credo - Start, stop, or check the LAN peer relay (cross-machine peer messaging, no cloud)
 arguments:
   - name: action
-    description: setup | win-bridge | init | bind | unbind | networks | netinfo | token | whoami | check | pairs | pair-reset | disconnect-all | start | restart | stop | trust | trust-router | network-hint | profiles | status (default status). init takes peer IPs, bind takes --name/--group/--label/--allow/--adapter/--subnet, trust-router takes --profile <name> [--refuse], pair-reset takes a peer (slot host:port, id or machine), disconnect-all takes --dry-run | --yes | --full, trust takes list | add <peer> <caption> | remove <peer> [<caption>], profiles takes list (default) | set <name>... | add <name> | all. win-bridge takes status (default) | start | stop (WSL <-> Windows bridge, see Windows sessions).
+    description: setup | win-bridge | init | bind | unbind | networks | netinfo | token | whoami | check | pairs | pair-reset | disconnect-all | start | restart | stop | trust | trust-router | network-hint | profiles | status (default status). init takes peer IPs, bind takes --name/--group/--label/--allow/--adapter/--subnet, trust-router takes --profile <name> [--refuse], pair-reset takes a peer (slot host:port, id or machine), disconnect-all takes --dry-run | --yes | --full, trust takes list | add <peer> <caption> | remove <peer> [<caption>], profiles takes list (default) | set <name>... | add <name> | all. win-bridge takes status (default) | start | stop | install-elevated | uninstall-elevated (WSL <-> Windows bridge and its elevated sender helper, see Windows sessions).
     required: false
 allowed-tools:
   - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py:*)
@@ -742,14 +742,50 @@ plugin dir; nothing is installed on Windows).
   the sender's connection cleanly ("sent"); otherwise the holder resets it, so
   `SendMessage` reports a failure instead of a false success, and the bridge log records
   `message to <name> NOT delivered: <reason>`.
-- **Elevated Windows sessions (known limit).** A Claude Code session that runs as
-  administrator creates its inbox pipe with the default DACL of an elevated token (owner
-  Administrators; full access for Administrators and SYSTEM, read-only for Everyone). The
-  PowerShell half started over WSL interop is normally not elevated, so Windows denies it
-  write access and WSL -> Windows messages to that session fail (logged as "the target
-  Windows session runs elevated ..."). The other direction still works. To message such
-  a session from WSL, run it without elevation, or run the bridge from an elevated WSL
-  console. No workaround that crosses the elevation boundary is built in.
+- **Elevated Windows sessions (elevated sender helper).** A Claude Code session that runs
+  as administrator creates its inbox pipe with the default DACL of an elevated token
+  (owner Administrators; full access for Administrators and SYSTEM, read-only for
+  Everyone). The PowerShell half is started over WSL interop and inherits the token of
+  the WSL interop console, which is normally not elevated, so Windows denies it write
+  access. The bridge always tries the direct write first. Only on "access denied" to an
+  Administrators-owned inbox while it is not elevated itself does it hand the prepared
+  bytes (auth line + message) to the elevated sender helper `scripts/credo-win-elevsend.ps1`:
+  - **Install once** (one UAC prompt, from WSL):
+    `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" elevsend-install`. It copies the
+    helper to `%ProgramData%\credo\` (admin-only write ACL, the task never runs a
+    user-writable script) and registers the scheduled task `credo-win-elevsend` (the
+    user's interactive logon, highest privileges, NO trigger). Without it, sends to an
+    elevated session fail with that reason and this install hint in the bridge log.
+  - **On demand only.** The bridge starts the task with `schtasks /Run` when it needs it
+    (no UAC prompt; the elevation lives in the task). The helper exits after 5 minutes
+    without a request and as soon as the bridge is gone, and it refuses to start (it never
+    opens its pipe) unless a live bridge has written `%LOCALAPPDATA%\credo\win-bridge-alive.json`
+    (pid + creation time). A cold start can take longer than the sender's wait; such a
+    first message fails with "its task was just started; send again".
+  - **What it does.** It serves one pipe, `LOCAL\credo-elevsend-<user SID>`, owned by
+    Administrators and writable only by this user (plus Administrators and SYSTEM). A
+    request is one line `{"v":1,"pipe":"LOCAL\\cc-msg-<32 hex>","data":"<base64>"}`; it
+    writes the bytes unchanged into that inbox, but only into a pipe of that form that
+    belongs to a live, real (not mirrored) session descriptor of this user, and answers
+    `{"ok":true}` or `{"ok":false,"err":"..."}`. It never logs a payload or a token. The
+    bridge sends only to a helper pipe owned by Administrators, so a non-elevated process
+    that squats the name receives nothing.
+  - **Trust.** With the helper installed, the user's own non-elevated processes can
+    message the user's elevated Claude sessions through it (the same reach the bridge
+    has for non-elevated sessions; an owner decision). Every receiving session keeps its
+    own consent gate.
+  - **Status and removal.** `credo-win-bridge.py status` shows whether the helper is
+    installed (and outdated). `credo-win-bridge.py elevsend-uninstall` removes only the
+    helper (one UAC prompt); `credo-peer-lan.py disconnect-all --full` removes it in the
+    same elevated run as the LAN relay's Windows side.
+  - **After a plain plugin uninstall** (Claude Code runs no uninstall hook) the task
+    `credo-win-elevsend` and `%ProgramData%\credo\credo-win-elevsend.ps1` (plus its log
+    `win-elevsend.log`) stay on Windows. They are inert: nothing starts the task any more,
+    and a manual start exits at once because no bridge is alive. To remove them, run
+    `credo-win-bridge.py elevsend-uninstall` before uninstalling, or afterwards in an
+    elevated Windows PowerShell:
+    `Unregister-ScheduledTask -TaskName credo-win-elevsend -Confirm:$false` and delete
+    `%ProgramData%\credo\credo-win-elevsend.ps1`.
 - **WSL sessions on Windows.** Every live WSL session of every profile, and every
   LAN-relay mirror, gets a Windows-side mirror: a holder process (`waitfor.exe` on a
   random signal), a named pipe served by the PowerShell half, a descriptor (procStart =
@@ -771,8 +807,10 @@ plugin dir; nothing is installed on Windows).
   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" status   # switch, daemon, mirrored sessions
   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" ensure   # start (what the hook runs)
   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" stop     # stop; removes every mirror on both sides
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" elevsend-install     # once, one UAC prompt
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" elevsend-uninstall   # remove the helper
   ```
-  `/credo:peer-lan win-bridge [status|start|stop]` runs these.
+  `/credo:peer-lan win-bridge [status|start|stop|install-elevated|uninstall-elevated]` runs these.
 - **Off switch.** `peer.win_bridge.enabled: false` in the credo config (global or profile
   layer; a project `.credo/config` is ignored for this key) or `CREDO_WIN_BRIDGE=0`. A
   running daemon notices within a minute and stops, removing its mirrors.
@@ -903,13 +941,17 @@ reported as FAILED, never as a silent exit 0.
 
 - **setup** - run the Setup flow above (interactive, Ask tool).
 
-- **win-bridge** `[status | start | stop]` - the WSL <-> Windows bridge (see Windows
-  sessions above; default status):
+- **win-bridge** `[status | start | stop | install-elevated | uninstall-elevated]` - the
+  WSL <-> Windows bridge (see Windows sessions above; default status):
   ```bash
   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" status
   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" ensure   # start
   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" stop
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" elevsend-install     # install-elevated
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" elevsend-uninstall   # uninstall-elevated
   ```
+  `install-elevated` and `uninstall-elevated` open one UAC prompt: run them only when the
+  user asked for it and is at the screen to confirm it.
   `start` does nothing when the bridge is switched off (`peer.win_bridge.enabled`,
   `CREDO_WIN_BRIDGE`) or outside WSL; say so instead of retrying.
 
