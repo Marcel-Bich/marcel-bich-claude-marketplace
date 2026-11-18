@@ -63,12 +63,18 @@ $ErrorActionPreference = 'Stop'
 
 # Bump by hand whenever this script changes: `credo-win-bridge.py status` compares it
 # with the installed copy and asks for one re-install when that is older.
-$ScriptVersion = 1
+$ScriptVersion = 2
 
 $script:ElevUtf8 = New-Object System.Text.UTF8Encoding($false)
 $script:ElevMaxRequest = 6MB
-$script:ElevInstallDir = Join-Path $env:ProgramData 'credo'
+# never from $env:ProgramData: a non-elevated user can override that variable
+# (HKCU\Environment) and steer an elevated run into a folder they control
+$script:ElevInstallDir = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'credo'
 $script:ElevInstalled = Join-Path $script:ElevInstallDir 'credo-win-elevsend.ps1'
+# where -Serve logs: set by -Serve to the folder of the RUNNING (installed) copy, and only
+# when that folder is owned by Administrators/SYSTEM; $null = no logging
+$script:ElevLogDir = $null
+$script:ElevKernel32 = $null
 
 # --- pure helpers (shared rules with credo-win-common.ps1, kept here so the elevated
 # --- copy depends on no user-writable file) ------------------------------------------
@@ -78,7 +84,7 @@ function Get-ElevSendPipeName([string]$Sid) {
 }
 
 function Test-ElevSendTarget([string]$Name) {
-    return ($null -ne $Name -and $Name -cmatch '^LOCAL\\cc-msg-[0-9a-f]{32}$')
+    return ($null -ne $Name -and $Name -cmatch '^LOCAL\\cc-msg-[0-9a-f]{32}\z')
 }
 
 function ConvertFrom-ElevSendRequest([string]$Line) {
@@ -106,9 +112,15 @@ function Get-ElevSendProcessFt([long]$ProcessId) {
 }
 
 function Test-ElevSendLiveSession([string]$SessDir, [string]$Name) {
-    # true when a live REAL session descriptor (canonical <pid>.json, no credo mirror
-    # marker, pid alive with its recorded creation time) names this inbox pipe
-    if (-not (Test-Path -LiteralPath $SessDir)) { return $false }
+    return ((Find-ElevSendSessionPid $SessDir $Name) -gt 0)
+}
+
+function Find-ElevSendSessionPid([string]$SessDir, [string]$Name) {
+    # pid of a live REAL session descriptor (canonical <pid>.json, no credo mirror marker,
+    # pid alive with its recorded creation time) that names this inbox pipe, else 0.
+    # Descriptors are user-writable, so this is only a pre-filter: Send-ElevSendTarget
+    # also proves that this pid serves the pipe and runs as this user.
+    if (-not (Test-Path -LiteralPath $SessDir)) { return 0 }
     foreach ($f in [System.IO.Directory]::GetFiles($SessDir, '*.json')) {
         $base = [System.IO.Path]::GetFileNameWithoutExtension($f)
         if ($base -notmatch '^[1-9][0-9]{0,9}$') { continue }
@@ -124,16 +136,51 @@ function Test-ElevSendLiveSession([string]$SessDir, [string]$Name) {
         if ($null -eq $pidp -or [string]$pidp.Value -ne $base) { continue }
         $msp = $o.PSObject.Properties['messagingSocketPath']
         if ($null -eq $msp -or $msp.Value -isnot [string]) { continue }
-        $m = [regex]::Match($msp.Value, '^[\\/]{2}[.?][\\/]pipe[\\/]LOCAL[\\/]([^\\/]+)$', 'IgnoreCase')
+        $m = [regex]::Match($msp.Value, '^[\\/]{2}[.?][\\/]pipe[\\/]LOCAL[\\/]([^\\/]+)\z', 'IgnoreCase')
         if (-not $m.Success -or ('LOCAL\' + $m.Groups[1].Value.ToLowerInvariant()) -cne $Name) { continue }
         $want = $o.PSObject.Properties['procStartFt']
         if ($null -eq $want) { $want = $o.PSObject.Properties['procStart'] }
         $ft = Get-ElevSendProcessFt ([long]$base)
         if ($null -eq $ft) { continue }
         if ($null -ne $want -and [string]$want.Value -ne $ft) { continue }
-        return $true
+        return [long]$base
     }
-    return $false
+    return 0
+}
+
+function Get-ElevSendKernel32 {
+    # GetNamedPipeServerProcessId through an in-memory P/Invoke stub (Reflection.Emit):
+    # no Add-Type, so no compiler run and no assembly written to a user-writable %TEMP%
+    if ($null -eq $script:ElevKernel32) {
+        $asm = [AppDomain]::CurrentDomain.DefineDynamicAssembly((New-Object System.Reflection.AssemblyName('CredoElevSendNative')), 'Run')
+        $tb = $asm.DefineDynamicModule('CredoElevSendNative').DefineType('CredoElevSendNative.K32', 'Public, Class')
+        $m = $tb.DefinePInvokeMethod('GetNamedPipeServerProcessId', 'kernel32.dll', 'Public, Static, PinvokeImpl',
+            'Standard', [bool], [Type[]]@([IntPtr], [UInt32].MakeByRefType()), 'Winapi', 'Unicode')
+        $m.SetImplementationFlags('PreserveSig')
+        $script:ElevKernel32 = $tb.CreateType()
+    }
+    return $script:ElevKernel32
+}
+
+function Get-ElevSendPipeServerPid($Client) {
+    try {
+        $id = [UInt32]0
+        if ((Get-ElevSendKernel32)::GetNamedPipeServerProcessId($Client.SafePipeHandle.DangerousGetHandle(), [ref]$id)) { return [long]$id }
+    } catch {}
+    return 0
+}
+
+function Get-ElevSendProcessOwnerSid([long]$ProcessId) {
+    try {
+        $o = Get-CimInstance Win32_Process -Filter ('ProcessId=' + [long]$ProcessId) -ErrorAction Stop
+        if ($null -eq $o) { return $null }
+        return [string](Invoke-CimMethod -InputObject $o -MethodName GetOwnerSid -ErrorAction Stop).Sid
+    } catch { return $null }
+}
+
+function Test-ElevSendServerIdentity([long]$ServerPid, [long]$SessionPid, [string]$OwnerSid, [string]$UserSid) {
+    # the pipe must be served by the session's own process, running as this user
+    return ($ServerPid -gt 0 -and $ServerPid -eq $SessionPid -and -not [string]::IsNullOrEmpty($OwnerSid) -and $OwnerSid -eq $UserSid)
 }
 
 function Get-ElevSendAliveFile {
@@ -175,13 +222,24 @@ function Test-ElevSendAdmin {
 
 function Write-ElevSendLog([string]$Text) {
     # admin-only folder; never a payload or token, only what happened
+    if ($null -eq $script:ElevLogDir) { return }
     try {
-        $p = Join-Path $script:ElevInstallDir 'win-elevsend.log'
+        $p = Join-Path $script:ElevLogDir 'win-elevsend.log'
         if ((Test-Path -LiteralPath $p) -and (Get-Item -LiteralPath $p).Length -gt 512KB) {
             Move-Item -LiteralPath $p -Destination ($p + '.1') -Force
         }
         [System.IO.File]::AppendAllText($p, ((Get-Date).ToString('s') + ' ' + $Text + "`r`n"), $script:ElevUtf8)
     } catch {}
+}
+
+function Test-ElevSendAdminOwnedDir([string]$Dir) {
+    # a real folder (no junction/symlink) owned by Administrators, SYSTEM or TrustedInstaller
+    try {
+        $item = Get-Item -LiteralPath $Dir -Force -ErrorAction Stop
+        if (-not $item.PSIsContainer -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { return $false }
+        $owner = (Get-Acl -LiteralPath $Dir).GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+        return ($owner -eq 'S-1-5-32-544' -or $owner -eq 'S-1-5-18' -or $owner -eq 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    } catch { return $false }
 }
 
 function New-ElevSendServer([string]$Name, [System.Security.Principal.SecurityIdentifier]$User) {
@@ -219,12 +277,18 @@ function Read-ElevSendLine($Stream, [int]$TimeoutMs) {
     }
 }
 
-function Send-ElevSendTarget([string]$Name, [byte[]]$Data) {
-    # write the bytes into the inbox pipe; returns '' on success, else the reason
+function Send-ElevSendTarget([string]$Name, [byte[]]$Data, [long]$SessionPid, [string]$UserSid) {
+    # write the bytes into the inbox pipe; returns '' on success, else the reason. Before
+    # writing, the connected pipe's server process must be the session's pid and run as
+    # this user, else nothing is written.
     $c = New-Object System.IO.Pipes.NamedPipeClientStream('.', $Name, [System.IO.Pipes.PipeDirection]::InOut,
         [System.IO.Pipes.PipeOptions]::Asynchronous)
     try {
         try { $c.Connect(1500) } catch { return ('connect failed: ' + $_.Exception.InnerException.Message) }
+        $srvPid = Get-ElevSendPipeServerPid $c
+        if (-not (Test-ElevSendServerIdentity $srvPid $SessionPid (Get-ElevSendProcessOwnerSid $srvPid) $UserSid)) {
+            return 'the inbox pipe is not served by that session''s process of this user - nothing written'
+        }
         try {
             $w = $c.WriteAsync($Data, 0, $Data.Length)
             if (-not $w.Wait(1500)) { return 'write timed out' }
@@ -241,6 +305,8 @@ function Send-ElevSendTarget([string]$Name, [byte[]]$Data) {
 
 function Invoke-ElevSendServe {
     if (-not (Test-ElevSendAdmin)) { Write-Host 'credo-win-elevsend: -Serve needs elevation (run it through its scheduled task)'; exit 2 }
+    $here = Split-Path -Parent $PSCommandPath
+    if (Test-ElevSendAdminOwnedDir $here) { $script:ElevLogDir = $here }
     $alive = Get-ElevSendAliveFile
     if (-not (Test-ElevSendBridgeAlive $alive)) {
         # credo's bridge is not running (or credo was removed): never open the pipe
@@ -249,9 +315,8 @@ function Invoke-ElevSendServe {
     }
     $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
     $name = Get-ElevSendPipeName $user.Value
-    $created = $false
-    $mutex = New-Object System.Threading.Mutex($true, ('Local\credo-elevsend-' + $user.Value), [ref]$created)
-    if (-not $created) { Write-ElevSendLog 'another helper is running, exiting'; exit 0 }
+    # single instance: the task runs with MultipleInstances IgnoreNew (no mutex a
+    # non-elevated process could pre-create to keep the helper from starting)
     $sessDir = Join-Path $env:USERPROFILE '.claude\sessions'
     Write-ElevSendLog ('helper v' + $ScriptVersion + ' serving (pid ' + $PID + ')')
     $last = [DateTime]::UtcNow
@@ -274,15 +339,21 @@ function Invoke-ElevSendServe {
                 $req = ConvertFrom-ElevSendRequest $line
                 $line = $null
                 if ($req.Err) { $reply = New-ElevSendReply $false $req.Err }
-                elseif (-not (Test-ElevSendLiveSession $sessDir $req.Pipe)) {
+                elseif (($spid = Find-ElevSendSessionPid $sessDir $req.Pipe) -le 0) {
                     [Array]::Clear($req.Data, 0, $req.Data.Length)
                     $reply = New-ElevSendReply $false 'no live session owns that inbox pipe'
                 } else {
-                    $err = Send-ElevSendTarget $req.Pipe $req.Data
+                    $err = Send-ElevSendTarget $req.Pipe $req.Data $spid $user.Value
                     if ($err) { Write-ElevSendLog ('send failed: ' + $err) }
                     $reply = New-ElevSendReply ($err -eq '') $err
                 }
-                try { $srv.Write($reply, 0, $reply.Length); $srv.Flush(); $srv.WaitForPipeDrain() } catch {}
+                try {
+                    $srv.Write($reply, 0, $reply.Length); $srv.Flush()
+                    # let the client read the reply: wait (bounded) for it to close its end
+                    # instead of WaitForPipeDrain, which has no timeout
+                    $eof = $srv.ReadAsync((New-Object byte[] 1), 0, 1)
+                    [void]$eof.Wait(2000)
+                } catch {}
             } catch {
                 Write-ElevSendLog ('request failed: ' + $_.Exception.Message)
             } finally {
@@ -290,8 +361,7 @@ function Invoke-ElevSendServe {
             }
         }
     } finally {
-        $mutex.ReleaseMutex()
-        $mutex.Dispose()
+        Write-ElevSendLog 'helper stopped'
     }
 }
 
@@ -331,11 +401,12 @@ function Invoke-ElevSendInstall {
             throw ($script:ElevInstallDir + ' is a junction/symlink - refusing to install there.')
         }
     }
-    $user = '{0}\{1}' -f $env:USERDOMAIN, $env:USERNAME
+    $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $psExe = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
     $arg = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Serve' -f $script:ElevInstalled
     if ($DryRun) {
         Write-Host ('DRYRUN: would copy {0} -> {1} (admin-only write ACL, v{2})' -f $PSCommandPath, $script:ElevInstalled, $ScriptVersion)
-        Write-Host ('DRYRUN: would register task {0}: powershell.exe {1} (user {2}, interactive logon, highest privileges, no trigger: started on demand only)' -f $TaskName, $arg, $user)
+        Write-Host ('DRYRUN: would register task {0}: {3} {1} (user {2}, interactive logon, highest privileges, no trigger: started on demand only)' -f $TaskName, $arg, $user, $psExe)
         return
     }
     if (-not (Test-Path -LiteralPath $script:ElevInstallDir)) { New-Item -ItemType Directory -Path $script:ElevInstallDir | Out-Null }
@@ -348,7 +419,7 @@ function Invoke-ElevSendInstall {
     Set-ElevSendAdminOnlyAcl $script:ElevInstalled $false
     $old = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     if ($old) { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue }
-    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg
+    $action = New-ScheduledTaskAction -Execute $psExe -Argument $arg
     # Interactive: runs in the user's own logon session, so LOCAL\ pipe names match the
     # sessions' inboxes; Highest: the elevated token, without a UAC prompt per start
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
@@ -361,13 +432,22 @@ function Invoke-ElevSendInstall {
 }
 
 function Invoke-ElevSendUninstall {
-    if ($DryRun) { Write-Host ('DRYRUN: would stop and remove task {0} and {1}' -f $TaskName, $script:ElevInstalled); return }
+    if ($DryRun) { Write-Host ('DRYRUN: would stop and remove task {0}, {1}, its log and the folder when empty' -f $TaskName, $script:ElevInstalled); return }
     if (-not (Test-ElevSendAdmin)) { throw '-Uninstall needs an elevated PowerShell (Run as administrator).' }
     if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
         Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     }
-    if (Test-Path -LiteralPath $script:ElevInstalled -PathType Leaf) { Remove-Item -LiteralPath $script:ElevInstalled -Force }
+    foreach ($n in 'credo-win-elevsend.ps1', 'win-elevsend.log', 'win-elevsend.log.1') {
+        $f = Join-Path $script:ElevInstallDir $n
+        if (Test-Path -LiteralPath $f -PathType Leaf) { Remove-Item -LiteralPath $f -Force }
+    }
+    # the folder too, but only when nothing else of credo (e.g. the LAN relay's proxy
+    # script) is left in it
+    if ((Test-Path -LiteralPath $script:ElevInstallDir -PathType Container) -and
+        @(Get-ChildItem -LiteralPath $script:ElevInstallDir -Force).Count -eq 0) {
+        Remove-Item -LiteralPath $script:ElevInstallDir -Force
+    }
 }
 
 # --- dispatch (skipped when dot-sourced, e.g. by the tests) ----------------------------

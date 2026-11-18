@@ -579,17 +579,7 @@ function Get-CredoElevSendPipeName {
 
 function Test-CredoElevSendInstalled {
     if ($env:CREDO_WIN_ELEVSEND_INSTALLED) { return ($env:CREDO_WIN_ELEVSEND_INSTALLED -eq '1') }
-    return (Test-Path -LiteralPath (Join-Path $env:ProgramData 'credo\credo-win-elevsend.ps1'))
-}
-
-function Test-CredoElevSendRunning {
-    # the helper holds a session-local mutex; a non-elevated process may not open it, so
-    # "access denied" means it exists
-    try {
-        $m = [System.Threading.Mutex]::OpenExisting('Local\credo-elevsend-' + (Get-CredoUserSid))
-        $m.Dispose()
-        return $true
-    } catch [System.UnauthorizedAccessException] { return $true } catch { return $false }
+    return (Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'credo\credo-win-elevsend.ps1'))
 }
 
 function Start-CredoElevSendTask($Hub) {
@@ -608,7 +598,7 @@ function Start-CredoElevSendTask($Hub) {
         $psi.RedirectStandardError = $true
         $p = [System.Diagnostics.Process]::Start($psi)
         $p.Dispose()
-        Write-CredoHubLog $Hub 'elevated sender helper was not running: started its task'
+        Write-CredoHubLog $Hub 'elevated sender helper: started its task (on demand)'
         return $true
     } catch {
         Write-CredoHubLog $Hub ('could not start the elevated sender helper: ' + $_.Exception.Message)
@@ -660,13 +650,16 @@ function Read-CredoElevSendReply([byte[]]$Line) {
 
 function Start-CredoElevSendPath($Hub, $Send) {
     # hand the prepared bytes (auth line + message) to the elevated helper
-    if (-not (Test-CredoElevSendRunning)) {
-        if (-not (Test-CredoElevSendInstalled)) {
-            Stop-CredoSend $Hub $Send $false ((Get-CredoAccessDeniedText $Hub $Send.Name) + '; ' + $script:ElevInstallHint)
-            return
-        }
-        [void](Start-CredoElevSendTask $Hub)
-        $Send.ElevStarted = $true
+    if (-not (Test-CredoElevSendInstalled)) {
+        Stop-CredoSend $Hub $Send $false ((Get-CredoAccessDeniedText $Hub $Send.Name) + '; ' + $script:ElevInstallHint)
+        return
+    }
+    # the helper exits after 5 idle minutes: unless it answered within the last 4, start
+    # its task (a running one ignores the start). No probe a non-elevated process could
+    # fake (such as a pre-created mutex) keeps the bridge from starting it.
+    $now = [DateTime]::UtcNow
+    if (-not $Hub.ContainsKey('ElevLastOk') -or $now -gt $Hub.ElevLastOk.AddMinutes(4)) {
+        if (Start-CredoElevSendTask $Hub) { $Send.ElevStarted = $true }
     }
     $Send.Via = 'helper'
     $Send.Attempts++
@@ -801,6 +794,7 @@ function Step-CredoElevSend($Hub, $Send) {
             }
             $line = if ($nl -ge 0) { Split-CredoBytes $data 0 $nl } else { $data }
             $r = Read-CredoElevSendReply $line
+            $Hub.ElevLastOk = [DateTime]::UtcNow
             $err = if ($r.Ok) { '' } else { 'elevated sender helper: ' + $r.Err }
             Stop-CredoSend $Hub $Send $r.Ok $err
         }

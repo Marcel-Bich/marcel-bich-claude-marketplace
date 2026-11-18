@@ -687,8 +687,27 @@ Check 'helper target: owned by a live session' (Test-ElevSendLiveSession $sd $tp
 Check 'helper target: other pipe has no session' (-not (Test-ElevSendLiveSession $sd ('LOCAL\cc-msg-' + 'f' * 32)))
 [IO.File]::WriteAllText((Join-Path $sd ('{0}.json' -f $PID)), $desc.Replace('{"pid"', '{"credoWinBridge":true,"pid"'))
 Check 'helper target: a credo mirror does not count' (-not (Test-ElevSendLiveSession $sd $tp))
+[IO.File]::WriteAllText((Join-Path $sd ('{0}.json' -f $PID)), $desc)
+Check 'helper target: the session pid is found' ((Find-ElevSendSessionPid $sd $tp) -eq $PID)
 [IO.File]::Delete((Join-Path $sd ('{0}.json' -f $PID)))
 [IO.Directory]::Delete($sd)
+# server identity: the pipe must be served by the session's pid, running as this user
+$mySid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+Check 'helper identity: session pid + same user' (Test-ElevSendServerIdentity 42 42 $mySid $mySid)
+Check 'helper identity: another server pid refused' (-not (Test-ElevSendServerIdentity 43 42 $mySid $mySid))
+Check 'helper identity: another user refused' (-not (Test-ElevSendServerIdentity 42 42 'S-1-5-18' $mySid))
+Check 'helper identity: unknown pid or owner refused' (-not (Test-ElevSendServerIdentity 0 0 $mySid $mySid) -and -not (Test-ElevSendServerIdentity 42 42 $null $mySid))
+$fxName = 'LOCAL\credo-wbtest-' + [guid]::NewGuid().ToString('N')
+$fxSrv = New-Object IO.Pipes.NamedPipeServerStream($fxName, 'InOut', 1, 'Byte', 'Asynchronous')
+$fxWait = $fxSrv.WaitForConnectionAsync()
+$fxCli = New-Object IO.Pipes.NamedPipeClientStream('.', $fxName, 'InOut')
+$fxCli.Connect(2000)
+Check 'helper identity: GetNamedPipeServerProcessId names the serving process' ((Get-ElevSendPipeServerPid $fxCli) -eq $PID)
+$fxCli.Dispose(); $fxSrv.Dispose()
+Check 'helper identity: process owner SID' ((Get-ElevSendProcessOwnerSid $PID) -eq $mySid)
+Check 'helper log dir: a user folder is not admin-owned' (-not (Test-ElevSendAdminOwnedDir $PSScriptRoot))
+Check 'helper log dir: the system folder is' (Test-ElevSendAdminOwnedDir ([Environment]::SystemDirectory))
+Check 'helper install dir never comes from the environment' ($script:ElevInstallDir -eq (Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'credo'))
 Check 'relay: private allow entries' ((Test-RelayPrivateIp '192.168.1.42') -and -not (Test-RelayPrivateIp '8.8.8.8') -and (Test-RelayAllowed '192.168.1.42' @('192.168.1.0/24')) -and -not (Test-RelayAllowed '192.168.2.1' @('192.168.1.0/24')))
 PS1
     PIPE_T='\\.\pipe\LOCAL\cc-msg-ABABABABABABABABABABABABABABABAB'

@@ -99,7 +99,9 @@ $ErrorActionPreference = "Stop"
 $ScriptVersion = 5
 
 $ScriptPath = $MyInvocation.MyCommand.Path
-$InstallDir = Join-Path $env:ProgramData "credo"
+# never from $env:ProgramData: a non-elevated user can override that variable
+# (HKCU\Environment) and steer the elevated run into a folder they control
+$InstallDir = Join-Path ([Environment]::GetFolderPath("CommonApplicationData")) "credo"
 $InstalledScript = Join-Path $InstallDir "credo-peer-lan-winproxy.ps1"
 # Per-port names so a second relay instance (other -Port, own -TaskName) never
 # overwrites the first one's rule, data file or applied state. The default port keeps

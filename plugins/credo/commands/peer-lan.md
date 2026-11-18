@@ -765,15 +765,23 @@ plugin dir; nothing is installed on Windows).
   - **What it does.** It serves one pipe, `LOCAL\credo-elevsend-<user SID>`, owned by
     Administrators and writable only by this user (plus Administrators and SYSTEM). A
     request is one line `{"v":1,"pipe":"LOCAL\\cc-msg-<32 hex>","data":"<base64>"}`; it
-    writes the bytes unchanged into that inbox, but only into a pipe of that form that
-    belongs to a live, real (not mirrored) session descriptor of this user, and answers
-    `{"ok":true}` or `{"ok":false,"err":"..."}`. It never logs a payload or a token. The
+    writes the bytes unchanged into that inbox and answers `{"ok":true}` or
+    `{"ok":false,"err":"..."}`. Descriptors are user-writable, so a matching live, real
+    (not mirrored) session descriptor is only a pre-filter; before it writes, the helper
+    connects and proves with `GetNamedPipeServerProcessId` that the pipe is served by that
+    descriptor's pid and that this process runs as the same user, else it writes nothing.
+    It never logs a payload or a token, and it logs only into the Administrators-owned
+    folder of its installed copy (never a path taken from environment variables). The
     bridge sends only to a helper pipe owned by Administrators, so a non-elevated process
     that squats the name receives nothing.
   - **Trust.** With the helper installed, the user's own non-elevated processes can
     message the user's elevated Claude sessions through it (the same reach the bridge
     has for non-elevated sessions; an owner decision). Every receiving session keeps its
-    own consent gate.
+    own consent gate. Residual risk of the install and uninstall runs: like the LAN
+    relay's `-Install`, the wrapper copies the script to the user's `%TEMP%` and starts
+    that copy elevated, so a process already running as the user could swap the copy
+    between the copy and the UAC confirmation. The installed copy itself lives in the
+    admin-only folder and is what the task runs.
   - **Status and removal.** `credo-win-bridge.py status` shows whether the helper is
     installed (and outdated). `credo-win-bridge.py elevsend-uninstall` removes only the
     helper (one UAC prompt); `credo-peer-lan.py disconnect-all --full` removes it in the
