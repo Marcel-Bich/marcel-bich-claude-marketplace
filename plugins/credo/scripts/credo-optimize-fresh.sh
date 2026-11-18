@@ -21,6 +21,12 @@
 #   3 freshness unknown (no default branch found, or the fetch failed and nothing
 #   else is stale), 4 not a git repo.
 
+# python3 by name is missing or only the Store alias stub on native Windows: resolve the
+# interpreter once (../hooks/credo-python-lib.sh; unchanged python3 elsewhere).
+# shellcheck source-path=SCRIPTDIR source=../hooks/credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../hooks/credo-python-lib.sh" 2>/dev/null && credo_python_cmd
+: "${CREDO_PYTHON:=python3}"
+
 set -euo pipefail
 
 die() { echo "credo-optimize-fresh: $1" >&2; exit "${2:-2}"; }
@@ -79,7 +85,7 @@ emit() { # fresh behind ahead fetch suggestions...
     [ -n "$default" ] && [ "$branch" = "$default" ] && on_default=yes
     if [ "$JSON" -eq 1 ]; then
         BRANCH="$branch" DEFAULT="$default" REMOTE="$remote" ON="$on_default" FETCH_S="$fetch" \
-        BEHIND="$behind" AHEAD="$ahead" DIRTY="$dirty" FRESH="$fresh" python3 -c '
+        BEHIND="$behind" AHEAD="$ahead" DIRTY="$dirty" FRESH="$fresh" "$CREDO_PYTHON" -c '
 import json, os, sys
 e = os.environ
 def num(v):

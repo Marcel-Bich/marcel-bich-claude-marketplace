@@ -118,6 +118,12 @@
 # Exit codes: 0 done (also with nothing to do), 1 bad arguments, 2 not a git repository
 # or no base branch (main worktree on a detached HEAD and no --base).
 
+# python3 by name is missing or only the Store alias stub on native Windows: resolve the
+# interpreter once (../hooks/credo-python-lib.sh; unchanged python3 elsewhere).
+# shellcheck source-path=SCRIPTDIR source=../hooks/credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../hooks/credo-python-lib.sh" 2>/dev/null && credo_python_cmd
+: "${CREDO_PYTHON:=python3}"
+
 set -euo pipefail
 
 die() { echo "credo-worktree-cleanup: $1" >&2; exit "${2:-1}"; }
@@ -208,7 +214,7 @@ if [ "$LIST_LOCKED" -eq 1 ]; then
         LOCKED+=("$path$SEP$branch$SEP${reason:-no reason given}")
     done
     if [ "$MODE" = "json" ]; then
-        printf '%s\n' "${LOCKED[@]+"${LOCKED[@]}"}" | MAIN="$MAIN" python3 -c '
+        printf '%s\n' "${LOCKED[@]+"${LOCKED[@]}"}" | MAIN="$MAIN" "$CREDO_PYTHON" -c '
 import json, os, sys
 items = []
 for line in sys.stdin:
@@ -457,7 +463,7 @@ process_inside() { # real-path -> 0 and FOUND_PID when a live process has its cw
     if [ "$PROC_READ" -eq 0 ]; then
         PROC_READ=1
         # one pass over /proc: cwd, exe and every open file descriptor of each readable process
-        PROC_CWDS="$(python3 -I -c '
+        PROC_CWDS="$("$CREDO_PYTHON" -I -c '
 import os
 for pid in os.listdir("/proc"):
     if not pid.isdigit():
@@ -505,7 +511,7 @@ rescue_stray_credo() { # path
     local dry="" outp rc
     if [ "$DRY" -eq 1 ]; then dry="--dry-run"; fi
     rc=0
-    outp="$(python3 -I "$SCRIPT_DIR/credo-cleanup.py" rescue-credo $dry "$1" 2>&1)" || rc=$?
+    outp="$("$CREDO_PYTHON" -I "$SCRIPT_DIR/credo-cleanup.py" rescue-credo $dry "$1" 2>&1)" || rc=$?
     printf '%s\n' "$outp" | grep -E '^(rescued|would-rescue|conflict) ' \
         | sed "s|^|credo-worktree-cleanup: $1: .credo |" >&2 || true
     [ "$rc" -eq 0 ] || RESCUE_WHY="conflict"
@@ -564,7 +570,7 @@ evaluate() { # path branch locked prunable lock-reason
         # unattended run (SessionStart): in doubt, skip - a recent change, a live session whose
         # cwd is inside, or a live session's ledger naming it
         local busy
-        if busy="$(python3 -I "$SCRIPT_DIR/credo-cleanup.py" worktree-busy "$real" 2>/dev/null)"; then
+        if busy="$("$CREDO_PYTHON" -I "$SCRIPT_DIR/credo-cleanup.py" worktree-busy "$real" 2>/dev/null)"; then
             add kept "$path" "$branch" "possibly in use ($busy), skipped by the background run"
             return
         fi
@@ -659,7 +665,7 @@ fi
 
 # --- report ---------------------------------------------------------------------
 if [ "$MODE" = "json" ]; then
-    printf '%s\n' "${RESULTS[@]+"${RESULTS[@]}"}" | BASE="$BASE" DRY="$DRY" MAIN="$MAIN" python3 -c '
+    printf '%s\n' "${RESULTS[@]+"${RESULTS[@]}"}" | BASE="$BASE" DRY="$DRY" MAIN="$MAIN" "$CREDO_PYTHON" -c '
 import json, os, shlex, sys
 items = []
 for line in sys.stdin:

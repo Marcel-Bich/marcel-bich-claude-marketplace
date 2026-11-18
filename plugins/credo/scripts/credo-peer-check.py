@@ -98,7 +98,8 @@ def sock_dirs():
         xdg = os.environ.get("XDG_RUNTIME_DIR")
         if xdg:
             cands.append(os.path.join(xdg, "cc-socks"))
-        cands.append("/run/user/%d/cc-socks" % os.getuid())
+        if hasattr(os, "getuid"):  # POSIX only
+            cands.append("/run/user/%d/cc-socks" % os.getuid())
         tmp = os.environ.get("TMPDIR")
         if tmp:
             cands.append(os.path.join(tmp, "cc-socks"))

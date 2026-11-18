@@ -36,6 +36,12 @@
 #
 # Exit codes: 0 ok, 1 bad arguments / not found (never-has), 4 not a git repo.
 
+# python3 by name is missing or only the Store alias stub on native Windows: resolve the
+# interpreter once (../hooks/credo-python-lib.sh; unchanged python3 elsewhere).
+# shellcheck source-path=SCRIPTDIR source=../hooks/credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../hooks/credo-python-lib.sh" 2>/dev/null && credo_python_cmd
+: "${CREDO_PYTHON:=python3}"
+
 set -euo pipefail
 
 usage() {
@@ -105,7 +111,7 @@ case "$CMD" in
         never=""
         [ -f "$DIR/never" ] && never="$(cat "$DIR/never")"
         if [ "${1:-}" = "--json" ]; then
-            REPO="$REPO" OPTIN="$optin" SEEN="$seen" OFFER="$offer" PEND="$pend" NEVER="$never" python3 -c '
+            REPO="$REPO" OPTIN="$optin" SEEN="$seen" OFFER="$offer" PEND="$pend" NEVER="$never" "$CREDO_PYTHON" -c '
 import json, os
 def num(v):
     return int(v) if v.isdigit() else None

@@ -34,6 +34,12 @@
 # Exit codes: 0 no overlap, 3 overlap found, 4 no credo project resolved,
 # 1 bad arguments (no id, non-numeric id, or an id with no item file).
 
+# python3 by name is missing or only the Store alias stub on native Windows: resolve the
+# interpreter once (../hooks/credo-python-lib.sh; unchanged python3 elsewhere).
+# shellcheck source-path=SCRIPTDIR source=../hooks/credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../hooks/credo-python-lib.sh" 2>/dev/null && credo_python_cmd
+: "${CREDO_PYTHON:=python3}"
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -73,7 +79,7 @@ for id in "${IDS[@]}"; do
     FILES+=("$id=$f")
 done
 
-python3 - "$MODE" "$DIR" "${FILES[@]}" <<'PY'
+"$CREDO_PYTHON" - "$MODE" "$DIR" "${FILES[@]}" <<'PY'
 import fnmatch, json, re, sys
 
 mode, credo_dir = sys.argv[1], sys.argv[2]

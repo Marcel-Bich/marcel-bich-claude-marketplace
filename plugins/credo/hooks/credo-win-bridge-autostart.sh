@@ -25,7 +25,9 @@ fi
 
 script="${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py"
 [ -f "$script" ] || exit 0
-command -v python3 >/dev/null 2>&1 || exit 0
+# shellcheck source-path=SCRIPTDIR source=credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/credo-python-lib.sh" 2>/dev/null || exit 0
+credo_find_python || exit 0
 
 # Fast path (this hook also runs on every UserPromptSubmit, because /reload-plugins after a
 # plugin update fires no SessionStart): a live daemon of this plugin version needs nothing.
@@ -42,8 +44,8 @@ fi
 
 # detached: own session, no inherited stdio, so the hook never waits for it
 if command -v setsid >/dev/null 2>&1; then
-  setsid python3 "$script" ensure </dev/null >/dev/null 2>&1 &
+  setsid "$CREDO_PYTHON" "$script" ensure </dev/null >/dev/null 2>&1 &
 else
-  nohup python3 "$script" ensure </dev/null >/dev/null 2>&1 &
+  nohup "$CREDO_PYTHON" "$script" ensure </dev/null >/dev/null 2>&1 &
 fi
 exit 0

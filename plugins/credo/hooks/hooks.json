@@ -84,7 +84,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/credo-ledger.py pre",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-py.sh ${CLAUDE_PLUGIN_ROOT}/scripts/credo-ledger.py pre",
             "timeout": 5
           }
         ]
@@ -160,7 +160,7 @@
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/credo-ledger.py session-start",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-py.sh ${CLAUDE_PLUGIN_ROOT}/scripts/credo-ledger.py session-start",
             "timeout": 10
           }
         ]
@@ -288,7 +288,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/credo-ledger.py post",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-py.sh ${CLAUDE_PLUGIN_ROOT}/scripts/credo-ledger.py post",
             "timeout": 10
           }
         ]

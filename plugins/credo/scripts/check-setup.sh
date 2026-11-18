@@ -6,6 +6,19 @@
 JQ_INSTALLED=$(command -v jq >/dev/null 2>&1 && echo "true" || echo "false")
 CURL_INSTALLED=$(command -v curl >/dev/null 2>&1 && echo "true" || echo "false")
 
+# python3 (required by credo): each candidate is started once (python3, python, py -3), so the
+# Windows Store alias stub counts as missing. Detection only - nothing is installed here.
+PYTHON_OK="false"; PYTHON_CMD="none"; PYTHON_OS="none"; PYTHON_STUB="false"
+PYTHON_HINT="install python3 with the package manager of your system"
+# shellcheck source-path=SCRIPTDIR source=../hooks/credo-python-lib.sh
+if . "$(dirname "${BASH_SOURCE[0]}")/../hooks/credo-python-lib.sh" 2>/dev/null; then
+    if credo_find_python; then
+        PYTHON_OK="true"; PYTHON_CMD="$CREDO_PYTHON"; PYTHON_OS="$CREDO_PYTHON_OS"
+    fi
+    credo_python_is_stub && PYTHON_STUB="true"
+    PYTHON_HINT="$(credo_python_install_hint)"
+fi
+
 # Plugin checks (read JSON directly - claude plugin list fails inside active sessions)
 # credo is self-contained: dogma is recommended, get-shit-done is optional.
 # These are reported as informational hints only - neither is required for credo to work.
@@ -67,6 +80,9 @@ fi
 
 # Build missing requirements warnings
 MISSING_WARNINGS=""
+if [ "$PYTHON_OK" = "false" ]; then
+    MISSING_WARNINGS="${MISSING_WARNINGS}  - python3: credo (install: ${PYTHON_HINT})\n"
+fi
 if [ "$JQ_INSTALLED" = "false" ]; then
     MISSING_WARNINGS="${MISSING_WARNINGS}  - jq: dogma, limit, signal (install: sudo apt install jq)\n"
 fi
@@ -152,6 +168,12 @@ CREDO_SETUP_CHECK_V1
 system_requirements:
   jq: $JQ_INSTALLED
   curl: $CURL_INSTALLED
+python:
+  working: $PYTHON_OK
+  command: $PYTHON_CMD
+  os: $PYTHON_OS
+  store_stub: $PYTHON_STUB
+  install_hint: $PYTHON_HINT
 plugins:
   dogma: $DOGMA_INSTALLED
   gsd: $GSD_INSTALLED

@@ -49,6 +49,12 @@
 # Output: auto ([x]), ask ([?]), deny ([ ] or [0]), one ([1]), all ([a]) or missing.
 # Exit codes: 0 always (missing is an answer), 1 bad arguments.
 
+# python3 by name is missing or only the Store alias stub on native Windows: resolve the
+# interpreter once (../hooks/credo-python-lib.sh; unchanged python3 elsewhere).
+# shellcheck source-path=SCRIPTDIR source=../hooks/credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../hooks/credo-python-lib.sh" 2>/dev/null && credo_python_cmd
+: "${CREDO_PYTHON:=python3}"
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -129,7 +135,7 @@ pinned_dir() {
     [ "${DOGMA_CREDO_CONFIG:-}" != "none" ] || return 1
     [ -f "$SCRIPT_DIR/credo-config.sh" ] || return 1
     local credo_dir proj sess
-    credo_dir="$(bash "$SCRIPT_DIR/credo-config.sh" resolve-project 2>/dev/null)" || return 1
+    credo_dir="$("${BASH:-bash}" "$SCRIPT_DIR/credo-config.sh" resolve-project 2>/dev/null)" || return 1
     [ -n "$credo_dir" ] || return 1
     proj="$(dirname "$credo_dir")"
     [ -d "$proj" ] || return 1
@@ -172,7 +178,7 @@ INHERIT_BLOCK=""
 [ -z "$INHERIT" ] || INHERIT_BLOCK="$(block "$INHERIT")"
 
 printf '%s\n' "$PRIMARY_BLOCK" | SECTION="$SECTION" PATTERN="$PATTERN" PERM_ID="$ID" \
-    INHERIT_BLOCK="$INHERIT_BLOCK" python3 -c '
+    INHERIT_BLOCK="$INHERIT_BLOCK" "$CREDO_PYTHON" -c '
 import os, re, sys
 env = os.environ
 section, pattern, pid = env["SECTION"], env["PATTERN"], env["PERM_ID"]

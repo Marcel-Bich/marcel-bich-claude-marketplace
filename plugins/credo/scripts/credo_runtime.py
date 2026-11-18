@@ -50,6 +50,15 @@ SD_BOOTED_DEFAULT = "/run/systemd/system"
 
 # --- small helpers -------------------------------------------------------------------
 
+def _credo_platform():
+    """credo_platform.py next to this file (pid liveness and bash path on native Windows)."""
+    d = os.path.dirname(os.path.abspath(__file__))
+    if d not in sys.path:
+        sys.path.insert(0, d)
+    import credo_platform
+    return credo_platform
+
+
 def now_iso():
     return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -281,6 +290,8 @@ def pick_method():
 def pid_alive(pid):
     if not isinstance(pid, int) or pid <= 1:
         return False
+    if os.name == "nt":  # no /proc there
+        return _credo_platform().pid_alive(pid)
     try:
         with open("/proc/%d/stat" % pid) as fh:
             state = fh.read().rsplit(")", 1)[-1].split()[0]
@@ -311,7 +322,10 @@ def launch(method, name, script, cwd, logfile):
                 "--working-directory=" + cwd, "bash", script]
         return run_rc(argv) == 0, None
     with open(logfile, "a") as log:
-        proc = subprocess.Popen(["nohup", "bash", script], cwd=cwd, stdin=subprocess.DEVNULL,
+        argv = ["nohup", "bash", script]
+        if os.name == "nt":  # no nohup; a bare "bash" would be the WSL launcher
+            argv = [_credo_platform().bash_exe(), script]
+        proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
                                 stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     return True, proc.pid
 

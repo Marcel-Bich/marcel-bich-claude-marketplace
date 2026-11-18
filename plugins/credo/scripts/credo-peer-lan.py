@@ -122,16 +122,14 @@ import threading
 import time
 import uuid
 
-try:
-    import fcntl
-except ImportError:  # not on POSIX: the trust list is then changed without a lock
-    fcntl = None
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     import credo_peer_meta as peer_meta
 except ImportError:  # metadata is optional; the relay works without it
     peer_meta = None
+import credo_lock
+import credo_platform
 import credo_profiles as profiles
 import credo_session_name as session_name
 from credo_session_name import sid_short
@@ -3176,6 +3174,8 @@ def relay_via_daemon(path, host, port, payload, timeout=10.0):
 # descriptor / proc helpers
 # ---------------------------------------------------------------------------
 def pid_alive(pid):
+    if os.name == "nt":  # os.kill(pid, 0) would send CTRL_C_EVENT there
+        return credo_platform.pid_alive(pid)
     try:
         os.kill(int(pid), 0)
         return True
@@ -3229,10 +3229,14 @@ def daemon_is_alive(pid, pstart=None):
         return False
     if pid <= 0 or pid == os.getpid():
         return False
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
+    if os.name == "nt":  # os.kill(pid, 0) would send CTRL_C_EVENT there
+        if not credo_platform.pid_alive(pid):
+            return False
+    else:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
     if os.path.isdir("/proc"):
         try:
             with open("/proc/%d/cmdline" % pid, "rb") as fh:
@@ -4082,9 +4086,9 @@ class TrustStore(object):
 
     def _locked(self):
         """An fd holding an exclusive flock on the sidecar lock file (close it to
-        release), or None without fcntl. The lock file is opened without following a
+        release), or None without any lock module (credo_lock). The lock file is opened without following a
         symlink and must be a regular file of this user."""
-        if fcntl is None:
+        if not credo_lock.AVAILABLE:
             return None
         d = os.path.dirname(self.path) or "."
         os.makedirs(d, exist_ok=True)
@@ -4092,10 +4096,11 @@ class TrustStore(object):
                      | getattr(os, "O_CLOEXEC", 0), 0o600)
         try:
             info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+            if not stat.S_ISREG(info.st_mode) or (hasattr(os, "geteuid")
+                                                   and info.st_uid != os.geteuid()):
                 raise TrustFileError("trust lock %s.lock is not a regular file of this user"
                                      % self.path)
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            credo_lock.lock(fd)
         except BaseException:
             os.close(fd)
             raise

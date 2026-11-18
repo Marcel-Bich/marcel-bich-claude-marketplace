@@ -1035,6 +1035,12 @@ def maintenance(args):
 
 
 def main():
+    if os.name != "posix":
+        # birth times, /proc, mounts and the ledger are POSIX only; a native Windows Python
+        # gets a clear note, never a traceback
+        print("credo-cleanup: not supported on native Windows (POSIX only), nothing done",
+              file=sys.stderr)
+        return 0
     ap = argparse.ArgumentParser(prog="credo-cleanup.py", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("own-rm")

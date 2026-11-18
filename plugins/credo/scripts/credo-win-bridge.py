@@ -77,13 +77,10 @@ import threading
 import time
 import uuid
 
-try:
-    import fcntl
-except ImportError:  # not on POSIX: the bridge only runs under WSL anyway
-    fcntl = None
-
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import credo_lock  # noqa: E402
+import credo_platform  # noqa: E402
 import credo_profiles as profiles  # noqa: E402
 import credo_session_name as session_name  # noqa: E402
 
@@ -224,7 +221,7 @@ def config_value():
         return None
     env = dict(os.environ, CREDO_PROJECT="/dev/null", CREDO_SKIP_ENSURE="1")
     try:
-        r = subprocess.run(["bash", script, "get", "peer.win_bridge.enabled"], env=env,
+        r = subprocess.run([credo_platform.bash_exe(), script, "get", "peer.win_bridge.enabled"], env=env,
                            capture_output=True, text=True, timeout=10)
     except Exception:
         return None
@@ -1207,13 +1204,11 @@ def version_tuple(v):
 
 
 def cmd_daemon():
-    if fcntl is None:
+    if not credo_lock.AVAILABLE:
         return 1
     ensure_dirs()
     lock_fh = open(os.path.join(state_dir(), "bridge.lock"), "a")
-    try:
-        fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    if not credo_lock.lock(lock_fh, blocking=False):
         log("another bridge daemon is running, exiting")
         return 0
     if not enabled():

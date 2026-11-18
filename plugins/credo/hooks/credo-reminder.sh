@@ -16,7 +16,9 @@
 set -u
 
 input="$(cat 2>/dev/null || true)"
-command -v python3 >/dev/null 2>&1 || exit 0
+# shellcheck source-path=SCRIPTDIR source=credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/credo-python-lib.sh" 2>/dev/null || exit 0
+credo_find_python || exit 0
 case "${1:-}" in
     turn|start) ;;
     *) exit 0 ;;
@@ -82,5 +84,5 @@ reminder_switched_off() { # 0 when the layer that decides reminder.enabled says 
 reminder_layers
 reminder_switched_off && exit 0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || exit 0
-printf '%s' "$input" | python3 "$SCRIPT_DIR/../scripts/credo-reminder.py" "$1" >/dev/null 2>&1 || true
+printf '%s' "$input" | "$CREDO_PYTHON" "$SCRIPT_DIR/../scripts/credo-reminder.py" "$1" >/dev/null 2>&1 || true
 exit 0

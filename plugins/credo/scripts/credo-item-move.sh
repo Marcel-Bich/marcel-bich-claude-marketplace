@@ -91,6 +91,12 @@
 # On success prints "moved #<id>: <old> -> <new>" and exits 0.
 # On any error exits 1 and changes nothing.
 
+# python3 by name is missing or only the Store alias stub on native Windows: resolve the
+# interpreter once (../hooks/credo-python-lib.sh; unchanged python3 elsewhere).
+# shellcheck source-path=SCRIPTDIR source=../hooks/credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../hooks/credo-python-lib.sh" 2>/dev/null && credo_python_cmd
+: "${CREDO_PYTHON:=python3}"
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -642,7 +648,7 @@ esac
 case "$TARGET" in
     done|verified|3_verified|archived)
         if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -f "$SCRIPT_DIR/credo-cleanup.py" ]; then
-            python3 -I "$SCRIPT_DIR/credo-cleanup.py" item-close 2>/dev/null \
+            "$CREDO_PYTHON" -I "$SCRIPT_DIR/credo-cleanup.py" item-close 2>/dev/null \
                 | sed 's/^/credo-item-move: session temp: /' || true
         fi
         ;;

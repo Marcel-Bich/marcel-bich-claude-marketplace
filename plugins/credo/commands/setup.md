@@ -34,10 +34,59 @@ This outputs structured results for all checks. Parse the output to determine:
 - `files.roadmap` - Does ROADMAP.md exist? (only relevant if GSD is used)
 - `project.state` - Overall state (needs_setup, needs_mapping, needs_project, needs_roadmap, ready)
 - `todo_tools.state` / `todo_tools.declined` - Is the Claude Code task-list tools opt-in on for the active profile (see Step 10)?
+- `python.working` / `python.command` / `python.os` / `python.store_stub` / `python.install_hint` - Is a real Python 3 available (python3, python or `py -3`, each started once, so the Windows Store alias stub counts as missing), and how could it be installed (see Step 1b)?
 - `tmux.installed` / `tmux.inside` / `tmux.platform` / `tmux.pkg_manager` / `tmux.login_shell` - Is tmux installed, does this session run inside it, and how could it be installed (see Step 11)?
 - `peer_trust_guard.quiet` / `peer_trust_guard.env` - Does credo only remind (quiet, default) or ask for confirmation (strict) when a command grants LAN peer trust, and is the env override `CREDO_PEER_TRUST_GUARD_QUIET` set (see Step 12)?
 
-**If project.state = ready:** Skip directly to "Setup Complete" section. Do NOT ask any questions.
+**If project.state = ready:** Run Step 1b (it is silent when Python works), then skip directly to "Setup Complete" section. Ask no other questions.
+
+## Step 1b: Python 3 (Required)
+
+credo's hooks and helper scripts are Python 3 (stdlib only). Without a working Python 3 the
+hooks that need it are skipped and each session shows one "credo needs python3" message.
+
+**(a) `python.working = true`** -> nothing to do, skip silently. A native Windows Python
+(`python.os = nt`, e.g. python.org's `python` or the `py` launcher) counts as working; the
+POSIX-only parts (provenance ledger, cleanup helper, LAN relay) stay off there by design.
+
+**(b) `python.working = false`** -> tell the user in 2-3 lines that python3 is a requirement
+of credo, and when `python.store_stub = true` that `python3`/`python` are only the Microsoft
+Store alias stub (it prints "Python was not found" and exits). Then show the exact install
+command, which is `python.install_hint`:
+
+| Platform | Command |
+|----------|---------|
+| native Windows (Git Bash) | `winget install Python.Python.3.12`, then turn off the python.exe and python3.exe App Execution Aliases (Settings, Apps, Advanced app settings, App execution aliases) and restart Claude Code |
+| `apt` | `sudo apt install python3` |
+| `dnf` | `sudo dnf install python3` |
+| `pacman` | `sudo pacman -S python` |
+| `zypper` | `sudo zypper install python3` |
+| macOS | `brew install python` |
+
+Ask via AskUserQuestion (hard rule - never install anything without the user's explicit yes;
+never run this step in autonomous mode, report the missing Python instead):
+
+```
+credo needs python3, and no working Python 3 was found. credo can install it with:
+  <exact command>
+Run it now?
+
+- Yes, install Python 3 (Recommended) - runs exactly the command above
+- I'll run it myself - show the command only
+- No, skip (credo hooks that need Python stay off)
+```
+
+- "Yes" -> for a `sudo` command, first check `sudo -n true 2>/dev/null`. If that fails, sudo
+  needs a password, which the agent cannot type. Do NOT run it; tell the user to run the
+  exact command in their own terminal (or via the `!` prefix in the Claude Code prompt) and
+  to say when it is done. Otherwise run exactly the shown command (for winget only the
+  `winget install ...` part; the App Execution Aliases are switched off by the user in
+  Windows Settings), then verify by running `check-setup.sh` again: `python.working` must
+  be `true` (on Windows often only in a new terminal or after a Claude Code restart, because
+  a PATH change reaches new processes only). On failure show the error and stop; never try
+  another package manager or source on your own.
+- "I'll run it myself" -> show the command again, nothing else.
+- "No" -> nothing is stored; the per-session message keeps reminding the user.
 
 ## Step 2: Initialize the credo Framework (Core)
 

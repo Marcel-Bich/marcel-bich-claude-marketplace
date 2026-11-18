@@ -25,19 +25,31 @@ had a tool call running is marked "ambiguous" with those session ids; the helper
 ambiguous window-only entry.
 
 Never blocks: every error exits 0 without output (the deny cases are intentional). Off with
-CREDO_LEDGER=0 or the local config key cleanup.enabled: false.
+CREDO_LEDGER=0 or the local config key cleanup.enabled: false. Not POSIX (native Windows Python)
+or a library that cannot load: exits 0 at once. Hooks start it through hooks/credo-py.sh, which
+probes for a working Python 3 first.
 """
-import json
 import os
-import re
-import shlex
-import stat
 import sys
-import time
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-import credo_cleanup_lib as L  # noqa: E402
+# The ledger relies on Linux features (/proc, statx birth time, POSIX paths). On any other
+# platform (a native Windows Python under Git Bash) or when its library cannot load, it does
+# nothing and exits 0, so a hook never fails visibly because of it.
+if os.name != "posix":
+    sys.exit(0)
+
+try:
+    import json
+    import re
+    import shlex
+    import stat
+    import time
+
+    HERE = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, HERE)
+    import credo_cleanup_lib as L
+except Exception:  # noqa: BLE001 - a hook never fails on its own environment
+    sys.exit(0)
 
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 MARK_STALE_S = 6 * 3600

@@ -117,6 +117,10 @@ Technically the two do not collide: their hooks are disjoint, and their commands
 All plugins require:
 
 - `jq` - JSON processor (install: `sudo apt install jq` / `brew install jq`)
+
+credo also requires:
+
+- `python3` - stdlib only (install: `sudo apt install python3` / `brew install python`; on Windows: `python` from python.org or `winget install Python.Python.3.12`, the `py` launcher also works). The Microsoft Store alias stub (`python3`/`python` under `WindowsApps`, which only prints "Python was not found") does not count: turn off those App Execution Aliases in the Windows settings. Without a working Python 3, credo's Python hooks are skipped and each session shows one "credo needs python3" message; `/credo:setup` detects this and offers the install command (it installs only after your yes).
 - **Supported:** Linux, macOS, WSL2
 - **Not supported:** Native Windows / PowerShell (use WSL2 instead)
 

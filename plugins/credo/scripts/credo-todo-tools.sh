@@ -55,6 +55,12 @@
 # (invalid JSON, its "env" is not an object, or the backup / write failed, e.g. a
 # read-only profile dir) - settings.json was not changed then.
 
+# python3 by name is missing or only the Store alias stub on native Windows: resolve the
+# interpreter once (../hooks/credo-python-lib.sh; unchanged python3 elsewhere).
+# shellcheck source-path=SCRIPTDIR source=../hooks/credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../hooks/credo-python-lib.sh" 2>/dev/null && credo_python_cmd
+: "${CREDO_PYTHON:=python3}"
+
 set -uo pipefail
 
 VAR="CLAUDE_CODE_ENABLE_TODO_TOOLS"
@@ -77,7 +83,7 @@ now() {
 # values are printed as "json:<value>" so a number 1 never compares equal to "1".
 settings_value() {
     [ -f "$SETTINGS" ] || { printf '\n'; return 0; }
-    python3 - "$SETTINGS" "$VAR" <<'PY' 2>/dev/null || printf '\n'
+    "$CREDO_PYTHON" - "$SETTINGS" "$VAR" <<'PY' 2>/dev/null || printf '\n'
 import json, sys
 try:
     with open(sys.argv[1], encoding="utf-8") as f:
@@ -137,9 +143,9 @@ case "$CMD" in
         is_on
         ;;
     enable)
-        command -v python3 >/dev/null 2>&1 || { echo "credo-todo-tools: python3 is required" >&2; exit 2; }
+        command -v "$CREDO_PYTHON" >/dev/null 2>&1 || { echo "credo-todo-tools: python3 is required" >&2; exit 2; }
         mkdir -p "$PROFILE" || exit 2
-        python3 - "$SETTINGS" "$VAR" "$(now)" <<'PY'
+        "$CREDO_PYTHON" - "$SETTINGS" "$VAR" "$(now)" <<'PY'
 import json, os, shutil, sys, tempfile
 
 path, var, stamp = sys.argv[1], sys.argv[2], sys.argv[3]

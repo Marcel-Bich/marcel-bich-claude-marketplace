@@ -61,18 +61,29 @@ mkdir -p "$FAKE_ROOT/scripts"
 SENTINEL="$TMP/started"
 PY_BIN="$(command -v python3 || echo python3)"
 REAL_DAEMON="$SCRIPT_DIR/credo-peer-lan.py"
+# The hook runs the script with a probed Python 3 (hooks/credo-python-lib.sh), never through
+# its shebang, so the fake is Python too.
 cat > "$FAKE_ROOT/scripts/credo-peer-lan.py" <<EOF
-#!/usr/bin/env bash
+#!/usr/bin/env python3
 # fake daemon: record the subcommand it was invoked with and exit at once (never
 # lingers, never binds a port). The hook must invoke it as "ensure".
-if [ "\$1" = network-hint ]; then exec "$PY_BIN" "$REAL_DAEMON" "\$@"; fi
-if [ "\$1" = onboarding ]; then
-    if [ -z "\${FAKE_ONB_STATE:-}" ]; then exec "$PY_BIN" "$REAL_DAEMON" "\$@"; fi
-    case " \$* " in *" --dir "*) echo "\$FAKE_ONB_STATE \${FAKE_ONB_DIR:-$TMP/cfg/credo}" ;; *) echo "\$FAKE_ONB_STATE" ;; esac
-    exit 0
-fi
-echo "started \$*" >> "$SENTINEL"
-exit 0
+import os, sys
+a = sys.argv[1:]
+real = ["$PY_BIN", "$REAL_DAEMON"] + a
+if a[:1] == ["network-hint"]:
+    os.execv(real[0], real)
+if a[:1] == ["onboarding"]:
+    st = os.environ.get("FAKE_ONB_STATE", "")
+    if not st:
+        os.execv(real[0], real)
+    if "--dir" in a:
+        print(st, os.environ.get("FAKE_ONB_DIR") or "$TMP/cfg/credo")
+    else:
+        print(st)
+    sys.exit(0)
+with open("$SENTINEL", "a") as fh:
+    # the profile is recorded too, so a check can tell which session started it
+    fh.write("started " + " ".join(a) + " " + os.environ.get("CLAUDE_CONFIG_DIR", "") + "\n")
 EOF
 chmod +x "$FAKE_ROOT/scripts/credo-peer-lan.py"
 
@@ -328,7 +339,9 @@ echo '{"this_machine":"SIB","peers":[],"networks":{"home":{"fingerprint":{}}},"p
 rm -f "$SENTINEL"
 OUT_X="$(run_sib "$SIBHOME/.claude-extra")"
 sleep 0.4
-ok "unserved sibling starts nothing" "$([ ! -f "$SENTINEL" ] && echo 0 || echo 1)"
+# the sentinel line names the profile that started the relay: a late start of an earlier
+# (served) run may still land after the rm above, so only this profile's start counts
+ok "unserved sibling starts nothing" "$(grep -q 'claude-extra' "$SENTINEL" 2>/dev/null && echo 1 || echo 0)"
 case "$OUT_X" in *"is not served by the LAN relay of this machine"*"profiles add .claude-extra"*"in the user's language (the language of the conversation); fall back to English if unknown or unsure.") PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL unserved sibling: add-profile note missing: %s\n' "$OUT_X" ;; esac
 ok "unserved sibling: no second config in the sibling profile" "$([ ! -e "$SIBHOME/.claude-extra/credo/peer-lan.json" ] && echo 0 || echo 1)"
 mkdir -p "$SIBHOME/.claude-extra/credo"

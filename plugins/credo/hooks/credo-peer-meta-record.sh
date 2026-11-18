@@ -88,7 +88,7 @@ credo=""
 dec_script="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts" 2>/dev/null && pwd)/credo-dir-decision.sh"
 if [ -f "$dec_script" ]; then
     [ -n "$cwd" ] && [ -d "$cwd" ] || cwd="$PWD"
-    case "$(cd "$cwd" 2>/dev/null && bash "$dec_script" get 2>/dev/null)" in
+    case "$(cd "$cwd" 2>/dev/null && "${BASH:-bash}" "$dec_script" get 2>/dev/null)" in
         accepted) credo="on" ;;
         declined) credo="off" ;;
     esac

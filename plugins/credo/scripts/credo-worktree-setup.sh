@@ -49,6 +49,12 @@
 # into the builder brief: read-only lookups of anything missing in the worktree).
 # Exit codes: 0 done, 1 bad arguments, 2 not a secondary worktree of a git repo.
 
+# python3 by name is missing or only the Store alias stub on native Windows: resolve the
+# interpreter once (../hooks/credo-python-lib.sh; unchanged python3 elsewhere).
+# shellcheck source-path=SCRIPTDIR source=../hooks/credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../hooks/credo-python-lib.sh" 2>/dev/null && credo_python_cmd
+: "${CREDO_PYTHON:=python3}"
+
 set -euo pipefail
 
 die() { echo "credo-worktree-setup: $1" >&2; exit "${2:-1}"; }
@@ -83,7 +89,7 @@ link .credo/"
 find_plugin_file() { # plugin-name relative-file
     local cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" d
     {
-        python3 - "$cfg/plugins/installed_plugins.json" "$1" 2>/dev/null <<'PY' || true
+        "$CREDO_PYTHON" - "$cfg/plugins/installed_plugins.json" "$1" 2>/dev/null <<'PY' || true
 import json, sys
 try:
     data = json.load(open(sys.argv[1]))
@@ -134,7 +140,7 @@ is_ignored() { # rel - ignored in the worktree or in the main checkout
 }
 
 relpath() { # target-abs from-dir-abs
-    python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$1" "$2" 2>/dev/null || echo "$1"
+    "$CREDO_PYTHON" -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$1" "$2" 2>/dev/null || echo "$1"
 }
 
 # A directory pattern like "CLAUDE/" does not match a symlink, so a linked directory

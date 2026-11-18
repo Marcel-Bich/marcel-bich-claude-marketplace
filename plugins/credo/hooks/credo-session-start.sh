@@ -116,6 +116,8 @@ case "$mode" in active|passive|autonomous) active=true ;; esac
 
 # --- resolve the decision-set script path for the ASK instruction ---
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || HOOK_DIR=""
+# shellcheck source-path=SCRIPTDIR source=credo-python-lib.sh
+. "$HOOK_DIR/credo-python-lib.sh" 2>/dev/null || credo_python_ready() { return 1; }
 DECISION_SCRIPT="${HOOK_DIR}/../scripts/credo-decision-set.sh"
 # Prefer the normalized absolute path (drops the ../ for a cleaner instruction);
 # if HOOK_DIR could not be resolved, fall back to ${CLAUDE_PLUGIN_ROOT} rather
@@ -199,8 +201,8 @@ RUNTIME_NOTE=""
 RUNTIME_PY="${_scripts_dir:-${CLAUDE_PLUGIN_ROOT:-}/scripts}/credo_runtime.py"
 case "$source" in
     startup|resume)
-        if [[ -f "$RUNTIME_PY" ]]; then
-            RUNTIME_NOTE="$(python3 "$RUNTIME_PY" check --session "$session_id" 2>/dev/null)" || RUNTIME_NOTE=""
+        if [[ -f "$RUNTIME_PY" ]] && credo_python_ready; then
+            RUNTIME_NOTE="$("$CREDO_PYTHON" "$RUNTIME_PY" check --session "$session_id" 2>/dev/null)" || RUNTIME_NOTE=""
         fi
         ;;
 esac

@@ -13,7 +13,10 @@
 
 trap 'exit 0' ERR
 case "${CREDO_PEER_SPLIT_HINT:-1}" in 0|false|no|off) exit 0 ;; esac
-PY="$(command -v python3 2>/dev/null)" || exit 0
+# shellcheck source-path=SCRIPTDIR source=credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/credo-python-lib.sh" 2>/dev/null || exit 0
+credo_find_python || exit 0
+PY="$CREDO_PYTHON"
 SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts" 2>/dev/null && pwd)/credo-peer-check.py"
 [ -f "$SCRIPT" ] || exit 0
 to=""

@@ -59,6 +59,12 @@
 # Exit codes: 0 ok, 1 hard error, 3 key not found, 4 needs explicit target
 #   (resolve-project and rules: cwd is a hub or has no credo project).
 
+# python3 by name is missing or only the Store alias stub on native Windows: resolve the
+# interpreter once (../hooks/credo-python-lib.sh; unchanged python3 elsewhere).
+# shellcheck source-path=SCRIPTDIR source=../hooks/credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../hooks/credo-python-lib.sh" 2>/dev/null && credo_python_cmd
+: "${CREDO_PYTHON:=python3}"
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -146,7 +152,7 @@ ensure_global() {
 # every directory a hub. Missing file / key -> false.
 read_hub() {
     local f="$1"
-    python3 - "$f" <<'PY'
+    "$CREDO_PYTHON" - "$f" <<'PY'
 import sys
 path = sys.argv[1]
 val = False
@@ -228,7 +234,7 @@ case "$CMD" in
         PROFILE_F="$PROFILE"
         [ "$PROFILE_F" = "$GLOBAL" ] && PROFILE_F=""
         CREDO_BUILTIN="$BUILTIN" CREDO_BUILTIN_PRESETS="$BUILTIN_PRESETS" CREDO_GLOBAL_F="$GLOBAL" CREDO_PROFILE_F="$PROFILE_F" CREDO_PROJECT_F="$PROJECT" \
-            python3 - "$KEY" "$CMD" <<'PY'
+            "$CREDO_PYTHON" - "$KEY" "$CMD" <<'PY'
 import os, sys, json
 
 key = sys.argv[1]

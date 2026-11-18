@@ -44,6 +44,14 @@ cfgdir="${cfgdir%/}"
 
 script="${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py"
 [ -f "$script" ] || exit 0
+# Run it with a probed Python 3, not through its shebang: on native Windows python3 can be
+# the Store alias stub (credo-python-lib.sh). No working Python 3 -> nothing to do. The Python
+# relay is POSIX only (native Windows has its own PowerShell relay), so a native Windows
+# Python (os.name nt) does nothing here either.
+# shellcheck source-path=SCRIPTDIR source=credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/credo-python-lib.sh" 2>/dev/null || exit 0
+credo_find_python || exit 0
+[ "$CREDO_PYTHON_OS" = "posix" ] || exit 0
 
 to5=""
 command -v timeout >/dev/null 2>&1 && to5="timeout 5"
@@ -61,7 +69,7 @@ command -v timeout >/dev/null 2>&1 && to5="timeout 5"
 #   bound           served and bound -> say nothing
 #   declined        this profile declined the offer -> say nothing
 # shellcheck disable=SC2086  # $to5 is an intentional optional command prefix
-out="$($to5 "$script" onboarding --state --dir 2>/dev/null | tail -n1)"
+out="$($to5 "$CREDO_PYTHON" "$script" onboarding --state --dir 2>/dev/null | tail -n1)"
 state="${out%% *}"
 mdir="${out#* }"
 [ "$mdir" = "$out" ] && mdir=""
@@ -107,7 +115,7 @@ fi
 hint="$mdir/peer-lan-network-hint.json"
 if [ -s "$hint" ] && grep -q '"kind"' "$hint" 2>/dev/null; then
   # shellcheck disable=SC2086  # $to5 is an intentional optional command prefix
-  hint_text="$($to5 "$script" network-hint 2>/dev/null)"
+  hint_text="$($to5 "$CREDO_PYTHON" "$script" network-hint 2>/dev/null)"
   [ -n "$hint_text" ] && echo "$hint_text"
 fi
 
@@ -118,7 +126,7 @@ mkdir -p "$mdir" 2>/dev/null || true
 # the daemon's bind-retry guards concurrent starts, so no pgrep pre-check is needed: a
 # current/newer daemon is left alone, an older one (after cc-up) is replaced, and a
 # losing racer exits 0 without disturbing the incumbent.
-nohup "$script" ensure >>"$mdir/peer-lan.log" 2>&1 &
+nohup "$CREDO_PYTHON" "$script" ensure >>"$mdir/peer-lan.log" 2>&1 &
 disown 2>/dev/null || true
 
 # WSL only: refresh the Windows portproxy so the just-started daemon is reachable from

@@ -16,6 +16,12 @@
 # credo-worktree-setup.sh>, hydra=<hydra plugin dir or empty>.
 # Exit codes: 0 always, 1 bad arguments.
 
+# python3 by name is missing or only the Store alias stub on native Windows: resolve the
+# interpreter once (../hooks/credo-python-lib.sh; unchanged python3 elsewhere).
+# shellcheck source-path=SCRIPTDIR source=../hooks/credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../hooks/credo-python-lib.sh" 2>/dev/null && credo_python_cmd
+: "${CREDO_PYTHON:=python3}"
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,7 +45,7 @@ find_hydra_dir() {
     fi
     local cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" d
     {
-        python3 - "$cfg/plugins/installed_plugins.json" 2>/dev/null <<'PY' || true
+        "$CREDO_PYTHON" - "$cfg/plugins/installed_plugins.json" 2>/dev/null <<'PY' || true
 import json, sys
 try:
     data = json.load(open(sys.argv[1]))
@@ -79,7 +85,7 @@ if [ -n "$HYDRA" ] && [ -f "$HYDRA/scripts/worktree-setup.sh" ]; then
 fi
 
 if [ "$MODE" = "json" ]; then
-    FLOW="$FLOW" REASON="$REASON" SETUP="$SETUP" HYDRA="$HYDRA" python3 -c '
+    FLOW="$FLOW" REASON="$REASON" SETUP="$SETUP" HYDRA="$HYDRA" "$CREDO_PYTHON" -c '
 import json, os
 print(json.dumps({"flow": os.environ["FLOW"], "reason": os.environ["REASON"],
                   "setup": os.environ["SETUP"], "hydra": os.environ["HYDRA"] or None}))'

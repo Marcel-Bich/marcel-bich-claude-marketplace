@@ -40,6 +40,8 @@ set -u
 
 MODE="${1:-}"
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || exit 0
+# shellcheck source-path=SCRIPTDIR source=credo-python-lib.sh
+. "$HOOK_DIR/credo-python-lib.sh" 2>/dev/null || credo_python_ready() { return 1; }
 SCRIPTS="$HOOK_DIR/../scripts"
 
 # mirror_maybe_on: exit 0 only when the global or the profile config file holds a non-empty
@@ -60,7 +62,7 @@ mirror_maybe_on() {
 # mirror_command: the configured sink command, empty when off.
 mirror_command() {
     [ -f "$SCRIPTS/credo-config.sh" ] || return 1
-    CREDO_PROJECT=/dev/null CREDO_SKIP_ENSURE=1 bash "$SCRIPTS/credo-config.sh" \
+    CREDO_PROJECT=/dev/null CREDO_SKIP_ENSURE=1 "${BASH:-bash}" "$SCRIPTS/credo-config.sh" \
         get remote.mirror_command 2>/dev/null
 }
 
@@ -105,10 +107,10 @@ mirror_mark() {
 run_sink() {
     local cmd="$1" json="$2" t="${CREDO_REMOTE_MIRROR_TIMEOUT:-5}" p w
     if command -v timeout >/dev/null 2>&1; then
-        timeout "$t" bash -c "$cmd" <<<"$json" >/dev/null 2>&1
+        timeout "$t" "${BASH:-bash}" -c "$cmd" <<<"$json" >/dev/null 2>&1
         return 0
     fi
-    bash -c "$cmd" <<<"$json" >/dev/null 2>&1 &
+    "${BASH:-bash}" -c "$cmd" <<<"$json" >/dev/null 2>&1 &
     p=$!
     ( sleep "$t"; kill "$p" 2>/dev/null ) >/dev/null 2>&1 &
     w=$!
@@ -199,8 +201,8 @@ PERM_SRC_DEF='def src: (.tool_input // {}) as $ti | (.tool_name // "") as $tn
 sha256_hex() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum | awk '{ print $1 }'
-    elif command -v python3 >/dev/null 2>&1; then
-        python3 -I -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())' 2>/dev/null
+    elif credo_python_ready; then
+        "$CREDO_PYTHON" -I -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())' 2>/dev/null
     fi
 }
 
@@ -418,7 +420,7 @@ stop_events() {
 idle_minutes() {
     local v="${CREDO_REMOTE_MIRROR_IDLE_MINUTES:-}"
     if [ -z "$v" ] && [ -f "$SCRIPTS/credo-config.sh" ]; then
-        v="$(CREDO_PROJECT=/dev/null CREDO_SKIP_ENSURE=1 bash "$SCRIPTS/credo-config.sh" \
+        v="$(CREDO_PROJECT=/dev/null CREDO_SKIP_ENSURE=1 "${BASH:-bash}" "$SCRIPTS/credo-config.sh" \
             get remote.mirror_idle_minutes 2>/dev/null)"
     fi
     case "$v" in ""|*[!0-9]*) v=10 ;; esac

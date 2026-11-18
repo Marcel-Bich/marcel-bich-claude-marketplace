@@ -179,9 +179,12 @@ def open_own_file(path, uid=None, private=False):
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
             raise UnsafeFile("not a regular file")
-        if info.st_uid != (os.geteuid() if uid is None else uid):
+        # Native Windows has no uids or POSIX modes in os.stat (st_uid 0, mode 0o666);
+        # there the per-user profile ACL is the boundary, so these two checks are POSIX only.
+        posix = hasattr(os, "geteuid")
+        if posix and info.st_uid != (os.geteuid() if uid is None else uid):
             raise UnsafeFile("owned by uid %d, not by this user" % info.st_uid)
-        if private and info.st_mode & 0o022:
+        if posix and private and info.st_mode & 0o022:
             raise UnsafeFile("writable by group or others (mode %o)" % stat.S_IMODE(info.st_mode))
     except BaseException:
         os.close(fd)
@@ -437,7 +440,8 @@ class Snapshot:
                     info = os.lstat(path)
                 except OSError:
                     continue
-                if stat.S_ISSOCK(info.st_mode) and info.st_uid == os.geteuid():
+                if (stat.S_ISSOCK(info.st_mode) and hasattr(os, "geteuid")
+                        and info.st_uid == os.geteuid()):
                     found.append("unix:" + path)
         seen = []
         for addr in found:

@@ -53,7 +53,7 @@ HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || exit 0
 PRESET="$HOOK_DIR/../scripts/credo-preset.sh"
 [[ -f "$PRESET" ]] || exit 0
 
-show=$(bash "$PRESET" show 2>/dev/null) || exit 0
+show=$("${BASH:-bash}" "$PRESET" show 2>/dev/null) || exit 0
 
 # One pass over the show output. Lines: preset <name>; stage <role> <model id>
 # <effort> <attempts>; back <role>. Header and prompt lines do not match.

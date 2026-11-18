@@ -2,7 +2,7 @@
 
 Credo (Latin: "I believe") is the mentor framework for Claude Code: a self-contained process layer that governs how a whole session runs. It turns a loose set of good habits into an enforced, project-local workflow: a per-session working mode, a work-item lifecycle with a hard Definition of Done, budget-aware autonomy, visual verification, and safety rules that travel into every subagent.
 
-It is opinionated by design and stands alone. Three external touchpoints are documented honestly below: the `limit` plugin (recommended prerequisite for a few features), `tmux` (strongly recommended, needed by the self-compact and self-reload commands) and `ntfy` (optional push notifications). Everything else lives inside this plugin.
+It is opinionated by design and stands alone. It requires `python3` (stdlib only, see [Requirements](#requirements)). Three external touchpoints are documented honestly below: the `limit` plugin (recommended prerequisite for a few features), `tmux` (strongly recommended, needed by the self-compact and self-reload commands) and `ntfy` (optional push notifications). Everything else lives inside this plugin.
 
 ## What credo is
 
@@ -512,6 +512,13 @@ Set `remote.mirror_command` in the global or profile config to a shell command. 
 Before anything is sent, every string of the event is masked (`hooks/credo-remote-mirror-redact.jq`, rules in its header): PEM private key bodies (the BEGIN and END lines stay, the body becomes `***`; without an END line the body is masked to the end), auth headers and Bearer tokens, `NAME=value`, `NAME = value` and `NAME: value` for token, secret, password, key and credential names, `--password`, `--token` and similar flag values, `-p` values of mysql, psql, sshpass, mongo and redis-cli, `user:password@` in URLs, provider token prefixes (`ghp_`, `github_pat_`, `xox*-`, `sk-`), and runs of 32 or more letters and digits (hashes, base64 secrets). A masked part shows as `***`. The `sha256` field is set by the hook and is not masked. Known trade-off: a full 40-character commit hash is masked too. If the masking fails, nothing is sent.
 
 Every event carries `type`, `session_id`, `cwd`, `ts` (UTC) and its own fields (ask and permission events add `subagent`, and `agent_type` when set); no status or veto events are ever sent (a block's `text` can quote the lines below a blocker, which may include a status line or the open-codes footer), and the only digest is `sha256` of a cut permission command. The same open question is sent once per session (Ask by `tool_use_id`, codes by code, a blocker by its Blocker line, a permission prompt once per 10 minutes). The hooks never print a decision, never block and always exit 0; a failing sink is ignored. Test: `scripts/test-credo-remote-mirror.sh`.
+
+## Requirements
+
+- **`python3`** (3.x, stdlib only) - credo's hooks and helper scripts are Python. Install: `sudo apt install python3` (or `dnf`, `pacman -S python`, `zypper`), `brew install python` on macOS. On native Windows: `python` from python.org or `winget install Python.Python.3.12`; the `py` launcher also works (python.org ships no `python3.exe`, so credo tries `python3`, then `python`, then `py -3`). The Microsoft Store alias stub (`python3`/`python` under `WindowsApps`, which only prints "Python was not found") does not count; turn off its App Execution Aliases in the Windows settings (Apps, Advanced app settings, App execution aliases).
+- **`jq`** - like every plugin of this marketplace.
+
+How credo finds Python: every Python hook starts each candidate once (`hooks/credo-python-lib.sh`) and accepts only one that reports Python 3; the three direct ledger entries run through the launcher `hooks/credo-py.sh`. Without a working Python 3 the hooks that need it are skipped (they never block) and each session shows ONE message `credo needs python3 ... Install: <command for this platform>`. `/credo:setup` (Step 1b) detects a missing Python or the Store stub, shows the install command and runs it only after your explicit yes. A native Windows Python counts as present; the POSIX-only parts (provenance ledger, cleanup helper, LAN relay) stay off there and exit 0.
 
 ## Dependencies
 

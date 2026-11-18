@@ -49,6 +49,12 @@
 #                              default profile pins to _.claude.json.
 #   CREDO_BUDGET_MAX_AGE_SECONDS  staleness threshold in seconds (default 300)
 
+# python3 by name is missing or only the Store alias stub on native Windows: resolve the
+# interpreter once (../hooks/credo-python-lib.sh; unchanged python3 elsewhere).
+# shellcheck source-path=SCRIPTDIR source=../hooks/credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../hooks/credo-python-lib.sh" 2>/dev/null && credo_python_cmd
+: "${CREDO_PYTHON:=python3}"
+
 set -euo pipefail
 
 # Resolve the cache glob. Precedence:
@@ -67,6 +73,14 @@ else
     GLOB="/tmp/claude-mb-limit-cache_$(basename "${CLAUDE_CONFIG_DIR:-$HOME/.claude}").json"
 fi
 MAX_AGE="${CREDO_BUDGET_MAX_AGE_SECONDS:-300}"
+# Native Windows (Git Bash): the Python below is a Windows program and does not know the
+# MSYS /tmp; hand it the Windows form of the path (cygpath -m keeps the glob characters).
+case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*)
+        if command -v cygpath >/dev/null 2>&1; then
+            GLOB="$(cygpath -m "$GLOB" 2>/dev/null || printf '%s' "$GLOB")"
+        fi ;;
+esac
 
 MODE="${1:-kv}"
 case "$MODE" in
@@ -77,7 +91,7 @@ esac
 
 CREDO_LIMIT_CACHE_GLOB="$GLOB" CREDO_BUDGET_MAX_AGE_SECONDS="$MAX_AGE" \
 CREDO_BUDGET_GLOB_EXPLICIT="$GLOB_EXPLICIT" \
-CREDO_BUDGET_MODE="$MODE" python3 - <<'PY'
+CREDO_BUDGET_MODE="$MODE" "$CREDO_PYTHON" - <<'PY'
 import glob
 import json
 import os

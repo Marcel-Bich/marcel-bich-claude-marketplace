@@ -35,6 +35,12 @@
 # Exit codes: 0 ok, 2 usage error (unknown role or command, bad attempt, bad --field).
 # The helper is read-only: it never writes config or state.
 
+# python3 by name is missing or only the Store alias stub on native Windows: resolve the
+# interpreter once (../hooks/credo-python-lib.sh; unchanged python3 elsewhere).
+# shellcheck source-path=SCRIPTDIR source=../hooks/credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../hooks/credo-python-lib.sh" 2>/dev/null && credo_python_cmd
+: "${CREDO_PYTHON:=python3}"
+
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -82,7 +88,7 @@ CREDO_BUILTIN_PRESETS_JSON="$(CREDO_GLOBAL=/nonexistent CREDO_PROFILE=/nonexiste
     "$CFG" get presets 2>/dev/null)" || CREDO_BUILTIN_PRESETS_JSON="{}"
 export CREDO_PRESETS_JSON CREDO_ACTIVE_RAW CREDO_BUILTIN_PRESETS_JSON
 
-exec python3 -I - "$FIELD" "${ARGS[@]}" <<'PY'
+exec "$CREDO_PYTHON" -I - "$FIELD" "${ARGS[@]}" <<'PY'
 import json
 import os
 import sys

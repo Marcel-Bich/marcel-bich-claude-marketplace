@@ -27,18 +27,27 @@ Everything here fails soft: callers catch exceptions; a hook never blocks on an 
 """
 import ctypes
 import ctypes.util
-import fcntl
 import glob
 import json
 import os
-import pwd
 import re
 import stat
 import subprocess
 import sys
 import time
 
+# pwd is POSIX only; importing this file must never crash on a native Windows Python.
+try:
+    import pwd
+except ImportError:
+    pwd = None
+
 HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import credo_lock  # noqa: E402
+import credo_platform  # noqa: E402
+
 # Claude Code session ids are UUIDs; nothing else is accepted, so an id can never name or escape
 # a directory (no "..", no "/", no ordinary folder names)
 SID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -62,7 +71,7 @@ def home():
     if not h:
         try:
             h = pwd.getpwuid(os.getuid()).pw_dir
-        except KeyError:
+        except (KeyError, AttributeError):
             h = os.path.expanduser("~")
     return os.path.realpath(h)
 
@@ -198,7 +207,7 @@ def kind_of(st):
 
 
 class Locked:
-    """Exclusive flock on <file>.lock for the duration of a with block."""
+    """Exclusive lock (credo_lock: flock / msvcrt) on <file>.lock for a with block."""
 
     def __init__(self, path):
         self.path = path + ".lock"
@@ -207,12 +216,12 @@ class Locked:
     def __enter__(self):
         ensure_dir(os.path.dirname(self.path))
         self.fh = open(self.path, "a")
-        fcntl.flock(self.fh, fcntl.LOCK_EX)
+        credo_lock.lock(self.fh)
         return self
 
     def __exit__(self, *exc):
         try:
-            fcntl.flock(self.fh, fcntl.LOCK_UN)
+            credo_lock.unlock(self.fh)
         finally:
             self.fh.close()
 
@@ -324,6 +333,8 @@ def profile_dirs():
 
 
 def pid_alive(pid):
+    if os.name == "nt":  # os.kill(pid, 0) would send CTRL_C_EVENT there
+        return credo_platform.pid_alive(pid)
     try:
         os.kill(int(pid), 0)
         return True
@@ -405,7 +416,7 @@ def local_config(timeout=3):
     env["CREDO_SKIP_ENSURE"] = "1"
     env.setdefault("CLAUDE_PLUGIN_ROOT", os.path.dirname(HERE))
     try:
-        out = subprocess.run(["bash", script, "get", "cleanup"], env=env, capture_output=True,
+        out = subprocess.run([credo_platform.bash_exe(), script, "get", "cleanup"], env=env, capture_output=True,
                              text=True, timeout=timeout)
         if out.returncode == 0:
             val = json.loads(out.stdout or "{}")
@@ -895,7 +906,9 @@ def owned_entry(p, st, entries, sid):
 # --------------------------------------------------------------------------- delete
 
 
-_DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+# getattr: O_DIRECTORY / O_NOFOLLOW do not exist on Windows; the module must still import there
+_DIR_FLAGS = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+              | getattr(os, "O_CLOEXEC", 0))
 
 
 def open_dir_nofollow(path):

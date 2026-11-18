@@ -45,14 +45,24 @@ cur_cfg="${cur_cfg%/}"
 cur_sess="$cur_cfg/sessions"
 [ -d "$cur_sess" ] || exit 0
 
-# python3 is required to inject/verify the marker as structured JSON; fail-safe if absent.
-PY="$(command -v python3 2>/dev/null || true)"
-[ -n "$PY" ] || exit 0
+# python3 is required to inject/verify the marker as structured JSON; fail-safe if absent
+# (or only the Windows Store alias stub, see credo-python-lib.sh).
+# shellcheck source-path=SCRIPTDIR source=credo-python-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/credo-python-lib.sh" 2>/dev/null || exit 0
+credo_find_python || exit 0
+PY="$CREDO_PYTHON"
 
 MARK='credoPeerBridge'
 LAN_MARK='credoPeerLan'
 WIN_MARK='credoWinBridge'   # credo-win-bridge.py mirrors, written into every profile itself
-pid_alive() { kill -0 "$1" 2>/dev/null; }
+# Session pids are Windows pids on native Windows (Git Bash): kill -0 only knows MSYS pids
+# there and would call every live session dead, so tasklist decides.
+case "${OSTYPE:-}" in
+  msys*|cygwin*)
+    pid_alive() { tasklist //FI "PID eq $1" //NH 2>/dev/null | tr -d '\r' | grep -Eq "[[:space:]]$1[[:space:]]"; } ;;
+  *)
+    pid_alive() { kill -0 "$1" 2>/dev/null; } ;;
+esac
 
 # Marker check: the marker must be a real top-level JSON key, not just a byte
 # sequence somewhere in the file. grep is a cheap pre-filter; the structural python

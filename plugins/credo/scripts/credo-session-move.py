@@ -156,6 +156,15 @@ class Fail(Exception):
 
 # --- small helpers -------------------------------------------------------------
 
+def _credo_platform():
+    """credo_platform.py next to this file (pid liveness and bash path on native Windows)."""
+    d = os.path.dirname(os.path.abspath(__file__))
+    if d not in sys.path:
+        sys.path.insert(0, d)
+    import credo_platform
+    return credo_platform
+
+
 def has_ctrl(p):
     return any(ord(c) < 32 or ord(c) == 0x7f for c in p)
 
@@ -377,6 +386,8 @@ def alive(pid, tab, mode):
         s = proc_stat(proc_root(), pid)
         if s is not None:
             return s[0] not in ("Z", "X")
+    if os.name == "nt":  # os.kill(pid, 0) would send CTRL_C_EVENT there
+        return _credo_platform().pid_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

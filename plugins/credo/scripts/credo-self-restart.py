@@ -84,7 +84,6 @@ Python 3 stdlib only.
 
 import argparse
 import datetime
-import fcntl
 import glob
 import json
 import os
@@ -96,9 +95,12 @@ import subprocess
 import sys
 import time
 
+
 SCRIPT_PATH = os.path.abspath(__file__)
 SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
 sys.path.insert(0, SCRIPT_DIR)
+import credo_lock  # noqa: E402
+import credo_platform  # noqa: E402
 import credo_pane_guard as pane_guard  # noqa: E402
 import credo_pane_wake as pane_wake  # noqa: E402
 import credo_runtime as runtime  # noqa: E402
@@ -1183,7 +1185,7 @@ def invocation(method, details, launcher, cwd):
         # does not match text left over from the old session
         return pane_guard.tmux_base(details.get("socket")) + ["send-keys", "-t", details["pane"],
                 "clear; bash '%s'" % launcher, "Enter"]
-    inner = ["bash", launcher]
+    inner = [credo_platform.bash_exe(), launcher]
     if details.get("tmux_session"):
         inner = ["tmux", "new-session", "-s", details["tmux_session"], "bash", launcher]
     if method == "wt":
@@ -1206,7 +1208,7 @@ def config_get(key, config_dir, config_explicit):
     else:
         env.pop("CLAUDE_CONFIG_DIR", None)
     try:
-        r = subprocess.run(["bash", sh, "get", key], env=env, capture_output=True,
+        r = subprocess.run([credo_platform.bash_exe(), sh, "get", key], env=env, capture_output=True,
                            text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
         return None
@@ -1521,6 +1523,7 @@ class Cancelled(Exception):
     pass
 
 
+
 class MarkerLock(object):
     """Exclusive flock serializing the pending -> cancelled / pending -> stopping
     transitions between `cancel` and the worker."""
@@ -1532,12 +1535,12 @@ class MarkerLock(object):
     def __enter__(self):
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         self.fh = open(self.path, "a")
-        fcntl.flock(self.fh, fcntl.LOCK_EX)
+        credo_lock.lock(self.fh)
         return self
 
     def __exit__(self, *_):
         try:
-            fcntl.flock(self.fh, fcntl.LOCK_UN)
+            credo_lock.unlock(self.fh)
         finally:
             self.fh.close()
         return False

@@ -79,6 +79,7 @@ SCRIPT_PATH = os.path.abspath(__file__)
 SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
 sys.path.insert(0, SCRIPT_DIR)
 import credo_pane_guard as guard  # noqa: E402
+import credo_platform  # noqa: E402
 import credo_pane_wake as wk  # noqa: E402
 
 
@@ -244,7 +245,7 @@ def config_get(key, sid, cwd):
     env = dict(os.environ)
     env["CREDO_SESSION_ID"] = sid
     try:
-        r = subprocess.run(["bash", config_script(), "get", key], env=env,
+        r = subprocess.run([credo_platform.bash_exe(), config_script(), "get", key], env=env,
                            cwd=cwd if os.path.isdir(cwd) else "/", capture_output=True,
                            text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):

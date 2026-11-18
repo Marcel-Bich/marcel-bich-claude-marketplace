@@ -13,7 +13,9 @@ case "${CREDO_SESSION_REGISTRY:-1}" in
     0|false|no|off) exit 0 ;;
 esac
 
-command -v python3 >/dev/null 2>&1 || exit 0
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || exit 0
-python3 "$HOOK_DIR/../scripts/credo-session-registry.py" record >/dev/null 2>&1
+# shellcheck source-path=SCRIPTDIR source=credo-python-lib.sh
+. "$HOOK_DIR/credo-python-lib.sh" 2>/dev/null || exit 0
+credo_find_python || exit 0
+"$CREDO_PYTHON" "$HOOK_DIR/../scripts/credo-session-registry.py" record >/dev/null 2>&1
 exit 0
