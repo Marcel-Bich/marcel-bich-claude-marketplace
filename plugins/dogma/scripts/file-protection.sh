@@ -27,6 +27,8 @@ trap 'exit 0' ERR
 # Load shared permissions library
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib-permissions.sh"
+# shellcheck source=lib-python.sh
+. "$SCRIPT_DIR/lib-python.sh"
 
 # === JSON OUTPUT FOR BLOCKING ===
 # Claude Code expects JSON with permissionDecision
@@ -158,7 +160,7 @@ HEADER
     output_deny "$REASON_MSG"
 }
 
-# === SHELL-AWARE CHECK (python3) ===
+# === SHELL-AWARE CHECK (POSIX Python 3, lib-python.sh) ===
 # bash-guard.py finds deletes and data-destroying commands however they are written
 # (wrappers, quoting, nested shells, git reset --hard, archive/sync source deletion,
 # inline interpreter code ...) together with the directories they run in. Two groups are
@@ -220,7 +222,8 @@ if [ "$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)" = "Bash" ] && 
     # allowed, whatever the delete setting; anything unsure keeps the setting below (delete-guard.py).
     # Discards get no temp-root exemption: they always follow their own setting.
     EVENT_CWD="$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)"
-    if [ "$DELETE_ENTRIES" != "[]" ] && [ "$(printf '{"deletes": %s}' "$DELETE_ENTRIES" | python3 -I "$SCRIPT_DIR/delete-guard.py" --temp-only "$EVENT_CWD" 2>/dev/null)" = "temp" ]; then
+    # (the same POSIX Python 3 that produced the findings, see dogma_bash_findings)
+    if [ "$DELETE_ENTRIES" != "[]" ] && dogma_find_python && [ "$(printf '{"deletes": %s}' "$DELETE_ENTRIES" | dogma_python -I "$SCRIPT_DIR/delete-guard.py" --temp-only "$EVENT_CWD" 2>/dev/null)" = "temp" ]; then
         DELETE_ENTRIES="[]"
     fi
     decide_group "$DELETE_ENTRIES" "§0lgy|delete files" deny
@@ -248,7 +251,7 @@ if [ "$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)" = "Bash" ] && 
     report_delete
 fi
 
-# === CHECK PERMISSIONS (text fallback without python3) ===
+# === CHECK PERMISSIONS (text fallback without a POSIX Python 3) ===
 # Target of the command (`cd <dir> && rm ...`, `git -C <dir> clean`) > credo pinned
 # project > $PWD; missing settings inherited from the session folder's file
 TARGET_DIR=$(dogma_target_from_command "$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)") || TARGET_DIR=""

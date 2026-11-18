@@ -24,6 +24,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib-permissions.sh
 source "$SCRIPT_DIR/lib-permissions.sh"
+# Python 3 by any name (python3, python, py -3); only text parsing here, so a native
+# Windows Python is fine too
+# shellcheck source=lib-python.sh
+. "$SCRIPT_DIR/lib-python.sh"
+dogma_find_python --native-ok || true
 
 MODE="kv"
 if [ "${1:-}" = "--json" ]; then
@@ -44,7 +49,7 @@ load_permissions "$TARGET" || exit 4
 FILE="$PERMS_FILE"
 
 printf '%s\n' "$PERMS_SECTION" | MODE="$MODE" FILE="$FILE" INHERIT_FILE="$DOGMA_INHERIT_FILE" \
-    INHERIT_SECTION="$DOGMA_INHERIT_SECTION" python3 -c '
+    INHERIT_SECTION="$DOGMA_INHERIT_SECTION" dogma_python -c '
 import json, os, re, sys
 
 ID = re.compile(r"\(§([0-9a-z]{4})\)")

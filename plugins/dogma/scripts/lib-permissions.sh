@@ -727,16 +727,20 @@ EOF
 # bash-guard.py normalises a Bash command like a shell (quoting, variables, wrappers,
 # nested shells, substitutions, heredocs, cd tracking) and reports the deletes,
 # package installs and git add/commit/push it contains, each with the directories it
-# runs in. Hooks use these findings instead of text patterns when python3 exists.
+# runs in. Hooks use these findings instead of text patterns when a POSIX Python 3 exists.
 
-# Print the findings JSON for a hook input; returns 1 (prints nothing) without python3
-# or when the analysis failed (callers then fall back to their text patterns).
+# Print the findings JSON for a hook input; returns 1 (prints nothing) without a POSIX
+# Python 3 (lib-python.sh: no Store stub, no native Windows Python, whose path semantics
+# turned "2>/dev/null" into an overwrite of C:\dev\null) or when the analysis failed
+# (callers then fall back to their text patterns).
 # Usage: dogma_bash_findings "$INPUT"
 dogma_bash_findings() {
-    command -v python3 >/dev/null 2>&1 || return 1
     local here out
     here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    out="$(printf '%s' "$1" | python3 -I "$here/bash-guard.py" --findings 2>/dev/null)" || return 1
+    # shellcheck source=lib-python.sh
+    . "$here/lib-python.sh"
+    dogma_find_python || return 1
+    out="$(printf '%s' "$1" | dogma_python -I "$here/bash-guard.py" --findings 2>/dev/null)" || return 1
     [ -n "$out" ] || return 1
     printf '%s\n' "$out"
 }

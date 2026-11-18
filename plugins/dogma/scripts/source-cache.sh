@@ -51,6 +51,11 @@ SOURCE="${CLAUDE_MB_DOGMA_SOURCE:-}"
 STATE_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/dogma/source-cache"
 DAY=86400
 FETCH_TIMEOUT=15
+# Python 3 by any name (python3, python, py -3); only text parsing here, so a native
+# Windows Python is fine too
+# shellcheck source=lib-python.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-python.sh"
+dogma_find_python --native-ok || true
 
 # --- helpers ---
 
@@ -59,8 +64,8 @@ sha256_hex() {
         printf '%s' "$1" | sha256sum | cut -c1-64
     elif command -v shasum >/dev/null 2>&1; then
         printf '%s' "$1" | shasum -a 256 | cut -c1-64
-    elif command -v python3 >/dev/null 2>&1; then
-        printf '%s' "$1" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+    elif [ -n "$DOGMA_PYTHON" ]; then
+        printf '%s' "$1" | dogma_python -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
     else
         return 1
     fi
@@ -275,8 +280,8 @@ is_unreachable() {
 
 # NOTICES.md -> TSV id, action, date, text (entries within the max age, id-first)
 parse_notices_md() {
-    command -v python3 >/dev/null 2>&1 || return 1
-    python3 - "$1" "${CLAUDE_MB_DOGMA_NOTICES_MAX_AGE_DAYS:-90}" <<'PY'
+    [ -n "$DOGMA_PYTHON" ] || return 1
+    dogma_python - "$1" "${CLAUDE_MB_DOGMA_NOTICES_MAX_AGE_DAYS:-90}" <<'PY'
 import datetime, re, sys
 
 path, max_age = sys.argv[1], sys.argv[2]

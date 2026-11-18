@@ -26,15 +26,18 @@ fi
 
 [ "${CLAUDE_MB_DOGMA_ENABLED:-true}" = "true" ] || exit 0
 [ "${CLAUDE_MB_DOGMA_NOTICES:-true}" = "true" ] || exit 0
-command -v python3 >/dev/null 2>&1 || exit 0
-
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# Python 3 by any name (python3, python, py -3; python.org on Windows ships no python3.exe);
+# only JSON and text handling here, so a native Windows Python is fine too
+# shellcheck source=../scripts/lib-python.sh
+. "$PLUGIN_ROOT/scripts/lib-python.sh" 2>/dev/null || exit 0
+dogma_find_python --native-ok || exit 0
 SCRIPT="$PLUGIN_ROOT/scripts/notices-pending.sh"
 [ -x "$SCRIPT" ] || exit 0
 
 # hook stdin carries the session cwd; fall back to $PWD
 INPUT="$(cat 2>/dev/null || true)"
-CWD="$(printf '%s' "$INPUT" | python3 -c '
+CWD="$(printf '%s' "$INPUT" | dogma_python -c '
 import json, sys
 try:
     print(json.load(sys.stdin).get("cwd") or "")
@@ -44,7 +47,7 @@ except Exception:
 [ -n "$CWD" ] && [ -d "$CWD" ] || CWD="$PWD"
 # session id for the credo pin lookup (a session started in a folder outside any repo
 # gets the notices of its credo pinned project, see notices-pending.sh)
-DOGMA_SESSION_ID="$(printf '%s' "$INPUT" | python3 -c '
+DOGMA_SESSION_ID="$(printf '%s' "$INPUT" | dogma_python -c '
 import json, re, sys
 try:
     sid = json.load(sys.stdin).get("session_id") or ""
@@ -57,7 +60,7 @@ export DOGMA_SESSION_ID
 PENDING="$("$SCRIPT" --json --hint "$CWD" 2>/dev/null)" || exit 0
 [ -n "$PENDING" ] || exit 0
 
-printf '%s' "$PENDING" | SCRIPT="$SCRIPT" CWD="$CWD" python3 -c '
+printf '%s' "$PENDING" | SCRIPT="$SCRIPT" CWD="$CWD" dogma_python -c '
 import json, os, shlex, sys
 
 data = json.load(sys.stdin)

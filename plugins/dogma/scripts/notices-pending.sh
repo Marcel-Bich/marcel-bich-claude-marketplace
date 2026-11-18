@@ -48,12 +48,17 @@
 # Exit codes: listing 0 = notices (or a hint) printed, 4 = none pending, no dogma
 # context, or any error (silent, fail safe). mark: 0 = marked, 1 = bad argument /
 # unknown id, 4 = no dogma context or state not writable.
-# Needs python3 or jq (source notices need python3).
+# Needs Python 3 or jq (source notices need Python 3).
 
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NOTICES_FILE="$PLUGIN_ROOT/notices.json"
 SOURCE_CACHE="$PLUGIN_ROOT/scripts/source-cache.sh"
 SEEN_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/dogma/notices-seen"
+# Python 3 by any name (python3, python, py -3); only JSON and text parsing here, so a
+# native Windows Python is fine too
+# shellcheck source=lib-python.sh
+. "$PLUGIN_ROOT/scripts/lib-python.sh"
+dogma_find_python --native-ok || true
 
 # --- helpers ---
 
@@ -77,8 +82,8 @@ sha256_hex() {
         printf '%s' "$1" | sha256sum | cut -c1-64
     elif command -v shasum >/dev/null 2>&1; then
         printf '%s' "$1" | shasum -a 256 | cut -c1-64
-    elif command -v python3 >/dev/null 2>&1; then
-        printf '%s' "$1" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+    elif [ -n "$DOGMA_PYTHON" ]; then
+        printf '%s' "$1" | dogma_python -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
     else
         return 1
     fi
@@ -88,8 +93,8 @@ sha256_hex() {
 # (tabs and newlines inside values become spaces)
 parse_notices() {
     [ -f "$NOTICES_FILE" ] || return 1
-    if command -v python3 >/dev/null 2>&1; then
-        python3 -c '
+    if [ -n "$DOGMA_PYTHON" ]; then
+        dogma_python -c '
 import json, sys
 def clean(v):
     return " ".join(str(v if v is not None else "").split())
@@ -110,8 +115,8 @@ for n in json.load(open(sys.argv[1], encoding="utf-8")):
 # TSV lines (id, action, kind, text) on stdin -> JSON object on stdout
 emit_json() {
     local repo="$1" hint="$2"
-    if command -v python3 >/dev/null 2>&1; then
-        python3 -c '
+    if [ -n "$DOGMA_PYTHON" ]; then
+        dogma_python -c '
 import json, sys
 out = []
 for line in sys.stdin.read().splitlines():

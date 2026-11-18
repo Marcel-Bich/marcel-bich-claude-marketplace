@@ -205,6 +205,10 @@ HEREDOC_RE = re.compile(r"__DOGMA_HEREDOC_(\d+)__")
 CONT_RE = re.compile(r"\\\r?\n")  # a line continuation: backslash, newline
 # the standard streams are no files: a redirect onto them is not resolved (realpath leads to /proc/<pid>/fd/...)
 STREAM_TARGET_RE = re.compile(r"^/dev/(?:stdin|stdout|stderr|fd/\d+)$")
+# Redirect targets that are never a file to protect, compared as the literal word (after quote
+# removal), so no path resolution can turn them into one (a native Windows Python resolved
+# /dev/null to C:\dev\null). "/dev//null" or "x/../dev/null" are not literal and stay checked.
+NULL_REDIRECT_TARGETS = frozenset({"/dev/null"})
 # text that can redefine cat, tee or an interpreter in the running shell: a function, an alias, hash, enable,
 # builtin, a changed PATH, a sourced file (a heredoc body is data only when these words are the real ones)
 SHADOW_RE = re.compile(
@@ -2003,9 +2007,9 @@ class Analysis:
             if operator in ("<", "<&", "<>"):
                 self.check_path(target, directories, "read", force=True)
             if operator.startswith((">", "&>")) or operator == "<>":
+                if target in NULL_REDIRECT_TARGETS or STREAM_TARGET_RE.match(target):
+                    continue  # /dev/null, /dev/stdout and friends: no file, nothing to protect (nor to remember)
                 self.check_path(target, directories, "write", force=True)
-                if STREAM_TARGET_RE.match(target):
-                    continue  # /dev/stdout and friends: no file, nothing to protect (nor to remember)
                 self.remember_written(target, directories)
                 self.critical_target(target, directories, ">>" in operator)
                 if ">>" not in operator:
@@ -4180,6 +4184,11 @@ def findings(analysis, cwd):
 
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
+    if os.name != "posix":
+        # The analysis models POSIX paths (/, ~, /tmp, /dev/null); a native Windows Python resolves them to
+        # C:\ paths. No verdict here: the hooks treat this as "no Python" (lib-python.sh) and use their text rules.
+        sys.stderr.write("dogma: bash-guard.py needs a POSIX Python (os.name %s)\n" % os.name)
+        sys.exit(3)
     try:
         event = json.load(sys.stdin)
     except (ValueError, OSError):

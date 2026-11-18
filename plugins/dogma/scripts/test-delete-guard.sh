@@ -685,5 +685,78 @@ if grep -nE "process\.run\(\[\`\\$\{\\$\.plugin\.root\}" "$HERE/../hooks/band.ts
     FAIL=$((FAIL + 1)); echo "FAIL band.tsx runs a script by its path (System32 bash trap on Windows)"
 else PASS=$((PASS + 1)); fi
 
+# --- native Windows (#190): a python.org Python (python.exe and py.exe, no python3.exe, os.name nt)
+# ran bash-guard.py --findings through file-protection.sh, which resolved "2>/dev/null" to
+# C:\dev\null and refused it as an overwrite of a protected path. The guards take only a POSIX
+# Python; without one their text rules decide: /dev/null and the streams pass, protected writes
+# and deletes stay blocked.
+FP_HOOK="$HERE/file-protection.sh"
+run_hook_win() { # <stub dir> <hook> <command> -> deny/allow
+    local out
+    out="$(jq -n --arg c "$3" --arg d "$T" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+        PATH="$WIN/$1:$PATH" HOME="$FH" CLAUDE_MB_DOGMA_ENABLED=true bash "$2" 2>/dev/null)"
+    case "$out" in *'"deny"'*) echo deny ;; *) echo allow ;; esac
+}
+for d in native store; do
+    for c in "grep x f 2>/dev/null" "grep x f >/dev/null 2>&1" "ls &>/dev/null" "ls 1>/dev/stdout 2>/dev/stderr" \
+             "ls >&2" "echo x > out.txt" "echo x > /tmp/acme/out.txt" "echo x >> ~/proj/out.txt" \
+             "make 2>&1 | tee build.log" "echo x > \"\$OUT\"" "echo x > /c/Users/me/workspace/proj/.bench/x.log" \
+             "echo x > /mnt/c/somewhere/project/out.txt" "echo x > /c/Users/me/AppData/Local/Temp/a/b.txt"; do
+        expect_win allow "$d" "$c"
+        got="$(run_hook_win "$d" "$FP_HOOK" "$c")"
+        if [ "$got" = allow ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL file-protection win/$d: $c"; fi
+    done
+    for c in "echo hi > /etc/passwd" "echo x >> ~/.bashrc" "echo x > ~" "echo x > \$HOME/.profile" "echo x > ~/notes.txt" \
+             "echo x | tee -a ~/.ssh/authorized_keys" "echo x > /c/Windows/System32/drivers/etc/hosts" \
+             "echo x > 'C:\\Windows\\win.ini'" "echo x > C:/Users/me/.gitconfig" "echo x > /c/Users/me/AppData/Roaming/a/b.txt" \
+             "echo x > /dev/sda" "echo x > /home/someone/.bashrc" "echo x > /mnt/c/Users/me/NTUSER.DAT" "echo x > /usr/local/bin/x"; do
+        expect_win deny "$d" "$c" "protected path"
+    done
+    expect_win deny "$d" "rm -rf /tmp/x"
+    expect_win deny "$d" "rm -rf ~"
+done
+# a POSIX Python sees the same: literal /dev/null and the streams are no protected targets
+for c in "grep x f 2>/dev/null" "grep x f >/dev/null 2>&1" "ls 1>/dev/stdout 2>/dev/stderr" ": > /dev/null"; do
+    expect allow "$T" "$c"
+done
+expect deny "$T" "echo hi > /etc/passwd"
+expect deny "$T" "echo x > /dev/sda"
+# lib-python.sh: python3 -> python -> py -3; a native Python only where the caller allows it
+LP="$WIN/lp"
+mkdir -p "$LP/pyonly" "$LP/ntonly"
+printf '#!/bin/sh\n[ "$1" = "-3" ] || exit 9\nshift\nexec "%s" "$@"\n' "$(command -v python3)" >"$LP/pyonly/py"   # the py launcher
+printf '#!/bin/sh\ncat >/dev/null\nprintf "dogma-python 3 nt\\r\\n"\n' >"$LP/ntonly/python"
+chmod +x "$LP/pyonly/py" "$LP/ntonly/python"
+lp_probe() { # <PATH> <args...> -> "<cmd words>|<os>|<rc>"
+    local path="$1"
+    shift
+    PATH="$path" bash -c '. "$1"; shift; dogma_find_python "$@"; rc=$?; echo "${DOGMA_PYTHON_CMD[*]}|$DOGMA_PYTHON_OS|$rc"' \
+        _ "$HERE/lib-python.sh" "$@"
+}
+lp_expect() { # want got label
+    if [ "$1" = "$2" ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL lib-python $3: want $1 got $2"; fi
+}
+mkdir -p "$WIN/none"   # a PATH with the tools these probes need, but no python3
+for tool in jq cat tr sh bash; do ln -sf "$(command -v "$tool")" "$WIN/none/$tool"; done
+lp_expect "py -3|posix|0" "$(lp_probe "$LP/pyonly:$WIN/none" )" "py -3 when python3 and python are missing"
+lp_expect "||1" "$(lp_probe "$LP/ntonly:$WIN/none")" "native python refused for the guards"
+lp_expect "python|nt|0" "$(lp_probe "$LP/ntonly:$WIN/none" --native-ok)" "native python accepted for helpers"
+lp_expect "||1" "$(lp_probe "$WIN/store:$WIN/none" --native-ok)" "store stub refused even for helpers"
+# dogma_python turns the CRLF output of a native Python into LF
+got="$(PATH="$LP/ntonly:$WIN/none" bash -c '. "$1"; dogma_find_python --native-ok; dogma_python -c x </dev/null' _ "$HERE/lib-python.sh" | od -c | tr -s ' ' | head -1)"
+case "$got" in *'\r'*) FAIL=$((FAIL + 1)); echo "FAIL dogma_python keeps CR: $got" ;; *) PASS=$((PASS + 1)) ;; esac
+# bash-guard.py itself refuses to judge under a native Windows Python (no verdict, exit 3)
+rc="$(printf '{"tool_name":"Bash","tool_input":{"command":"ls 2>/dev/null"},"cwd":"/tmp"}' |
+    python3 -I -c 'import os, runpy, sys; g = runpy.run_path(sys.argv[1], run_name="bash_guard"); sys.argv = [sys.argv[1], "--findings"]; os.name = "nt"; g["main"]()' \
+    "$HERE/bash-guard.py" >/dev/null 2>&1; echo $?)"
+lp_expect 3 "$rc" "bash-guard.py under os.name nt"
+# no dogma hook or helper calls python3 by name or runs a .py through its shebang
+by_name="$(grep -nE '(^|[^[:alnum:]_./-])python3([[:space:]]|$)' "$HERE"/*.sh "$HERE"/../hooks/*.sh |
+    grep -v '/test-' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -v 'for spec in python3' || true)"
+if [ -z "$by_name" ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL python3 by name: $by_name"; fi
+if grep -nE '"command": *"[^"]*\.py' "$HERE/../hooks/hooks.json" >/dev/null; then
+    FAIL=$((FAIL + 1)); echo "FAIL hooks.json runs a .py through its shebang"
+else PASS=$((PASS + 1)); fi
+
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
