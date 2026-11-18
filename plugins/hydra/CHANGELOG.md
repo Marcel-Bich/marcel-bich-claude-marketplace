@@ -6,6 +6,17 @@ Changelog of the hydra plugin. Newest first. Months group releases; no day dates
 
 ### v0.4
 
+#### v0.4.1
+
+##### Added
+
+- README section "Windows limitations"
+
+##### Fixed
+
+- Every hook command quotes `${CLAUDE_PLUGIN_ROOT}`, so the hooks still run when the plugin root
+  contains a space (for example a Windows profile like `C:\Users\First Last`)
+
 #### v0.4.0
 
 ##### Added
