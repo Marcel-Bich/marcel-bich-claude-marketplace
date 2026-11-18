@@ -757,6 +757,9 @@ function Step-CredoElevSend($Hub, $Send) {
     # one completed stage of a send through the elevated helper
     $t = $Send.Task
     if ($t.IsFaulted -or $t.IsCanceled) {
+        # the helper is gone or broken: forget its last answer, so the next send starts
+        # its task again instead of trusting it for up to 4 more minutes
+        [void]$Hub.Remove('ElevLastOk')
         $err = if ($t.Exception) { $t.Exception.InnerException.Message } else { 'canceled' }
         if ($Send.Stage -eq 'hconnect') {
             $err = 'elevated sender helper not reachable: ' + $err
@@ -886,6 +889,7 @@ function Invoke-CredoHubPoll($Hub) {
         # hard end at the deadline, also for a pending write: the caller (the WSL
         # holder) stops waiting for the verdict soon after it
         if ($now -gt $s.Deadline) {
+            if ($s.Via -eq 'helper') { [void]$Hub.Remove('ElevLastOk') }
             $why = if ($s.LastErr) { ' (last error: ' + $s.LastErr + ')' } else { '' }
             Stop-CredoSend $Hub $s $false ($s.Stage + ' timed out' + $why)
         }

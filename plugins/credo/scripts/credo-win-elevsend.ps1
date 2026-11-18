@@ -172,9 +172,9 @@ function Get-ElevSendPipeServerPid($Client) {
 
 function Get-ElevSendProcessOwnerSid([long]$ProcessId) {
     try {
-        $o = Get-CimInstance Win32_Process -Filter ('ProcessId=' + [long]$ProcessId) -ErrorAction Stop
+        $o = Get-CimInstance Win32_Process -Filter ('ProcessId=' + [long]$ProcessId) -OperationTimeoutSec 2 -ErrorAction Stop
         if ($null -eq $o) { return $null }
-        return [string](Invoke-CimMethod -InputObject $o -MethodName GetOwnerSid -ErrorAction Stop).Sid
+        return [string](Invoke-CimMethod -InputObject $o -MethodName GetOwnerSid -OperationTimeoutSec 2 -ErrorAction Stop).Sid
     } catch { return $null }
 }
 
@@ -225,9 +225,13 @@ function Write-ElevSendLog([string]$Text) {
     if ($null -eq $script:ElevLogDir) { return }
     try {
         $p = Join-Path $script:ElevLogDir 'win-elevsend.log'
-        if ((Test-Path -LiteralPath $p) -and (Get-Item -LiteralPath $p).Length -gt 512KB) {
-            Move-Item -LiteralPath $p -Destination ($p + '.1') -Force
+        if ((Test-Path -LiteralPath $p) -and (Get-Item -LiteralPath $p -Force).Length -gt 512KB) {
+            $old = $p + '.1'
+            # never rotate onto (or through) a junction/symlink planted at the destination
+            if ((Test-Path -LiteralPath $old) -and ((Get-Item -LiteralPath $old -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { return }
+            Move-Item -LiteralPath $p -Destination $old -Force
         }
+        if ((Test-Path -LiteralPath $p) -and ((Get-Item -LiteralPath $p -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { return }
         [System.IO.File]::AppendAllText($p, ((Get-Date).ToString('s') + ' ' + $Text + "`r`n"), $script:ElevUtf8)
     } catch {}
 }
@@ -399,6 +403,13 @@ function Invoke-ElevSendInstall {
     if (Test-Path -LiteralPath $script:ElevInstallDir) {
         if ((Get-Item -LiteralPath $script:ElevInstallDir -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
             throw ($script:ElevInstallDir + ' is a junction/symlink - refusing to install there.')
+        }
+        # nothing inside may redirect either (a planted junction/symlink in place of the
+        # script copy or the log)
+        $bad = @(Get-ChildItem -LiteralPath $script:ElevInstallDir -Force | Where-Object { $_.Attributes -band [System.IO.FileAttributes]::ReparsePoint })
+        if ($bad.Count -gt 0) {
+            throw ($script:ElevInstallDir + ' contains junctions/symlinks (' + (($bad | ForEach-Object { $_.Name }) -join ', ') +
+                   ') - refusing to install there. Remove them and re-run -Install.')
         }
     }
     $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
