@@ -6,6 +6,17 @@ Changelog of the dogma plugin. Newest first. Months group releases; no day dates
 
 ### v1.47
 
+#### v1.47.9
+
+##### Added
+
+- README section "Windows limitations"
+
+##### Fixed
+
+- Every hook command quotes `${CLAUDE_PLUGIN_ROOT}`, so the hooks still run when the plugin root
+  contains a space (for example a Windows profile like `C:\Users\First Last`)
+
 #### v1.47.8
 
 ##### Fixed
