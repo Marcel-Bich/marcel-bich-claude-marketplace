@@ -2,6 +2,37 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-11
 
+## limit
+
+### v2
+
+#### v2.37
+
+##### v2.37.4
+
+###### Fixed
+
+- Native Windows (Git Bash): local token counting works. A native `jq.exe` (e.g. from winget) writes CRLF line ends, and the stray `\r` broke offsets, pending flags, completeness and every number read back from jq; jq now runs with `-b` there (or its `\r` is stripped when the build has no `-b`). The local highscore line and the Est100% samples depend on this
+- Native Windows: `--arg` values that look like paths are no longer rewritten by Git Bash into `C:/...` before jq sees them, so ledger lookups by transcript path and the pruning of deleted transcripts match the stored keys
+- Native Windows: a `transcript_path` in Windows form (`C:\Users\...`) maps to the same ledger entry as its POSIX spelling, so it is not counted twice
+- A `CLAUDE_CONFIG_DIR` with backslashes (`C:\Users\me\.claude-x`) keeps its profile name in every limit script; the combined-statusline setup writes it as `C:/...` into `statusLine.command`
+- Plan detection, the work-repo hooks, the GLM statusline and the refresh-interval hook get the same jq fix on native Windows
+- With jq 1.7 or newer, history entries and the highscore view show `0` / `9` again instead of the literal `0.0` / `9.0`
+
+##### v2.37.3
+
+###### Fixed
+
+- Native Windows (Git Bash): the 5h and weekly figures show again. The usage response is now saved through a command-line path that Git Bash translates; before, the native curl wrote it to the drive root (`C:\tmp`) and the shared cache stayed empty
+- Highscore and token figures no longer need `bc` (missing in Git Bash); they use bash integer math with the same one-decimal truncation
+- Background refresh, ledger scan, plan detection and the provider hand-off start the running bash instead of a `bash` looked up on PATH, which on native Windows can be the WSL launcher (`System32\bash.exe`)
+
+##### v2.37.2
+
+###### Fixed
+
+- A plan without a 5h limit (five_hour.utilization null, weekly only) no longer shows `invalid_response`; the 5h line is left out and the weekly lines render
+
 ## credo
 
 ### v0
@@ -627,26 +658,6 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 ###### Fixed
 
 - Redirect-like text in an unquoted heredoc body of `cat` or `tee` (`see <dogma>/x`, `a>/x`) is no longer denied as a redirect onto a critical path; command substitutions and backticks in the body are still checked
-
-## limit
-
-### v2
-
-#### v2.37
-
-##### v2.37.3
-
-###### Fixed
-
-- Native Windows (Git Bash): the 5h and weekly figures show again. The usage response is now saved through a command-line path that Git Bash translates; before, the native curl wrote it to the drive root (`C:\tmp`) and the shared cache stayed empty
-- Highscore and token figures no longer need `bc` (missing in Git Bash); they use bash integer math with the same one-decimal truncation
-- Background refresh, ledger scan, plan detection and the provider hand-off start the running bash instead of a `bash` looked up on PATH, which on native Windows can be the WSL launcher (`System32\bash.exe`)
-
-##### v2.37.2
-
-###### Fixed
-
-- A plan without a 5h limit (five_hour.utilization null, weekly only) no longer shows `invalid_response`; the 5h line is left out and the weekly lines render
 
 # 2026-10
 
