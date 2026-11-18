@@ -7,6 +7,7 @@
 #   - limit_atomic_write <file>             write stdin to file via mktemp + mv
 #   - limit_read_json <file>                print file only if it is valid JSON
 #   - limit_debug_enabled                   one debug flag for all scripts
+#   - limit_si <int>                        1500000 -> 1.5M (no bc needed)
 #
 # Parallel statusline renders (one per open session, several per second) used to
 # write state with `cat > file`, so a concurrent reader could see an empty or
@@ -160,4 +161,24 @@ backoff_retry_in() {
     local left=$((retry_at - now))
     [[ "$left" -lt 0 ]] && left=0
     echo "$left"
+}
+
+# SI short form of a non-negative integer: k, M, G, T, P, E with one decimal,
+# truncated like `bc` with scale=1 (7560000 -> 7.5M). Pure bash integer math, so
+# it also works where bc is missing (Git Bash on native Windows). Below 1000 the
+# number is printed as is. Bash integers end at 9.2E18, so E is the largest unit.
+limit_si() {
+    local n="$1" div=1000 unit t
+    if (( n < 1000 )); then
+        printf '%d' "$n"
+        return
+    fi
+    for unit in k M G T P E; do
+        if [[ "$unit" == E ]] || (( n < div * 1000 )); then
+            t=$(( n / (div / 10) ))
+            printf '%d.%d%s' $((t / 10)) $((t % 10)) "$unit"
+            return
+        fi
+        div=$((div * 1000))
+    done
 }

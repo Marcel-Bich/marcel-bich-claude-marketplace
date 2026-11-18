@@ -271,7 +271,6 @@ main() {
         printf 'header = "anthropic-beta: oauth-2025-04-20"\n'
         printf 'header = "User-Agent: claude-code-limit-plugin/1.0.0"\n'
         printf 'max-time = %s\n' "$TIMEOUT"
-        printf 'output = "%s"\n' "$body_file"
         printf 'write-out = "%%{http_code}"\n'
         printf 'silent\n'
     } > "$cfg_file"
@@ -286,8 +285,12 @@ main() {
     # http_code is the only thing curl writes to stdout (via write-out). The
     # body is written to body_file. curl stderr is discarded so no header/token
     # detail can leak through diagnostics.
+    # The body path goes on the command line, not into the config: a native
+    # Windows curl (Git Bash) reads the config verbatim, so "/tmp/..." there
+    # lands on the drive root (C:\tmp) while the argument is translated by the
+    # MSYS runtime. The path is not secret; the token stays in the config only.
     local http_code=""
-    http_code=$(curl -sS --config "$cfg_file" 2>/dev/null) || {
+    http_code=$(curl -sS --config "$cfg_file" -o "$body_file" 2>/dev/null) || {
         emit "curl-failed" 5
     }
 

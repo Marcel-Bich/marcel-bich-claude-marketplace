@@ -816,14 +816,17 @@ ledger_scan_all_detached() {
     local self="${_LEDGER_DIR}/usage-ledger.sh"
     local data_dir
     data_dir=$(dirname "$LEDGER_FILE")
+    # "$BASH" (the running shell), never a bare `bash` from PATH: on native
+    # Windows that can be System32\bash.exe, the WSL launcher.
+    local sh="${BASH:-bash}"
     if command -v setsid >/dev/null 2>&1; then
         PLUGIN_DATA_DIR="$data_dir" CLAUDE_PROJECTS_DIR="$CLAUDE_PROJECTS_DIR" \
             CLAUDE_MB_LIMIT_SCAN_BUDGET="${CLAUDE_MB_LIMIT_BG_SCAN_BUDGET:-25}" \
-            setsid bash "$self" scan >/dev/null 2>&1 < /dev/null &
+            setsid "$sh" "$self" scan >/dev/null 2>&1 < /dev/null &
     else
         ( PLUGIN_DATA_DIR="$data_dir" CLAUDE_PROJECTS_DIR="$CLAUDE_PROJECTS_DIR" \
             CLAUDE_MB_LIMIT_SCAN_BUDGET="${CLAUDE_MB_LIMIT_BG_SCAN_BUDGET:-25}" \
-            bash "$self" scan >/dev/null 2>&1 < /dev/null ) &
+            "$sh" "$self" scan >/dev/null 2>&1 < /dev/null ) &
     fi
     disown 2>/dev/null || true
     return 0

@@ -49,6 +49,8 @@ Live API usage in Claude Code statusline - colored progress bars, Git info, toke
 ## Requirements
 
 - `jq` - JSON processor (install: `sudo apt install jq`)
+- `curl` - for the usage refresh
+- Native Windows: runs in Git Bash (as Claude Code does); `bc`, `flock` and `setsid` are not needed. jq can come from winget, curl from Git's mingw64.
 
 ## Installation
 

@@ -36,22 +36,10 @@ format_number() {
     local int_num="${num%.*}"
     [[ -z "$int_num" ]] && int_num=0
 
-    if (( int_num >= 1000000000000000000000000 )); then
-        printf "%.1fY" "$(echo "scale=1; $num / 1000000000000000000000000" | bc)"
-    elif (( int_num >= 1000000000000000000000 )); then
-        printf "%.1fZ" "$(echo "scale=1; $num / 1000000000000000000000" | bc)"
-    elif (( int_num >= 1000000000000000000 )); then
-        printf "%.1fE" "$(echo "scale=1; $num / 1000000000000000000" | bc)"
-    elif (( int_num >= 1000000000000000 )); then
-        printf "%.1fP" "$(echo "scale=1; $num / 1000000000000000" | bc)"
-    elif (( int_num >= 1000000000000 )); then
-        printf "%.1fT" "$(echo "scale=1; $num / 1000000000000" | bc)"
-    elif (( int_num >= 1000000000 )); then
-        printf "%.1fG" "$(echo "scale=1; $num / 1000000000" | bc)"
-    elif (( int_num >= 1000000 )); then
-        printf "%.1fM" "$(echo "scale=1; $num / 1000000" | bc)"
-    elif (( int_num >= 1000 )); then
-        printf "%.1fk" "$(echo "scale=1; $num / 1000" | bc)"
+    # Integer math (state-io.sh), no bc: Git Bash on native Windows has none.
+    # Truncating the decimals first gives the same digit as bc's scale=1.
+    if (( int_num >= 1000 )); then
+        limit_si "$((10#$int_num))"
     else
         echo "$int_num"
     fi
@@ -148,9 +136,9 @@ detect_plan() {
     fi
 
     # Try plan-detect.sh if available
-    if [[ -x "${SCRIPT_DIR}/plan-detect.sh" ]]; then
+    if [[ -f "${SCRIPT_DIR}/plan-detect.sh" ]]; then
         local detected
-        detected=$("${SCRIPT_DIR}/plan-detect.sh" 2>/dev/null) || detected=""
+        detected=$("${BASH:-bash}" "${SCRIPT_DIR}/plan-detect.sh" 2>/dev/null) || detected=""
         if [[ -n "$detected" && "$detected" != "unknown" ]]; then
             echo "$detected"
             return

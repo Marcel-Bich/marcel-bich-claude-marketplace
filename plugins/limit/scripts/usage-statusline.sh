@@ -65,11 +65,14 @@ SCRIPT_DIR_ABS="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
 # (empty base URL or api.anthropic.com) continues unchanged below.
 __provider_base="${ANTHROPIC_BASE_URL:-}"
 if [[ -n "$__provider_base" && "$__provider_base" != *"api.anthropic.com"* ]]; then
-    exec "${SCRIPT_DIR}/zai-statusline.sh"
+    exec "${BASH:-bash}" "${SCRIPT_DIR}/zai-statusline.sh"
 fi
 
 # Plan detection - determine subscription type for plan-specific highscores
-CURRENT_PLAN=$("${SCRIPT_DIR}/plan-detect.sh" 2>/dev/null || echo "unknown")
+# Sibling scripts run through "$BASH" (the running shell), never through their
+# "#!/usr/bin/env bash" shebang: on native Windows a PATH lookup of `bash` can
+# hit System32\bash.exe, the WSL launcher.
+CURRENT_PLAN=$("${BASH:-bash}" "${SCRIPT_DIR}/plan-detect.sh" 2>/dev/null || echo "unknown")
 
 # Shared state primitives (locks, atomic writes, debug flag, backoff, rounding)
 # shellcheck source=state-io.sh
@@ -820,22 +823,9 @@ format_highscore() {
         return
     fi
 
-    if [[ "$tokens" -ge 1000000000000000000000000 ]]; then
-        printf "%.1fY" "$(echo "scale=1; $tokens/1000000000000000000000000" | bc)"
-    elif [[ "$tokens" -ge 1000000000000000000000 ]]; then
-        printf "%.1fZ" "$(echo "scale=1; $tokens/1000000000000000000000" | bc)"
-    elif [[ "$tokens" -ge 1000000000000000000 ]]; then
-        printf "%.1fE" "$(echo "scale=1; $tokens/1000000000000000000" | bc)"
-    elif [[ "$tokens" -ge 1000000000000000 ]]; then
-        printf "%.1fP" "$(echo "scale=1; $tokens/1000000000000000" | bc)"
-    elif [[ "$tokens" -ge 1000000000000 ]]; then
-        printf "%.1fT" "$(echo "scale=1; $tokens/1000000000000" | bc)"
-    elif [[ "$tokens" -ge 1000000000 ]]; then
-        printf "%.1fG" "$(echo "scale=1; $tokens/1000000000" | bc)"
-    elif [[ "$tokens" -ge 1000000 ]]; then
-        printf "%.1fM" "$(echo "scale=1; $tokens/1000000" | bc)"
-    elif [[ "$tokens" -ge 1000 ]]; then
-        printf "%.1fk" "$(echo "scale=1; $tokens/1000" | bc)"
+    # Integer math (state-io.sh), no bc: Git Bash on native Windows has none.
+    if [[ "$tokens" -ge 1000 ]]; then
+        limit_si "$tokens"
     else
         echo "$tokens"
     fi
@@ -2262,7 +2252,7 @@ main() {
         local refresh_status="" refresh_rc=0
         if [[ ! -f "$CACHE_FILE" ]]; then
             # Cold start: synchronous fetch so we have something to show now.
-            refresh_status="$("${SCRIPT_DIR}/refresh-usage.sh" 2>/dev/null)" || refresh_rc=$?
+            refresh_status="$("${BASH:-bash}" "${SCRIPT_DIR}/refresh-usage.sh" 2>/dev/null)" || refresh_rc=$?
         else
             # Warm: consume the previous detached run's status (if any),
             if [[ -f "$REFRESH_STATUS_FILE" ]]; then
@@ -2273,9 +2263,11 @@ main() {
                 [[ "$_rrc" =~ ^[0-9]+$ ]] && refresh_rc="$_rrc"
             fi
             # and kick off a fresh refresh DETACHED for the next render.
+            # "$BASH" (the running shell), never a bare `bash` from PATH: on native
+            # Windows that can be System32\bash.exe, the WSL launcher.
             if command -v setsid >/dev/null 2>&1; then
-                setsid bash -c '
-                    s="$("$1/refresh-usage.sh" 2>/dev/null)"; rc=$?
+                setsid "${BASH:-bash}" -c '
+                    s="$("$BASH" "$1/refresh-usage.sh" 2>/dev/null)"; rc=$?
                     printf "%s\t%s\n" "$s" "$rc" > "$2.tmp.$$" 2>/dev/null && mv -f "$2.tmp.$$" "$2" 2>/dev/null
                 ' _ "$SCRIPT_DIR" "$REFRESH_STATUS_FILE" >/dev/null 2>&1 < /dev/null &
             else
@@ -2284,7 +2276,7 @@ main() {
                 # keeps working. It stays in this process group (a killpg-style
                 # cancellation could interrupt it, but tmp+mv+flock make that a
                 # clean skipped tick, never corruption).
-                ( r="$("${SCRIPT_DIR}/refresh-usage.sh" 2>/dev/null)"; rc=$?
+                ( r="$("${BASH:-bash}" "${SCRIPT_DIR}/refresh-usage.sh" 2>/dev/null)"; rc=$?
                   printf '%s\t%s\n' "$r" "$rc" > "${REFRESH_STATUS_FILE}.tmp.$$" 2>/dev/null \
                     && mv -f "${REFRESH_STATUS_FILE}.tmp.$$" "$REFRESH_STATUS_FILE" 2>/dev/null ) < /dev/null &
             fi
