@@ -249,7 +249,7 @@ check "hooks.json wires the guard for Agent, Task, EnterWorktree and Bash" ok \
 import json, sys
 groups = json.load(open(sys.argv[1]))["hooks"]["PreToolUse"]
 ok = any(set(g["matcher"].split("|")) >= {"Agent", "Task", "EnterWorktree", "Bash"}
-         and any(h["command"].endswith("/hooks/worktree-guard.sh") for h in g["hooks"])
+         and any(h["command"].endswith("/hooks/worktree-guard.sh\"") for h in g["hooks"])
          for g in groups)
 print("ok" if ok else "bad")
 PY

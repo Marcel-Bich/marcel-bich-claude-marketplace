@@ -521,6 +521,17 @@ Every event carries `type`, `session_id`, `cwd`, `ts` (UTC) and its own fields (
 
 How credo finds Python: every Python hook starts each candidate once (`hooks/credo-python-lib.sh`) and accepts only one that reports Python 3; the three direct ledger entries run through the launcher `hooks/credo-py.sh`. Without a working Python 3 the hooks that need it are skipped (they never block) and each session shows ONE message `credo needs python3 ... Install: <command for this platform>`. `/credo:setup` (Step 1b) detects a missing Python or the Store stub, shows the install command and runs it only after your explicit yes. A native Windows Python counts as present; the POSIX-only parts (provenance ledger, cleanup helper, LAN relay) stay off there and exit 0.
 
+## Windows limitations
+
+On native Windows (Claude Code native, hooks run by Git Bash, Python from python.org) the item workflow, the hooks, the config, peer messaging (see [Windows sessions](#windows-sessions-wsl-bridge-and-native-windows-relay)) and worktree setup work. Not available or reduced there:
+
+- **tmux features** (`/credo:self-restart`, `/credo:self-compact`, `/credo:self-reload`, the periodic reminder, type-as-owner, runtime pane references): Git Bash ships no tmux. They refuse with one line ("needs tmux, which is not available on native Windows") instead of failing; run Claude Code inside WSL for them.
+- **Worktree setup** links with native Windows symlinks only. Without Developer Mode (or admin rights) Windows refuses symlinks; the path is then skipped with a hint and read in the main checkout - never copied, and never a directory junction (a forced worktree removal would delete the main checkout's files through a junction).
+- **Worktree cleanup** cannot see which Windows process has its working directory in a worktree, so it fails closed: merged worktrees are reported as an owner question and never removed automatically.
+- **Resource gate**: the 1-minute load average does not exist there; the CPU is gated by the Windows CPU load (CIM `Win32_Processor.LoadPercentage`, the same reading as the Windows host check under WSL).
+- **Power-down** at the end of an autonomous run uses `MSYS_NO_PATHCONV=1 shutdown.exe /h` (hibernate) or `rundll32.exe powrprof.dll,SetSuspendState 0,1,0` (standby); without the prefix Git Bash turns `/h` into a drive path.
+- The POSIX-only helpers named under [Requirements](#requirements) stay off and exit 0.
+
 ## Dependencies
 
 credo works on its own. Three touchpoints are external:

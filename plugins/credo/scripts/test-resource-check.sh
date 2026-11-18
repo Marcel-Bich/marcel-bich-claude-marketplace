@@ -183,6 +183,38 @@ out="$(CREDO_DISK_AVAIL_KB=2097152 "$SUT")"; rc=$?
 check "leading zero reserve text" "wait:low free disk 2.00 GB < 3 GB reserve/5" "$out/$rc"
 printf '' > "$CREDO_PROJECT"
 
+# native Windows (Git Bash): MSYS /proc/loadavg is not used (it always reads 0.00); the CPU
+# comes from the CIM LoadPercentage of the same powershell.exe call as the WSL host path
+# (BASH_ENV unset: a profile that prepends PATH would hide the stubs)
+WIN="$TMP/stub-win"
+mkdir -p "$WIN"
+printf '#!/bin/sh\necho MINGW64_NT-10.0-19045\n' > "$WIN/uname"
+printf '#!/bin/sh\nprintf "%%s\\r\\n" "$(cat "%s/ps-line")"\n' "$TMP" > "$WIN/powershell.exe"
+chmod +x "$WIN/uname" "$WIN/powershell.exe"
+mem 5000000; load 16.0
+echo "1000 500 97" > "$TMP/ps-line"
+out="$(env -u CREDO_HOST_MEM -u BASH_ENV PATH="$WIN:$PATH" "$SUT")"; rc=$?
+check "windows: CPU from CIM waits, MSYS loadavg ignored" "wait:host CPU busy 97% >= 94%/5" "$out/$rc"
+echo "1000 500 12" > "$TMP/ps-line"
+out="$(env -u CREDO_HOST_MEM -u BASH_ENV PATH="$WIN:$PATH" "$SUT" --json)"; rc=$?
+check "windows: CIM CPU below the threshold ok, no load average" "ok 12 None None/0" \
+    "$(printf '%s' "$out" | jq_py 'd["status"], d["host_cpu_percent"], d["cpu_busy_percent"], d["load1"]')/$rc"
+load 0.00
+echo "1000 100 12" > "$TMP/ps-line"
+out="$(env -u CREDO_HOST_MEM -u BASH_ENV PATH="$WIN:$PATH" "$SUT")"; rc=$?
+check "windows: RAM of this machine through the same call" "wait:host RAM used 90.0% >= 80%/5" "$out/$rc"
+# Linux (not WSL, not Windows): no powershell.exe call at all
+LIN="$TMP/stub-lin"
+mkdir -p "$LIN"
+printf '#!/bin/sh\necho Linux\n' > "$LIN/uname"
+printf '#!/bin/sh\ntouch "%s/ps-called"\necho "1000 1 99"\n' "$TMP" > "$LIN/powershell.exe"
+chmod +x "$LIN/uname" "$LIN/powershell.exe"
+if ! grep -qi microsoft /proc/version 2>/dev/null; then
+    out="$(env -u CREDO_HOST_MEM -u BASH_ENV PATH="$LIN:$PATH" "$SUT")"; rc=$?
+    check "linux: unchanged, powershell.exe not called" "ok/0 none" "$out/$rc $([ -e "$TMP/ps-called" ] && echo called || echo none)"
+fi
+mem 5000000; load 4.0
+
 # bad args; --running and --heavy are removed (the check always runs)
 "$SUT" --running 2 >/dev/null 2>&1; check "--running removed" 1 "$?"
 "$SUT" --heavy >/dev/null 2>&1; check "--heavy removed" 1 "$?"

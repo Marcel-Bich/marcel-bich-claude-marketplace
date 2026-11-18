@@ -577,15 +577,23 @@ May autonomous work power down THIS machine when it finishes or hits the weekly 
 Step 2 - detect the platform:
 
 - WSL: `grep -qiE "microsoft|wsl" /proc/version` succeeds.
-- else read `uname -s`: `Linux` -> native Linux, `Darwin` -> macOS.
+- else read `uname -s`: `Linux` -> native Linux, `Darwin` -> macOS, `MINGW*`, `MSYS*` or
+  `CYGWIN*` -> native Windows (Git Bash; the same detection as `tmux.platform = windows` in
+  the check-setup output).
 
-Step 3 - on native Linux only, check power-state availability before offering modes:
+Step 3 - check power-state availability before offering modes:
 
-- `grep -qw disk /sys/power/state` -> hibernate (suspend-to-disk) is available.
-- `grep -qw mem /sys/power/state` -> suspend (suspend-to-RAM) is available.
-
-If `disk` is absent, do NOT offer hibernate (it is unavailable, typically because swap is
-smaller than RAM) - steer to suspend and say why.
+- native Linux:
+  - `grep -qw disk /sys/power/state` -> hibernate (suspend-to-disk) is available.
+  - `grep -qw mem /sys/power/state` -> suspend (suspend-to-RAM) is available.
+  If `disk` is absent, do NOT offer hibernate (it is unavailable, typically because swap is
+  smaller than RAM) - steer to suspend and say why.
+- native Windows: `MSYS_NO_PATHCONV=1 powercfg.exe /a` lists the available sleep states
+  (first block) and the unavailable ones (second block, localized text, e.g. "Hibernate" /
+  "Ruhezustand", "Standby (S3)"). Offer hibernate only when it is in the available block;
+  enabling it (`powercfg /hibernate on`, admin) is the user's call - never run it yourself.
+  `MSYS_NO_PATHCONV=1` is required in Git Bash: without it MSYS turns a `/a` or `/h`
+  argument into a drive path (`A:/`, `H:/`) and the Windows tool rejects it.
 
 Step 4 - second AskUserQuestion, which mode, with a PLATFORM-SPECIFIC recommendation and the
 concrete command shown. Per-platform command table:
@@ -596,15 +604,20 @@ concrete command shown. Per-platform command table:
   (`systemctl hibernate`) - offer the hibernate alternative ONLY if `/sys/power/state` had
   `disk`.
 - macOS: StandBy (`pmset sleepnow`) - single reasonable option.
+- native Windows (Git Bash): recommended Hibernate (`MSYS_NO_PATHCONV=1 shutdown.exe /h`) -
+  offer it ONLY if `powercfg /a` listed hibernate as available; alternative StandBy
+  (`rundll32.exe powrprof.dll,SetSuspendState 0,1,0`). Keep the `MSYS_NO_PATHCONV=1` prefix
+  in the stored `sleep.command`: the command runs through Git Bash, where a bare
+  `shutdown.exe /h` becomes `shutdown.exe H:/` and fails.
 
 Present it like this, adapted to the detected platform (drop the hibernate row where it is
 unavailable, and mark the Recommended one per platform):
 
 ```
-Which power-down mode? (detected platform: <WSL|Linux|macOS>)
+Which power-down mode? (detected platform: <WSL|Linux|macOS|Windows>)
 
 - StandBy (suspend) - <command> (Recommended on Linux) - low power, reliable, fast resume
-- Ruhezustand (hibernate) - <command> (Recommended on WSL) - writes RAM to disk, zero power
+- Ruhezustand (hibernate) - <command> (Recommended on WSL and Windows) - writes RAM to disk, zero power
 ```
 
 The shown command is a PROPOSAL the user can accept or override with their own command string

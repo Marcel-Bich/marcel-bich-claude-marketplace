@@ -59,6 +59,15 @@ def _credo_platform():
     return credo_platform
 
 
+def _windows_tmux_refusal(feature):
+    """credo_pane_guard.windows_tmux_refusal (next to this file): the native Windows refusal."""
+    d = os.path.dirname(os.path.abspath(__file__))
+    if d not in sys.path:
+        sys.path.insert(0, d)
+    import credo_pane_guard
+    return credo_pane_guard.windows_tmux_refusal(feature)
+
+
 def now_iso():
     return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -603,6 +612,10 @@ def dispatch(args):
         print("\n".join(lines))
         return rc
     if args.cmd == "pane":
+        refusal = _windows_tmux_refusal("tmux pane references")
+        if refusal:
+            print(json.dumps({"error": refusal}, indent=2) if args.action == "resolve" else refusal)
+            return 1
         if args.action == "add":
             msg, rc = pane_add(root, args.target, args.purpose, args.ssh)
             print(msg)

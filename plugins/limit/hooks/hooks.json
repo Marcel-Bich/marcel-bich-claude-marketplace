@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/ensure-refresh-interval.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/ensure-refresh-interval.sh\"",
             "timeout": 10
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/inject-status.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/inject-status.sh\"",
             "timeout": 10
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/inject-status.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/inject-status.sh\"",
             "timeout": 10
           }
         ]
@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/track-work-repo.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/track-work-repo.sh\"",
             "timeout": 10
           }
         ]
@@ -49,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-work-repo.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-work-repo.sh\"",
             "timeout": 10
           }
         ]

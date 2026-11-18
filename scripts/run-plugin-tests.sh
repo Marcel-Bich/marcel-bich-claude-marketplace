@@ -23,7 +23,8 @@ case "${1:-}" in
             claude plugin validate "$p" >/dev/null 2>&1 || { echo "FAIL validate $p"; exit 1; }
             # every script a hook runs directly must be committed executable
             [ -f "$p/hooks/hooks.json" ] || continue
-            for s in $(grep -o '"command": *"${CLAUDE_PLUGIN_ROOT}/[^" ]*' "$p/hooks/hooks.json" | sed 's|.*${CLAUDE_PLUGIN_ROOT}/||' | sort -u); do
+            # (the placeholder may be quoted: "command": "\"${CLAUDE_PLUGIN_ROOT}/x.sh\" arg")
+            for s in $(grep -oE '"command": *"(\\")?[$][{]CLAUDE_PLUGIN_ROOT[}]/[^" \\]*' "$p/hooks/hooks.json" | sed 's|.*${CLAUDE_PLUGIN_ROOT}/||' | sort -u); do
                 mode="$(git ls-files -s "$p$s" | cut -d' ' -f1)"
                 [ "$mode" = "100755" ] || { echo "FAIL not executable in git: $p$s"; exit 1; }
             done
@@ -79,4 +80,9 @@ for p in $plugins; do
         count=$((count + 1))
     done
 done
+# repo-level: every hooks.json command survives a plugin root with a space
+if [ -z "${1:-}" ]; then
+    TMPDIR="$RUN_TMP" bash scripts/test-hooks-plugin-root.sh >/dev/null 2>&1 </dev/null || { echo "FAIL scripts/test-hooks-plugin-root.sh"; exit 1; }
+    count=$((count + 1))
+fi
 echo "tests: $count script(s) passed, $skipped manual skipped"

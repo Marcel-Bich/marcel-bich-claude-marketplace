@@ -619,6 +619,11 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="credo-reminder.py")
     ap.add_argument("action", choices=("turn", "start", "status"))
     args = ap.parse_args(argv)
+    refusal = guard.windows_tmux_refusal("the periodic reminder")
+    if refusal:
+        if args.action == "status":
+            print(refusal)
+        return 0  # turn/start run from hooks: nothing to do, nothing to say
     if args.action == "status":
         return cmd_status()
     try:

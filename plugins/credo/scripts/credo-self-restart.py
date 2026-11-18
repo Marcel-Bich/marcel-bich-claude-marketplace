@@ -1087,11 +1087,16 @@ def relaunch_pty(argv):
     """Run argv in a pty and proxy stdin/stdout/winsize transparently. Watch only
     the first DIALOG_WATCH seconds of output for the resume-from-summary dialog and
     inject the answer once. Returns the child's exit code."""
-    import fcntl
-    import pty
-    import select
-    import termios
-    import tty
+    try:
+        import fcntl
+        import pty
+        import select
+        import termios
+        import tty
+    except ImportError:  # native Windows: no pty
+        sys.stderr.write("credo-self-restart: the pty relaunch needs a POSIX terminal, which "
+                         "is not available on native Windows; run Claude Code inside WSL\n")
+        return 2
     if not argv:
         return 2
     watch = env_float("CREDO_SELF_RESTART_DIALOG_WATCH", DIALOG_WATCH)
@@ -2022,6 +2027,10 @@ def main(argv=None):
                     help="session scratchpad to snapshot into .credo/process/runtime/ before "
                          "the restart (default: the Claude Code scratchpad of this session)")
     args = ap.parse_args(argv)
+    refusal = pane_guard.windows_tmux_refusal("self-restart")
+    if refusal and args.action in ("check", "run"):
+        print("FAIL: " + refusal)
+        return 1
     return {"check": cmd_check, "run": cmd_run, "cancel": cmd_cancel,
             "status": cmd_status}[args.action](args)
 

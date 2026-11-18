@@ -9,7 +9,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-paused-wake-guard.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-paused-wake-guard.sh\"",
             "timeout": 5
           }
         ]
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-ask-buffer-guard.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-ask-buffer-guard.sh\"",
             "timeout": 5
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/credo-5h-budget-guard.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/credo-5h-budget-guard.sh\"",
             "timeout": 10
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-agent-spawn-check.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-agent-spawn-check.sh\"",
             "timeout": 10
           }
         ]
@@ -49,12 +49,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-item-move-guard.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-item-move-guard.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-wait-hint.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-wait-hint.sh\"",
             "timeout": 10
           }
         ]
@@ -64,7 +64,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-message.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-message.sh\"",
             "timeout": 10
           }
         ]
@@ -74,7 +74,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-remote-mirror.sh ask",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-remote-mirror.sh\" ask",
             "timeout": 5
           }
         ]
@@ -84,7 +84,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-py.sh ${CLAUDE_PLUGIN_ROOT}/scripts/credo-ledger.py pre",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-py.sh\" \"${CLAUDE_PLUGIN_ROOT}/scripts/credo-ledger.py\" pre",
             "timeout": 5
           }
         ]
@@ -95,72 +95,72 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-session-start.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-session-start.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-bridge.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-bridge.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-lan-autostart.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-lan-autostart.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-win-bridge-autostart.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-win-bridge-autostart.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/credo-unblock-sweep.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/credo-unblock-sweep.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-optimize-hook.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-optimize-hook.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-todo-tools-hint.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-todo-tools-hint.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-session-dir-record.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-session-dir-record.sh\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-split-hint.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-split-hint.sh\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-permission-mode-record.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-permission-mode-record.sh\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-meta-record.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-meta-record.sh\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-session-registry.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-session-registry.sh\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-reminder.sh start",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-reminder.sh\" start",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-py.sh ${CLAUDE_PLUGIN_ROOT}/scripts/credo-ledger.py session-start",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-py.sh\" \"${CLAUDE_PLUGIN_ROOT}/scripts/credo-ledger.py\" session-start",
             "timeout": 10
           }
         ]
@@ -171,77 +171,77 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-mode-inject.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/session-mode-inject.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "CREDO_WIN_BRIDGE_EVENT=prompt ${CLAUDE_PLUGIN_ROOT}/hooks/credo-win-bridge-autostart.sh",
+            "command": "CREDO_WIN_BRIDGE_EVENT=prompt \"${CLAUDE_PLUGIN_ROOT}/hooks/credo-win-bridge-autostart.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/role-inject.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/role-inject.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-datetime-inject.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-datetime-inject.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-attended-reminder.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-attended-reminder.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-skill-nudge.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-skill-nudge.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-plugin-freshness-inject.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-plugin-freshness-inject.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-autonomy-clear.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-autonomy-clear.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-message.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-message.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-bridge.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-bridge.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-optimize-hook.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-optimize-hook.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-permission-mode-record.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-permission-mode-record.sh\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-meta-record.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-meta-record.sh\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-session-registry.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-session-registry.sh\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-reminder.sh turn",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-reminder.sh\" turn",
             "timeout": 10
           }
         ]
@@ -253,22 +253,22 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-datetime-inject.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-datetime-inject.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-skill-nudge.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-skill-nudge.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-plugin-freshness-inject.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-plugin-freshness-inject.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-bridge.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-bridge.sh\"",
             "timeout": 10
           }
         ]
@@ -278,7 +278,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-screenshot-relocate.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-screenshot-relocate.sh\"",
             "timeout": 10
           }
         ]
@@ -288,7 +288,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-py.sh ${CLAUDE_PLUGIN_ROOT}/scripts/credo-ledger.py post",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-py.sh\" \"${CLAUDE_PLUGIN_ROOT}/scripts/credo-ledger.py\" post",
             "timeout": 10
           }
         ]
@@ -299,7 +299,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-subagent-inject.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-subagent-inject.sh\"",
             "timeout": 10
           }
         ]
@@ -310,12 +310,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-autonomy-keepalive.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-autonomy-keepalive.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-remote-mirror.sh stop",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-remote-mirror.sh\" stop",
             "timeout": 5
           }
         ]
@@ -327,7 +327,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-autonomy-permission-notify.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-autonomy-permission-notify.sh\"",
             "timeout": 10
           }
         ]
@@ -338,7 +338,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/credo-remote-mirror.sh permission",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-remote-mirror.sh\" permission",
             "timeout": 5
           }
         ]

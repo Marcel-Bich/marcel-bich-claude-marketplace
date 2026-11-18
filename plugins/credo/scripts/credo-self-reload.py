@@ -582,6 +582,10 @@ def main(argv=None):
     ap.add_argument("--max-nudges", type=int, default=3,
                     help="at most this many re-sends of the \".\" (default 3)")
     args = ap.parse_args(argv)
+    refusal = guard.windows_tmux_refusal("self-reload")
+    if refusal and args.action in ("check", "run"):
+        print("FAIL: " + refusal)
+        return 1
     if args.timeout <= 0 or args.delay < 0 or args.nudge_wait <= 0 or args.max_nudges < 0:
         ap.error("--timeout and --nudge-wait must be > 0, --delay and --max-nudges >= 0")
     return {"check": cmd_check, "run": cmd_run, "cancel": cmd_cancel,

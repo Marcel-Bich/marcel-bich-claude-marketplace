@@ -182,9 +182,9 @@ ok "pieces join back to the text, at most TYPE_CHUNK_CHARS each" "$?"
 
 # --- hook wiring ---------------------------------------------------------------------
 [ -x "$HOOK_SH" ]; ok "hook wrapper is executable" "$?"
-jq -e '[.hooks.UserPromptSubmit[].hooks[].command] | any(. == "${CLAUDE_PLUGIN_ROOT}/hooks/credo-reminder.sh turn")' "$HOOKS_JSON" >/dev/null
+jq -e '[.hooks.UserPromptSubmit[].hooks[].command] | any(. == "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-reminder.sh\" turn")' "$HOOKS_JSON" >/dev/null
 ok "UserPromptSubmit runs the turn counter" "$?"
-jq -e '[.hooks.SessionStart[].hooks[].command] | any(. == "${CLAUDE_PLUGIN_ROOT}/hooks/credo-reminder.sh start")' "$HOOKS_JSON" >/dev/null
+jq -e '[.hooks.SessionStart[].hooks[].command] | any(. == "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-reminder.sh\" start")' "$HOOKS_JSON" >/dev/null
 ok "SessionStart starts the worker" "$?"
 
 # --- fakes ---------------------------------------------------------------------------

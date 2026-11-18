@@ -130,6 +130,11 @@ def format_show(result):
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    refusal = ot.guard.windows_tmux_refusal("owner-type")
+    if refusal:
+        result = {"status": "unsupported", "reason": refusal, "exit": 1}
+        print(json.dumps(result, sort_keys=True) if args.json else "%s: %s" % (result["status"], refusal))
+        return 1
     result = run(args)
     if args.cmd == "show" and not args.json:
         if result["exit"] == 0:

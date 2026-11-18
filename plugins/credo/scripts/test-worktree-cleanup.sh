@@ -430,6 +430,14 @@ out="$(cd "$W6/busy" && "$SUT" --dry-run "$R6")"
 check "live process kept, owner asked" 1 "$(printf '%s\n' "$out" | grep -c "^kept $W6/busy branch=wt/busy reason=live process inside it (pid [0-9]*) (ask owner)$" || true)"
 out="$("$SUT" --dry-run "$R6")"
 contains "process gone: busy is a candidate" "candidate $W6/busy branch=wt/busy reason=merged into main, clean" "$out"
+# Native Windows (uname says MINGW): /proc does not show Windows processes, so the check fails
+# closed - a merged clean worktree is kept as an owner question, also on a real run (nothing removed)
+WINSTUB="$TMP/stub-win"; mkdir -p "$WINSTUB"
+printf '#!/bin/sh\necho MINGW64_NT-10.0-19045\n' > "$WINSTUB/uname"; chmod +x "$WINSTUB/uname"
+out="$(env -u BASH_ENV PATH="$WINSTUB:$PATH" "$SUT" "$R6")"
+contains "windows: process check fails closed, owner asked" "kept $W6/busy branch=wt/busy reason=live processes cannot be checked on native Windows (no /proc), kept (ask owner)" "$out"
+contains "windows: rebased candidate kept too" "kept $W6/rb branch=wt/rb reason=live processes cannot be checked on native Windows" "$out"
+check "windows: nothing removed" "yes yes yes" "$(exists "$W6/busy") $(exists "$W6/rb") $(exists "$W6/ignored")"
 
 out="$("$SUT" "$R6")"; rc=$?
 check "rebased run exit" 0 "$rc"

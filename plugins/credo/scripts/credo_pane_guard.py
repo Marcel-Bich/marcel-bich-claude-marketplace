@@ -25,6 +25,9 @@ callers send one early ntfy push per blocked wait and keep waiting).
 
 Pure functions (no I/O) - strip_ansi, styled_chars, find_input_box, input_content,
 assess, wait_until_safe. tmux helpers - tmux_base, pane_info, capture, probe_pane.
+Platform - native_windows, windows_tmux_refusal: the tmux features (self-restart,
+self-compact, self-reload, reminder, owner-type, runtime panes) refuse with one clear line
+on native Windows instead of failing deeper down.
 
 Recognised layout (Claude Code 2.1.x) - the input box is a full-width rule line of
 "─", the input line starting with "❯" (U+276F, followed by a space or NBSP), any
@@ -36,10 +39,29 @@ first character inverted as the cursor), which is not input.
 Python 3 stdlib only.
 """
 
+import os
 import re
+import shutil
 import subprocess
+import sys
 import time
 import unicodedata
+
+def native_windows():
+    """True under a native Windows Python, and under an MSYS or Cygwin Python without tmux
+    (Git Bash): no tmux and no /proc of the Windows processes there."""
+    if os.name == "nt":
+        return True
+    return sys.platform.startswith(("cygwin", "msys")) and not shutil.which("tmux")
+
+
+def windows_tmux_refusal(feature):
+    """The one-line refusal for a tmux feature on native Windows, else None."""
+    if not native_windows():
+        return None
+    return ("%s needs tmux, which is not available on native Windows (Git Bash); "
+            "run Claude Code inside WSL to use it" % feature)
+
 
 RULE_CHARS = set("─━╭╮╰╯")
 MARKERS = ("❯", ">", "!")  # "!" = Claude Code bash mode (a message starting with "!")

@@ -57,6 +57,13 @@ The deny message names the flow to use: `/hydra:create <name>`, or `git worktree
 /hydra:cleanup
 ```
 
+## Windows limitations
+
+On native Windows (Claude Code native, hooks run by Git Bash) the worktree guard and `worktree-setup.sh` work, with two limits:
+
+- **Symlinks need Developer Mode** (Settings > System > For developers) or admin rights. Without them Windows refuses the native symlinks `worktree-setup.sh` creates; the path is skipped with a hint and read in the main checkout. It is never copied (a copy would silently diverge) and never linked as a directory junction (a forced worktree removal would delete the main checkout's files through a junction).
+- **The guard needs Python 3** (`python`, `python3` or `py -3` from python.org; the Microsoft Store stub does not count). Without it the guard denies the worktree creations it cannot check and shows a one-time message.
+
 ## Installation
 
 ```bash

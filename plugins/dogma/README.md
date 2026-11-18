@@ -178,6 +178,12 @@ The enforcement hooks increase token consumption significantly. Recommended for 
 
 **Without jq the protection hooks are OFF.** The delete guard (its deny output is built with jq), git permissions and dependency verification print no decision, so Claude Code's own permission rules decide, and other marketplace plugins degrade. dogma does not block anything because of a missing jq; instead every session start shows a warning (`hooks/jq-missing-warn.sh`) for the user and the agent, urging the install. With jq present nothing changes. The warning is silent when `CLAUDE_MB_DOGMA_ENABLED=false`.
 
+## Windows limitations
+
+On native Windows (Claude Code native, hooks run by Git Bash) all dogma hooks run. One part is reduced:
+
+- **Shell-aware command analysis** (delete guard, file protection, git permissions, dependency verification) runs only under a POSIX Python 3, because it models POSIX paths. A native Windows Python (python.org) does not count, so on native Windows the text rules decide: harmless commands pass, destructive-looking commands are denied more broadly than under Linux or WSL, and token protection uses its own text rules.
+
 ## Installation
 
 ```bash

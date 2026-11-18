@@ -19,7 +19,10 @@
 #     untracked symlink whose real target lies in the main checkout is a setup link (for
 #     example node_modules) and is no change
 #   - no live process has its working directory inside it (read from /proc; unreadable
-#     entries are skipped, so without /proc this check finds nothing)
+#     entries are skipped, so without /proc this check finds nothing). On native Windows
+#     (Git Bash, MSYS, Cygwin) the processes cannot be read this way, so the check fails
+#     closed there: every merged worktree is kept and reported as an owner question, never
+#     removed
 #   - a branch without a commit of its own (its reflog has no commit, cherry-pick or revert
 #     entry; a fast-forward from the base does not count) may still be in use by an agent
 #     that just started: it is kept while younger than --fresh-hours (default 24), and it is
@@ -455,11 +458,21 @@ classify_changes() { # worktree-path
 }
 
 # Live processes whose working directory is inside a path. /proc/<pid>/cwd is read once per run
-# (readlink; an unreadable entry is skipped). Sets FOUND_PID when one matches.
+# (readlink; an unreadable entry is skipped). Sets FOUND_PID and PROC_WHY (the report reason)
+# when one matches. Native Windows fails closed: a Windows process's working directory and open
+# files are not in /proc, so "no process found" would be a guess - every path counts as in use.
 PROC_CWDS=""
 PROC_READ=0
-process_inside() { # real-path -> 0 and FOUND_PID when a live process has its cwd, exe or an open file inside
+PROC_WHY=""
+NATIVE_WINDOWS=""
+case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) NATIVE_WINDOWS=1 ;; esac
+process_inside() { # real-path -> 0 and FOUND_PID, PROC_WHY when a live process has its cwd, exe or an open file inside
     local pid cwd
+    if [ -n "$NATIVE_WINDOWS" ]; then
+        FOUND_PID="unknown"
+        PROC_WHY="live processes cannot be checked on native Windows (no /proc), kept"
+        return 0
+    fi
     if [ "$PROC_READ" -eq 0 ]; then
         PROC_READ=1
         # one pass over /proc: cwd, exe and every open file descriptor of each readable process
@@ -486,7 +499,7 @@ for pid in os.listdir("/proc"):
     fi
     while IFS=$'\t' read -r pid cwd; do
         case "$cwd" in
-            "$1"|"$1"/*) FOUND_PID="$pid"; return 0 ;;
+            "$1"|"$1"/*) FOUND_PID="$pid"; PROC_WHY="live process inside it (pid $pid)"; return 0 ;;
         esac
     done <<< "$PROC_CWDS"
     return 1
@@ -563,7 +576,7 @@ evaluate() { # path branch locked prunable lock-reason
         cand="candidate-lossless"; tail="only .credo changes already in main (lossless)"
     fi
     if process_inside "$real"; then
-        add kept "$path" "$branch" "live process inside it (pid $FOUND_PID)$ask"
+        add kept "$path" "$branch" "$PROC_WHY$ask"
         return
     fi
     if [ "$BACKGROUND" -eq 1 ]; then
@@ -640,7 +653,7 @@ if [ "$DRY" -eq 0 ]; then
             # the live-process check runs again too, from a fresh /proc read (the one before is older)
             PROC_READ=0; PROC_CWDS=""
             if process_inside "$wreal"; then
-                RESULTS[$i]="failed$sfx$SEP$path$SEP$branch$SEP$reason, live process inside it (pid $FOUND_PID): not removed$SEP"
+                RESULTS[$i]="failed$sfx$SEP$path$SEP$branch$SEP$reason, $PROC_WHY: not removed$SEP"
                 continue
             fi
         fi

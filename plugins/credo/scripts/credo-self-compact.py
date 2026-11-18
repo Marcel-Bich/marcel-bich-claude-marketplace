@@ -673,6 +673,10 @@ def main(argv=None):
                          "seconds (default 7200 = 2 h, env "
                          "CREDO_SELF_COMPACT_BREADCRUMB_MAX_AGE)")
     args = ap.parse_args(argv)
+    refusal = guard.windows_tmux_refusal("self-compact")
+    if refusal and args.action in ("check", "run"):
+        print("FAIL: " + refusal)
+        return 1
     if args.timeout <= 0 or args.delay < 0 or args.max_breadcrumb_age <= 0 or \
             args.nudge_wait <= 0 or args.max_nudges < 0 or args.done_timeout <= 0:
         ap.error("--timeout, --max-breadcrumb-age, --nudge-wait and --done-timeout must be "

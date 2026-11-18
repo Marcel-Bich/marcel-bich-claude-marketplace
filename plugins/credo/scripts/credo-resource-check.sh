@@ -7,7 +7,10 @@
 #   RAM used = (MemTotal - MemAvailable) / MemTotal (/proc/meminfo)
 #   host     = under WSL also the Windows host (the owner's machine; the WSL VM is only a
 #              part of it): RAM (total - available) / total and the CPU load in percent,
-#              read in one powershell.exe call
+#              read in one powershell.exe call; on native Windows (Git Bash, MSYS) the same
+#              call reads this machine, and the 1-minute load is skipped there (MSYS
+#              /proc/loadavg always reads 0.00), so the CPU is gated by CIM
+#              Win32_Processor.LoadPercentage alone
 # CPU (WSL or host) at resources.max_busy_percent or more, or RAM (WSL or host) at
 # resources.max_ram_percent or more answers "wait:<reason>".
 # Free disk on the target drive is checked too: the item's disk_gb plus the
@@ -38,7 +41,8 @@
 #   CREDO_PROC_LOADAVG  loadavg file (default /proc/loadavg)
 #   CREDO_NPROC         CPU count (default: nproc)
 #   CREDO_HOST_MEM      host as "<total bytes> <available bytes> [<cpu load %>]" instead of powershell.exe;
-#                       "off" skips the host check (default: queried only under WSL)
+#                       "off" skips the host check (default: queried only under WSL and on
+#                       native Windows)
 #   CREDO_DISK_AVAIL_KB free KB on the target drive (default: df of --path; set but
 #                       empty = unreadable)
 #
@@ -130,8 +134,15 @@ emit() {
 # true when value $1 is at threshold $2 or more
 at_or_over() { awk -v a="$1" -v m="$2" 'BEGIN { exit !(a >= m) }'; }
 
+# native Windows (Git Bash, MSYS, Cygwin): /proc/loadavg exists but always reads 0.00
+NATIVE_WINDOWS=""
+case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) NATIVE_WINDOWS=1 ;; esac
+
 check_cpu() {
     local loadavg="${CREDO_PROC_LOADAVG:-/proc/loadavg}"
+    if [ -n "$NATIVE_WINDOWS" ]; then
+        return 0 # the CPU is read through the host check (CIM LoadPercentage) instead
+    fi
     LOAD1="$(awk '{ print $1; exit }' "$loadavg" 2>/dev/null || true)"
     [[ "$LOAD1" =~ ^[0-9]+([.][0-9]+)?$ ]] || LOAD1=""
     NCPU="${CREDO_NPROC:-$(nproc 2>/dev/null || true)}"
@@ -150,6 +161,8 @@ check_cpu() {
 
 check_ram() {
     local meminfo="${CREDO_PROC_MEMINFO:-/proc/meminfo}" total avail
+    # native Windows: Git Bash has no /proc/meminfo; the host check reads this machine's RAM
+    [ -n "$NATIVE_WINDOWS" ] && [ -z "${CREDO_PROC_MEMINFO:-}" ] && return 0
     total="$(awk '/^MemTotal:/ { print $2; exit }' "$meminfo" 2>/dev/null || true)"
     avail="$(awk '/^MemAvailable:/ { print $2; exit }' "$meminfo" 2>/dev/null || true)"
     if ! [[ "$total" =~ ^[0-9]+$ ]] || ! [[ "$avail" =~ ^[0-9]+$ ]] || [ "$total" -eq 0 ]; then
@@ -164,13 +177,14 @@ check_ram() {
     fi
 }
 
-# the Windows host behind WSL: its RAM is the owner's RAM (the WSL VM is only a part of it)
+# the Windows host behind WSL: its RAM is the owner's RAM (the WSL VM is only a part of it);
+# on native Windows the same call reads this machine (its only CPU reading, see check_cpu)
 host_mem() {
     if [ -n "${CREDO_HOST_MEM+x}" ]; then
         printf '%s' "$CREDO_HOST_MEM"
         return 0
     fi
-    grep -qi microsoft /proc/version 2>/dev/null || return 0
+    [ -n "$NATIVE_WINDOWS" ] || grep -qi microsoft /proc/version 2>/dev/null || return 0
     command -v powershell.exe >/dev/null 2>&1 || return 0
     timeout 15 powershell.exe -NoProfile -NonInteractive -Command \
         'Add-Type -AssemblyName Microsoft.VisualBasic; $c = New-Object Microsoft.VisualBasic.Devices.ComputerInfo; $l = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average; "$($c.TotalPhysicalMemory) $($c.AvailablePhysicalMemory) $l"' \

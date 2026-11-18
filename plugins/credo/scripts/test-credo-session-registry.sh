@@ -222,9 +222,9 @@ make_entry() { # session-id pid pid-start name tmux-json-or-null [profile-dir]
 field() { jq -r "$2 // \"null\"" "$1" 2>/dev/null; }
 
 # ---------------------------------------------------------------- hooks.json wiring
-jq -e '[.hooks.SessionStart[].hooks[].command] | any(endswith("credo-session-registry.sh"))' "$HOOKS_JSON" >/dev/null 2>&1
+jq -e '[.hooks.SessionStart[].hooks[].command] | any(endswith("credo-session-registry.sh\""))' "$HOOKS_JSON" >/dev/null 2>&1
 expect "hooks.json: SessionStart runs the registry hook" 0 $?
-jq -e '[.hooks.UserPromptSubmit[].hooks[].command] | any(endswith("credo-session-registry.sh"))' "$HOOKS_JSON" >/dev/null 2>&1
+jq -e '[.hooks.UserPromptSubmit[].hooks[].command] | any(endswith("credo-session-registry.sh\""))' "$HOOKS_JSON" >/dev/null 2>&1
 expect "hooks.json: UserPromptSubmit runs the registry hook" 0 $?
 
 # ---------------------------------------------------------------- record: basic entry
