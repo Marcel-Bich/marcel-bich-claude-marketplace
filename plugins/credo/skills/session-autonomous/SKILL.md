@@ -786,6 +786,17 @@ commit-identity gate (credo `budget` skill) must pass before every commit. If co
 push is forbidden by permissions, that is a SHOWSTOPPER for autonomous work - the work
 cannot be secured - so warn via ntfy and stop; do not keep building unsecured work.
 
+### Handoff-rules check (before every autonomous start)
+
+Before the run starts, as part of the read-back, compare the handoff's `## Rules (temporary)`
+lines with `.credo/RULES.md` (credo `rules`, "Handoff rules (temporary) vs RULES.md"), helped
+by `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-handoff-rules.py" check .credo/process/handoffs/HANDOFF.md .credo/RULES.md`.
+Name aloud in the read-back every conflict and every handoff rule without a source or an
+`until` (it does not apply), and send the same as one ntfy line, so the owner can correct it
+before the run. Then start anyway: no Ask, RULES.md wins over a conflicting handoff rule until
+the owner settles it, and agent-decision rules are never treated as owner orders. Do the same
+after every compact or rehydrate during the run.
+
 ### Budget-start read-back (mandatory before any autonomous start)
 
 Before starting an autonomous run - always, not only overnight - the agent MUST give a

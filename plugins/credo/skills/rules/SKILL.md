@@ -63,8 +63,8 @@ main agent - the same way security is inherited.
 ## Before an owner question or an approval park
 
 Before ANY question to the owner and before parking an item as "waits on approval" (installs
-included), check this file's grants and the standing agreements in the handoff and the
-requirements log. If a grant covers the case and its conditions can be closed by the agent
+included), check this file's grants, the valid `## Rules (temporary)` lines in the handoff
+(see "Handoff rules" below) and the requirements log. If a grant covers the case and its conditions can be closed by the agent
 (for example a fresh security check of the package), close them and proceed. Ask only when
 no grant applies or the check comes out unclear. Agreed facts (for example "these instances
 are test instances") are applied, not worked around. The safety floor is unchanged: with no
@@ -84,6 +84,39 @@ From highest to lowest:
 
 So RULES.md sits between DOGMA-PERMISSIONS and the defaults: it WIDENS latitude within the
 safety floor, and never overrides safety or a stricter DOGMA-PERMISSIONS rule.
+
+## Handoff rules (temporary) vs RULES.md
+
+Within the safety floor and DOGMA-PERMISSIONS, the instruction sources rank:
+
+1. **The owner's current words** in this conversation.
+2. **Owner rules in the handoff** (`## Rules (temporary)` lines with `source: owner "<quote>"
+   (<date>)` and an `until`) - temporary, they end at their `until`.
+3. **`.credo/RULES.md`** - the permanent per-repo rules.
+4. **Agent-decision rules in the handoff** (`source: agent decision` plus an `until`) - they
+   only fill gaps, never beat RULES.md, and are never presented as owner orders.
+
+The handoff line format is
+`- <rule> | source: owner "<verbatim quote>" (<YYYY-MM-DD>) | until: <goal, date or event>`
+(or `| source: agent decision | until: ...`), written by credo `compact-plus`.
+
+- **No `until`, no rule.** A handoff rule without an `until` (or without a source) does not
+  apply. Say so aloud to the owner instead of following it. A rule outside the
+  `## Rules (temporary)` section (for example under "standing rules") does not apply either.
+- **Expired rules are dropped** once their date passed or their goal or event happened.
+- **Compare with RULES.md** before an autonomous run starts (credo `session-autonomous`) and
+  after every compact or rehydrate: read both, then report every conflict and every rule
+  lacking a source or an `until` aloud to the owner (in an autonomous run also via ntfy),
+  and keep working. On a conflict RULES.md wins over the handoff rule until the owner
+  settles it. The cheap mechanical part is
+  `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-handoff-rules.py" check <HANDOFF.md> <RULES.md>`
+  (flags lines without `source:`/`until:`, expired dates and rules outside the section, and
+  lists the RULES.md headings to compare); the conflict judgement itself is yours. After a
+  compact the SessionStart hook already prints that check.
+- **An owner rule without an expiry goes to the right place.** Permanent -> propose the exact
+  RULES.md entry and write it after the owner's OK (see "Writing a rule"); temporary -> ask
+  the owner for the `until`. If the owner leaves it open, say aloud that the rule will not be
+  honoured reliably and will get lost over time and context.
 
 ## Writing a rule (interactive-only, on request)
 

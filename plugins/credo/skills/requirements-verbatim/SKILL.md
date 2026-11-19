@@ -61,6 +61,11 @@ be labelled as such (for example "proposal:" / "my recommendation:"). Do not pre
 preference as the user's requirement. The two-zone separation (`User (verbatim)` vs
 `Assistant (proposal / finding)`) extends beyond this log to every output the agent produces.
 
+Agent notes reach a handoff only as `source: agent decision` rules with an `until`, never
+unlabelled and never as owner orders; an owner rule carries its verbatim quote and date from
+this log as its source (format and precedence: credo `compact-plus` step 3 and credo `rules`,
+"Handoff rules (temporary) vs RULES.md").
+
 ## Reference convention
 
 Refer to a logged requirement by DATE plus a short context phrase (for example

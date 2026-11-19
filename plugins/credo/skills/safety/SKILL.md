@@ -193,8 +193,8 @@ risk: an install pulls in third-party code, so it must always be an approved dec
   check (source, author, license, known supply-chain problems); a suspicious entry is not
   installed and the item goes back to `1_todo/1_clarify`.
 - Before any owner question or "waits on approval" park for an install, check the repo's
-  `.credo/RULES.md` grants (credo `rules`) and the standing agreements in the handoff and the
-  requirements log. If a grant covers the install and its conditions (for example a fresh
+  `.credo/RULES.md` grants (credo `rules`), the valid `## Rules (temporary)` lines in the
+  handoff and the requirements log. If a grant covers the install and its conditions (for example a fresh
   security check of source, author and licence) can be closed by the agent, close them and
   proceed. Ask only when no grant applies or the check comes out unclear. An agreed fact (for
   example "these instances are test instances") is applied, not worked around. With no grant,

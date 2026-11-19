@@ -339,7 +339,18 @@ case "$source" in
             [[ -z "$handoff_path" ]] && handoff_path=".credo/process/handoffs/HANDOFF.md"
             mode_hint=""
             [[ -z "$mode" ]] && mode_hint=" (No session mode set - if this is attended work, pick one: /credo:session-active or /credo:session-passive.)"
-            REHYDRATE="[credo] You secured state with /compact-plus before this compaction. Reload it now before continuing: the handoff file at ${handoff_path}, the latest .credo/process/requirements/ entry, and .credo/process/resume-after-reset.md if present. Then resume where you left off.${mode_hint}"
+            REHYDRATE="[credo] You secured state with /compact-plus before this compaction. Reload it now before continuing: the handoff file at ${handoff_path}, .credo/RULES.md, the latest .credo/process/requirements/ entry, and .credo/process/resume-after-reset.md if present. Then resume where you left off.${mode_hint}"
+            # Handoff rules (#199): precedence, the RULES.md compare and the script check of
+            # the handoff's "Rules (temporary)" lines. The wording lives in the script only.
+            HANDOFF_RULES_PY="${_scripts_dir:-${CLAUDE_PLUGIN_ROOT:-}/scripts}/credo-handoff-rules.py"
+            if [[ -f "$HANDOFF_RULES_PY" ]] && credo_python_ready; then
+                rules_md=""
+                case "$handoff_path" in
+                    *.credo/process/handoffs/*) rules_md="${handoff_path%%process/handoffs/*}RULES.md" ;;
+                esac
+                _hr="$("$CREDO_PYTHON" "$HANDOFF_RULES_PY" rehydrate "$handoff_path" ${rules_md:+"$rules_md"} 2>/dev/null)" || _hr=""
+                [[ -n "$_hr" ]] && REHYDRATE="$REHYDRATE"$'\n'"$_hr"
+            fi
             rm -f "$breadcrumb" 2>/dev/null || true
         fi
         ;;

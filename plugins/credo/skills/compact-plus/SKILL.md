@@ -152,6 +152,26 @@ then go straight to the report (step 8) and skip steps 4-7.
    carry into the handoff ("waits on T38", "waits on owner") against that item's open DoD boxes
    and Body first (credo `items`, "Body-freshness invariant"): a stale label is dropped, and the
    buildable work it hid is listed as next. This file is git-excluded too.
+   Rules go into the handoff ONLY in one section, `## Rules (temporary)`, one line each:
+
+   ```
+   - <rule> | source: owner "<verbatim quote>" (<YYYY-MM-DD>) | until: <goal, date or event>
+   - <rule> | source: agent decision | until: <goal, date or event>
+   ```
+
+   The source is either the owner's verbatim quote with its date (from the requirements log)
+   or `agent decision`; an agent decision is never written or presented as an owner order and
+   only fills gaps (it never beats `.credo/RULES.md`). The `until` names when the rule stops
+   applying (a goal reached, a date, an event). A rule without an `until` does not apply, so
+   it is not carried; drop expired ones and ones whose goal is reached. An owner rule without
+   an expiry belongs in the right place instead: permanent -> propose the exact
+   `.credo/RULES.md` entry and write it after the owner's OK (credo `rules`); temporary -> ask
+   the owner for the `until`. If the owner leaves it open, say aloud that the rule will not be
+   honoured reliably and will get lost over time and context. Never copy rule-like lines into
+   other handoff sections ("standing rules", "owner orders in force"). Check the result with
+   `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-handoff-rules.py" check .credo/process/handoffs/HANDOFF.md .credo/RULES.md`
+   (exit 1 = flagged lines; fix them before the compact). Precedence and the conflict rule are
+   in credo `rules` ("Handoff rules").
    Then drop the one-shot post-compact rehydrate breadcrumb so the next SessionStart
    (after the compact) reminds you to reload this handoff:
 
