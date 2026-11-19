@@ -567,7 +567,7 @@ function Get-CredoAccessDeniedText($Hub, [string]$Name) {
 
 # --- elevated sender helper (credo-win-elevsend.ps1, item #196) ------------------------
 $script:ElevTask = 'credo-win-elevsend'
-$script:ElevInstallHint = 'install the elevated sender helper once from WSL with `credo-win-bridge.py elevsend-install` (one UAC prompt)'
+$script:ElevInstallHint = 'WSL -> elevated Windows sessions need the elevated sender helper; install it now (one UAC prompt): `credo-win-bridge.py elevsend-install`'
 
 function Get-CredoUserSid {
     return [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value

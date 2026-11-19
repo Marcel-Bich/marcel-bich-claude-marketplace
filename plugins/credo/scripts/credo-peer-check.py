@@ -434,7 +434,7 @@ def lan_status(run_check):
     def run(args, timeout):
         # read only: the peer check never starts the elevated Windows -Install (a UAC prompt
         # it could not answer) and never triggers the Windows task (CREDO_PEER_LAN_WINPROXY=0)
-        env = dict(os.environ, CREDO_PEER_LAN_WINPROXY="0")
+        env = dict(os.environ, CREDO_PEER_LAN_WINPROXY="0", CREDO_ELEVSEND_OFFER="0")
         try:
             r = subprocess.run([sys.executable, script] + args, capture_output=True,
                                text=True, timeout=timeout, env=env)
@@ -701,6 +701,21 @@ def sender_meta(addr):
     return ""
 
 
+def elevsend_offer():
+    """The WSL bridge's one-line offer to install the elevated sender helper, or "" (single
+    source: credo-win-bridge.py elevsend_offer; read only, it never starts the install)."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "credo_win_bridge_for_check", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                       "credo-win-bridge.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.elevsend_offer()
+    except Exception:
+        return ""
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Read-only multi-channel peer check")
     ap.add_argument("cmd", nargs="?", default="list", choices=("list", "hint", "hook", "sender"))
@@ -729,15 +744,22 @@ def main(argv=None):
             msg = split_hint(sid if isinstance(sid, str) else None)
         except Exception:
             return 0
+        offer = elevsend_offer()
+        if offer:
+            msg = (msg + "\n" + offer) if msg else offer
         if msg:
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
                                                      "additionalContext": msg}}))
         return 0
     res = collect(run_lan_check=not a.no_lan_check)
+    res["elevsend_offer"] = elevsend_offer()
     if a.json:
         print(json.dumps(res, indent=2, default=str))
     else:
         print_table(res)
+        if res["elevsend_offer"]:
+            print("")
+            print(res["elevsend_offer"])
     return 0
 
 

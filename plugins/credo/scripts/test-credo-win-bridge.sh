@@ -195,6 +195,51 @@ check("elevsend status: not installed names the install command",
 check("elevsend status: outdated copy", "OUTDATED" in wb.elevsend_status_line(2, 1, "/pd"))
 check("elevsend status: installed names the removal command", "elevsend-uninstall" in wb.elevsend_status_line(1, 1, "/pd"))
 check("elevsend status: unknown ProgramData", "unknown" in wb.elevsend_status_line(1, None, None))
+# the one install offer (setup, peer-lan, peer check, bridge log): decision + line
+check("offer: elevated session seen + helper missing", wb.elevsend_offer_needed(["acme-admin"], 2, None))
+check("offer: elevated session seen + helper outdated", wb.elevsend_offer_needed(["acme-admin"], 2, 1))
+check("offer: none when the helper is current", not wb.elevsend_offer_needed(["acme-admin"], 2, 2))
+check("offer: none without an elevated session", not wb.elevsend_offer_needed([], 2, None))
+check("offer: setup asks even without an elevated session", wb.elevsend_offer_needed([], 2, None, always=True))
+check("offer: none when the shipped version is unknown", not wb.elevsend_offer_needed(["x"], None, None, always=True))
+_line = wb.elevsend_offer_text(["acme-admin"], 2, None, "/plugin/scripts/credo-win-bridge.py")
+check("offer line: names the sessions, state, UAC and the exact command",
+      "(acme-admin)" in _line and "not installed" in _line and "one UAC prompt" in _line
+      and 'python3 "/plugin/scripts/credo-win-bridge.py" elevsend-install' in _line)
+check("offer line: never unattended", "autonomous or unattended: only report" in _line)
+check("offer line: outdated state", "outdated: installed v1, shipped v2" in wb.elevsend_offer_text([], 2, 1, "/x"))
+check("offer line: at most three names", "a, b, c, ...)" in wb.elevsend_offer_text(["a", "b", "c", "d"], 2, None, "/x"))
+_saved = (wb.elevated_sessions_seen, wb.elevsend_versions, wb.lan().wsl_interop_host)
+try:
+    wb.lan().wsl_interop_host = lambda: True
+    wb.elevated_sessions_seen = lambda: ["acme-admin"]
+    wb.elevsend_versions = lambda: (2, None, "/pd")
+    check("offer(): line when needed", "acme-admin" in wb.elevsend_offer())
+    wb.elevsend_versions = lambda: (2, 2, "/pd")
+    check("offer(): nothing when current", wb.elevsend_offer() == "")
+    wb.elevated_sessions_seen = lambda: []
+    wb.elevsend_versions = lambda: (_ for _ in ()).throw(AssertionError("no Windows call needed"))
+    check("offer(): no elevated session -> no Windows call, no line", wb.elevsend_offer() == "")
+    wb.lan().wsl_interop_host = lambda: False
+    wb.elevated_sessions_seen = lambda: ["acme-admin"]
+    check("offer(): never outside WSL", wb.elevsend_offer(always=True) == "")
+    wb.lan().wsl_interop_host = lambda: True
+    os.environ["CREDO_ELEVSEND_OFFER"] = "0"
+    check("offer(): CREDO_ELEVSEND_OFFER=0 switches it off", wb.elevsend_offer(always=True) == "")
+    del os.environ["CREDO_ELEVSEND_OFFER"]
+finally:
+    wb.elevated_sessions_seen, wb.elevsend_versions, wb.lan().wsl_interop_host = _saved
+# Windows tools print in the OEM code page: every text-mode subprocess call decodes
+# tolerantly (a byte like 0x81 crashed elevsend-install after a successful install)
+import re as _re
+_here = os.environ["CREDO_SCRIPTS"]
+for _name in ("credo-win-bridge.py", "credo-peer-lan.py"):
+    _src = open(os.path.join(_here, _name), encoding="utf-8").read()
+    _bad = [m.start() for m in _re.finditer(r"text=True(?![^)]*errors=)", _src)]
+    check("%s: every text=True subprocess call has errors=" % _name, not _bad, _bad[:3])
+_setup = open(os.path.join(_here, "..", "commands", "setup.md"), encoding="utf-8").read()
+check("setup offers the elevated sender helper on WSL (never unattended)",
+      "Step 12c" in _setup and "elevsend-install" in _setup and "Never run this step in\nautonomous mode" in _setup)
 
 # publish list, templates, descriptors, cleanup (temp profiles)
 root = tempfile.mkdtemp(dir=".")

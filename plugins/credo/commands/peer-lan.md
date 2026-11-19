@@ -782,6 +782,20 @@ plugin dir; nothing is installed on Windows).
     that copy elevated, so a process already running as the user could swap the copy
     between the copy and the UAC confirmation. The installed copy itself lives in the
     admin-only folder and is what the task runs.
+  - **Offer, everywhere peers are used.** When the running bridge has seen a Windows
+    session that is reachable only through the helper (it probes each new session's inbox
+    owner once, with one read-only connection that sends nothing) and the helper is
+    missing or outdated, one line offers the install with the exact command:
+    `credo: WSL -> elevated Windows sessions (<names>) need the elevated sender helper
+    (...); install now (one UAC prompt)? Command: python3 ".../credo-win-bridge.py"
+    elevsend-install ...`. It comes from ONE function (`elevsend_offer` in
+    `credo-win-bridge.py`, also `credo-win-bridge.py elevsend-offer [--always]`) and is
+    shown by `credo-peer-lan.py check`, `start` and `status`, by the peer check
+    (`credo-peer-check.py`, its table, `--json` field `elevsend_offer` and the SessionStart
+    hook), by `/credo:setup` (Step 12c) and in the bridge log after a send to an elevated
+    session failed. When the line appears in an interactive session, ask the user and on
+    "yes" run the command yourself (the user only confirms the UAC prompt). In autonomous
+    or unattended runs only report it; never start the install there.
   - **Status and removal.** `credo-win-bridge.py status` shows whether the helper is
     installed (and outdated). `credo-win-bridge.py elevsend-uninstall` removes only the
     helper (one UAC prompt); `credo-peer-lan.py disconnect-all --full` removes it in the
@@ -959,7 +973,10 @@ reported as FAILED, never as a silent exit 0.
   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" elevsend-uninstall   # uninstall-elevated
   ```
   `install-elevated` and `uninstall-elevated` open one UAC prompt: run them only when the
-  user asked for it and is at the screen to confirm it.
+  user asked for it and is at the screen to confirm it. When `check`, `start`, `status` or
+  `win-bridge status` prints the `credo: WSL -> elevated Windows sessions ...` offer line,
+  ask the user (AskUserQuestion) whether to install now and run `elevsend-install` on yes;
+  in autonomous or unattended runs only report the line.
   `start` does nothing when the bridge is switched off (`peer.win_bridge.enabled`,
   `CREDO_WIN_BRIDGE`) or outside WSL; say so instead of retrying.
 

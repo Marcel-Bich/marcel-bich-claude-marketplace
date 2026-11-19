@@ -627,7 +627,7 @@ def self_ip_linux():
     try:
         out = subprocess.run(
             ["ip", "route", "get", "1.1.1.1"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
         )
     except Exception:
         return None
@@ -948,7 +948,7 @@ def _win_cwd():
 def _run_out(argv, timeout=5, cwd=None):
     try:
         res = subprocess.run(
-            argv, capture_output=True, text=True, timeout=timeout, cwd=cwd
+            argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, cwd=cwd
         )
     except Exception:
         return ""
@@ -1893,7 +1893,7 @@ def run_winproxy_install(port, task):
     if not ps_exe or not os.path.isfile(script):
         return None, "powershell.exe or %s not found" % WIN_PS1
     try:
-        win_path = subprocess.run(["wslpath", "-w", script], capture_output=True, text=True,
+        win_path = subprocess.run(["wslpath", "-w", script], capture_output=True, text=True, encoding="utf-8", errors="replace",
                                   timeout=10).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         win_path = ""
@@ -1903,7 +1903,7 @@ def run_winproxy_install(port, task):
     encoded = base64.b64encode(command.encode("utf-16-le")).decode("ascii")
     try:
         proc = subprocess.run([ps_exe, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-                              stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
                               timeout=WINPROXY_INSTALL_TIMEOUT)
     except subprocess.TimeoutExpired:
         return None, ("the elevated run did not finish within %d s; its window may still be open, "
@@ -2176,7 +2176,7 @@ def _ufw_status_text():
     if not have_cmd("ufw"):
         return None
     try:
-        out = subprocess.run(["ufw", "status"], capture_output=True, text=True, timeout=5)
+        out = subprocess.run(["ufw", "status"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
         text = out.stdout or ""
     except Exception:
         text = ""
@@ -2200,7 +2200,7 @@ def _firewalld_running():
     if not have_cmd("firewall-cmd"):
         return False
     try:
-        out = subprocess.run(["firewall-cmd", "--state"], capture_output=True, text=True, timeout=5)
+        out = subprocess.run(["firewall-cmd", "--state"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
         return (out.stdout or "").strip() == "running"
     except Exception:
         return False
@@ -7990,7 +7990,7 @@ def _win_uninstall(port, task):
         return 1
     try:
         win_path = subprocess.run(["wslpath", "-w", script], capture_output=True,
-                                  text=True, timeout=10).stdout.strip()
+                                  text=True, encoding="utf-8", errors="replace", timeout=10).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         win_path = ""
     if not win_path:
@@ -8655,7 +8655,38 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not getattr(args, "func", None):
         return run_daemon(args)
-    return args.func(args)
+    rc = args.func(args)
+    if getattr(args, "cmd", None) in ("check", "start", "status"):
+        print_elevsend_offer()
+    return rc
+
+
+def print_elevsend_offer():
+    """The WSL bridge's offer to install the elevated sender helper (one line, only when
+    an elevated Windows session was seen and the helper is missing or outdated). Single
+    source: credo-win-bridge.py elevsend_offer."""
+    try:
+        line = load_win_bridge().elevsend_offer()
+    except Exception:
+        line = ""
+    if line:
+        print(line)
+
+
+_WIN_BRIDGE = {}
+
+
+def load_win_bridge():
+    """credo-win-bridge.py as a module, loaded once and lazily."""
+    if "m" not in _WIN_BRIDGE:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "credo_win_bridge_for_lan", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                      "credo-win-bridge.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _WIN_BRIDGE["m"] = mod
+    return _WIN_BRIDGE["m"]
 
 
 if __name__ == "__main__":

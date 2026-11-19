@@ -65,7 +65,7 @@ stdio protocol with the PowerShell half (one JSON object per line, UTF-8):
            {"op":"log","text":"..."}
 
 Usage: credo-win-bridge.py ensure | daemon | stop | status | enabled | elevsend-install |
-       elevsend-uninstall
+       elevsend-uninstall | elevsend-offer [--always]
 Python 3 stdlib only.
 """
 
@@ -246,7 +246,7 @@ def config_value():
     env = dict(os.environ, CREDO_PROJECT="/dev/null", CREDO_SKIP_ENSURE="1")
     try:
         r = subprocess.run([credo_platform.bash_exe(), script, "get", "peer.win_bridge.enabled"], env=env,
-                           capture_output=True, text=True, timeout=10)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
     except Exception:
         return None
     if r.returncode != 0:
@@ -281,7 +281,7 @@ def ps_command():
         return None
     try:
         win = subprocess.run(["wslpath", "-w", os.path.join(HERE, PS_SCRIPT)],
-                             capture_output=True, text=True, timeout=10).stdout.strip()
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10).stdout.strip()
     except Exception:
         return None
     if not win:
@@ -962,6 +962,7 @@ class Daemon(object):
         self.published = {}        # WSL sessionId -> publish entry (with "sock")
         self.mirror_pipe = {}      # WSL sessionId -> Windows mirror pipe path
         self.pending = {}          # send id -> (holder, connection id, monotonic start)
+        self.next_offer = 0.0      # monotonic time of the next allowed install-offer log line
         self.next_id = 1
         self.user = ""
         self.last_list = 0.0
@@ -1031,6 +1032,8 @@ class Daemon(object):
                 log("message to %s NOT delivered (%s): %s" % (
                     name, "verdict too late, the sender already saw a failure" if late else
                     "the sender sees a failed send", ev.get("err")))
+                if "runs elevated" in str(ev.get("err")):
+                    self.log_elevsend_offer()
             elif pend is not None and time.monotonic() - pend[2] > VERDICT_WAIT:
                 log("message to %s delivered after the sender had given up (it saw a failure)" % name)
             if pend is not None:
@@ -1159,6 +1162,24 @@ class Daemon(object):
         return None
 
     # -- message paths --------------------------------------------------------
+    def log_elevsend_offer(self):
+        """After a send failed on an elevated session: log the install offer (the same line
+        setup, peer-lan and the peer check show), at most every 10 minutes and off the
+        PowerShell reader thread (it may call a Windows tool)."""
+        now = time.monotonic()
+        if now < self.next_offer:
+            return
+        self.next_offer = now + 600.0
+
+        def run():
+            try:
+                line = elevsend_offer(always=True)
+            except Exception:
+                line = ""
+            if line:
+                log(line)
+        threading.Thread(target=run, daemon=True).start()
+
     def to_windows(self, holder, data, cid=None):
         """Bytes a WSL session wrote into a holder: drop any auth line, swap the
         sender's WSL inbox for its Windows mirror pipe, send to the Windows session.
@@ -1236,6 +1257,11 @@ class Daemon(object):
                 "version": VERSION,
                 "ps_pid": self.ps.pid if self.ps is not None and self.ps.poll() is None else None,
                 "windows_sessions": sorted(h.name for h in self.holders.values()),
+                # Windows sessions reachable only through the elevated sender helper
+                # (read by elevsend_offer: setup, peer-lan and the peer check offer it)
+                "elevated_windows_sessions": sorted(
+                    session_name.clean(h.win.get("name"), 40) or h.sid
+                    for h in self.holders.values() if h.win.get("needsElevHelper") is True),
                 "published": len(self.mirror_pipe),
                 "updated": int(time.time()),
             }
@@ -1457,6 +1483,58 @@ def elevsend_command(script_win, action):
     ).format(src=script_win, act=action)
 
 
+def elevsend_offer_needed(elevated, shipped, installed, always=False):
+    """Whether to offer installing the elevated sender helper: an elevated Windows
+    session was seen (or `always`, used by /credo:setup) and the helper is missing or
+    older than the shipped one. No offer when the shipped version is unknown."""
+    if not (elevated or always) or shipped is None:
+        return False
+    return installed is None or installed < shipped
+
+
+def elevsend_offer_text(elevated, shipped, installed, script_path):
+    """The one offer line (single source for setup, peer-lan, the peer check and the
+    bridge log)."""
+    state = ("not installed" if installed is None
+             else "outdated: installed v%d, shipped v%d" % (installed, shipped))
+    names = list(elevated or [])
+    who = (" (%s%s)" % (", ".join(names[:3]), ", ..." if len(names) > 3 else "")) if names else ""
+    return ("credo: WSL -> elevated Windows sessions%s need the elevated sender helper (%s); "
+            "install now (one UAC prompt)? Command: python3 \"%s\" elevsend-install - "
+            "interactive: run it after the user says yes; autonomous or unattended: only "
+            "report this, never start it." % (who, state, script_path))
+
+
+def elevated_sessions_seen():
+    """Names of Windows sessions the RUNNING bridge found reachable only through the
+    helper ([] when the bridge is not running or saw none)."""
+    if not daemon_alive(read_pidfile()):
+        return []
+    try:
+        with open(status_path()) as fh:
+            names = json.load(fh).get("elevated_windows_sessions") or []
+    except Exception:
+        return []
+    return [n for n in names if isinstance(n, str)]
+
+
+def elevsend_offer(always=False):
+    """The offer line, or "" when no offer is needed. Cheap when nothing elevated was
+    seen (no Windows call); WSL only. CREDO_ELEVSEND_OFFER=0 switches the offer off (tests)."""
+    if os.environ.get("CREDO_ELEVSEND_OFFER") == "0" or not lan().wsl_interop_host():
+        return ""
+    elevated = elevated_sessions_seen()
+    if not elevated and not always:
+        return ""
+    try:
+        shipped, installed, pd = elevsend_versions()
+    except Exception:
+        return ""
+    if pd is None or not elevsend_offer_needed(elevated, shipped, installed, always):
+        return ""
+    return elevsend_offer_text(elevated, shipped, installed, os.path.abspath(__file__))
+
+
 def cmd_elevsend(action):
     """elevsend-install / elevsend-uninstall: one elevated run (the user confirms UAC)."""
     m = lan()
@@ -1466,7 +1544,7 @@ def cmd_elevsend(action):
         print("powershell.exe or %s not found (Windows interop needed)" % ELEV_SCRIPT)
         return 1
     try:
-        win = subprocess.run(["wslpath", "-w", script], capture_output=True, text=True,
+        win = subprocess.run(["wslpath", "-w", script], capture_output=True, text=True, encoding="utf-8", errors="replace",
                              timeout=10).stdout.strip()
         command = elevsend_command(win, action)
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
@@ -1476,7 +1554,7 @@ def cmd_elevsend(action):
     encoded = base64.b64encode(command.encode("utf-16-le")).decode("ascii")
     try:
         proc = subprocess.run([ps_exe, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-                              stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
                               timeout=ELEV_TIMEOUT)
     except subprocess.TimeoutExpired:
         print("the elevated run did not finish within %d s" % ELEV_TIMEOUT)
@@ -1517,13 +1595,19 @@ def print_elevsend_status():
         print(elevsend_status_line(*elevsend_versions()))
     except Exception as exc:
         print("elevated sender helper: unknown (%s)" % exc)
+    try:
+        offer = elevsend_offer()
+    except Exception:
+        offer = ""
+    if offer:
+        print(offer)
 
 
 def main(argv):
     if not argv:
         print(__doc__.split("\n\n")[0])
         print("usage: credo-win-bridge.py ensure | daemon | stop | status | enabled | "
-              "elevsend-install | elevsend-uninstall")
+              "elevsend-install | elevsend-uninstall | elevsend-offer [--always]")
         return 2
     cmd = argv[0]
     if cmd == "holder":
@@ -1542,6 +1626,11 @@ def main(argv):
         return cmd_elevsend("Install")
     if cmd == "elevsend-uninstall":
         return cmd_elevsend("Uninstall")
+    if cmd == "elevsend-offer":
+        line = elevsend_offer(always="--always" in argv[1:])
+        if line:
+            print(line)
+        return 0
     if cmd == "enabled":
         print("true" if enabled() else "false")
         return 0

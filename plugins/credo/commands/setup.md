@@ -1082,6 +1082,48 @@ or `false`. After "Change the intervals", `get reminder.active.turns` and
 `get reminder.autonomous.minutes` print the chosen values. Tell the user in one line which keys
 to edit later, and that `enabled: false` switches the reminder off at any time.
 
+## Step 12c: Elevated Sender Helper for Windows Sessions (WSL only)
+
+Only on WSL with Windows interop: skip silently unless `grep -qiE "microsoft|wsl"
+/proc/version` succeeds and `command -v powershell.exe` finds it. Never run this step in
+autonomous mode or any unattended run: it opens a UAC prompt that only the user at the
+screen can confirm.
+
+Background (2 lines for the user): the WSL <-> Windows peer bridge cannot write into a
+Windows Claude Code session that runs as administrator unless a small elevated helper is
+installed once (scheduled task, started on demand, exits when idle; details in
+`/credo:peer-lan`, Windows sessions).
+
+Check (the same offer line `/credo:peer-lan` and the peer check show; `--always` asks
+even before an elevated session was seen):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" elevsend-offer --always
+```
+
+- No output -> the helper is installed and current (or this is not WSL): say nothing more.
+- An offer line (`credo: WSL -> elevated Windows sessions ... need the elevated sender
+  helper (not installed | outdated ...)`) -> ask via AskUserQuestion:
+
+```
+Install the elevated sender helper so WSL sessions can message Windows sessions that run as administrator?
+
+- Yes, install it now (Recommended if you run Claude Code as administrator on Windows) - one UAC prompt, confirm it on screen
+- No, skip - messages to elevated Windows sessions keep failing with an install hint
+```
+
+- "Yes" -> run it yourself (the user only confirms the UAC prompt; tell them a prompt is
+  about to open):
+
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-win-bridge.py" elevsend-install
+  ```
+
+  It prints `-Install OK: ...` on success or `-Install FAILED: <reason>` (for example a
+  declined prompt). Run `status` again and report the `elevated sender helper:` line.
+- "No" -> nothing is changed. Mention that `/credo:peer-lan win-bridge install-elevated`
+  installs it later and `elevsend-uninstall` removes it.
+
 ## Setup Complete
 
 Before the message below: if Step 2c was skipped because `project.state` was `ready` and
@@ -1094,7 +1136,8 @@ autonomous setup). Likewise, if Step 10 was skipped because `project.state` was
 because `project.state` was `ready` and `tmux.installed` or `tmux.inside` is `false`, run
 Step 11 now. Likewise, if Step 12b was skipped because `project.state` was `ready` and
 `credo-config.sh source reminder.enabled` prints `builtin:`, run Step 12b now (not in
-autonomous setup).
+autonomous setup). Likewise, run Step 12c now on WSL when it was skipped
+because `project.state` was `ready` (not in autonomous setup).
 
 **If all steps were skipped (project.state was ready):**
 

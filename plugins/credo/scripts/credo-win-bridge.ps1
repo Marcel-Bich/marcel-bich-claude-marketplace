@@ -46,6 +46,21 @@ function Send-BridgeLog([string]$Text) {
     Send-BridgeEvent ([ordered]@{ op = 'log'; text = $Text })
 }
 
+function Test-BridgeNeedsElevHelper($Hub, [string]$PipePath) {
+    # whether this session can only be reached through the elevated sender helper (its
+    # inbox is owned by Administrators and this bridge is not elevated). Probed once per
+    # pipe (one read-only connection that sends nothing), so the offer to install the
+    # helper can be shown before a message fails.
+    $name = Get-CredoPipeName $PipePath
+    if (-not (Test-CredoCcPipeName $name)) { return $false }
+    if (-not $Hub.ContainsKey('ElevProbe')) { $Hub.ElevProbe = @{}; $Hub.SelfElevated = (Test-CredoElevated) }
+    if ($Hub.SelfElevated) { return $false }
+    if (-not $Hub.ElevProbe.ContainsKey($name)) {
+        $Hub.ElevProbe[$name] = (Test-CredoUseElevHelper $true (Get-CredoInboxOwner $Hub $name) $false)
+    }
+    return [bool]$Hub.ElevProbe[$name]
+}
+
 function Get-BridgeSessionList($Hub) {
     $keep = 'pid', 'sessionId', 'cwd', 'name', 'nameSource', 'status', 'version', 'peerProtocol', 'peerFeatures',
             'kind', 'entrypoint', 'pidDomain', 'messagingSocketPath', 'updatedAt', 'statusUpdatedAt', 'startedAt'
@@ -56,6 +71,7 @@ function Get-BridgeSessionList($Hub) {
             $v = Get-CredoProp $o $k
             if ($null -ne $v) { $e[$k] = $v }
         }
+        $e['needsElevHelper'] = Test-BridgeNeedsElevHelper $Hub ([string](Get-CredoProp $o 'messagingSocketPath'))
         $out += ,$e
     }
     return ,$out
