@@ -6,6 +6,33 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 ### v0
 
+#### v0.87
+
+##### v0.87.0
+
+###### Added
+
+- `credo-handoff-rules.py check <HANDOFF.md> [RULES.md]` flags handoff rule lines without a
+  `source:` or `until:`, open-ended untils ("further notice", "dauerhaft"), expired or invalid dates and rule-like lines outside the
+  `## Rules (temporary)` section, and lists the RULES.md headings to compare against; the
+  post-compact rehydrate note now carries the precedence and this check
+
+###### Changed
+
+- Handoff rules are temporary and need a source and an expiry:
+  `- <rule> | source: owner "<quote>" (<date>) | until: <goal, date or event>` or
+  `| source: agent decision | until: ...`. Without an `until` a rule does not apply and the
+  agent says so aloud; agent decisions only fill gaps and are never shown as owner orders
+- Precedence is stated in the rules, compact-plus and session-autonomous skills: the owner's
+  current words > owner rules in the handoff > `.credo/RULES.md` > agent-decision rules. The
+  handoff is compared with RULES.md before an autonomous start and after a compact; conflicts
+  are reported aloud (ntfy in autonomous runs); a valid owner rule from the handoff (owner
+  quote with date, until not yet reached) beats RULES.md while it lasts, RULES.md wins over
+  agent decisions and invalid or expired handoff rules
+- The `[credo-reminder]` text no longer asks to carry every standing agreement into the
+  handoff; it carries only rules with source and until, drops expired ones and sends permanent
+  ones to RULES.md
+
 #### v0.86
 
 ##### v0.86.2
