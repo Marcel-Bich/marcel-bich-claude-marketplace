@@ -164,8 +164,12 @@ The executable keeps its original form: a bare `claude` (no `/`) stays bare in t
 launcher's `exec`, so the PATH lookup still finds a wrapper or shim placed earlier on PATH.
 Only when the launcher's PATH has no such name (`type -P` fails, e.g. a new window with
 another PATH) does it fall back to the path the name resolved to at `check` time (shown as
-`exe fallback:`). An argv0 that already is a path is used as is. This holds for every
-relaunch method and for the `relaunch-pty` wrap.
+`exe fallback:`). An argv0 that already is a path is used as is, with one narrow
+exception that heals sessions an older self-restart relaunched with an absolute path: an
+absolute `.../claude` whose directory is on PATH while a PATH lookup of `claude` finds a
+DIFFERENT file first (a wrapper/shim) goes back to the bare name, with the absolute path as
+the fallback (`check` shows `argv0 healed:`). This holds for every relaunch method and for
+the `relaunch-pty` wrap.
 
 Permission mode changed DURING the session (Shift+Tab, `/permissions`) is not in argv. The
 `credo-permission-mode-record.sh` hook (SessionStart + UserPromptSubmit) records the live

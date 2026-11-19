@@ -1174,6 +1174,31 @@ def exe_fallback(argv0):
     return found if os.path.isabs(found) else ""
 
 
+def healed_argv0(argv0):
+    """The bare name for an absolute argv0 that an older self-restart produced by
+    resolving a bare "claude" on PATH, else "". Narrow on purpose: the basename is
+    "claude", the file's directory is on PATH, and a PATH lookup of the name finds a
+    DIFFERENT file (a wrapper/shim earlier on PATH). The launcher still falls back to
+    the absolute path when its own PATH lacks the name."""
+    if not argv0 or not os.path.isabs(argv0) or os.path.basename(argv0) != "claude":
+        return ""
+    if not (os.path.isfile(argv0) and os.access(argv0, os.X_OK)):
+        return ""
+    name = os.path.basename(argv0)
+    dirs = [os.path.realpath(d) for d in os.environ.get("PATH", "").split(os.pathsep) if d]
+    if os.path.realpath(os.path.dirname(argv0)) not in dirs:
+        return ""
+    found = shutil.which(name)
+    if not found or not os.path.isabs(found):
+        return ""
+    try:
+        if os.path.samefile(found, argv0):
+            return ""
+    except OSError:
+        return ""
+    return name
+
+
 def launcher_text(cwd, config_dir, config_explicit, argv, pty_wrap=False, fallback=""):
     lines = [
         "#!/bin/bash",
@@ -1420,7 +1445,12 @@ def gather(args):
     # keep a bare argv0 (e.g. "claude") so the launcher's PATH lookup still finds a
     # wrapper or shim placed earlier on PATH; the resolved path is only the fallback
     # for a launcher whose PATH (new window, other tmux server) lacks the name
-    plan["exe_fallback"] = exe_fallback(argv[0])
+    if exe_end == 0:
+        healed = healed_argv0(argv[0])
+        if healed:
+            plan["argv0_healed_from"] = argv[0]
+            argv[0] = healed
+    plan["exe_fallback"] = plan.get("argv0_healed_from") or exe_fallback(argv[0])
     plan["original_argv"] = argv
     tenv = read_environ_keys(pid, ENV_KEYS)
     if tenv is None:
@@ -1523,6 +1553,9 @@ def print_plan(plan, errors):
     if plan.get("relaunch_argv_template"):
         p("  relaunch:     %s" % " ".join(shlex.quote(a)
                                           for a in plan["relaunch_argv_template"]))
+    if plan.get("argv0_healed_from"):
+        p("  argv0 healed: %s -> %s (a PATH wrapper/shim applies again)"
+          % (plan["argv0_healed_from"], plan["original_argv"][0]))
     if plan.get("exe_fallback"):
         p("  exe fallback: %s (only when the launcher's PATH lacks %s)"
           % (plan["exe_fallback"], plan["original_argv"][0]))

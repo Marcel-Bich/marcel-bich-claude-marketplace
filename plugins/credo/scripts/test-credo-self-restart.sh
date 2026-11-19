@@ -312,6 +312,20 @@ def run_launcher(path):
                           capture_output=True, text=True).stdout.strip()
 t("launcher run: shim first on PATH wins", run_launcher(shim_dir + ":/usr/bin:/bin") == "shim it's")
 t("launcher run: name missing on PATH -> fallback path", run_launcher("/usr/bin:/bin") == "real it's")
+# heal: an absolute argv0 left by an older relaunch goes back to the bare name only when
+# its dir is on PATH and the PATH lookup finds a different file (a shim) first
+os.environ["PATH"] = os.pathsep.join([shim_dir, real_dir, _path])
+t("heal: shim earlier on PATH -> bare name", m.healed_argv0(real) == "claude")
+os.environ["PATH"] = os.pathsep.join([real_dir, shim_dir, _path])
+t("heal: lookup finds the same file -> no heal", m.healed_argv0(real) == "")
+os.environ["PATH"] = os.pathsep.join([shim_dir, _path])
+t("heal: argv0 dir not on PATH -> no heal", m.healed_argv0(real) == "")
+other = fake_bin(os.path.join(xd, "other"), "notclaude", "x")
+os.environ["PATH"] = os.pathsep.join([shim_dir, os.path.dirname(other), _path])
+t("heal: other basename -> no heal", m.healed_argv0(other) == "")
+t("heal: missing file -> no heal", m.healed_argv0(os.path.join(xd, "gone", "claude")) == "")
+t("heal: bare argv0 untouched", m.healed_argv0("claude") == "")
+os.environ["PATH"] = _path
 # owner-rule guard (real 300 s minimum)
 os.environ.pop("CREDO_SELF_RESTART_MIN_ANNOUNCE", None)
 t("min announce is 300", m.min_announce() == 300)
@@ -566,7 +580,8 @@ ok "update: allowlist only, env stripped, CLAUDE_CONFIG_DIR kept" "$?"
 grep -q "version credo@mkt-a: 0.69.0 -> 0.70.0" "$CFGA/credo/self-restart.log"; ok "log records version before -> after" "$?"
 # execute the generated launcher: the fake claude must get the exact relaunch argv
 : > "$FAKE_CLAUDE_LOG"
-CLAUDECODE=1 CLAUDE_CODE_FOO=bar PATH="$FC:$BASE" bash "$LAUNCHER"
+# no BASH_ENV/ENV: a host startup file could put a real claude ahead of the fake on PATH
+env -u BASH_ENV -u ENV CLAUDECODE=1 CLAUDE_CODE_FOO=bar PATH="$FC:$BASE" bash "$LAUNCHER"
 "$PY" - "$FAKE_CLAUDE_LOG" "$CFGA" "$SID" "$PROJ" <<'PYEOF'
 import json, sys
 r = json.loads(open(sys.argv[1]).readline())
