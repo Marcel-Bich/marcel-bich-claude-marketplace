@@ -99,6 +99,58 @@ lacks "bad: fenced lines ignored" "line 1[34]" "$out"
 lacks "bad: Next section not flagged" "\"Next\"" "$out"
 check "bad: flag count" 7 "$(printf '%s\n' "$out" | grep -c '^FLAG ')"
 
+# --- audit fixes: quotes and pipes in owner quotes, open-ended untils, sub-bullets,
+# subheadings, legacy headings, ~~~ fences, invalid dates -----------------------------
+cat > "$H" <<'EOF'
+# Handoff
+
+## Rules (temporary)
+- Quote with quotes | source: owner "use "fast" mode, not | slow" (2021-05-30) | until: acme-task is done
+- Open 1 | source: agent decision | until: further notice
+- Open 2 | source: agent decision | until: bis auf Weiteres
+- Open 3 | source: agent decision | until: dauerhaft
+- Open 4 | source: agent decision | until: never
+- Bad date | source: agent decision | until: 2021-13-40
+- Bad owner date | source: owner "x" (2021-02-30) | until: box-1 is up
+- Parent rule | source: agent decision | until: box-1 is up
+  - a sub-bullet without fields is a detail, not a rule
+
+### Build order
+- Sub rule without until | source: agent decision
+
+~~~
+## Standing rules
+- inside a tilde fence, ignored
+~~~
+
+## Work on rules skill
+- not a rule collection
+
+## Regeln
+- Alte Absprache
+
+## Next
+- build item 2
+EOF
+out="$(run check "$H")"; rc=$?
+check "audit: exit" 1 "$rc"
+lacks "audit: quotes and pipes in an owner quote pass" "line 4:" "$out"
+has "audit: further notice" "line 5: no real expiry (until further notice): belongs in RULES.md" "$out"
+has "audit: bis auf Weiteres" "line 6: no real expiry" "$out"
+has "audit: dauerhaft" "line 7: no real expiry" "$out"
+has "audit: never" "line 8: no real expiry" "$out"
+has "audit: invalid until date" "line 9: until date 2021-13-40 is not a valid date" "$out"
+has "audit: invalid source date" "line 10: source date 2021-02-30 is not a valid date" "$out"
+lacks "audit: sub-bullet is no rule" "line 12:" "$out"
+lacks "audit: parent with sub-bullet passes" "line 11:" "$out"
+has "audit: subheading stays in the section" "line 15: no until:" "$out"
+lacks "audit: tilde fence ignored" "line 18" "$out"
+lacks "audit: no false legacy hit" "Work on rules skill" "$out"
+has "audit: German legacy heading" "section \"Regeln\"" "$out"
+check "audit: flag count" 8 "$(printf '%s\n' "$out" | grep -c '^FLAG ')"
+"$PY" "$SUT" check "$H" --today >/dev/null 2>&1; check "audit: --today without value" 2 "$?"
+"$PY" "$SUT" check "$H" --today 2021-02-30 >/dev/null 2>&1; check "audit: --today invalid" 2 "$?"
+
 # --- no rules section, no RULES.md ---------------------------------------------------
 printf '# Handoff\n\n## Done\n- x\n' > "$H"
 out="$(run check "$H")"; rc=$?

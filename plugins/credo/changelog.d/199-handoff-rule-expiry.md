@@ -5,7 +5,7 @@ bump: minor
 ### Added
 
 - `credo-handoff-rules.py check <HANDOFF.md> [RULES.md]` flags handoff rule lines without a
-  `source:` or `until:`, expired until-dates and rule-like lines outside the
+  `source:` or `until:`, open-ended untils ("further notice", "dauerhaft"), expired or invalid dates and rule-like lines outside the
   `## Rules (temporary)` section, and lists the RULES.md headings to compare against; the
   post-compact rehydrate note now carries the precedence and this check
 

@@ -101,6 +101,11 @@ When sources disagree, precedence descends:
 4. Remembered items.
 5. Model inference.
 
+Rules (owner words, handoff rules, `.credo/RULES.md`) have their own finer order: credo
+`rules`, "Handoff rules (temporary) vs RULES.md". "Standing orders" in level 2 are
+RULES.md and the valid `## Rules (temporary)` handoff lines, ranked among each other as
+described there; a handoff rule without a source and an `until` is no standing order.
+
 Do not re-derive this for every trivial decision. When something is unclear, first
 check this log and the committed docs (levels 1-3); only then ask the user, or fall
 back to a documented default if the user is away.

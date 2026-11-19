@@ -14,10 +14,11 @@ settles it. A rule without `until:` does not apply.
 
 Usage:
     credo-handoff-rules.py check <HANDOFF.md> [RULES.md] [--today YYYY-MM-DD]
-        Print one finding per bad rule line (missing source, missing until, expired
-        until-date, source neither an owner quote with date nor "agent decision"),
-        legacy rule sections outside "Rules (temporary)", and the RULES.md headings to
-        compare against. Exit 0 = no finding, 1 = findings, 2 = usage or unreadable file.
+        Print one finding per bad rule line (missing source, missing until, open-ended
+        until such as "further notice" or "dauerhaft", expired or invalid dates, source
+        neither an owner quote with date nor "agent decision"), rule collections outside
+        "Rules (temporary)" (its ### subsections belong to it; indented sub-bullets are
+        details of the rule above), and the RULES.md headings to compare against. Exit 0 = no finding, 1 = findings, 2 = usage or unreadable file.
     credo-handoff-rules.py rehydrate <HANDOFF.md> [RULES.md] [--today YYYY-MM-DD]
         The post-compact instruction text (precedence + compare + check result) for the
         SessionStart hook. Always exits 0.
@@ -48,11 +49,25 @@ PRECEDENCE = (
     "lost over time and context.")
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
-LEGACY_RE = re.compile(r"\b(rules?|standing|agreements?|owner orders?|orders in force)\b", re.I)
-FIELD_RE = re.compile(r"^\s*(source|until)\s*:\s*(.*?)\s*$", re.I)
-OWNER_SRC_RE = re.compile(r'^owner\s+"[^"]+"\s*\(\s*\d{4}-\d{2}-\d{2}[^)]*\)', re.I)
-DATE_RE = re.compile(r"^(?:by\s+|on\s+)?(\d{4}-\d{2}-\d{2})\b", re.I)
-PLACEHOLDER_RE = re.compile(r"^\(?(none|-|n/?a|tbd|\?|open|unknown|forever|permanent)\)?$", re.I)
+# headings of rule collections outside "## Rules (temporary)" (English and German); a heading
+# that only mentions rules ("Work on rules skill") is no rule collection
+LEGACY_RE = re.compile(
+    r"standing\s+(rules|orders|agreements)|owner\s+(orders|rules)"
+    r"|(rules|orders|agreements)\s+(still\s+)?in\s+force"
+    r"|^(rules|orders|agreements)\s*(\(.*\))?$"
+    r"|stehende\s+\w+|\b(regeln|absprachen|vorgaben)\b", re.I)
+FIELD_MARK_RE = re.compile(r"\|\s*(source|until)\s*:", re.I)
+# greedy: the quote may itself hold straight quotes or pipes, it ends at the trailing (date)
+OWNER_SRC_RE = re.compile(r'^owner\s+".*"\s*\(\s*\d{4}-\d{1,2}-\d{1,2}[^)]*\)$', re.I | re.S)
+OWNER_DATE_RE = re.compile(r"\(\s*(\d{4}-\d{1,2}-\d{1,2})[^)]*\)$")
+DATE_RE = re.compile(r"^(?:by\s+|on\s+)?(\d{4}-\d{1,2}-\d{1,2})\b", re.I)
+PLACEHOLDER_RE = re.compile(r"^\(?(none|-|n/?a|tbd|\?|open|unknown)\)?$", re.I)
+# open-ended: no real expiry, the rule is permanent and belongs in RULES.md
+OPEN_RE = re.compile(
+    r"^(until\s+|bis\s+)?(further\s+notice|notice|never|always|forever|indefinitely|"
+    r"permanent(ly)?|no\s+end|ongoing|auf\s+weiteres|weiteres|dauerhaft|immer|nie|niemals|"
+    r"unbefristet|für\s+immer|ewig)[.!]?$", re.I)
+FENCES = ("```", "~~~")
 
 
 def read(path):
@@ -61,15 +76,19 @@ def read(path):
 
 
 def sections(lines):
-    """Yield (heading level, heading text, start index, [(lineno, line)]) per heading."""
+    """Return [heading level, heading text, line number, [(lineno, line)]] per heading;
+    lines inside ``` or ~~~ fences are skipped."""
     out = []
     cur = None
-    fence = False
+    fence = None
     for i, line in enumerate(lines, 1):
-        if line.lstrip().startswith("```"):
-            fence = not fence
+        lead = line.lstrip()
+        if fence is None and lead.startswith(FENCES):
+            fence = lead[:3]
             continue
-        if fence:
+        if fence is not None:
+            if lead.startswith(fence):
+                fence = None
             continue
         m = HEADING_RE.match(line)
         if m:
@@ -81,42 +100,62 @@ def sections(lines):
 
 
 def rule_lines(body):
-    """Bullet lines of a section; continuation lines are folded into their bullet."""
+    """Top-level bullet lines of a section. Indented lines, sub-bullets included, are folded
+    into the bullet above them: they are details of that rule, not rules of their own."""
     rules = []
     for no, line in body:
         s = line.strip()
-        if re.match(r"^[-*+]\s+", s):
+        indented = line[:1] in (" ", "\t")
+        if not indented and re.match(r"^[-*+]\s+", s):
             rules.append([no, re.sub(r"^[-*+]\s+", "", s)])
-        elif s and rules and line[:1] in (" ", "\t"):
+        elif s and rules and indented:
             rules[-1][1] += " " + s
     return rules
 
 
+def fields_of(text):
+    """{'source': value, 'until': value} split only at '| source:' and '| until:'."""
+    marks = list(FIELD_MARK_RE.finditer(text))
+    fields = {}
+    for n, m in enumerate(marks):
+        end = marks[n + 1].start() if n + 1 < len(marks) else len(text)
+        fields.setdefault(m.group(1).lower(), text[m.end():end].strip())
+    return fields
+
+
+def parse_date(value):
+    try:
+        return datetime.datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
 def check_rule(text, today):
     """Return the list of problems of one rule line (empty = fine)."""
-    parts = [p.strip() for p in text.split("|")]
-    fields = {}
-    for p in parts[1:]:
-        m = FIELD_RE.match(p)
-        if m:
-            fields[m.group(1).lower()] = m.group(2)
+    fields = fields_of(text)
     probs = []
     src = fields.get("source")
-    if src is None or not src:
+    if not src:
         probs.append("no source: (owner \"<quote>\" (<date>) or agent decision)")
-    elif not (OWNER_SRC_RE.match(src) or src.lower() == "agent decision"):
+    elif src.lower() == "agent decision":
+        pass
+    elif not OWNER_SRC_RE.match(src):
         probs.append("source is neither owner \"<quote>\" (<date>) nor agent decision")
+    elif parse_date(OWNER_DATE_RE.search(src).group(1)) is None:
+        probs.append("source date %s is not a valid date" % OWNER_DATE_RE.search(src).group(1))
     until = fields.get("until")
-    if until is None or not until or PLACEHOLDER_RE.match(until):
+    if not until or PLACEHOLDER_RE.match(until):
         probs.append("no until: (goal, date or event) - this rule does NOT apply")
+    elif OPEN_RE.match(until):
+        probs.append("no real expiry (until %s): belongs in RULES.md (propose the entry) or "
+                     "needs a real until" % until)
     else:
         m = DATE_RE.match(until)
         if m:
-            try:
-                d = datetime.date.fromisoformat(m.group(1))
-            except ValueError:
-                d = None
-            if d is not None and d < today:
+            d = parse_date(m.group(1))
+            if d is None:
+                probs.append("until date %s is not a valid date" % m.group(1))
+            elif d < today:
                 probs.append("expired (until %s) - drop it" % m.group(1))
     return probs
 
@@ -125,17 +164,24 @@ def check(handoff, rules_md, today):
     lines = read(handoff)
     findings = []
     found = False
+    rules_level = None  # level of the open "Rules (temporary)" heading, its subsections belong to it
     for level, title, start, body in sections(lines):
-        if title.strip().lower() == SECTION.lower():
-            found = True
+        if rules_level is not None and level > rules_level:
+            in_rules = True
+        else:
+            rules_level = None
+            in_rules = title.strip().lower() == SECTION.lower()
+            if in_rules:
+                rules_level = level
+                found = True
+        if in_rules:
             for no, text in rule_lines(body):
                 for p in check_rule(text, today):
                     findings.append("line %d: %s: %s" % (no, p, text[:120]))
-        elif LEGACY_RE.search(title):
-            if rule_lines(body):
-                findings.append("line %d: section \"%s\" holds rule-like lines outside \"## %s\" - "
-                                "they do not apply; move each into \"## %s\" with source and until, "
-                                "or drop it" % (start, title, SECTION, SECTION))
+        elif LEGACY_RE.search(title.strip()) and rule_lines(body):
+            findings.append("line %d: section \"%s\" holds rule-like lines outside \"## %s\" - "
+                            "they do not apply; move each into \"## %s\" with source and until, "
+                            "or drop it" % (start, title, SECTION, SECTION))
     notes = []
     if not found:
         notes.append("no \"## %s\" section: the handoff carries no temporary rules" % SECTION)
@@ -148,11 +194,14 @@ def check(handoff, rules_md, today):
 
 
 def parse_args(argv):
+    """Split off --today YYYY-MM-DD; ValueError when its value is missing or invalid."""
     today = datetime.date.today()
     rest = []
     i = 0
     while i < len(argv):
-        if argv[i] == "--today" and i + 1 < len(argv):
+        if argv[i] == "--today":
+            if i + 1 >= len(argv):
+                raise ValueError("--today needs a value")
             today = datetime.date.fromisoformat(argv[i + 1])
             i += 2
             continue
