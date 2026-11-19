@@ -8,9 +8,10 @@ A handoff (.credo/process/handoffs/HANDOFF.md) may hold rules only in one sectio
     - <rule> | source: agent decision | until: <goal, date or event>
 
 Precedence: the owner's current words > owner rules in the handoff (temporary) >
-.credo/RULES.md > agent-decision rules in the handoff (they only fill gaps). A conflict
-between a handoff rule and RULES.md is reported aloud and RULES.md applies until the owner
-settles it. A rule without `until:` does not apply.
+.credo/RULES.md > agent-decision rules in the handoff (they only fill gaps). On a conflict
+with RULES.md a valid owner rule (owner quote with date, until not yet reached) wins while it
+lasts; RULES.md wins over agent decisions and invalid handoff rules (missing or invalid source
+or until, expired). Every conflict is reported aloud. A rule without `until:` does not apply.
 
 Usage:
     credo-handoff-rules.py check <HANDOFF.md> [RULES.md] [--today YYYY-MM-DD]
@@ -42,7 +43,9 @@ PRECEDENCE = (
     "rule needs a source and an until: " + FORMAT + ". A handoff rule without until does NOT "
     "apply: say so aloud to the owner instead of following it. Compare the handoff rules with "
     ".credo/RULES.md; report every conflict aloud (in autonomous runs also via ntfy), keep "
-    "working, and let RULES.md win over the conflicting handoff rule until the owner settles it. "
+    "working. On a conflict a valid owner rule from the handoff (owner quote with date, until not "
+    "yet reached) beats RULES.md while it lasts; RULES.md wins over agent decisions and over "
+    "invalid handoff rules (missing or invalid source or until, expired). "
     "An owner rule without an expiry goes to the right place: permanent -> propose the exact "
     "RULES.md entry and write it after the owner's OK; temporary -> ask the owner for the until; "
     "if the owner leaves it open, say aloud that it will not be honoured reliably and will get "

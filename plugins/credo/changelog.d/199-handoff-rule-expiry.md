@@ -18,7 +18,9 @@ bump: minor
 - Precedence is stated in the rules, compact-plus and session-autonomous skills: the owner's
   current words > owner rules in the handoff > `.credo/RULES.md` > agent-decision rules. The
   handoff is compared with RULES.md before an autonomous start and after a compact; conflicts
-  are reported aloud (ntfy in autonomous runs) and RULES.md wins until the owner settles it
+  are reported aloud (ntfy in autonomous runs); a valid owner rule from the handoff (owner
+  quote with date, until not yet reached) beats RULES.md while it lasts, RULES.md wins over
+  agent decisions and invalid or expired handoff rules
 - The `[credo-reminder]` text no longer asks to carry every standing agreement into the
   handoff; it carries only rules with source and until, drops expired ones and sends permanent
   ones to RULES.md

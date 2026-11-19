@@ -793,8 +793,10 @@ lines with `.credo/RULES.md` (credo `rules`, "Handoff rules (temporary) vs RULES
 by `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-handoff-rules.py" check .credo/process/handoffs/HANDOFF.md .credo/RULES.md`.
 Name aloud in the read-back every conflict and every handoff rule without a source or an
 `until` (it does not apply), and send the same as one ntfy line, so the owner can correct it
-before the run. Then start anyway: no Ask, RULES.md wins over a conflicting handoff rule until
-the owner settles it, and agent-decision rules are never treated as owner orders. Do the same
+before the run. Then start anyway, no Ask. On a conflict a valid owner rule from the handoff
+(owner quote with date, `until` not yet reached) beats RULES.md while it lasts; RULES.md wins
+over agent-decision rules and invalid handoff rules (missing or invalid source or `until`,
+expired). Agent-decision rules are never treated as owner orders. Do the same
 after every compact or rehydrate during the run.
 
 ### Budget-start read-back (mandatory before any autonomous start)

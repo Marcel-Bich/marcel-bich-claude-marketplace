@@ -91,7 +91,8 @@ Within the safety floor and DOGMA-PERMISSIONS, the instruction sources rank:
 
 1. **The owner's current words** in this conversation.
 2. **Owner rules in the handoff** (`## Rules (temporary)` lines with `source: owner "<quote>"
-   (<date>)` and an `until`) - temporary, they end at their `until`.
+   (<date>)` and an `until`) - temporary: while their `until` is not reached they beat
+   RULES.md, also on a conflict; they end at their `until`.
 3. **`.credo/RULES.md`** - the permanent per-repo rules.
 4. **Agent-decision rules in the handoff** (`source: agent decision` plus an `until`) - they
    only fill gaps, never beat RULES.md, and are never presented as owner orders.
@@ -107,8 +108,11 @@ The handoff line format is
 - **Compare with RULES.md** before an autonomous run starts (credo `session-autonomous`) and
   after every compact or rehydrate: read both, then report every conflict and every rule
   lacking a source or an `until` aloud to the owner (in an autonomous run also via ntfy),
-  and keep working. On a conflict RULES.md wins over the handoff rule until the owner
-  settles it. The cheap mechanical part is
+  and keep working. Who wins a conflict follows the rank list above: a valid owner rule
+  from the handoff (owner quote with date, `until` not yet reached) beats RULES.md while it
+  lasts; RULES.md wins over agent-decision rules and over invalid handoff rules (missing or
+  invalid source or `until`, expired). The conflict is reported aloud either way, so the
+  owner can correct it. The cheap mechanical part is
   `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-handoff-rules.py" check <HANDOFF.md> <RULES.md>`
   (flags lines without `source:`/`until:`, expired dates and rules outside the section, and
   lists the RULES.md headings to compare); the conflict judgement itself is yours. After a

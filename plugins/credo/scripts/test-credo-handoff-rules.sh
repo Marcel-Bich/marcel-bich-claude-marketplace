@@ -167,7 +167,9 @@ printf '## Rules (temporary)\n- No until | source: agent decision\n' > "$H"
 out="$(run rehydrate "$H" "$R")"; rc=$?
 check "rehydrate: exit" 0 "$rc"
 has "rehydrate: precedence" "the owner's current words > owner rules in the handoff" "$out"
-has "rehydrate: RULES.md wins on conflict" "let RULES.md win over the conflicting handoff rule" "$out"
+has "rehydrate: valid owner rule beats RULES.md" "a valid owner rule from the handoff (owner quote with date, until not yet reached) beats RULES.md while it lasts" "$out"
+has "rehydrate: RULES.md beats agent and invalid rules" "RULES.md wins over agent decisions and over invalid handoff rules (missing or invalid source or until, expired)" "$out"
+lacks "rehydrate: old conflict wording gone" "until the owner settles it" "$out"
 has "rehydrate: report aloud" "report them aloud to the owner now" "$out"
 has "rehydrate: flag line" "FLAG line 2: no until:" "$out"
 out="$(run rehydrate "$TMP/missing.md")"; rc=$?
