@@ -160,6 +160,13 @@ any shell config. It keeps every original flag with its value, drops `-r/--resum
 and positional prompts, and appends `--resume <session-id> <wake prompt>`. The wake prompt
 is ALWAYS passed.
 
+The executable keeps its original form: a bare `claude` (no `/`) stays bare in the
+launcher's `exec`, so the PATH lookup still finds a wrapper or shim placed earlier on PATH.
+Only when the launcher's PATH has no such name (`type -P` fails, e.g. a new window with
+another PATH) does it fall back to the path the name resolved to at `check` time (shown as
+`exe fallback:`). An argv0 that already is a path is used as is. This holds for every
+relaunch method and for the `relaunch-pty` wrap.
+
 Permission mode changed DURING the session (Shift+Tab, `/permissions`) is not in argv. The
 `credo-permission-mode-record.sh` hook (SessionStart + UserPromptSubmit) records the live
 `permission_mode` per session in `<configdir>/credo/session-mode/<session-id>`, and the

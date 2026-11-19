@@ -9,6 +9,7 @@
 # fake target.
 #
 # It checks:
+#   - launcher keeps a bare argv0 (PATH shim wins) with a resolved-path fallback
 #   - argv rebuild: drops resume/continue/print/session-id/positional prompts, keeps
 #     value flags with their values (incl. variadic), keeps
 #     --dangerously-skip-permissions, never gains it, always ends with
@@ -275,6 +276,42 @@ t("launcher exports config dir", "export CLAUDE_CONFIG_DIR='/c fg'" in lt)
 t("launcher sets no resume thresholds", "RESUME_THRESHOLD" not in lt and "TOKEN_THRESHOLD" not in lt)
 t("launcher default profile unsets", "unset CLAUDE_CONFIG_DIR" in m.launcher_text("/w", "/h/.claude", False, ["claude"]))
 t("launcher pty wrap", "relaunch-pty -- claude" in m.launcher_text("/w", "/c", True, ["claude"], pty_wrap=True))
+# bare argv0 is kept (a PATH wrapper/shim stays in effect), the resolved path is only
+# the fallback for a launcher whose PATH lacks the name
+import subprocess
+xd = tempfile.mkdtemp()
+def fake_bin(d, name, word):
+    os.makedirs(d, exist_ok=True)
+    f = os.path.join(d, name)
+    open(f, "w").write('#!/bin/sh\necho %s "$@"\n' % word)
+    os.chmod(f, 0o755)
+    return f
+shim_dir, real_dir = os.path.join(xd, "shim"), os.path.join(xd, "real")
+fake_bin(shim_dir, "claude", "shim")
+real = fake_bin(real_dir, "claude", "real")
+_path = os.environ.get("PATH", "")
+os.environ["PATH"] = real_dir + os.pathsep + _path
+t("exe fallback: bare name resolves", m.exe_fallback("claude") == real)
+os.environ["PATH"] = _path
+t("exe fallback: path argv0 -> none", m.exe_fallback("/opt/x/claude") == "")
+t("exe fallback: unknown name -> none", m.exe_fallback("no-such-cmd-198x") == "")
+lb = m.launcher_text("/w", "/c", True, ["claude", "--resume", SID, "p"], fallback="/opt/x/claude")
+t("launcher bare argv0 kept", 'exec "$__credo_exe" --resume' in lb and "__credo_exe=claude" in lb)
+t("launcher bare argv0 PATH-only check + fallback",
+  "type -P claude >/dev/null 2>&1 || __credo_exe=/opt/x/claude" in lb)
+t("launcher bare argv0 never execs the absolute path directly", "exec /opt/x/claude" not in lb)
+lp = m.launcher_text("/w", "/c", True, ["/opt/x/claude", "-c"], fallback="")
+t("launcher path argv0 unchanged", "exec /opt/x/claude -c" in lp and "type -P" not in lp)
+t("launcher bare argv0 without fallback", "exec claude -c" in m.launcher_text("/w", "/c", True, ["claude", "-c"]))
+lw = m.launcher_text("/w", "/c", True, ["claude", "-c"], pty_wrap=True, fallback="/opt/x/claude")
+t("launcher pty wrap keeps bare argv0", 'relaunch-pty -- "$__credo_exe" -c' in lw and "type -P claude" in lw)
+def run_launcher(path):
+    f = os.path.join(xd, "l.sh")
+    open(f, "w").write(m.launcher_text(xd, "/c", True, ["claude", "it's"], fallback=real))
+    return subprocess.run(["/bin/bash", f], env={"PATH": path, "HOME": xd},
+                          capture_output=True, text=True).stdout.strip()
+t("launcher run: shim first on PATH wins", run_launcher(shim_dir + ":/usr/bin:/bin") == "shim it's")
+t("launcher run: name missing on PATH -> fallback path", run_launcher("/usr/bin:/bin") == "real it's")
 # owner-rule guard (real 300 s minimum)
 os.environ.pop("CREDO_SELF_RESTART_MIN_ANNOUNCE", None)
 t("min announce is 300", m.min_announce() == 300)

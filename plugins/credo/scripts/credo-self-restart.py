@@ -1166,7 +1166,15 @@ def relaunch_pty(argv):
     return 128 + os.WTERMSIG(status) if os.WIFSIGNALED(status) else 1
 
 
-def launcher_text(cwd, config_dir, config_explicit, argv, pty_wrap=False):
+def exe_fallback(argv0):
+    """Absolute path of a bare argv0 as resolved on the current PATH, else ""."""
+    if not argv0 or "/" in argv0:
+        return ""
+    found = shutil.which(argv0) or ""
+    return found if os.path.isabs(found) else ""
+
+
+def launcher_text(cwd, config_dir, config_explicit, argv, pty_wrap=False, fallback=""):
     lines = [
         "#!/bin/bash",
         "# credo self-restart launcher (generated, safe to delete)",
@@ -1178,9 +1186,19 @@ def launcher_text(cwd, config_dir, config_explicit, argv, pty_wrap=False):
     else:
         lines.append("unset CLAUDE_CONFIG_DIR")
     lines.append("cd %s || exit 1" % shlex.quote(cwd))
+    argv = list(argv)
+    exe = shlex.quote(argv[0]) if argv else ""
+    if argv and fallback and "/" not in argv[0] and fallback != argv[0]:
+        # bare name: the PATH lookup at exec time keeps a wrapper/shim earlier on PATH
+        # in effect; `type -P` (PATH only, no functions) decides the fallback path
+        lines.append("__credo_exe=%s" % shlex.quote(argv[0]))
+        lines.append("type -P %s >/dev/null 2>&1 || __credo_exe=%s"
+                     % (shlex.quote(argv[0]), shlex.quote(fallback)))
+        exe = '"$__credo_exe"'
     if pty_wrap:
-        argv = [sys.executable, SCRIPT_PATH, "relaunch-pty", "--"] + list(argv)
-    lines.append("exec " + " ".join(shlex.quote(a) for a in argv))
+        exe = " ".join(shlex.quote(a) for a in
+                       [sys.executable, SCRIPT_PATH, "relaunch-pty", "--"]) + " " + exe
+    lines.append("exec " + " ".join([exe] + [shlex.quote(a) for a in argv[1:]]))
     return "\n".join(lines) + "\n"
 
 
@@ -1399,9 +1417,10 @@ def gather(args):
     plan["target_pid"] = pid
     plan["target_start"] = proc_start(pid)
     argv = list(argv)
-    if "/" not in argv[0] and shutil.which(argv[0]):
-        # absolute path so a new window / tmux server with another PATH finds it
-        argv[0] = shutil.which(argv[0])
+    # keep a bare argv0 (e.g. "claude") so the launcher's PATH lookup still finds a
+    # wrapper or shim placed earlier on PATH; the resolved path is only the fallback
+    # for a launcher whose PATH (new window, other tmux server) lacks the name
+    plan["exe_fallback"] = exe_fallback(argv[0])
     plan["original_argv"] = argv
     tenv = read_environ_keys(pid, ENV_KEYS)
     if tenv is None:
@@ -1504,6 +1523,9 @@ def print_plan(plan, errors):
     if plan.get("relaunch_argv_template"):
         p("  relaunch:     %s" % " ".join(shlex.quote(a)
                                           for a in plan["relaunch_argv_template"]))
+    if plan.get("exe_fallback"):
+        p("  exe fallback: %s (only when the launcher's PATH lacks %s)"
+          % (plan["exe_fallback"], plan["original_argv"][0]))
     if plan.get("method"):
         p("  invocation:   %s" % " ".join(shlex.quote(a) for a in invocation(
             plan["method"], plan["method_details"], plan["launcher"], plan["cwd"])))
@@ -1647,7 +1669,8 @@ def relaunch(plan, prompt):
     details = plan["method_details"]
     with open(plan["launcher"], "w") as fh:
         fh.write(launcher_text(plan["cwd"], plan["config_dir"], plan["config_explicit"],
-                               argv, pty_wrap=bool(details.get("pty"))))
+                               argv, pty_wrap=bool(details.get("pty")),
+                               fallback=plan.get("exe_fallback", "")))
     os.chmod(plan["launcher"], 0o700)
     cmd = invocation(plan["method"], plan["method_details"], plan["launcher"], plan["cwd"])
     log("relaunch via %s: %s" % (plan["method"], " ".join(shlex.quote(a) for a in cmd)))
