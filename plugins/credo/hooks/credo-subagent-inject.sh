@@ -51,7 +51,9 @@ QUALITY GATES: if you build or touch a runtime or UI surface, prove it by drivin
 
 HONESTY: admit uncertainty, never guess or fabricate; verify before claiming something works.
 
-DELEGATION: if you spawn your own helpers they inherit this same security and run at a model at least as capable as yours, never weaker (orchestration skill). If you hit a blocking decision you cannot resolve, return {status: needs_decision, question: ...} instead of guessing.
+DELEGATION: if you spawn your own helpers they inherit this same security and run at a model at least as capable as yours, never weaker (orchestration skill).
+
+DECISIONS: on a GO item or an agent-owned item (clarify_owner: agent), decide uncritical questions yourself - the best possible solution (SOTA), else best effort, else note it for the owner - following the mainagent rules in your brief and any per-repo grant (e.g. "decide uncritical questions yourself" in .credo/RULES.md); effort or size is never a reason to ask. Log each such decision with its reason in your report so the owner can veto it. Return {status: needs_decision, question: ...} only for a genuine owner-only decision (the owner's taste or preference, money, deleting user data, installs, safety, a change to the verbatim requirement, or when every option is infeasible or really not good) - never guess on those. Open questions of a human-owned clarify item (clarify_owner: human) always go back as needs_decision; never decide them yourself.
 
 CLAIMS: your blocker and owner-decision claims are proposals; the main agent verifies them (reads the cited source) before it asks the owner or declares a blocker. Cite the file:line or command output that proves each such claim.
 

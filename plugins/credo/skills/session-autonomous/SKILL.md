@@ -199,7 +199,8 @@ low-risk items. A bundle gets one audit; other lean items finished in the same s
 be batched into one audit subagent (one verdict per item); `full` items are audited singly.
 The auditor fixes small findings itself after recording them (credo `audit`, "Fixing small
 findings"). Run the dogma `relevant` test stage per item where defined; the full suite runs
-only where dogma places it, else once per batch, not per item. Pending human-only
+only where dogma places it (only at the release when DOGMA-PERMISSIONS §8eyz is `[x]`),
+else once per batch, not per item (credo `orchestration`, "When the full suite runs"). Pending human-only
 tests do not hold an item in `2_go` (credo `items`, "Human-only checks do not block done").
 
 ### Bringing up a local surface to verify (autonomous)

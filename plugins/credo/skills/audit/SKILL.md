@@ -97,8 +97,8 @@ and run `<that dir>/scripts/test-commands.sh get relevant` (exit 4 / empty outpu
 defined). When dogma is absent or defines no `relevant` command, choose the relevant tests
 as before. An audit of a branch touching shared core files runs the whole core test
 folder. The full suite runs where dogma says (stage `all`, Final Verification, or once
-per release bundle when DOGMA-PERMISSIONS sets "run ALL tests only at release"), else
-once per batch release (credo `orchestration`, "Default batch workflow") - NOT per item,
+per release bundle when DOGMA-PERMISSIONS sets `§8eyz` "run ALL tests only at release" to
+`[x]`), else once per batch release (credo `orchestration`, "When the full suite runs") - NOT per item,
 in neither tier. Running tests is a read-only check and does not break the audit's hard
 constraints.
 

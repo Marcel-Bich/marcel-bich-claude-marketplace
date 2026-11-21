@@ -441,8 +441,9 @@ enable keep-alive is an explicit switch to autonomous mode (`/credo:session-auto
 
 Progress is secured through the credo `compact-plus` skill, driven by the limit plugin's
 session-context threshold signal (defaults 80 / 92 percent, config `compact.thresholds`).
-Do NOT self-trigger compact-plus proactively - run it only when the injected ACTION line
-names it or when the user invokes it. See the `compact-plus` skill.
+Do NOT self-trigger compact-plus proactively - act only when the injected ACTION line
+names it or when the user invokes it. Active mode is interactive, so on the ACTION line ask
+once via the Ask tool before running it (mode gate in the `compact-plus` skill).
 
 ## Ask for the GO as soon as an item is clear
 

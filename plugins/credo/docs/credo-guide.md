@@ -61,7 +61,7 @@ The session registry keeps one file per session under `~/.claude/credo/session-r
 In Claude Code builds with mods support, `hooks/band.tsx` draws a band above the prompt. It is strictly a renderer: it holds no business logic and no second source of truth, it only runs the read-only core scripts (`credo-item-counts.sh`, `credo-session-status.sh`, `credo-item-list.sh`, `credo-budget-read.sh`, `credo-config.sh get budget.autonomous_5h.main_ladder`) with this session's id (`CREDO_SESSION_ID`) and reads `templates/shorthands.json`. Everything else in credo works the same without it, and in other harnesses.
 
 - Line 1: `◆ credo` and the item count per status, short (`go: 12`) or long (`Go(go): 12`); colored per group (open yellow, blocked red when non-zero, finished green, parked gray), zero dimmed, 2 spaces inside a color group and 4 between groups, packed by hand to the band width. A count change flashes for 6 s (fuchsia for moves, white for pure creations) and raises a toast. Exit 4 from the counts script (no credo project) hides the band.
-- Line 2: the session mode/role (cyan), the open test, question and veto codes (🧪 / ❓ / ✋, vetos in bold yellow) parsed from the language-neutral footer of the last main-loop answer (`**🧪: T3** · **❓: Q4** · **✋: V2**`; the older word labels `Open for testing:` / `Open questions:` and their German forms are still read), and the buttons `☰ items` (`i`), `? help` (`h`), `⇆` (`l`, short/long form) and `◐ <preset>` (`e`, rotating `all` / `no parked` / `open + dogma` / `open only`).
+- Line 2: the session mode/role (cyan), the open test, question and veto codes (🧪 / ❓ / ✋, vetos in bold yellow) parsed from the language-neutral footer of the last main-loop answer (`` **🧪: T3** · **❓: Q4, `#177`** · **✋: V2, V5** ``; the older word labels `Open for testing:` / `Open questions:` and their German forms are still read), and the buttons `☰ items` (`i`), `? help` (`h`), `⇆` (`l`, short/long form) and `◐ <preset>` (`e`, rotating `all` / `no parked` / `open + dogma` / `open only`).
 - Line 3, only while this session's autonomy runs: `⟳ auto 5h <now>%→<next rung>  wake HH:MM` (red once the 5h figure reaches the fourth ladder rung).
 - Items and help share one pane (`credo-panel`, also opened by `/credo-items`): per status the total and the newest 15 items, or the cheatsheet; one line per entry, truncated at the end.
 - The prompt hint gets `Shortcuts: <keys not visible in the band>`; with the long form on, each as `key(word)`.
@@ -302,7 +302,7 @@ When the same ordered, multi-step workflow recurs in a session, the `skill-captu
 
 Required for two features:
 
-- **Context-percent triggers.** Auto-running compact-plus at the session-context fill thresholds relies on the limit plugin's inject hook. Point it at credo:
+- **Context-percent triggers.** Auto-running compact-plus at the session-context fill thresholds relies on the limit plugin's inject hook. Only credo autonomous mode runs it directly at the ACTION line; interactive modes ask once first (compact-plus skill, "Mode gate for the ACTION line"). Point it at credo:
   - `CLAUDE_MB_LIMIT_COMPACT_SKILL=credo:compact-plus`
   - `CLAUDE_MB_LIMIT_INJECT_THRESHOLDS=80,92`
   - `/credo:setup` offers to set these for you (Step 9, when the limit plugin is present); the manual values above still apply if you do not run setup.
