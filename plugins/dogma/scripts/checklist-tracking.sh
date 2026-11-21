@@ -14,6 +14,7 @@
 #
 # ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch for all hooks
 # ENV: CLAUDE_MB_DOGMA_CHECKLIST_TRACKING=true (default) | false
+# ENV: CLAUDE_MB_DOGMA_CREDO_DEFER=true (default) | false - credo-aware wording (lib-credo.sh)
 
 # NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
 # Trap all errors and exit cleanly
@@ -95,15 +96,33 @@ fi
 # ============================================
 
 if [ "$TOTAL_OPEN" -gt 0 ] 2>/dev/null; then
+    # credo active for this session (lib-credo.sh): credo's dd / done gate confirms.
+    CREDO_ACTIVE="false"
+    INPUT=$(cat 2>/dev/null || true)
+    # shellcheck source=lib-credo.sh
+    if source "$(dirname "${BASH_SOURCE[0]}")/lib-credo.sh" 2>/dev/null && dogma_credo_active "$INPUT"; then
+        CREDO_ACTIVE="true"
+    fi
     echo ""
     echo "<dogma-checklist-tracking>"
     echo "Open checklists found ($TOTAL_OPEN tasks):"
     echo -e "$OPEN_CHECKLISTS"
     echo ""
+    if [ "$CREDO_ACTIVE" = "true" ]; then
+    echo "credo is active: when you complete a task from these lists, an explicit 'dd' from"
+    echo "the user or a passed credo done gate counts as the confirmation to check it off."
+    if [ "$DOGMA_CREDO_MODE" = "autonomous" ]; then
+    echo "Autonomous mode: never ask; note the candidate in your report instead."
+    else
+    echo "Without either, ask the user before checking it off."
+    fi
+    echo "Never silently check off tasks."
+    else
     echo "When you complete a task from these lists:"
     echo "1. Ask the user: \"Task 'X' seems complete. Mark as done? [Y/n]\""
     echo "2. Only mark as done after explicit user confirmation"
     echo "3. Never silently check off tasks"
+    fi
     echo "</dogma-checklist-tracking>"
 fi
 

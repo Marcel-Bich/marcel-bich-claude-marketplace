@@ -10,6 +10,7 @@
 #
 # ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch for all hooks
 # ENV: CLAUDE_MB_DOGMA_PROMPT_REMINDER=true (default) | false
+# ENV: CLAUDE_MB_DOGMA_CREDO_DEFER=true (default) | false - credo-aware wording (lib-credo.sh)
 
 # NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
 # Trap all errors and exit cleanly
@@ -64,6 +65,14 @@ fi
 # If no CLAUDE directory and no CLAUDE.md, skip silently
 if [ -z "$CLAUDE_DIR" ] && [ ! -f "CLAUDE.md" ]; then
     exit 0
+fi
+
+# credo active for this session (lib-credo.sh): the planning and versioning lines
+# point at credo's items and release flow instead of /create-plan and a bump per change.
+CREDO_ACTIVE="false"
+# shellcheck source=lib-credo.sh
+if source "$(dirname "${BASH_SOURCE[0]}")/lib-credo.sh" 2>/dev/null && dogma_credo_active "$INPUT"; then
+    CREDO_ACTIVE="true"
 fi
 
 # Build reminder message
@@ -135,7 +144,9 @@ elif [ -f "CLAUDE.planning.md" ]; then
     PLANNING_FILE="CLAUDE.planning.md"
 fi
 
-if [ -n "$PLANNING_FILE" ]; then
+if [ -n "$PLANNING_FILE" ] && [ "$CREDO_ACTIVE" = "true" ]; then
+    REMINDER="${REMINDER}Planning: credo is active - complex work is a credo item + clarify (credo items skill), no plan files, no /create-plan, no meta-question\n\n"
+elif [ -n "$PLANNING_FILE" ]; then
     REMINDER="${REMINDER}Planning: Plan complex tasks first, suggest /create-plan (see @${PLANNING_FILE})\n\n"
 fi
 
@@ -163,7 +174,9 @@ elif [ -f "CLAUDE.versioning.md" ]; then
     VERSIONING_FILE="CLAUDE.versioning.md"
 fi
 
-if [ -n "$VERSIONING_FILE" ]; then
+if [ -n "$VERSIONING_FILE" ] && [ "$CREDO_ACTIVE" = "true" ]; then
+    REMINDER="${REMINDER}Versioning: credo is active - no version bump per change; follow the project's release flow (e.g. a changelog fragment per change, one release per batch via the release script; see @${VERSIONING_FILE})\n\n"
+elif [ -n "$VERSIONING_FILE" ]; then
     REMINDER="${REMINDER}Versioning: Bump version on changes, use commit prefix vX.Y.Z: (see @${VERSIONING_FILE})\n\n"
 fi
 

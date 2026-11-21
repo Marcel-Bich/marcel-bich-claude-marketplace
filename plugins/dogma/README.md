@@ -118,6 +118,22 @@ When dogma runs inside Claude Code with mods support, `hooks/band.tsx` (listed u
 - Dependency verification (asks before package installs)
 - All hooks toggleable via environment variables
 
+### Working with credo
+
+Every prompt dogma injects workflow guidance besides its rule reminders. When the [credo](../credo/README.md) plugin is active for the session, credo's orchestration, items, done gate and release flow govern instead, so dogma's workflow injects step back:
+
+| Inject | Without credo | With credo active |
+|--------|---------------|-------------------|
+| `subagent-suggestion.sh` | Mandatory orchestration flow: Subagent-First, Hydra and TDD MANDATORY, handoff chain test - debug - review - final test, STEP 5 "Run ALL tests", checklist-manager | A short pointer: delegation, worktrees (Hydra per `§xw1i` via the credo worktree flow), TDD, the build pipeline and the full test run follow the credo orchestration skill |
+| `user-prompt-submit.sh` planning line | Plan complex tasks first, suggest `/create-plan` | Complex work is a credo item + clarify, no plan files, no meta-question |
+| `user-prompt-submit.sh` versioning line | Bump version on changes, commit prefix `vX.Y.Z:` | No version bump per change; the project's release flow (e.g. changelog fragments, one release per batch) |
+| `prompt-intervention-reminder.sh` | Complex task -> suggest `/create-plan` | Complex task -> a credo item + clarify; in credo's autonomous mode the whole skill reminder is silent |
+| `checklist-tracking.sh` | Ask "Mark as done? [Y/n]" before ticking | An explicit `dd` or a passed credo done gate confirms; autonomous mode never asks and notes the candidate |
+
+The safety parts stay exactly as they are: delete guard, git permissions, secrets and token protection, file protection, the AI traces, language, honesty and file protection reminders, the output convention, and `subagent-enforcement.sh` (governed by `DOGMA-PERMISSIONS.md`).
+
+"credo active" uses credo's own definition (`scripts/lib-credo.sh`): the session has a credo mode (`active`, `passive`, `autonomous`), or its credo decision is `accepted`, or the working directory (git toplevel, else the current folder) is opted in via credo's per-directory decision while credo is enabled in the settings (`enabledPlugins` in the user settings, project `.claude/settings.json` or `.claude/settings.local.json`). Anything unclear counts as not active, so dogma keeps its full injects. Without credo nothing changes. `CLAUDE_MB_DOGMA_CREDO_DEFER=false` keeps the full dogma injects even with credo active.
+
 ### Environment Variables
 
 | Variable | Default | Description |
@@ -132,6 +148,7 @@ When dogma runs inside Claude Code with mods support, `hooks/band.tsx` (listed u
 | `CLAUDE_MB_DOGMA_BUILTIN_INHERIT_MODEL` | `true` | Force built-in agents to inherit parent model |
 | `CLAUDE_MB_DOGMA_ALLOW_MODEL_DOWNGRADE` | `false` | Allow explicit model downgrades below parent |
 | `CLAUDE_MB_DOGMA_RESET_INTERVAL` | `2` | Reset interval for subagent enforcement state (number of prompts between resets). Set to 0 to disable enforcement entirely. |
+| `CLAUDE_MB_DOGMA_CREDO_DEFER` | `true` | Let dogma's workflow injects step back while credo is active for the session (see Working with credo); `false` keeps them |
 | `CLAUDE_MB_DOGMA_NOTICES` | `true` | Tell Claude once per repo about pending update notices and source broadcasts at session start |
 | `CLAUDE_MB_DOGMA_SOURCE` | - | Your dogma source: https/ssh git URL (SSH host aliases work), `file://` URL or absolute path. Used by `/dogma:sync` instead of the built-in default and read for source broadcasts (`NOTICES.md`); `/dogma:sync` asks once and stores it when unset |
 | `CLAUDE_MB_DOGMA_NOTICES_MAX_AGE_DAYS` | `90` | Skip source broadcasts older than this many days (`0` = no limit) |
