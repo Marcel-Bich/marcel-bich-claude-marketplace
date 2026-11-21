@@ -413,9 +413,11 @@ axis.
 
 Autonomous mode is where the common-core ntfy hybrid does the most work. Send every ntfy
 push through the helper `${CLAUDE_PLUGIN_ROOT}/scripts/credo-ntfy-send.sh "message"` (with
-`-t "Title"` and `CREDO_NTFY_PRIORITY=high` as needed); it resolves the topic/server through
-the cascade internally (`credo-config.sh get personal.ntfy_topic` / `personal.ntfy_server`)
-and is a silent no-op when ntfy is not configured, so you never touch the topic directly.
+`-t "Title"` and `CREDO_NTFY_PRIORITY=high` as needed); it resolves the relay/topic/server
+through the cascade internally (`personal.ntfy_relay`, `personal.ntfy_topic`,
+`personal.ntfy_server`) and is a silent no-op when ntfy is not configured, so you never touch
+the topic directly. A non-zero exit means the push was NOT sent (reason on stderr): log it in
+the transcript and treat the run as blind on notifications until a later push succeeds.
 Send an immediate `high` ntfy for come-to-PC events (a deferred question, a blocker /
 showstopper, a budget cap reached, run completion, the pre-hibernate veto) and BEFORE the
 blocking action.
@@ -423,7 +425,7 @@ A disk wait (credo `orchestration`, "Disk space") sends ONE `default` ntfy per i
 disk space", with the item id, the free space and the need; further waits of that item stay
 silent. It is not a come-to-PC event: the item retries itself once space is free.
 Progress is bundled into one digest per `ntfy.digest_interval_minutes`, and - when ntfy is
-configured (a `personal.ntfy_topic` is set) - sending that digest is MANDATORY per interval
+configured (a `personal.ntfy_topic` or `personal.ntfy_relay` is set) - sending that digest is MANDATORY per interval
 whenever there is progress; it is NOT the agent's discretion to judge it "not important
 enough" and stay silent (this is what fixes digests arriving far too rarely). With no topic
 set, ntfy stays silently skipped (see the end of this paragraph). Every completed item in the
@@ -431,7 +433,7 @@ digest is one line in the common core's "ntfy content standard" format
 (`#N <title>: <one sentence what was done> (<version>)`, pushed in the owner's language with
 umlauts); a bare item number or "done" is never enough, and meta information appears only
 when it concerns the owner. Prefer one message; if it exceeds ntfy's size limit, split into
-`n/m` messages. If `personal.ntfy_topic` is empty, skip ntfy silently - but then note that
+`n/m` messages. If `personal.ntfy_topic` and `personal.ntfy_relay` are both empty, skip ntfy silently - but then note that
 autonomy is running blind on notifications. Run completion is `high`, with the run's item
 lines as its body (see "Empty buildable queue" for the end-of-run report).
 
@@ -911,7 +913,11 @@ echo "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"                             # the act
 
    ```
    "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get personal.ntfy_topic
+   "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get personal.ntfy_relay
    ```
+
+   ntfy is active when EITHER is non-empty (a relay owns its own topic, so a relay alone is
+   enough).
 
    This is the command that resolves the FULL cascade (global < profile < project), including
    the global -> profile inheritance - a topic set only in the global config still resolves
@@ -948,8 +954,9 @@ it. The short form is a compact minimum that is ALWAYS present, in every case - 
   per part (d); never state it from memory or a default. A set directive is announced =
   committed and overrides `sleep.enabled: false`.
 - **ntfy:** whether ntfy is active AND what will be reported. Active-or-not is decided ONLY
-  by running `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get personal.ntfy_topic` fresh
-  at this moment - a non-empty value means active, exit 3 or empty means not configured.
+  by running `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get personal.ntfy_topic` and
+  `... get personal.ntfy_relay` fresh at this moment - active when EITHER is non-empty, exit 3
+  or empty for both means not configured.
   NEVER state ntfy's status from memory, from a profile-file glance, or by assumption; read
   it via that command (the value MAY be masked - "set / non-empty" or a few edge characters
   - the proof is present-vs-empty from the real output, not the plaintext topic). The value

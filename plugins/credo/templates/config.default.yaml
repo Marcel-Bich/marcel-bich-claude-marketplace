@@ -80,8 +80,9 @@ windows:
   deferred_question_minutes: 5
 
 # --- ntfy notifications (hybrid model) ---------------------------------------
-# Universal default. The ntfy TOPIC is personal and lives under personal.ntfy_topic
-# (empty -> notifications are skipped). This interval is the progress-digest cadence:
+# Universal default. The ntfy TOPIC is personal and lives under personal.ntfy_topic,
+# an optional local relay under personal.ntfy_relay (both empty -> notifications are
+# skipped). This interval is the progress-digest cadence:
 # come-to-PC events are sent immediately, progress events are bundled into one digest.
 ntfy:
   # Progress digest bundling interval (minutes).
@@ -411,6 +412,13 @@ personal:
   # ntfy server base URL. Default is the public ntfy.sh server; override in the
   # personal layer to point at a self-hosted instance.
   ntfy_server: "https://ntfy.sh"
+  # Optional local ntfy relay (empty = off). When set, pushes are POSTed as JSON
+  # {title, body, priority, tags} to this URL and the relay forwards them to its own
+  # topic; credo never sends the topic to it. Only http URLs on 127.0.0.1, localhost
+  # or [::1] are accepted, e.g. "http://127.0.0.1:8765/send". While a relay is set it
+  # is the only path. A failed relay push is reported, never sent directly instead.
+  # Contract: scripts/credo_ntfy_relay.py.
+  ntfy_relay: ""
   # ntfy opt-out marker. Setup-only: distinguishes "user declined notifications"
   # from "never asked" so /credo:setup stops re-asking. true -> setup skips the ntfy
   # question. It does NOT add any runtime prompt (runtime still just skips ntfy

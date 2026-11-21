@@ -32,6 +32,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 import urllib.request
 
@@ -482,17 +483,35 @@ def drop_wake(path):
 
 def ntfy(title, body, override_var, config_get, log):
     """The one ntfy push of the self-* helpers. The variable `override_var` ("off" or
-    a full URL) overrides; else personal.ntfy_topic (+ personal.ntfy_server, default
-    ntfy.sh) via config_get(key). The url is never logged (the topic is a secret)."""
+    a full URL) overrides; else personal.ntfy_relay (a local loopback relay, see
+    credo_ntfy_relay.py) is the ONLY path when set - a failed relay never falls back to
+    the direct server; without a relay personal.ntfy_topic (+ personal.ntfy_server,
+    default ntfy.sh) via config_get(key). The url is never logged (the topic is a
+    secret). Returns True when the push went out."""
     url = os.environ.get(override_var)
     if url == "off":
         log("ntfy disabled: %s - %s" % (title, body))
-        return
+        return False
     if not url:
+        relay = config_get("personal.ntfy_relay")
+        if relay:
+            try:
+                here = os.path.dirname(os.path.abspath(__file__))
+                if here not in sys.path:
+                    sys.path.insert(0, here)
+                import credo_ntfy_relay
+                sent, reason = credo_ntfy_relay.send(relay, title, body, "high")
+            except Exception as exc:
+                sent, reason = False, "relay helper unavailable (%s)" % type(exc).__name__
+            if sent:
+                log("ntfy sent via relay: %s" % title)
+                return True
+            log("ntfy relay failed (no direct fallback): %s" % reason)
+            return False
         topic = config_get("personal.ntfy_topic")
         if not topic:
             log("ntfy not configured: %s - %s" % (title, body))
-            return
+            return False
         server = config_get("personal.ntfy_server") or "https://ntfy.sh"
         url = server.rstrip("/") + "/" + topic
     req = urllib.request.Request(url, data=body.encode("utf-8"), method="POST",
@@ -500,5 +519,7 @@ def ntfy(title, body, override_var, config_get, log):
     try:
         urllib.request.urlopen(req, timeout=15).read()
         log("ntfy sent: %s" % title)
+        return True
     except Exception as exc:
         log("ntfy failed: %s" % type(exc).__name__)
+        return False

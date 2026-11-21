@@ -323,8 +323,9 @@ away.
 
 ## ntfy hybrid notifications (section D)
 
-ntfy is an optional dependency. The topic lives in config under `personal.ntfy_topic`; if
-it is empty, silently skip all ntfy - never error. Keep "push" unambiguous: a git push and
+ntfy is an optional dependency. The topic lives in config under `personal.ntfy_topic`, an
+optional local relay under `personal.ntfy_relay`; if both are empty, silently skip all ntfy -
+never error. Keep "push" unambiguous: a git push and
 an ntfy push are different acts; say which you mean.
 
 The model is hybrid - never spam single events, but never go fully silent either:
@@ -334,7 +335,7 @@ The model is hybrid - never spam single events, but never go fully silent either
   the blocking action, not after.
 - Progress (completed items, slices, milestones, findings) is bundled into ONE digest per
   interval - default 60 minutes, from `ntfy.digest_interval_minutes` in config. When ntfy is
-  configured (a `personal.ntfy_topic` is set), sending the digest is MANDATORY whenever there
+  configured (a `personal.ntfy_topic` or `personal.ntfy_relay` is set), sending the digest is MANDATORY whenever there
   is progress in the interval - never skip it as "not important enough". When no topic is set,
   ntfy stays silently skipped as above (mandatory does not mean "send without a topic").
 - Priorities: `default` = status / digest, `high` = come to the PC, `max` = data loss
@@ -365,17 +366,21 @@ digest, the end-of-run report) lists each finished item as ONE line:
   with the item id.
 
 Send every ntfy push through the helper - it is the single discoverable send path and
-resolves the topic/server from the config cascade (`credo-config.sh get personal.ntfy_topic`
-and `personal.ntfy_server`) internally, so you never touch the topic directly:
+resolves the relay/topic/server from the config cascade (`personal.ntfy_relay`,
+`personal.ntfy_topic`, `personal.ntfy_server`) internally, so you never touch the topic
+directly. With a relay set it POSTs only to that loopback relay (which owns the topic) and
+never falls back to the direct server; never `curl` ntfy yourself.
 
 ```
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-ntfy-send.sh" "message text"
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-ntfy-send.sh" -t "Title" "message text"
 ```
 
-Priority is set via the `CREDO_NTFY_PRIORITY` env var (`default` | `high` | `max`). When the
-topic is empty (ntfy not configured) or curl is missing, the helper is a silent no-op (exit 0)
-- never an error. Read the digest cadence with:
+Priority is set via `-p` or the `CREDO_NTFY_PRIORITY` env var (`default` | `high` | `max`).
+When ntfy is not configured (no relay, empty topic), the helper is a silent no-op (exit 0).
+A configured push that cannot be delivered exits non-zero (2 invalid relay URL, 3 send
+failed) with the reason on stderr: then the push did NOT go out - say so, never report it as
+sent. Read the digest cadence with:
 
 ```
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get ntfy.digest_interval_minutes

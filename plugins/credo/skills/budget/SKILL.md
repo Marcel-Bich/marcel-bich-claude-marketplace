@@ -150,7 +150,7 @@ The schedule renews daily. How to pick the row that applies now:
    Apply the MOST RESTRICTIVE caps among that day's adjacent rows (the lowest
    `five_hour_cap` and the lowest `weekly_cap`) AND surface the gap - a `default` ntfy via
    `CREDO_NTFY_PRIORITY=default ${CLAUDE_PLUGIN_ROOT}/scripts/credo-ntfy-send.sh "..."` (the
-   helper resolves the topic through the cascade and is a silent no-op when ntfy is not
+   helper resolves the relay/topic through the cascade and is a silent no-op when ntfy is not
    configured) plus a debug/log note - so the config gap gets fixed. A gap is a config bug, never a normal
    operating point: treat it safely and make it visible rather than throttling the wrong
    window or overspending unnoticed (the failure the RETRO caught).
