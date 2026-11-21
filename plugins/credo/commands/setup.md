@@ -550,9 +550,10 @@ it was not already chosen - but detect "already chosen" from the GLOBAL config F
   file never set it, so it would wrongly look "already configured" and skip the question on
   first-ever setup. Ask the sleep question UNLESS the global file already contains a `sleep:`
   block.
-- ntfy: check the same GLOBAL config file for a non-empty `personal.ntfy_topic:` value OR
-  `personal.ntfy_optout: true`. Skip the ntfy question if EITHER is present (a set topic means
-  configured; an opt-out means the user already declined). Otherwise ask.
+- ntfy: check the same GLOBAL config file for a non-empty `personal.ntfy_topic:` value, a
+  non-empty `personal.ntfy_relay:` value OR `personal.ntfy_optout: true`. Skip the ntfy
+  question if ANY is present (a set topic or relay means configured; an opt-out means the user
+  already declined). Otherwise ask.
 
 ### (a) Machine power-down (sleep)
 
@@ -629,15 +630,33 @@ command. Read + Edit the YAML directly (append or update the `sleep:` block).
 
 ### (b) ntfy push notifications
 
+First a read-only relay probe (it only opens and closes a TCP connection to the default
+loopback relay port and sends nothing; never install or start a relay yourself):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/credo_ntfy_relay.py" probe
+```
+
+Exit 0 (`listening http://127.0.0.1:8765/send`) means a local service answers there. Only
+then add the relay option below (shown first, marked Recommended); otherwise leave it out.
+A user with a relay on another loopback port may name its URL in the "Other" answer.
+
 Use AskUserQuestion:
 
 ```
 credo can send push notifications (via ntfy) so you get called back to the PC during autonomous work. Set it up?
 
+- Use the local relay at http://127.0.0.1:8765/send (Recommended) - a local service that owns the topic; agents never send to ntfy.sh directly   [only when the probe found a listener]
 - Yes, I have an ntfy topic - I will paste my topic string
 - No, skip notifications - autonomous work runs without push (silent)
 ```
 
+- "Relay" -> write the URL to `personal.ntfy_relay` in the GLOBAL config AND set
+  `personal.ntfy_optout: false` (Read + Edit). Validate a user-given URL first with
+  `credo_ntfy_relay.py validate <url>` (only `http://` on `127.0.0.1`, `localhost` or `[::1]`
+  is accepted; on exit 2 show the reason and ask again). The relay contract (JSON `title`,
+  `body`, `priority`, `tags`; 2xx = sent; the topic is never sent) is documented in
+  `scripts/credo_ntfy_relay.py`. Do NOT send a test push without the user's yes.
 - "Yes" -> ask for the topic string, then write it to `personal.ntfy_topic` in the GLOBAL
   config AND set `personal.ntfy_optout: false` (Read + Edit both values).
 - "No" -> leave `personal.ntfy_topic` empty and set `personal.ntfy_optout: true` in the GLOBAL
@@ -647,7 +666,7 @@ credo can send push notifications (via ntfy) so you get called back to the PC du
 
 ntfy is decided HERE at setup only. `personal.ntfy_optout` governs ONLY whether setup re-asks;
 it adds NO runtime prompt. At autonomous RUNTIME credo does NOT ask about ntfy: if a topic is
-set it is used, if empty it is silently skipped. Do not imply a runtime prompt.
+set (or a relay) it is used, if both are empty it is silently skipped. Do not imply a runtime prompt.
 
 ## Step 9: Compact Trigger Wiring (Optional)
 

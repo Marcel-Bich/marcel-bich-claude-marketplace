@@ -43,8 +43,9 @@ All config and personal values (ntfy topic/server, sleep, identities, viewports)
 credo config cascade (builtin < global < profile < project). Resolve them ONLY via
 `credo-config.sh get <dotted.key>` - never grep the plugin/repo folder, the template holds
 empty placeholders. To send an ntfy push, use the helper
-`${CLAUDE_PLUGIN_ROOT}/scripts/credo-ntfy-send.sh "message"` (it resolves the topic/server
-through the cascade and is a silent no-op when ntfy is not configured).
+`${CLAUDE_PLUGIN_ROOT}/scripts/credo-ntfy-send.sh "message"` (it resolves the relay/topic/server
+through the cascade, is a silent no-op when ntfy is not configured and exits non-zero when a
+configured push fails).
 
 ## Load and honor at session start
 

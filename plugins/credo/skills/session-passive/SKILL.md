@@ -39,11 +39,11 @@ It covers, all unchanged for passive mode:
 - The ntfy hybrid model (section D): immediate `high` only for come-to-PC events, progress
   bundled into one digest per `ntfy.digest_interval_minutes`, each finished item one line
   (`#N <title>: <what was done>`, section D content standard); skip silently if
-  `personal.ntfy_topic` is empty. Send via the helper
+  `personal.ntfy_topic` and `personal.ntfy_relay` are both empty. Send via the helper
   `${CLAUDE_PLUGIN_ROOT}/scripts/credo-ntfy-send.sh "message"` (add `-t "Title"`,
-  `CREDO_NTFY_PRIORITY=high` as needed) - it resolves the topic/server through the cascade
-  internally (`credo-config.sh get personal.ntfy_topic`) and is a silent no-op when ntfy is
-  not configured.
+  `CREDO_NTFY_PRIORITY=high` as needed) - it resolves the relay/topic/server through the
+  cascade internally and is a silent no-op when ntfy is not configured; a non-zero exit means
+  the push was NOT sent (reason on stderr).
 - Git-push policy (G5): commit and push immediately; the commit-identity gate lives in the
   credo `budget` skill; forbidden commit/push -> WARN, work not securable.
 - The credo `safety` skill applies always.
