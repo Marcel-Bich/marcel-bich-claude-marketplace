@@ -6,7 +6,8 @@ description: >
   commits plus pushes the tracked work product in the correct repository, then reports
   whether it is safe to compact. It does NOT run /compact itself - it makes a later
   compact safe. Run this only when the limit plugin's injected ACTION line names it
-  (session-context fill crossed a configured threshold) or when the user invokes it
+  (session-context fill crossed a configured threshold; in interactive modes only after
+  asking the user once, autonomous mode runs it directly) or when the user invokes it
   manually. Never self-trigger it proactively - that only wastes tokens. Accepts extra
   trailing instructions to perform in addition to the securing checklist. A minimal
   mode (invoke as /compact-plus min) secures only intent plus handoff to disk - no
@@ -29,8 +30,24 @@ two separate acts: compact-plus makes the later compact (manual or automatic) sa
 Exactly two triggers, never a third:
 
 1. The limit plugin injects an ACTION line naming this skill, because the session
-   context fill crossed a configured threshold. Run it then.
-2. The user invokes it manually.
+   context fill crossed a configured threshold. What happens then depends on the session
+   mode (the mode gate below).
+2. The user invokes it manually. A manual invocation always proceeds, in every mode.
+
+### Mode gate for the ACTION line
+
+- **credo autonomous mode** (owner absent) - run it at the ACTION line, no question.
+- **Interactive modes** (active, passive, or no mode set; owner present) - do NOT run it on
+  your own, even when the numbers say to compact. Ask ONCE via the Ask tool, one question
+  that covers compact-plus and the real /compact after it (for example "Context is at N%.
+  Run compact-plus now and then the real /compact?"). Run compact-plus only after an
+  explicit yes; that yes also counts as the confirmation for the real /compact below. No
+  answer or no -> leave it; the user compacts when they want.
+- **Ask forbidden in this session** (for example during a downdown, or an owner order not to
+  ask) - do not run it either; mention the ACTION once in the reply instead, so the user can
+  run it by hand.
+- **Mode unclear and it may be autonomous** - treat it as autonomous (never Ask in an
+  unattended run).
 
 The ACTION line is meant for the MAIN session only. A subagent that sees one ignores it
 and does not run compact-plus (or a self-compact); the main session gets it on its own.
@@ -266,9 +283,11 @@ from step 3, so it only works after compact-plus.
   and right after its green report set the `ScheduleWakeup` plus wake mark the keep-alive
   demands, then run `credo-self-compact.py run --auto` and END THE TURN - unless something
   important speaks against it (then record why).
-- Interactive modes - ask ONCE via the Ask tool whether to run the real /compact now. Only
-  after an explicit yes run `credo-self-compact.py run --user-confirmed` and END THE
-  TURN.
+- Interactive modes - when compact-plus ran after the mode-gate question ("compact-plus and
+  then the real /compact?") and the user said yes, that yes covers this step. Run
+  `credo-self-compact.py run --user-confirmed` and END THE TURN, no second question. After a
+  manual invocation ask ONCE via the Ask tool whether to run the real /compact now; only
+  after an explicit yes run `credo-self-compact.py run --user-confirmed` and END THE TURN.
   No answer or no -> leave it; the user compacts when they want.
 - After the compact the session wakes itself. The worker waits for the compact-done
   signal (SessionStart source `compact`) and types `.` (60 s fallback re-send), so the work

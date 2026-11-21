@@ -72,7 +72,9 @@ eq('no footer', parseLetters('just an answer'), { tests: [], questions: [], veto
 eq('veto footer alone', parseLetters('**✋: V2, V5**'), { tests: [], questions: [], vetos: ['V2', 'V5'] })
 eq('typed footer mixed with legacy letters', parseLetters('**🧪: C, T3** · **❓: Y, Q4, #177** · **✋: V2, V5**'),
   { tests: ['C', 'T3'], questions: ['Y', 'Q4', '#177'], vetos: ['V2', 'V5'] })
-eq('canonical typed footer from the legend', parseLetters('**🧪: T3** · **❓: Q4, #177** · **✋: V2, V5**'),
+eq('typed footer with a bare item ref (older form)', parseLetters('**🧪: T3** · **❓: Q4, #177** · **✋: V2, V5**'),
+  { tests: ['T3'], questions: ['Q4', '#177'], vetos: ['V2', 'V5'] })
+eq('canonical typed footer from the legend (backticked item ref)', parseLetters('**🧪: T3** · **❓: Q4, \`#177\`** · **✋: V2, V5**'),
   { tests: ['T3'], questions: ['Q4', '#177'], vetos: ['V2', 'V5'] })
 eq('legacy word label with new veto footer', parseLetters('Open for testing: DX, EF · **✋: V1**'),
   { tests: ['DX', 'EF'], questions: [], vetos: ['V1'] })

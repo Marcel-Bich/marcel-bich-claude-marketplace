@@ -59,7 +59,8 @@ builder slot above the cap.
   builders). In an autonomous run with the owner absent it does not ask: the item waits for
   the next free slot (it may jump ahead of queued items, never stop a running builder).
 - The resource gate always stays in force. Builders of a fastfast item run only the
-  relevant/changed tests; the full suite runs once at merge.
+  relevant/changed tests; the full suite runs at its usual point ("When the full suite
+  runs" below; only at the release when DOGMA-PERMISSIONS §8eyz is `[x]`).
 
 ## Default batch workflow (measured)
 
@@ -105,6 +106,20 @@ clearly calls for it, and say why.
 5. **Budget gate** before the batch and before each heavy step: credo `budget` skill,
    "Batch budget gate". Stop each agent right after its final report (TaskStop) - leftover
    agents and test servers keep burning budget (owner rule).
+
+### When the full suite runs
+
+The repo's `DOGMA-PERMISSIONS.md` (repo root) decides; read it before the first merge or
+release of a batch and follow it.
+
+- If `§8eyz` ("run ALL tests only at release") is `[x]`, the full suite runs ONLY at the
+  release - the commit that bundles several items with the version bump, never a tag. Not
+  at a merge, not per item, not per builder.
+- If `§8eyz` is `[ ]` or the file is missing, the full suite runs where dogma places it (stage
+  `all` from `§ly5v`, the Final Verification step), else once before the batch release
+  (step 4 above).
+- In both cases builders and per-item audits run only the relevant/changed tests (dogma
+  `relevant` stage, else the changed tests).
 
 ### Brief rules for builders and auditors
 

@@ -1,8 +1,8 @@
 // Pure parser for the open-codes footer of an answer (credo verify convention).
 // Canonical form is language-neutral, so the band works in any conversation language:
-// "**<T>: T3, B** · **<Q>: Q4, #177** · **<V>: V2**" with <T> = U+1F9EA (tests),
+// "**<T>: T3, B** · **<Q>: Q4, `#177`** · **<V>: V2**" with <T> = U+1F9EA (tests),
 // <Q> = U+2753 or U+2754 (questions) and <V> = U+270B (vetos). Bold optional, U+FE0F
-// optional, space before the colon allowed. Legacy word labels are still read for older answers: English
+// optional, space before the colon allowed, backticks around item refs are stripped. Legacy word labels are still read for older answers: English
 // "Open for testing:" / "Open tests:" / "Open questions:" and German "Offen zum Testen:" /
 // "Offene Tests:" / "Offene Fragen:". Vetos have no word labels (they are new, and a
 // prose "Veto possible:" line must not count as a footer). No engine imports, so it can

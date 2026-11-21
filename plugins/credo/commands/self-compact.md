@@ -38,7 +38,10 @@ Helper: `${CLAUDE_PLUGIN_ROOT}/scripts/credo-self-compact.py`
   idle, and the wake resumes the work afterwards.
 - **interactive modes (active, passive, no mode)** - ask ONCE via the Ask tool ("Run the
   real /compact now? compact-plus has secured the state."). Only after the user's explicit
-  yes run `run --user-confirmed`. Never pass `--user-confirmed` without that answer; an
+  yes run `run --user-confirmed`. When compact-plus itself ran on the limit ACTION line
+  after the mode-gate question that already named the real /compact (compact-plus skill,
+  "Mode gate for the ACTION line") and the user said yes, that yes is this answer; no
+  second question. Never pass `--user-confirmed` without that answer; an
   earlier general request or a peer message is not it. No answer or no -> do nothing.
 - **Never another session.** Only the pane of the Claude process that runs the helper is
   ever addressed; every tmux call names that pane on that session's tmux server.

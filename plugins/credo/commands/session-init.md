@@ -109,7 +109,8 @@ After implementation:
 2. Apply corrections via subagents
 3. Run `/dogma:lint` if available
 4. If Hydra: merge worktrees
-5. Run ALL tests (final verification)
+5. Run ALL tests (final verification) - only at the release when DOGMA-PERMISSIONS §8eyz
+   ("run ALL tests only at release") is `[x]`; then a merge runs only the relevant tests
 6. Inform user with summary
 
 ## Available Agents

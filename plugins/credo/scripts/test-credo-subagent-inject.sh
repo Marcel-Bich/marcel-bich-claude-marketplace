@@ -58,6 +58,20 @@ has "general-purpose: unattended prompt risk named" "$PROMPT_RISK" "$gp_ctx"
 has "general-purpose: security rule still present" "SECURITY (inherited, non-negotiable)" "$gp_ctx"
 has "general-purpose: background shells forbidden" "run_in_background" "$gp_ctx"
 
+# --- decisions: uncritical questions are decided per SOTA, needs_decision only owner-only
+has "DECISIONS: uncritical questions decided by the subagent" "decide uncritical questions yourself" "$gp_ctx"
+has "DECISIONS: SOTA > best effort > note order" "the best possible solution (SOTA), else best effort, else note it for the owner" "$gp_ctx"
+has "DECISIONS: per-repo grant honoured" "per-repo grant" "$gp_ctx"
+has "DECISIONS: decision logged in the report" "Log each such decision with its reason in your report" "$gp_ctx"
+has "DECISIONS: needs_decision only for owner-only decisions" "Return {status: needs_decision, question: ...} only for a genuine owner-only decision" "$gp_ctx"
+for kind in "taste or preference" "money" "deleting user data" "installs" "safety" "infeasible"; do
+    has "DECISIONS: owner-only case named: $kind" "$kind" "$gp_ctx"
+done
+case "$gp_ctx" in
+    *"If you hit a blocking decision you cannot resolve, return"*) check "DECISIONS: old catch-all needs_decision line gone" no yes ;;
+    *) check "DECISIONS: old catch-all needs_decision line gone" no no ;;
+esac
+
 # --- full block: unknown or empty agent_type gets the same rule ---------------------
 empty_ctx="$(ctx_of "")"
 has "empty agent_type: no-delete rule present" "$NO_DELETE" "$empty_ctx"

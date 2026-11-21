@@ -150,7 +150,7 @@ You can type a few short shorthands in chat; credo's SessionStart hook teaches t
 - `cc-up` - you fully updated Claude Code (plugins, reload, restart); the agent takes it at face value.
 - `cm` - commit (repo rules, no push). `ph` - commit and push.
 - `exclude` / `excluded` - always `.git/info/exclude`, never `.gitignore` (say "ignore" / "gitignore" for that).
-- Typed codes - tests `### 🧪 T3) ...`, questions `### ❓ Q4) ...`, vetos `### ✋✋ V2) Veto possible: ... ✋✋`, one monotonic counter each (T, Q, V; never reused); answer `T3 vf`, `T3.2 vf`, `Q4: ...`, `V12 ok`, `V12 <objection>`; all open codes listed in bold at the end of each reply as a language-neutral footer `**🧪: T3** · **❓: Q4** · **✋: V2**`.
+- Typed codes - tests `### 🧪 T3) ...`, questions `### ❓ Q4) ...`, vetos `### ✋✋ V2) Veto possible: ... ✋✋`, one monotonic counter each (T, Q, V; never reused); answer `T3 vf`, `T3.2 vf`, `Q4: ...`, `V12 ok`, `V12 <objection>`; all open codes listed in bold at the end of each reply as a language-neutral footer `` **🧪: T3** · **❓: Q4, `#177`** · **✋: V2, V5** ``.
 - `#N` vs `§cct_N` - `#N` only for real items (credo items, issues, PRs, tickets); Claude's harness tasks and other numbering are `§cct_N` (`§cct_2 dd` = task 2 done).
 
 ### The Full Commandments (credo)
