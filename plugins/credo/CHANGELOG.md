@@ -4,6 +4,37 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ## v0
 
+### v0.88
+
+#### v0.88.0
+
+##### Added
+
+- Optional local ntfy relay `personal.ntfy_relay` (e.g. `http://127.0.0.1:8765/send`): `credo-ntfy-send.sh` and the self-* helpers POST JSON `{title, body, priority, tags}` to it and the relay forwards to its own topic, so agents no longer send to a remote host themselves. Only `http://` on `127.0.0.1`, `localhost` or `[::1]` is accepted, the topic is never sent to the relay, redirects and proxy variables are ignored. While a relay is set it is the only path. A failed relay push is reported, never sent directly instead. Contract and read-only probe in `scripts/credo_ntfy_relay.py`
+- `credo-ntfy-send.sh` takes `-p priority` and `--tags` (also `CREDO_NTFY_TAGS`)
+- `/credo:setup` offers the relay key when a read-only probe finds a listener on the default loopback port
+
+##### Changed
+
+- compact-plus has a mode gate for the limit ACTION line. Autonomous mode runs it directly,
+  interactive modes ask once (one question covering compact-plus and the real /compact), a
+  session that forbids Ask only mentions the ACTION; a manual invocation always runs
+- The subagent rule block tells subagents to decide uncritical questions on GO or agent-owned
+  items themselves (SOTA,
+  else best effort, else note it), honour per-repo grants, log each decision in their report,
+  and return `needs_decision` only for owner-only decisions (taste, money, deleting user data,
+  installs, safety, infeasible options); open questions of a human-owned clarify item always
+  go back as `needs_decision`
+- One open-codes footer form everywhere, with item refs in backticks:
+  ``**🧪: T3** · **❓: Q4, `#177`** · **✋: V2, V5**``
+- The full test suite timing follows DOGMA-PERMISSIONS. When §8eyz ("run ALL tests only at
+  release") is `[x]` it runs only at the release, never at a merge; new orchestration
+  section "When the full suite runs"
+
+##### Fixed
+
+- A configured ntfy push that cannot be delivered no longer fails silently: `credo-ntfy-send.sh` exits non-zero (2 invalid relay URL, 3 send failed) with the reason on stderr, so agents stop reporting a failed push as sent; not configured stays a silent no-op
+
 ### v0.87
 
 #### v0.87.0
