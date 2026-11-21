@@ -26,7 +26,10 @@ trap cleanup EXIT
 
 # hermetic: own config dir, no credo env overrides, no session-folder file, no credo pin
 unset CREDO_SESSION_MODES_DIR CREDO_SESSION_DECISIONS_DIR CREDO_DIR_DECISIONS_DIR CLAUDE_MB_DOGMA_CREDO_DEFER
+unset CREDO_TASK_BACKEND CREDO_SESSION_START_INJECT CREDO_PROFILE CREDO_PROJECT
 export CLAUDE_CONFIG_DIR="$TEST_TMP_DIR/config"
+# the global credo config layer lives under the real home: point it into the temp dir
+export CREDO_GLOBAL="$TEST_TMP_DIR/global-credo-config"
 export DOGMA_SESSION_DIR="$TEST_TMP_DIR/session" DOGMA_CREDO_CONFIG=none
 mkdir -p "$CLAUDE_CONFIG_DIR" "$DOGMA_SESSION_DIR"
 
@@ -62,7 +65,7 @@ run_test() {
 }
 
 reset_state() {
-    rm -rf "$CLAUDE_CONFIG_DIR/credo" "$CLAUDE_CONFIG_DIR/settings.json" "$PROJECT/.claude"
+    rm -rf "$CLAUDE_CONFIG_DIR/credo" "$CLAUDE_CONFIG_DIR/settings.json" "$PROJECT/.claude" "$PROJECT/.credo"
     mkdir -p "$MODES" "$DECISIONS" "$DIRS"
 }
 
@@ -127,7 +130,40 @@ echo active > "$MODES/$SID"
 run_test "CLAUDE_MB_DOGMA_CREDO_DEFER=false -> never active" \
     "$(CLAUDE_MB_DOGMA_CREDO_DEFER=false; export CLAUDE_MB_DOGMA_CREDO_DEFER; is "$(detect)" inactive)"
 
+# credo's workflow stands down -> dogma keeps its flow
+reset_state
+echo active > "$MODES/$SID"
+run_test "CREDO_SESSION_START_INJECT=false -> not active" \
+    "$(CREDO_SESSION_START_INJECT=false; export CREDO_SESSION_START_INJECT; is "$(detect)" inactive)"
+run_test "CREDO_TASK_BACKEND=gsd -> not active" \
+    "$(CREDO_TASK_BACKEND=gsd; export CREDO_TASK_BACKEND; is "$(detect)" inactive)"
+run_test "CREDO_TASK_BACKEND=credo -> active" \
+    "$(CREDO_TASK_BACKEND=credo; export CREDO_TASK_BACKEND; is "$(detect)" active:active)"
+mkdir -p "$PROJECT/.credo"
+echo 'task_backend: gsd' > "$PROJECT/.credo/config"
+run_test "project .credo/config task_backend gsd -> not active" "$(is "$(detect)" inactive)"
+echo 'task_backend: "credo"' > "$PROJECT/.credo/config"
+run_test "project .credo/config task_backend credo -> active" "$(is "$(detect)" active:active)"
+echo 'task_backend: gsd' > "$CLAUDE_CONFIG_DIR/credo/config"
+run_test "project layer wins over a profile gsd backend" "$(is "$(detect)" active:active)"
+rm -rf "$PROJECT/.credo"
+run_test "profile credo config task_backend gsd -> not active" "$(is "$(detect)" inactive)"
+reset_state
+echo 'task_backend: gsd' > "$CREDO_GLOBAL"
+echo active > "$MODES/$SID"
+run_test "global credo config task_backend gsd -> not active" "$(is "$(detect)" inactive)"
+rm -f "$CREDO_GLOBAL"
+
 # === subagent-suggestion.sh (#68, #69, #70) ===
+# a missing lib-credo.sh keeps the full inject (guarded source)
+reset_state
+echo active > "$MODES/$SID"
+NOLIB="$TEST_TMP_DIR/nolib"
+mkdir -p "$NOLIB"
+cp "$SCRIPT_DIR/subagent-suggestion.sh" "$SCRIPT_DIR/lib-permissions.sh" "$NOLIB/"
+OUT="$(cd "$PROJECT" && printf '%s' "$INPUT" | bash "$NOLIB/subagent-suggestion.sh" 2>/dev/null)"
+run_test "missing lib-credo.sh: full mandatory flow kept" "$(has "$OUT" 'MANDATORY ORCHESTRATION FLOW')"
+
 reset_state
 OUT="$(run_hook subagent-suggestion.sh)"
 run_test "without credo: full mandatory flow" "$(has "$OUT" 'MANDATORY ORCHESTRATION FLOW')"

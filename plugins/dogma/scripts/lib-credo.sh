@@ -19,6 +19,9 @@
 #      credo plugin is enabled in the settings (user settings.json, project
 #      .claude/settings.json, .claude/settings.local.json; the last one that
 #      names credo@<marketplace> wins).
+# Never active when credo's own workflow text stands down: the task backend is gsd
+# (CREDO_TASK_BACKEND, else task_backend in the credo config layers) or
+# CREDO_SESSION_START_INJECT is not "true".
 # The per-session files are written by credo during this very session, so they
 # need no settings check. credo's own env overrides are honored:
 # CREDO_SESSION_MODES_DIR, CREDO_SESSION_DECISIONS_DIR, CREDO_DIR_DECISIONS_DIR.
@@ -59,12 +62,36 @@ dogma_credo_plugin_enabled() {
     [ "$state" = "true" ]
 }
 
+# The credo task backend (credo-config.sh backend): env CREDO_TASK_BACKEND, else the
+# last task_backend of the config layers global < profile < project (CREDO_GLOBAL,
+# CREDO_PROFILE, CREDO_PROJECT override the paths), else credo.
+dogma_credo_backend() {
+    local top="$1" base val="" f v
+    if [ -n "${CREDO_TASK_BACKEND:-}" ]; then
+        printf '%s\n' "$CREDO_TASK_BACKEND" | tr '[:upper:]' '[:lower:]'
+        return 0
+    fi
+    base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+    for f in "${CREDO_GLOBAL:-$HOME/.claude/credo/config}" "${CREDO_PROFILE:-$base/credo/config}" "${CREDO_PROJECT:-$top/.credo/config}"; do
+        [ -f "$f" ] || continue
+        v="$(sed -n 's/^task_backend:[[:space:]]*["'"'"']\{0,1\}\([A-Za-z0-9_-]*\).*/\1/p' "$f" 2>/dev/null | tail -n1)"
+        [ -n "$v" ] && val="$v"
+    done
+    printf '%s\n' "${val:-credo}" | tr '[:upper:]' '[:lower:]'
+}
+
 # Is credo active for this session? 0 = yes, 1 = no or unsure (fail open).
 dogma_credo_active() {
     local input="${1:-}" base sid mode decision top hash dir_decision
     DOGMA_CREDO_MODE=""
     [ "${CLAUDE_MB_DOGMA_CREDO_DEFER:-true}" = "true" ] || return 1
+    # credo's whole workflow text is off (credo-session-start.sh toggle): not active.
+    [ "${CREDO_SESSION_START_INJECT:-true}" = "true" ] || return 1
     base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+    top="$(git rev-parse --show-toplevel 2>/dev/null)" || top=""
+    [ -n "$top" ] || top="$PWD"
+    # gsd task backend: credo's workflow stands down, so dogma's flow stays.
+    [ "$(dogma_credo_backend "$top")" = "gsd" ] && return 1
 
     sid="$(printf '%s' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9._-]*\)".*/\1/p' | head -n1)"
     case "$sid" in
@@ -85,8 +112,6 @@ dogma_credo_active() {
 
     # Persistent per-directory opt-in (same key as credo-dir-decision.sh).
     command -v sha256sum >/dev/null 2>&1 || return 1
-    top="$(git rev-parse --show-toplevel 2>/dev/null)" || top=""
-    [ -n "$top" ] || top="$PWD"
     hash="$(printf '%s' "$top" | sha256sum | cut -d' ' -f1)"
     [ -n "$hash" ] || return 1
     dir_decision="$(dogma_credo_state_word "${CREDO_DIR_DECISIONS_DIR:-$base/credo/dir-decisions}/$hash")"

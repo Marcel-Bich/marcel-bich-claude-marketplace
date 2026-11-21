@@ -94,9 +94,7 @@ if ls *.test.* *.spec.* 2>/dev/null | head -1 >/dev/null 2>&1; then
 fi
 
 # shellcheck source=lib-credo.sh
-source "$SCRIPT_DIR/lib-credo.sh"
-
-if dogma_credo_active "$INPUT"; then
+if source "$SCRIPT_DIR/lib-credo.sh" 2>/dev/null && dogma_credo_active "$INPUT"; then
     # credo active: the dogma orchestration flow steps back (subagent-first, Hydra and TDD
     # MANDATORY, the handoff chain, STEP 5 "run ALL tests", checklist-manager).
     echo ""
