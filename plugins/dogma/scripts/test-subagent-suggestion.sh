@@ -21,6 +21,8 @@ trap cleanup EXIT
 # hermetic: no session-folder file to inherit from, no credo pinned project
 mkdir -p "$TEST_TMP_DIR/session" "$TEST_TMP_DIR/project/CLAUDE"
 export DOGMA_SESSION_DIR="$TEST_TMP_DIR/session" DOGMA_CREDO_CONFIG=none
+# the full dogma flow, whatever credo state the host has (test-credo-defer.sh covers credo)
+export CLAUDE_MB_DOGMA_CREDO_DEFER=false
 echo "# Subagents" > "$TEST_TMP_DIR/project/CLAUDE/CLAUDE.subagents.md"
 
 run_test() {

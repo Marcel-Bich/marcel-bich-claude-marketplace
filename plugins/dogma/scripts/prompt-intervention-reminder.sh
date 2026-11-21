@@ -7,6 +7,7 @@
 #
 # ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch
 # ENV: CLAUDE_MB_DOGMA_PROMPT_INTERVENTION=true (default) | false
+# ENV: CLAUDE_MB_DOGMA_CREDO_DEFER=true (default) | false - credo-aware wording (lib-credo.sh)
 
 trap 'exit 0' ERR
 
@@ -47,11 +48,27 @@ if [ -z "$INTERVENTION_FILE" ]; then
     exit 0
 fi
 
+# credo active for this session (lib-credo.sh): complex work becomes a credo item
+# instead of a /create-plan suggestion; in credo's autonomous mode nobody is there to
+# answer a suggestion, so the whole reminder stays silent.
+CREDO_ACTIVE="false"
+# shellcheck source=lib-credo.sh
+if source "$(dirname "${BASH_SOURCE[0]}")/lib-credo.sh" 2>/dev/null && dogma_credo_active "$INPUT"; then
+    CREDO_ACTIVE="true"
+    if [ "$DOGMA_CREDO_MODE" = "autonomous" ]; then
+        exit 0
+    fi
+fi
+
 # Output compact reminder
 echo ""
 echo "<dogma-skill-reminder>"
 echo "Before starting, consider if a skill would help:"
+if [ "$CREDO_ACTIVE" = "true" ]; then
+echo "- Complex/multi-step task? -> a credo item + clarify (credo items skill), no /create-plan, no meta-question"
+else
 echo "- Complex/multi-step task? -> suggest /create-plan"
+fi
 echo "- Need to prioritize? -> suggest /consider:eisenhower-matrix"
 echo "- Debugging issue? -> suggest /debug or /debug-like-expert"
 echo "- Decision needed? -> suggest /consider:* (first-principles, swot, etc.)"

@@ -7,6 +7,9 @@
 #
 # ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch
 # ENV: CLAUDE_MB_DOGMA_SUBAGENT_SUGGESTION=true (default) | false
+# ENV: CLAUDE_MB_DOGMA_CREDO_DEFER=true (default) | false - with credo active for the
+#      session (lib-credo.sh) the mandatory flow steps back to a short pointer at
+#      credo's orchestration; false keeps the full dogma flow.
 
 trap 'exit 0' ERR
 
@@ -90,6 +93,22 @@ if ls *.test.* *.spec.* 2>/dev/null | head -1 >/dev/null 2>&1; then
     TESTS_EXIST="true"
 fi
 
+# shellcheck source=lib-credo.sh
+if source "$SCRIPT_DIR/lib-credo.sh" 2>/dev/null && dogma_credo_active "$INPUT"; then
+    # credo active: the dogma orchestration flow steps back (subagent-first, Hydra and TDD
+    # MANDATORY, the handoff chain, STEP 5 "run ALL tests", checklist-manager).
+    echo ""
+    echo "<dogma-orchestration>"
+    echo "credo is active for this session, so the dogma orchestration flow steps back."
+    echo "Delegation, worktrees (Hydra per DOGMA-PERMISSIONS §xw1i, via the credo worktree flow),"
+    echo "TDD, the build/review pipeline and when the full test suite runs follow the credo"
+    echo "orchestration skill; work is tracked and closed as credo items (done gate)."
+    echo "dogma's safety hooks (delete guard, git permissions, secrets, AI traces) stay active."
+    if [ -n "$PERMISSIONS_FILE" ]; then
+        echo "Permissions: @${PERMISSIONS_FILE}"
+    fi
+    echo "</dogma-orchestration>"
+else
 # Output MANDATORY orchestration instruction
 echo ""
 echo "<dogma-orchestration>"
@@ -195,6 +214,7 @@ if [ -n "$PERMISSIONS_FILE" ]; then
     echo "Permissions: @${PERMISSIONS_FILE}"
 fi
 echo "</dogma-orchestration>"
+fi
 
 # === RESET SUBAGENT STATE EVERY N PROMPTS ===
 # This ensures the subagent-first warning triggers again periodically
