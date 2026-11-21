@@ -60,6 +60,8 @@ has "general-purpose: background shells forbidden" "run_in_background" "$gp_ctx"
 
 # --- decisions: uncritical questions are decided per SOTA, needs_decision only owner-only
 has "DECISIONS: uncritical questions decided by the subagent" "decide uncritical questions yourself" "$gp_ctx"
+has "DECISIONS: self-deciding limited to GO or agent-owned items" "on a GO item or an agent-owned item (clarify_owner: agent), decide" "$gp_ctx"
+has "DECISIONS: human-owned clarify questions go back" "Open questions of a human-owned clarify item (clarify_owner: human) always go back as needs_decision" "$gp_ctx"
 has "DECISIONS: SOTA > best effort > note order" "the best possible solution (SOTA), else best effort, else note it for the owner" "$gp_ctx"
 has "DECISIONS: per-repo grant honoured" "per-repo grant" "$gp_ctx"
 has "DECISIONS: decision logged in the report" "Log each such decision with its reason in your report" "$gp_ctx"

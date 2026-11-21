@@ -7,10 +7,12 @@ bump: patch
 - compact-plus has a mode gate for the limit ACTION line. Autonomous mode runs it directly,
   interactive modes ask once (one question covering compact-plus and the real /compact), a
   session that forbids Ask only mentions the ACTION; a manual invocation always runs
-- The subagent rule block tells subagents to decide uncritical questions themselves (SOTA,
+- The subagent rule block tells subagents to decide uncritical questions on GO or agent-owned
+  items themselves (SOTA,
   else best effort, else note it), honour per-repo grants, log each decision in their report,
   and return `needs_decision` only for owner-only decisions (taste, money, deleting user data,
-  installs, safety, infeasible options)
+  installs, safety, infeasible options); open questions of a human-owned clarify item always
+  go back as `needs_decision`
 - One open-codes footer form everywhere, with item refs in backticks:
   ``**🧪: T3** · **❓: Q4, `#177`** · **✋: V2, V5**``
 - The full test suite timing follows DOGMA-PERMISSIONS. When §8eyz ("run ALL tests only at
