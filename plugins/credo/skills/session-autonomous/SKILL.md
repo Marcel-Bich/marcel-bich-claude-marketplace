@@ -953,8 +953,9 @@ it. The short form is a compact minimum that is ALWAYS present, in every case - 
   per part (d); never state it from memory or a default. A set directive is announced =
   committed and overrides `sleep.enabled: false`.
 - **ntfy:** whether ntfy is active AND what will be reported. Active-or-not is decided ONLY
-  by running `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get personal.ntfy_topic` fresh
-  at this moment - a non-empty value means active, exit 3 or empty means not configured.
+  by running `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-config.sh" get personal.ntfy_topic` and
+  `... get personal.ntfy_relay` fresh at this moment - active when EITHER is non-empty, exit 3
+  or empty for both means not configured.
   NEVER state ntfy's status from memory, from a profile-file glance, or by assumption; read
   it via that command (the value MAY be masked - "set / non-empty" or a few edge characters
   - the proof is present-vs-empty from the real output, not the plaintext topic). The value

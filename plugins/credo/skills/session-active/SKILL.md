@@ -368,8 +368,8 @@ digest, the end-of-run report) lists each finished item as ONE line:
 Send every ntfy push through the helper - it is the single discoverable send path and
 resolves the relay/topic/server from the config cascade (`personal.ntfy_relay`,
 `personal.ntfy_topic`, `personal.ntfy_server`) internally, so you never touch the topic
-directly. With a relay set it POSTs to that loopback relay (which owns the topic) and falls
-back to the direct server only when a topic is set; never `curl` ntfy yourself:
+directly. With a relay set it POSTs only to that loopback relay (which owns the topic) and
+never falls back to the direct server; never `curl` ntfy yourself.
 
 ```
 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-ntfy-send.sh" "message text"

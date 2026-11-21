@@ -44,7 +44,7 @@ import urllib.request
 DEFAULT_URL = "http://127.0.0.1:8765/send"
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 PRIORITIES = ("min", "low", "default", "high", "max")
-TAGS_RE = re.compile(r"^[A-Za-z0-9_,-]{0,64}$")
+TAGS_RE = re.compile(r"[A-Za-z0-9_,-]{0,64}")
 TITLE_MAX = 50
 DEFAULT_TITLE = "credo"
 
@@ -85,7 +85,7 @@ def build_payload(title, body, priority, tags):
         return None, "empty message"
     if priority not in PRIORITIES:
         return None, "invalid priority %r (use %s)" % (priority, "|".join(PRIORITIES))
-    if not TAGS_RE.match(tags):
+    if not TAGS_RE.fullmatch(tags):
         return None, "invalid tags (allowed: letters, digits, _ , -; max 64)"
     return {"title": title[:TITLE_MAX], "body": body, "priority": priority,
             "tags": tags}, ""

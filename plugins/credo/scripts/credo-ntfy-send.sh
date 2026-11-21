@@ -13,16 +13,18 @@
 #           {title, body, priority, tags} to that local relay, which owns the topic.
 #           Only http URLs on 127.0.0.1, localhost or [::1] are accepted. The topic is
 #           never sent to the relay. Contract: scripts/credo_ntfy_relay.py.
-#   direct  otherwise, or when the relay fails and a topic is set: POST the message
-#           to <personal.ntfy_server>/<personal.ntfy_topic> (server empty ->
+#   direct  only when NO relay is configured: POST the message to
+#           <personal.ntfy_server>/<personal.ntfy_topic> (server empty ->
 #           https://ntfy.sh), exactly as before the relay existed.
+# A failed relay never falls back to the direct path, even with a topic set. The
+# relay exists because direct sends are not wanted on this machine.
 #
 # Not configured (no relay, empty topic) is a silent no-op that exits 0: a missing
 # notification path must never break the caller. A CONFIGURED push that cannot be
 # delivered fails loud: non-zero exit and the reason on stderr, so the caller knows
-# the push did not go out. The topic is a secret: it is NEVER written to
-# stdout/stderr and never logged (curl's own error text is discarded for that
-# reason, only its exit code is reported).
+# the push did not go out. The topic is a secret.
+# It is NEVER written to stdout/stderr and never logged (curl's own error text is
+# discarded for that reason, only its exit code is reported).
 #
 # Usage:
 #   credo-ntfy-send.sh "message text"
@@ -35,10 +37,10 @@
 # Exit codes:
 #   0  message sent, OR nothing to do (no relay and empty topic)
 #   1  usage error (no message given)
-#   2  personal.ntfy_relay is invalid (not a loopback http URL) and no direct
-#      fallback is configured, or invalid priority/tags for the relay
-#   3  send failed: the relay and/or the direct path were tried and none worked
-#      (e.g. relay down, curl or python3 missing, server unreachable)
+#   2  personal.ntfy_relay is invalid (not a loopback http URL), or invalid
+#      priority/tags for the relay
+#   3  send failed (e.g. relay down or refusing, curl or python3 missing, server
+#      unreachable)
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -115,11 +117,9 @@ if [ -n "$relay" ]; then
         # The helper already printed the reason; exit 2 = config or input error.
         [ "$rc" -eq 2 ] && fail_code=2
     fi
-    if [ -z "$topic" ]; then
-        echo "credo-ntfy-send: push NOT sent (relay failed, no personal.ntfy_topic for a direct fallback)" >&2
-        exit "$fail_code"
-    fi
-    echo "credo-ntfy-send: relay failed, falling back to the direct ntfy server" >&2
+    # No direct fallback. A configured relay is the only allowed path.
+    echo "credo-ntfy-send: push NOT sent (relay failed; no direct fallback while personal.ntfy_relay is set)" >&2
+    exit "$fail_code"
 fi
 
 # --- direct path ----------------------------------------------------------------

@@ -415,9 +415,9 @@ personal:
   # Optional local ntfy relay (empty = off). When set, pushes are POSTed as JSON
   # {title, body, priority, tags} to this URL and the relay forwards them to its own
   # topic; credo never sends the topic to it. Only http URLs on 127.0.0.1, localhost
-  # or [::1] are accepted, e.g. "http://127.0.0.1:8765/send". If the relay fails and
-  # ntfy_topic is set, credo falls back to the direct path. Contract:
-  # scripts/credo_ntfy_relay.py.
+  # or [::1] are accepted, e.g. "http://127.0.0.1:8765/send". While a relay is set it
+  # is the only path. A failed relay push is reported, never sent directly instead.
+  # Contract: scripts/credo_ntfy_relay.py.
   ntfy_relay: ""
   # ntfy opt-out marker. Setup-only: distinguishes "user declined notifications"
   # from "never asked" so /credo:setup stops re-asking. true -> setup skips the ntfy

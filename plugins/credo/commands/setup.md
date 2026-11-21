@@ -656,7 +656,9 @@ credo can send push notifications (via ntfy) so you get called back to the PC du
   `credo_ntfy_relay.py validate <url>` (only `http://` on `127.0.0.1`, `localhost` or `[::1]`
   is accepted; on exit 2 show the reason and ask again). The relay contract (JSON `title`,
   `body`, `priority`, `tags`; 2xx = sent; the topic is never sent) is documented in
-  `scripts/credo_ntfy_relay.py`. Do NOT send a test push without the user's yes.
+  `scripts/credo_ntfy_relay.py`. While a relay is set it is the only send path (a failed
+  relay push is reported, never sent directly instead). Do NOT send a test push without the
+  user's yes.
 - "Yes" -> ask for the topic string, then write it to `personal.ntfy_topic` in the GLOBAL
   config AND set `personal.ntfy_optout: false` (Read + Edit both values).
 - "No" -> leave `personal.ntfy_topic` empty and set `personal.ntfy_optout: true` in the GLOBAL

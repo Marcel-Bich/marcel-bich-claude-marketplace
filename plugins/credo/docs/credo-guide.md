@@ -312,7 +312,7 @@ Without the `limit` plugin these features are silently unavailable. No error is 
 
 ### 8.2 `ntfy` - optional
 
-Push notifications use `ntfy`. The topic is `personal.ntfy_topic` in the credo config. Optionally `personal.ntfy_relay` names a local relay (`http://` on `127.0.0.1`, `localhost` or `[::1]` only) that owns the topic: credo then POSTs JSON `{"title", "body", "priority", "tags"}` to it, never the topic, and falls back to the direct server only when a topic is set. Both unset means ntfy is silently skipped. A configured push that fails exits non-zero with the reason on stderr (`scripts/credo-ntfy-send.sh`, contract in `scripts/credo_ntfy_relay.py`). Nothing else depends on it.
+Push notifications use `ntfy`. The topic is `personal.ntfy_topic` in the credo config. Optionally `personal.ntfy_relay` names a local relay (`http://` on `127.0.0.1`, `localhost` or `[::1]` only) that owns the topic. credo then POSTs JSON `{"title", "body", "priority", "tags"}` to it, never the topic; while a relay is set it is the only path, a failed relay push is reported and never sent directly instead. Both unset means ntfy is silently skipped. A configured push that fails exits non-zero with the reason on stderr (`scripts/credo-ntfy-send.sh`, contract in `scripts/credo_ntfy_relay.py`). Nothing else depends on it.
 
 ## 9. Testing conventions
 

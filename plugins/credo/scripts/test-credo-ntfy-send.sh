@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for scripts/credo-ntfy-send.sh and scripts/credo_ntfy_relay.py: relay URL
 # validation, relay vs direct choice, the relay contract (JSON fields, no topic),
-# fallback, fail-loud exit codes, the read-only probe and the relay path of the
+# no direct fallback while a relay is set, no redirects, no proxies, fail-loud exit codes, the read-only probe and the relay path of the
 # self-* helpers (credo_pane_wake.ntfy).
 #
 # NOTHING real is sent: every config layer is a temp file, and both the "relay" and
@@ -49,6 +49,7 @@ lacks() { # name, needle, haystack
 cat > "$TMP/fake_server.py" <<'PYEOF'
 import http.server, json, sys
 out, portfile, code = sys.argv[1], sys.argv[2], int(sys.argv[3])
+location = sys.argv[4] if len(sys.argv) > 4 else ""
 class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode("utf-8")
@@ -57,16 +58,20 @@ class H(http.server.BaseHTTPRequestHandler):
                                  "title": self.headers.get("Title"),
                                  "priority": self.headers.get("Priority"),
                                  "tags": self.headers.get("Tags"), "body": body}) + "\n")
-        self.send_response(code); self.end_headers(); self.wfile.write(b"ok")
+        self.send_response(code)
+        if location:
+            self.send_header("Location", location)
+        self.end_headers(); self.wfile.write(b"ok")
+    do_GET = do_POST  # a followed redirect may arrive as GET, so record it too
     def log_message(self, *a):
         pass
 srv = http.server.HTTPServer(("127.0.0.1", 0), H)
 open(portfile, "w").write(str(srv.server_address[1]))
 srv.serve_forever()
 PYEOF
-start_server() { # name, http code -> sets <name>_PORT, records to $TMP/<name>.jsonl
+start_server() { # name, http code [, Location] -> sets <name>_PORT, records to $TMP/<name>.jsonl
     : > "$TMP/$1.jsonl"
-    "$PY" "$TMP/fake_server.py" "$TMP/$1.jsonl" "$TMP/$1.port" "$2" &
+    "$PY" "$TMP/fake_server.py" "$TMP/$1.jsonl" "$TMP/$1.port" "$2" "${3:-}" &
     PIDS="$PIDS $!"
     for _ in $(seq 1 50); do [ -s "$TMP/$1.port" ] && break; sleep 0.1; done
     eval "$1_PORT=$(cat "$TMP/$1.port")"
@@ -74,6 +79,8 @@ start_server() { # name, http code -> sets <name>_PORT, records to $TMP/<name>.j
 start_server relay 200
 start_server relaybad 500
 start_server ntfysrv 200
+start_server proxy 200
+start_server redirector 302 "http://127.0.0.1:$ntfysrv_PORT/redirected"
 # a free port with no listener
 DEAD_PORT="$("$PY" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
 RELAY_URL="http://127.0.0.1:$relay_PORT/send"
@@ -171,16 +178,42 @@ out="$("$SUT" "x" 2>&1)"; rc=$?
 check "remote relay URL, no topic: rc 2" 2 "$rc"
 has "remote relay URL: reason" "relay host must be" "$out"
 
-# --- relay fails, topic set -> direct fallback --------------------------------------
+# --- relay fails, topic set -> NO direct fallback, fail loud -------------------------
 config "http://127.0.0.1:$DEAD_PORT/send" "$TOPIC" "http://127.0.0.1:$ntfysrv_PORT"
 : > "$TMP/ntfysrv.jsonl"
-out="$("$SUT" -t "Fallback" "via direct" 2>&1)"; rc=$?
-check "fallback: rc 0" 0 "$rc"
-has "fallback: says so" "falling back" "$out"
-check "fallback: direct request" 1 "$(lines ntfysrv)"
-check "fallback: direct path is /<topic>" "/$TOPIC" "$(field ntfysrv 1 path)"
-check "fallback: direct body" "via direct" "$(field ntfysrv 1 body)"
-lacks "fallback: topic never printed" "$TOPIC" "$out"
+out="$("$SUT" -t "NoFallback" "relay only" 2>&1)"; rc=$?
+check "relay down + topic: rc 3" 3 "$rc"
+has "relay down + topic: says no fallback" "no direct fallback" "$out"
+check "relay down + topic: no direct request" 0 "$(lines ntfysrv)"
+lacks "relay down + topic: topic never printed" "$TOPIC" "$out"
+config "http://example.com/send" "$TOPIC" "http://127.0.0.1:$ntfysrv_PORT"
+"$SUT" "x" >/dev/null 2>&1; rc=$?
+check "invalid relay + topic: rc 2" 2 "$rc"
+check "invalid relay + topic: no direct request" 0 "$(lines ntfysrv)"
+
+# --- a relay redirect is never followed --------------------------------------------------
+config "http://127.0.0.1:$redirector_PORT/send" "" ""
+: > "$TMP/ntfysrv.jsonl"
+out="$("$SUT" "x" 2>&1)"; rc=$?
+check "redirect: rc 3" 3 "$rc"
+has "redirect: reason" "HTTP 302" "$out"
+check "redirect: target never contacted" 0 "$(lines ntfysrv)"
+
+# --- proxy variables are ignored for the relay -------------------------------------
+config "$RELAY_URL" "" ""
+: > "$TMP/relay.jsonl"; : > "$TMP/proxy.jsonl"
+PX="http://127.0.0.1:$proxy_PORT"
+http_proxy="$PX" HTTP_PROXY="$PX" all_proxy="$PX" ALL_PROXY="$PX" no_proxy="" NO_PROXY="" \
+    "$SUT" "via relay, not proxy" 2>/dev/null; rc=$?
+check "proxy env: rc 0" 0 "$rc"
+check "proxy env: relay got it" 1 "$(lines relay)"
+check "proxy env: proxy got nothing" 0 "$(lines proxy)"
+
+# --- tags with a trailing newline are rejected (fullmatch) ---------------------------
+"$SUT" --tags "ci
+" "x" >/dev/null 2>&1; check "tags trailing newline: rc 2" 2 "$?"
+check "tags newline: python check" "False" \
+    "$("$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); import credo_ntfy_relay as r; print(r.build_payload("t", "b", None, "ci\n")[0] is not None)' "$HERE")"
 
 # --- direct only (no relay): unchanged behaviour, headers --------------------------
 config "" "$TOPIC" "http://127.0.0.1:$ntfysrv_PORT/"
@@ -228,22 +261,42 @@ r1 = w.ntfy("T1", "b1", "CREDO_TEST_NTFY_URL_UNSET",
             cfg({"personal.ntfy_relay": relay, "personal.ntfy_topic": topic,
                  "personal.ntfy_server": server}), logs.append)
 r2 = w.ntfy("T2", "b2", "CREDO_TEST_NTFY_URL_UNSET",
+            cfg({"personal.ntfy_topic": topic, "personal.ntfy_server": server}), logs.append)
+r4 = w.ntfy("T4", "b4", "CREDO_TEST_NTFY_URL_UNSET",
             cfg({"personal.ntfy_relay": dead, "personal.ntfy_topic": topic,
                  "personal.ntfy_server": server}), logs.append)
+# a missing relay module must not crash the push
+import builtins
+real_import = builtins.__import__
+def no_relay(name, *a, **k):
+    if name == "credo_ntfy_relay":
+        raise ImportError(name)
+    return real_import(name, *a, **k)
+sys.modules.pop("credo_ntfy_relay", None)
+builtins.__import__ = no_relay
+try:
+    r5 = w.ntfy("T5", "b5", "CREDO_TEST_NTFY_URL_UNSET",
+                cfg({"personal.ntfy_relay": relay, "personal.ntfy_topic": topic,
+                     "personal.ntfy_server": server}), logs.append)
+except Exception as exc:
+    r5 = "crash:" + type(exc).__name__
+builtins.__import__ = real_import
 r3 = w.ntfy("T3", "b3", "CREDO_TEST_NTFY_URL_UNSET",
             cfg({"personal.ntfy_relay": dead}), logs.append)
-print("%s %s %s" % (r1, r2, r3))
+print("%s %s %s %s %s" % (r1, r2, r3, r4, r5))
 print(" || ".join(logs))
 PYEOF
 )"
-check "pane_wake: results relay/fallback/fail" "True True False" "$(printf '%s\n' "$res" | head -1)"
+check "pane_wake: results relay/direct/fail/no-fallback/no-module" "True True False False False" \
+    "$(printf '%s\n' "$res" | head -1)"
+has "pane_wake: missing module logged" "relay helper unavailable (ImportError)" "$res"
 has "pane_wake: relay log" "ntfy sent via relay: T1" "$res"
-has "pane_wake: relay failure logged" "ntfy relay failed: relay not reachable" "$res"
+has "pane_wake: relay failure logged" "ntfy relay failed (no direct fallback): relay not reachable" "$res"
 lacks "pane_wake: topic never logged" "$TOPIC" "$res"
 check "pane_wake: relay got T1 only" 1 "$(lines relay)"
 check "pane_wake: relay priority high" "high" \
     "$("$PY" -c 'import json,sys; print(json.loads(sys.argv[1])["priority"])' "$(field relay 1 body)")"
-check "pane_wake: direct got T2 only" "T2|1" "$(field ntfysrv 1 title)|$(lines ntfysrv)"
+check "pane_wake: direct got T2 only (no fallback for T4/T5)" "T2|1" "$(field ntfysrv 1 title)|$(lines ntfysrv)"
 
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]
