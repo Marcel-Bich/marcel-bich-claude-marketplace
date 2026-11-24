@@ -41,9 +41,10 @@ character is removed first. Otherwise the prompt is typed in one burst (one send
 pane settles for 0.5 s, and Enter is pressed once the burst shows in the field and the input
 box has nothing dialog-shaped next to it (credo_pane_wake.send_whole; the text is not compared
 exactly). Claude Code shows the burst as a paste placeholder or as text; both are accepted.
-Submitted means the field is empty again; Enter is re-sent up to 3 times while the own burst
-is still there, then the own burst is removed (WARNING in the log). A burst left in the field
-(dialog, other text) is reported by ntfy. The reference point (last reminder time and turn)
+Submitted means the field is empty again; Enter is re-sent up to 3 times while the field
+still shows exactly its content from right before the first Enter, then the own burst is
+removed (WARNING in the log). A burst that may be left in the field (dialog, copy mode, not
+shown in time, not removable) is reported by ntfy. The reference point (last reminder time and turn)
 moves to every attempt. A reminder that could not be sent safely is skipped and counts as
 sent. It stops when no mode is configured any more and when the Claude process of its session
 is gone. Background work never blocks it.
@@ -552,8 +553,9 @@ def attempt(pane, plan, text, mode, trig):
         if exc.status in ("failed: left in field", "failed: dialog open"):
             # the own burst stays in the field and blocks the self-* helpers until cleared
             ntfy("credo: reminder left in input",
-                 "The periodic reminder could not be submitted in tmux pane %s and is still "
-                 "in the input field - please submit or clear it." % plan["pane"], plan)
+                 "The periodic reminder could not be confirmed as submitted in tmux pane %s "
+                 "and may still be in the input field - please check, then submit or clear "
+                 "it." % plan["pane"], plan)
     now = time.time()
 
     def reference(st):
