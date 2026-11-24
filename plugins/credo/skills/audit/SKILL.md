@@ -128,8 +128,8 @@ For the item under review, gather the ground truth first (read, do not guess):
 - Owner facts. Facts the owner already stated (requirements log, recorded answers) must be
   written into the item, so the owner never has to repeat them. A stated fact missing from
   the item is a finding, ranked by its effect on the result.
-- Owner decisions. Search the requirements log (`.credo/process/requirements/*.md`) for the
-  audited area. A risk or design point the owner already accepted is not escalated
+- Owner decisions. Search the requirements log (main-checkout path of
+  `.credo/process/requirements/*.md`) for the audited area. A risk or design point the owner already accepted is not escalated
   ("Owner-accepted points" below).
 - Acceptance measurement (credo `items`, Success Criteria): an item whose result is an
   algorithm, a detection, or a quality or numeric outcome must name a data set and a target
@@ -190,12 +190,11 @@ Rank every finding with exactly one level:
 
 ### Owner-accepted points
 
-A finding that touches a risk or decision the owner already accepted in the requirements log
+A finding that is exactly a risk or decision the owner already accepted in the requirements log
 or the item History is reported in its own report section as
 `accepted (owner <date>, "<quote>")`. It is never ranked BLOCKER or MAJOR, never counts toward
 the verdict, and never becomes a new owner question (credo `items`, "Never re-ask a decided
-point"). Only a fact the decision did not cover (a changed risk, a new attack path) is a normal
-finding, and it quotes the earlier decision.
+point"). Covers only exactly the point decided, same scope and facts unchanged since the decision; quote it verbatim with date and source file; only the owner's own words count, never an agent decision (e.g. a "DECIDED by agent" line); a wider scope, new facts or a different risk stay a normal ranked finding that quotes the decision; the newest owner decision on the point wins.
 
 ## Evidence (required for every finding)
 

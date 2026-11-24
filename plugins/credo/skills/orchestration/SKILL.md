@@ -490,8 +490,9 @@ subagent (one verdict and report section per item); `full` items are always audi
 singly. The tier changes only the depth, never whether the audit runs. The auditor
 records its findings first, then fixes small ones itself on the item's worktree branch
 (credo `audit`, "Fixing small findings"). The brief points the auditor to the requirements log
-(`.credo/process/requirements/*.md`, main-checkout path). A finding on an owner-accepted risk
-is reported as accepted, never as a new owner question (credo `audit`, "Owner-accepted points").
+(main-checkout path of `.credo/process/requirements/*.md`). A finding that is exactly an owner-accepted risk
+is reported as `accepted (owner <date>, "<quote>")`, never as a new owner question (credo `audit`,
+"Owner-accepted points").
 
 ## Delegating verify / UI subagents
 
