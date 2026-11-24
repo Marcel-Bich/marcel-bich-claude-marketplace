@@ -6,6 +6,34 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ### v0.89
 
+#### v0.89.3
+
+##### Changed
+
+- Detached spawn and daemon log helpers moved into the shared `scripts/credo_detach.py`,
+  used by the LAN relay and the WSL bridge (`CREDO_WIN_BRIDGE_SPAWN` mirrors
+  `CREDO_PEER_LAN_SPAWN`)
+
+##### Fixed
+
+- WSL <-> Windows peer bridge survives the session that started it: the daemon now runs
+  as its own transient systemd user service (else a double fork with setsid, SIGHUP
+  ignored) instead of inside the starting Claude Code session's systemd scope, with the
+  same session-bound and secret-like environment filtering as the LAN relay
+- Bridge log lines carry an ISO 8601 timestamp with milliseconds and offset, the daemon
+  logs how it was spawned and its cgroup, and every shutdown logs its reason
+- Agents no longer strand Windows-side temp files they cannot delete: the `wsl-env` skill and
+  the subagent inject say to keep such files in the session TMPDIR and hand Windows tools the
+  `wslpath -w` path (`\\wsl.localhost\<distro>\...`); reading through it was measured at a few
+  milliseconds extra per note
+- `credo-cleanup.py own-rm` on WSL also removes a single file this session's Write tool created
+  in a Windows temp dir (`%TEMP%`, `C:\Users\Public`, `C:\tmp` as `/mnt/<drive>/...`): drvfs has
+  no birth time, so the ledger records it when the pre hook saw no file and its change time is
+  not older than the call, and the NTFS file id must be unchanged; deleted through drvfs, same
+  2-minute rule, everything else stays report-only. Only on WSL (kernel facts): a native Linux
+  `/mnt/<x>` never qualifies. The done-gate purge never removes a `C:\Users\Public` file (results
+  for the owner may live there), only an explicit `own-rm <path>` does
+
 #### v0.89.2
 
 ##### Added
