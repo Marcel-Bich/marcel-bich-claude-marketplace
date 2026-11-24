@@ -413,7 +413,8 @@ when that session or its scope ended, the SIGTERM for the whole group also hit t
 and its holders. Without a usable systemd user manager (macOS, WSL without systemd,
 containers) it falls back to a double fork with `setsid` and SIGHUP ignored, which leaves
 the caller's process group and session but not a cgroup scope. `CREDO_PEER_LAN_SPAWN`
-selects the method: `auto` (default), `systemd` (no fallback) or `setsid`. The systemd unit
+selects the method: `auto` (default), `systemd` (no fallback) or `setsid`; the code is
+shared with the WSL bridge (`scripts/credo_detach.py`). The systemd unit
 gets only a small environment (PATH, HOME, locale, XDG dirs, `CLAUDE_CONFIG_DIR`,
 `CODEX_HOME`, `WSL_DISTRO_NAME` and the `CREDO_*` settings) plus the pinned
 `CREDO_PEER_LAN_CONFIG`. `CREDO_*` names that are session-bound (`SESSION_ID`,
@@ -766,6 +767,26 @@ plugin dir; nothing is installed on Windows).
   replaces an older one after a plugin update and stops a running one when switched off.
   One daemon per WSL distro (a lock in `~/.local/state/credo/win-bridge/`, where its log,
   state and holder sockets live). It does not need the LAN relay or its config.
+- **Detached from the session that started it.** Like the LAN relay (same code,
+  `scripts/credo_detach.py`), `ensure` never runs the daemon itself. With a systemd user
+  manager (WSL with systemd) the daemon gets its own transient user service
+  (`systemd-run --user --collect`, unit `credo-win-bridge-<time>-<pid>.service`), outside
+  the process group, session and systemd scope of the Claude Code session whose hook
+  started it; before, it lived in that session's scope and a SIGTERM for the scope (the
+  session ending) also stopped the bridge. Otherwise a double fork with `setsid` and
+  SIGHUP ignored. `CREDO_WIN_BRIDGE_SPAWN` selects `auto` (default), `systemd` (no
+  fallback) or `setsid`. The systemd unit gets the same small environment as the relay
+  (PATH, HOME, locale, XDG dirs, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `WSL_DISTRO_NAME`, the
+  non-session, non-secret `CREDO_*` settings) plus the pinned `CREDO_WIN_BRIDGE_STATE`; no
+  `WSL_INTEROP` (Windows interop works from a user service without it, and a terminal's
+  interop socket would end with that terminal). The double fork keeps `WSL_INTEROP` and
+  drops the same session-bound and secret-like names and `TMPDIR`.
+- **Log.** `bridge.log` in the state dir: every line starts with an ISO 8601 local time
+  with milliseconds and offset and `[credo-win-bridge <pid>]`. The daemon logs how it was
+  spawned and its cgroup at start, logs and ignores SIGHUP, and every shutdown names its
+  reason (`shutting down: received SIGTERM (sender pid unknown; ppid ..., cgroup ...)`,
+  `switched off in the credo config`, or `main loop ended`). Uncaught exceptions land in
+  the log with a timestamp.
 - **Windows sessions in WSL.** Every live Windows session (pid alive with its recorded
   creation time) gets a holder subprocess with a unix socket and a mirror descriptor in
   every local profile's `sessions/` (holder pid and `/proc` procStart, pidDomain copied

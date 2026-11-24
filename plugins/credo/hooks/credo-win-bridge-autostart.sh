@@ -8,7 +8,9 @@
 # interop (powershell.exe) works and that it is switched on. It is started DETACHED via the
 # `ensure` subcommand, so this hook returns at once: ensure leaves a current/newer daemon
 # alone, replaces an older one after a plugin update and stops a running one when the
-# switch is off.
+# switch is off. ensure itself only launches: the daemon gets its own transient systemd
+# user service (else a double fork + setsid, scripts/credo_detach.py), so it never lives
+# in this session's process group or systemd scope and survives the session's end.
 #
 # Off switch: credo config `peer.win_bridge.enabled: false` or CREDO_WIN_BRIDGE=0.
 #

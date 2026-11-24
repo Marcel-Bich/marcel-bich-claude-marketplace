@@ -88,6 +88,7 @@ import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import credo_detach as detach  # noqa: E402
 import credo_lock  # noqa: E402
 import credo_platform  # noqa: E402
 import credo_profiles as profiles  # noqa: E402
@@ -198,13 +199,17 @@ def ensure_dirs():
             pass
 
 
-_LOG_LOCK = threading.Lock()
+# re-entrant: a signal handler (SIGHUP) may log while the main thread is inside log()
+_LOG_LOCK = threading.RLock()
 
 
 def log(msg):
-    """One timestamped line in bridge.log (never a token: callers only pass names,
-    pids, paths and error texts). Rotates at LOG_MAX into bridge.log.1."""
-    line = "%s [%d] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), os.getpid(), msg)
+    """Timestamped lines in bridge.log (ISO 8601 local time with milliseconds and offset,
+    one prefix per message line, so a traceback keeps the timeline; never a token:
+    callers only pass names, pids, paths and error texts). Rotates at LOG_MAX into
+    bridge.log.1."""
+    prefix = "%s [credo-win-bridge %d] " % (detach.log_stamp(), os.getpid())
+    line = "".join(prefix + ln + "\n" for ln in (str(msg).splitlines() or [""]))
     with _LOG_LOCK:
         try:
             p = log_path()
@@ -953,6 +958,7 @@ class Daemon(object):
         self.sess_dirs_fn = sess_dirs_fn or profiles.sessions_dirs
         self.lock = threading.RLock()
         self.stop_ev = threading.Event()
+        self.stop_reason = None    # why the daemon stops (logged by shutdown); first one wins
         self.ps = None
         self.ps_lock = threading.Lock()
         self.ps_ready = False
@@ -1288,12 +1294,20 @@ class Daemon(object):
             if time.monotonic() - self.last_config > CONFIG_RECHECK:
                 self.last_config = time.monotonic()
                 if not enabled():
-                    log("switched off in the credo config, stopping")
+                    self.request_stop("switched off in the credo config")
                     break
             self.stop_ev.wait(0.5)
         self.shutdown()
 
+    def request_stop(self, reason):
+        """Stop the main loop and remember why (the first reason wins). Safe inside a
+        signal handler: it only sets two fields, the reason is logged by shutdown()."""
+        if self.stop_reason is None:
+            self.stop_reason = reason
+        self.stop_ev.set()
+
     def shutdown(self):
+        log("shutting down: %s" % (self.stop_reason or "main loop ended"))
         with self.lock:
             for sid in list(self.holders):
                 self._drop_holder(sid)
@@ -1373,11 +1387,25 @@ def cmd_daemon():
     except ValueError:
         interval = DEFAULT_INTERVAL
     d = Daemon(argv, interval=max(0.2, interval))
-    signal.signal(signal.SIGTERM, lambda *_: d.stop_ev.set())
-    signal.signal(signal.SIGINT, lambda *_: d.stop_ev.set())
-    log("daemon up (version %s)" % VERSION)
+    detach.install_log_excepthooks(log)
+
+    def _sig(signo, _frame):
+        d.request_stop(detach.signal_reason(signo, SPAWNED_VAR))
+
+    def _hup(_signo, _frame):
+        log("SIGHUP received and ignored (%s)" % detach.process_context(SPAWNED_VAR))
+
+    signal.signal(signal.SIGTERM, _sig)
+    signal.signal(signal.SIGINT, _sig)
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, _hup)
+    log("daemon up (version %s); daemon process: %s"
+        % (VERSION, detach.process_context(SPAWNED_VAR, with_cgroup=True)))
     try:
         d.run()
+    except BaseException as exc:
+        log("main loop ended by %s: %s" % (type(exc).__name__, exc))
+        raise
     finally:
         rec = read_pidfile()
         if rec and rec.get("pid") == os.getpid():
@@ -1401,6 +1429,57 @@ def stop_daemon(rec, timeout=10.0):
     return not daemon_alive(rec)
 
 
+# How the daemon is launched (CREDO_WIN_BRIDGE_SPAWN, same modes as the LAN relay's
+# CREDO_PEER_LAN_SPAWN, mechanics shared in credo_detach.py, item #206): "auto" (default)
+# = its own transient systemd user service when a systemd user manager answers, else a
+# double fork; "systemd" = only systemd-run (no fallback, for tests); "setsid" = always the
+# double fork. Started from a hook, a plain child would live in the starting Claude Code
+# session's systemd scope and die with it.
+SPAWNED_VAR = "CREDO_WIN_BRIDGE_SPAWNED"
+SPAWN_ENV_SKIP = (SPAWNED_VAR, "CREDO_WIN_BRIDGE_EVENT")
+
+
+def spawn_mode():
+    return detach.spawn_mode("CREDO_WIN_BRIDGE_SPAWN")
+
+
+def _pinned_env():
+    """The state dir is pinned, so a daemon and its launcher always agree on the pidfile,
+    lock, sockets and log, whatever XDG_STATE_HOME the daemon environment ends up with."""
+    return {"CREDO_WIN_BRIDGE_STATE": state_dir()}
+
+
+def _spawn_env():
+    """Environment of a systemd-run bridge daemon: the shared allowlist (credo_detach).
+    No WSL_INTEROP: interop works from a user service without it (verified, #206), and a
+    terminal's interop socket would die with that terminal."""
+    return detach.systemd_env(SPAWN_ENV_SKIP, _pinned_env())
+
+
+def _fork_env():
+    """Environment of a double-forked bridge daemon: the caller's minus session-bound and
+    secret-like CREDO_* names and TMPDIR. WSL_INTEROP stays: without systemd it is how the
+    daemon reaches powershell.exe."""
+    return detach.fork_env(SPAWN_ENV_SKIP, _pinned_env())
+
+
+def _systemd_unit_name():
+    return "credo-win-bridge-%d-%d" % (int(time.time()), os.getpid())
+
+
+def spawn_detached_daemon():
+    """Start `credo-win-bridge.py daemon` fully detached from the caller (own transient
+    systemd user service, else double fork + setsid) and return its pid. stdin /dev/null,
+    stdout/stderr appended to bridge.log."""
+    mode = spawn_mode()
+    use_systemd = mode in ("auto", "systemd")
+    return detach.spawn_detached(
+        [sys.executable, os.path.abspath(__file__), "daemon"], log_path(), mode,
+        _systemd_unit_name() if use_systemd else "", "credo WSL-Windows peer bridge",
+        _spawn_env() if use_systemd else {}, _fork_env(),
+        SPAWNED_VAR, "CREDO_WIN_BRIDGE_SPAWN", log)
+
+
 def cmd_ensure():
     """Start the daemon detached when it is switched on, interop works and none runs;
     replace an OLDER running one; stop a running one when switched off."""
@@ -1415,12 +1494,16 @@ def cmd_ensure():
         mine, theirs = version_tuple(VERSION), version_tuple(rec.get("version"))
         if mine is None or theirs is None or theirs >= mine:
             return 0
+        log("ensure: replacing daemon pid %s (version %s) by version %s"
+            % (rec.get("pid"), rec.get("version"), VERSION))
         stop_daemon(rec)
     ensure_dirs()
-    with open(log_path(), "a") as out:
-        subprocess.Popen([sys.executable, os.path.abspath(__file__), "daemon"],
-                         stdin=subprocess.DEVNULL, stdout=out, stderr=out,
-                         start_new_session=True, close_fds=True)
+    try:
+        pid = spawn_detached_daemon()
+    except Exception as exc:
+        log("ensure: could not start the daemon: %s" % exc)
+        return 1
+    log("ensure: started daemon pid %d (detached: %s)" % (pid, spawn_mode()))
     return 0
 
 
