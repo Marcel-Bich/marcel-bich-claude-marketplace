@@ -138,6 +138,17 @@ bash_case "short heredoc into python3" allow "python3 - <<'EOF'${NL}${SMALL}${NL
 check "short browser_run_code" allow "$(decide mcp__plugin_playwright_playwright__browser_run_code code "$SMALL")"
 check "browser_run_code with filename only" allow \
     "$(decide mcp__plugin_playwright_playwright__browser_run_code filename "/tmp/check.js")"
+# run_code <filename>: decision for a long code value plus the given filename
+run_code() {
+    local out
+    out="$(jq -n --arg v "$BIG" --arg f "$1" \
+        '{session_id: "x", tool_name: "mcp__plugin_playwright_playwright__browser_run_code", tool_input: {code: $v, filename: $f}}' \
+        | bash "$HOOK" 2>/dev/null)"
+    case "$out" in *deny*) echo deny ;; "") echo allow ;; *) echo other ;; esac
+}
+check "browser_run_code: filename set, long code ignored" allow "$(run_code /tmp/check.js)"
+check "browser_run_code: empty filename, long code denied" deny "$(run_code "")"
+check "browser_run_code: blank filename, long code denied" deny "$(run_code "  ")"
 
 # --- allowed: ordinary long commands (false-positive guard) ---------------------------------
 LONGMSG="$(text 3000)"
@@ -171,7 +182,15 @@ check "invalid env limit fails open" allow \
 printf 'guards:\n  inline_code_max: 0\n' > "$CREDO_PROJECT"
 check "config 0 switches off" allow "$(decide Bash command "python3 -c '$BIG'")"
 printf 'guards:\n  inline_code_max: 100\n' > "$CREDO_PROJECT"
-check "config 100 denies 200 chars" deny "$(decide Bash command "python3 -c '$(code 200)'")"
+# the config is read only for code over the 1500 default: short code never pays the
+# credo-config.sh call, so a config value of 100 does not reach 200 characters of code
+check "config not read for code within the default (100 vs 200 chars)" allow \
+    "$(decide Bash command "python3 -c '$(code 200)'")"
+check "config 100 applies to code over the default" deny "$(decide Bash command "python3 -c '$BIG'")"
+printf 'guards:\n  inline_code_max: 2000\n' > "$CREDO_PROJECT"
+check "config 2000 raises the limit" allow "$(decide Bash command "python3 -c '$BIG'")"
+check "config 2000 still denies 2100 chars" deny "$(decide Bash command "python3 -c '$(code 2100)'")"
+printf 'guards:\n  inline_code_max: 100\n' > "$CREDO_PROJECT"
 check "env override beats config" allow \
     "$(CREDO_INLINE_CODE_MAX=5000 decide Bash command "python3 -c '$BIG'")"
 printf 'guards:\n  inline_code_max: lots\n' > "$CREDO_PROJECT"

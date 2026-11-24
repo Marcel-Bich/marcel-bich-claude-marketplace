@@ -23,8 +23,10 @@ timeout, taskset, nohup, time, command, exec):
   $(...) command substitutions are parsed the same way.
 
 Limit: env CREDO_INLINE_CODE_MAX (non-empty) > credo config guards.inline_code_max
-(credo-config.sh) > 1500. 0 or a negative value switches the guard off. The limit is only
-resolved when interpreter code was found, so normal commands cost no config read.
+(credo-config.sh) > 1500. 0 or a negative value switches the guard off. The config is only
+read for code over 1500 characters, so normal commands and short code cost no config read
+(a config value below 1500 therefore only matters for code over 1500; the env override
+applies at any size). browser_run_code with a non-empty filename is not checked.
 
 Failure-safe: any parse error, unknown input, unreadable or invalid limit -> allow (exit 0,
 no output). The guard never blocks because of its own error.
@@ -481,10 +483,15 @@ def is_run_code(tool_name):
     return tool_name.endswith("browser_run_code") or tool_name.endswith("browser_run_code_unsafe")
 
 
-def resolve_limit(session_id):
-    """The configured limit, or None (guard off or limit unusable: fail open)."""
+def resolve_limit(session_id, size):
+    """The limit that applies to code of this size, or None (allow: guard off, limit unusable,
+    or code within the default floor). The config is read only for code over the default
+    limit (credo-config.sh costs about 100 ms), so a config value below 1500 takes effect only
+    for code over 1500; the env override applies at any size."""
     raw = os.environ.get("CREDO_INLINE_CODE_MAX", "")
     if raw.strip() == "":
+        if size <= DEFAULT_LIMIT:
+            return None
         raw = config_limit(session_id)
     if raw is None:
         return DEFAULT_LIMIT
@@ -548,8 +555,9 @@ def main():
         kind = "bash"
     elif is_run_code(tool):
         code = tool_input.get("code")
-        if not isinstance(code, str):
-            return
+        filename = tool_input.get("filename")
+        if not isinstance(code, str) or isinstance(filename, str) and filename.strip():
+            return  # with a filename Playwright runs the file and ignores code
         size, name, kind = len(code), "browser_run_code", "playwright"
     else:
         return
@@ -559,7 +567,7 @@ def main():
     if size <= 0:
         return
     session_id = event.get("session_id") if isinstance(event.get("session_id"), str) else ""
-    limit = resolve_limit(session_id)
+    limit = resolve_limit(session_id, size)
     if limit is None or size <= limit:
         return
     if kind == "playwright":

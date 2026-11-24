@@ -325,7 +325,9 @@ items:
 # and names the alternative (Write a script file, run it separately with a literal path;
 # browser_run_code: the filename parameter). Applies in subagents too. Only the size
 # counts. 0 switches the guard off; env CREDO_INLINE_CODE_MAX overrides this value. An
-# unreadable value counts as off (fail open).
+# unreadable value counts as off (fail open). The value is read only for code over 1500
+# characters (no config call for short code), so a value below 1500 only applies there;
+# CREDO_INLINE_CODE_MAX applies at any size.
 guards:
   inline_code_max: 1500
 
