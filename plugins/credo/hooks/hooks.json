@@ -60,6 +60,16 @@
         ]
       },
       {
+        "matcher": "Bash|.*browser_run_code.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-inline-guard.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "SendMessage|Bash|Write|Edit|MultiEdit",
         "hooks": [
           {

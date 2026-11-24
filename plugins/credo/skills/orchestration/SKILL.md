@@ -155,6 +155,23 @@ the security block):
 - No background shells. The agent runs no command with `run_in_background`. This holds for
   every subagent brief, not only builders and auditors ("Monitoring without context
   flooding" below).
+- No-block commands, in every subagent brief (huge commands are error-prone, often stopped
+  by hooks or review prompts and stall an unattended run; the goal is to steer, not to block
+  work): no long inline code (`python -c`, `node -e`, `perl -e`, `ruby -e`, `bash -c`,
+  `powershell -Command`, a heredoc or pipe into an interpreter) - split the work into
+  several smaller commands (allowed), or Write the script (.py/.sh/.ps1) to the session
+  TMPDIR (`$TMPDIR`, normally `/tmp/credo-tmp-<uid>/<session id>/`) or scratchpad and run it
+  in a separate call with a literal path (PowerShell from WSL:
+  `powershell.exe -File "$(wslpath -w <path>)"`); delete each throwaway script once it is no
+  longer needed with `python3 <credo>/scripts/credo-cleanup.py own-rm <literal path>` (no
+  prompt for the session's own TMPDIR and scratchpad files, for the main agent and its
+  subagents alike; a file changed in the last 2 minutes is only reported, the done-gate
+  purge takes it later); never write and run a file in the same command; no `VAR=$(...); $VAR/script` calls, literal paths only;
+  `./node_modules/.bin/<tool>` instead of `npx` for an installed tool; Playwright
+  `browser_run_code` with the `filename` parameter for long code. The SubagentStart inject
+  carries the same block and the PreToolUse inline guard denies inline code over
+  `guards.inline_code_max` characters (default 1500), but the brief names it anyway, and
+  the main agent follows it itself.
 - Every brief carries the repo's mandatory brief lines from `.credo/RULES.md` (for example a
   path-safety note), copied verbatim. A repo's `.credo/RULES.md` overrides these defaults, and
   the subagent reads that file first.

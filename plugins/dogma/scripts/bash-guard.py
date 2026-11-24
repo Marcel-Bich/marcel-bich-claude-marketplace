@@ -2164,7 +2164,7 @@ class Analysis:
 
         self.check_arguments(verb, args, directories)
         self.check_dumps(verb, args)
-        self.check_install(verb, args)
+        self.check_install(verb, args, directories)
         self.check_delete(verb, args, directories)
         self.check_special(verb, args, segment, bodies, directories, depth)
         piped = bool(segment and segment.piped)
@@ -2982,9 +2982,9 @@ class Analysis:
                 if item in ("-u", "--user", "--oauth2-bearer", "--password", "--http-password"):
                     raise Deny("dogma: command includes credentials that could leak into logs.")
 
-    def check_install(self, verb, args):
+    def check_install(self, verb, args, directories=None):
         names = [arg for arg in args if not arg.startswith("-")]
-        if verb == "npx" and names and self.local_npm_tool(names[0]):
+        if verb == "npx" and self.local_npx(args, directories):
             return
         if verb in ("npx", "bunx", "uvx", "pnpx", "corepack"):
             if verb != "corepack" or names[:1] in (["enable"], ["install"], ["prepare"], ["use"]):
@@ -3283,19 +3283,38 @@ class Analysis:
             if candidate in self.written and "/" not in candidate and verb != "make":
                 raise Deny("dogma: a file written in this command is run right away; the script cannot be checked.")
 
-    def local_npm_tool(self, tool):
-        for directory in self.known_dirs():
-            probe = directory
-            while probe and probe != "/":
-                if os.path.isfile(os.path.join(probe, "node_modules", ".bin", tool)):
-                    return True
-                if os.path.lexists(os.path.join(probe, ".git")):
-                    break
-                probe = os.path.dirname(probe)
-        return False
+    def local_npx(self, args, directories):
+        """True when "npx <args>" can only run an already installed local tool, so nothing is downloaded.
 
-    def known_dirs(self):
-        return {directory for directory in getattr(self, "_known", set()) | self.anchors if directory}
+        The first operand is the tool, a plain bin name (no version or scope: tsc, not tsc@5 or @scope/x),
+        and node_modules/.bin/<tool> exists for every directory the command may run in (the cd-followed
+        directories; an unknown one never counts). -y/--yes, -p/--package and -c/--call keep the npx rule:
+        they install a named package or run a shell string."""
+        tool = None
+        for arg in args:
+            if long_option(arg, "yes", 2) or long_option(arg, "package", 3) or long_option(arg, "call", 3) \
+                    or arg[:1] == "-" and arg[1:2] != "-" and any(flag in arg[1:] for flag in "ypc"):
+                return False
+            if arg == "--":
+                continue
+            if not arg.startswith("-"):
+                tool = arg
+                break
+        if not tool or not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", tool):
+            return False
+        places = set(directories or ()) or set(self.anchors)
+        return bool(places) and None not in places and all(self.local_npm_tool(tool, place) for place in places)
+
+    @staticmethod
+    def local_npm_tool(tool, directory):
+        probe = directory
+        while probe and probe != "/":
+            if os.path.isfile(os.path.join(probe, "node_modules", ".bin", tool)):
+                return True
+            if os.path.lexists(os.path.join(probe, ".git")):
+                break
+            probe = os.path.dirname(probe)
+        return False
 
     def counts_only(self):
         following = self.pipe_next or []

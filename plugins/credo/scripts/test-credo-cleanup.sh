@@ -265,6 +265,38 @@ o="$(helper own-rm "$PAD/rel-clone")"
 contains "scratchpad child removed" "removed $PAD/rel-clone" "$o"
 o="$(helper own-rm "$ST")"
 contains "TMPDIR root itself refused" "refused $ST" "$o"
+
+# --- 3b. throwaway scripts of the main agent and of a subagent (#200) ------------------------
+# A subagent shares the session id (hook input session_id, $CLAUDE_CODE_SESSION_ID) and the
+# session TMPDIR; its Write calls land in its own transcript under <session>/subagents/. own-rm
+# does not care which agent of the session calls it, so each removal below works for both.
+sub_write() { # <file path> : a subagent Write call (agent_id in the hook input, subagent transcript)
+    N=$((N + 1))
+    local hin
+    hin="$(printf '{"session_id":"%s","agent_id":"agent-sub200","tool_name":"Write","tool_use_id":"tu%s","cwd":"%s","tool_input":{"file_path":"%s"}}' \
+        "$SA" "$N" "$R" "$1")"
+    printf '%s' "$hin" | python3 -I "$SHIM" "$OVJ" "$LEDGER" pre >/dev/null
+    echo 'print(1)' > "$1"
+    printf '%s' "$hin" | python3 -I "$SHIM" "$OVJ" "$LEDGER" post
+    mkdir -p "$PROF/projects/-fix/$SA/subagents"
+    TX="$PROF/projects/-fix/$SA/subagents/agent-sub200.jsonl" tx_write "$1"
+}
+sub_write "$ST/sub-check.py"
+o="$(helper own-rm "$ST/sub-check.py")"
+contains "subagent throwaway script in the session TMPDIR removed" "removed $ST/sub-check.py" "$o"
+sub_write "$PAD/sub-check.py"
+o="$(helper own-rm "$PAD/sub-check.py")"
+contains "subagent throwaway script in the scratchpad removed" "removed $PAD/sub-check.py" "$o"
+write_call "$ST/main-check.py"
+o="$(helper own-rm "$ST/main-check.py")"
+contains "main agent throwaway script in the session TMPDIR removed" "removed $ST/main-check.py" "$o"
+sub_write "$R/sub200-check.py"
+contains "subagent Write in a temp dir recorded with write evidence" '"evidence": "write"' \
+    "$(grep "\"$R/sub200-check.py\"" "$LEDGER_FILE")"
+o="$(helper own-rm "$R/sub200-check.py")"
+contains "subagent Write-created temp file removed (subagent transcript confirms)" "removed $R/sub200-check.py" "$o"
+o="$(helper own-rm "$R/sub200-check.py")"
+check "second own-rm of the same script is quiet" "" "$(printf '%s' "$o" | grep -v '^gone ')"
 mkdir -p "$TMP/precious"; echo keep > "$TMP/precious/data"
 ln -s "$TMP/precious" "$ST/link1"
 o="$(helper own-rm "$ST/link1/data")"

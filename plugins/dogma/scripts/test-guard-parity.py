@@ -114,6 +114,9 @@ def fill(root):
     (dirs["N"] / "node_modules" / ".bin").mkdir(parents=True)
     for tool in ("tsc", "eslint", "prettier"):
         (dirs["N"] / "node_modules" / ".bin" / tool).write_text("", encoding="utf-8")
+    # a sub-package with its own local tool (npx after cd web)
+    (dirs["N"] / "web" / "node_modules" / ".bin").mkdir(parents=True)
+    (dirs["N"] / "web" / "node_modules" / ".bin" / "vite").write_text("", encoding="utf-8")
     # ordinary folders below the home (copy and move targets of everyday commands)
     for folder in ("git", "Documents", "Downloads"):
         (home / folder).mkdir()

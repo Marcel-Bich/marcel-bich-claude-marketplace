@@ -63,6 +63,8 @@ WORKTREE .credo: in a linked worktree write every .credo/ change (items, require
 
 BACKGROUND SHELLS: forbidden for subagents - do not start a background shell, never set run_in_background; only the main agent may use them, and it keeps track of them.
 
+NO-BLOCK COMMANDS: huge commands are error-prone and often stopped by hooks or review prompts, which stalls an unattended run. No long inline code (python -c, node -e, perl -e, ruby -e, bash -c, powershell -Command, a heredoc or pipe into an interpreter; credo denies more than guards.inline_code_max characters, default 1500). Instead split the work into several smaller commands (allowed), or Write the script (.py/.sh/.ps1) to the session TMPDIR ($TMPDIR, normally /tmp/credo-tmp-<uid>/<session id>/; the scratchpad works too) with the Write tool and run it in a separate call with a literal path (PowerShell from WSL: powershell.exe -File "$(wslpath -w <path>)"). Once a throwaway script is no longer needed, delete it with python3 __CLEANUP__ own-rm <literal path> (no prompt for your own session TMPDIR or scratchpad files, also when a subagent wrote them; a file changed in the last 2 minutes is only reported and the done-gate purge takes it later). Never write and run a file in the same command. No VAR=$(...); $VAR/script calls - use literal paths. For an installed tool prefer ./node_modules/.bin/<tool> over npx. Playwright browser_run_code: put long code in a file and pass the filename parameter.
+
 OUTPUT HYGIENE: no curly quotes; no ellipsis character (use ...); no emojis in code or logs; ASCII identifiers only; double hyphens (--) only where changing to - would break functionality (CLI flags, argument separators), everywhere in prose use -; no AI-filler phrases (Let me..., I'll..., Sure!, Certainly!).
 
 LANGUAGE: follow the project's own language rules if any exist (read them). If none exist, match the language already established in the file you touch (file-local convention wins). If unclear, write everything in English including code comments; use another language only where deliberately required (UI strings, translation files). Exception: credo items themselves are written in the user's configured language if set, otherwise English.__LANG_CLAUSE__
@@ -97,6 +99,15 @@ if [[ "$light_block" -eq 0 ]]; then
         item_clause=" Record and gate work as a credo item; work counts as done only after the mandatory post-completion audit gate, with docs updated in the same change (items and audit skills)."
     fi
     rules="${rules/__ITEM_CLAUSE__/$item_clause}"
+
+    # --- cleanup helper path (literal, so the own-rm command can be copied as is) ---
+    cleanup_path=""
+    if [[ -n "$HOOK_DIR" ]]; then
+        cleanup_path="$(cd "$HOOK_DIR/../scripts" 2>/dev/null && pwd)/credo-cleanup.py" || cleanup_path=""
+        [[ -f "$cleanup_path" ]] || cleanup_path=""
+    fi
+    [[ -n "$cleanup_path" ]] || cleanup_path="<credo>/scripts/credo-cleanup.py"
+    rules="${rules//__CLEANUP__/$cleanup_path}"
 
     # --- project RULES.md first (fail-safe) ---
     # A repo's .credo/RULES.md overrides the credo defaults, so the subagent reads it
