@@ -701,7 +701,8 @@ for d in native store; do
     for c in "grep x f 2>/dev/null" "grep x f >/dev/null 2>&1" "ls &>/dev/null" "ls 1>/dev/stdout 2>/dev/stderr" \
              "ls >&2" "echo x > out.txt" "echo x > /tmp/acme/out.txt" "echo x >> ~/proj/out.txt" \
              "make 2>&1 | tee build.log" "echo x > \"\$OUT\"" "echo x > /c/Users/me/workspace/proj/.bench/x.log" \
-             "echo x > /mnt/c/somewhere/project/out.txt" "echo x > /c/Users/me/AppData/Local/Temp/a/b.txt"; do
+             "echo x > /mnt/c/somewhere/project/out.txt" "echo x > /c/Users/me/AppData/Local/Temp/a/b.txt" \
+             "echo x > /dev/tcp/127.0.0.1/48610" "echo x >> /dev/udp/127.0.0.1/514"; do
         expect_win allow "$d" "$c"
         got="$(run_hook_win "$d" "$FP_HOOK" "$c")"
         if [ "$got" = allow ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL file-protection win/$d: $c"; fi
@@ -709,7 +710,8 @@ for d in native store; do
     for c in "echo hi > /etc/passwd" "echo x >> ~/.bashrc" "echo x > ~" "echo x > \$HOME/.profile" "echo x > ~/notes.txt" \
              "echo x | tee -a ~/.ssh/authorized_keys" "echo x > /c/Windows/System32/drivers/etc/hosts" \
              "echo x > 'C:\\Windows\\win.ini'" "echo x > C:/Users/me/.gitconfig" "echo x > /c/Users/me/AppData/Roaming/a/b.txt" \
-             "echo x > /dev/sda" "echo x > /home/someone/.bashrc" "echo x > /mnt/c/Users/me/NTUSER.DAT" "echo x > /usr/local/bin/x"; do
+             "echo x > /dev/sda" "echo x > /home/someone/.bashrc" "echo x > /mnt/c/Users/me/NTUSER.DAT" "echo x > /usr/local/bin/x" \
+             "echo x > /dev/tcp/../sda" "echo x > /dev/tcp/127.0.0.1/../../sda" "echo x > /dev/tcp/127.0.0.1/80/x" "echo x > /dev/mem"; do
         expect_win deny "$d" "$c" "protected path"
     done
     expect_win deny "$d" "rm -rf /tmp/x"

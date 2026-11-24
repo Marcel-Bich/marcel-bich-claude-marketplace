@@ -705,5 +705,28 @@ CASES = (
     (682, 'BYPASS', 'deny', 'N', 'Bash', 'npx --package=left-pad tsc'),
     (683, 'BYPASS', 'deny', 'N', 'Bash', "npx -c 'tsc'"),
     (684, 'BYPASS', 'deny', 'N', 'Bash', 'npx @acme/tool run'),
+    # bash network pseudo-paths /dev/tcp/<host>/<port> and /dev/udp/<host>/<port> open a socket, no file
+    (685, 'FP', 'allow', 'N', 'Bash', "bash -c 'exec 3<>/dev/tcp/127.0.0.1/48610 && echo ok'"),
+    (686, 'FP', 'allow', 'N', 'Bash', "timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/48610 && echo ok'"),
+    (687, 'FP', 'allow', 'N', 'Bash', 'exec 3<>/dev/tcp/127.0.0.1/48610'),
+    (688, 'FP', 'allow', 'N', 'Bash', 'echo ping > /dev/tcp/127.0.0.1/48610'),
+    (689, 'FP', 'allow', 'N', 'Bash', 'echo ping >> /dev/tcp/localhost/48610'),
+    (690, 'FP', 'allow', 'N', 'Bash', 'echo ping > /dev/udp/127.0.0.1/514'),
+    (691, 'FP', 'allow', 'N', 'Bash', 'cat < /dev/tcp/127.0.0.1/48610'),
+    (692, 'FP', 'allow', 'N', 'Bash', "sh -c 'echo ping >/dev/udp/127.0.0.1/514'"),
+    (693, 'FP', 'allow', 'N', 'Bash', 'exec 3<>/dev/tcp/example.org/http'),
+    (694, 'BYPASS', 'deny', 'N', 'Bash', 'echo x > /dev/sda'),
+    (695, 'BYPASS', 'deny', 'N', 'Bash', 'exec 3<>/dev/sda'),
+    (696, 'BYPASS', 'deny', 'N', 'Bash', "bash -c 'exec 3<>/dev/nvme0n1'"),
+    (697, 'BYPASS', 'deny', 'N', 'Bash', 'echo x > /dev/mem'),
+    (698, 'BYPASS', 'deny', 'N', 'Bash', 'echo x >> /dev/kmem'),
+    (699, 'BYPASS', 'deny', 'N', 'Bash', 'echo x > /dev/tcp/../sda'),
+    (700, 'BYPASS', 'deny', 'N', 'Bash', 'echo x > /dev/tcp/127.0.0.1/../../sda'),
+    (701, 'BYPASS', 'deny', 'N', 'Bash', 'echo x > /dev/tcp'),
+    (702, 'BYPASS', 'deny', 'N', 'Bash', 'echo x > /dev/tcp/127.0.0.1/80/x'),
+    # a redirect word right before the closing quote of sh -c '...' ends at that quote
+    (703, 'FP', 'allow', 'N', 'Bash', "sh -c 'echo ping >/tmp/ping.log'"),
+    (704, 'FP', 'allow', 'N', 'Bash', "bash -c 'echo ok >'\"/tmp/a b.log\""),
+    (705, 'BYPASS', 'deny', 'X', 'Bash', "sh -c 'echo x >/tmp/x' && rm -rf '{H}'"),
 )
 # fmt: on
