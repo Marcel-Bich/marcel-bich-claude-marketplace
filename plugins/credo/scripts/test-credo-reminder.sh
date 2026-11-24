@@ -31,6 +31,9 @@
 #     placeholder forms are accepted as they are; a dialog after the burst -> no Enter; a
 #     field that holds text -> skipped at once and left as it is; a failed send -> nothing
 #     typed
+#   - confirmed submit (item 204): an Enter that is swallowed is re-sent; a burst that is never
+#     submitted is removed again (WARNING logged); transcript rows with dialog words above the
+#     input box never withhold Enter; burst_state classifies fake captures
 #   - turns trigger: after the mode's turns since the last reminder, once idle; the
 #     reminder itself is no user turn
 #   - minutes trigger (shortened to 1.2 s): every interval, counted from the last reminder
@@ -183,6 +186,75 @@ assert w.type_chunks("") == [] and w.type_chunks("short") == ["short"]
 PYEOF
 ok "pieces join back to the text, at most TYPE_CHUNK_CHARS each" "$?"
 
+# burst_state (item 204): the field around a reminder burst, from fake captures. Transcript
+# rows above the input box (an earlier numbered message drawn with the prompt marker, a quoted
+# "Do you want to" line) are never a dialog; a menu below the box or no box at all is.
+SCRIPT_DIR="$SCRIPT_DIR" "$PY" - <<'PYEOF'
+import os, sys
+sys.path.insert(0, os.environ["SCRIPT_DIR"])
+import credo_pane_wake as w
+R = "─" * 60
+T = "[credo-reminder] Check yourself against what we agreed: re-read the rules " * 20
+def cap(field, above=("● Done.", ""), below=("  ? for shortcuts",)):
+    return "\n".join(list(above) + [R, "❯ " + field, R] + list(below)) + "\n"
+st = lambda c: w.burst_state(c, T)[0]
+assert st(cap("[Pasted text #1]")) == "own"
+assert st(cap("[Pasted text #1 +11 lines]")) == "own"
+assert st(cap("[Pasted text #1 +11 lines] ")) == "own"
+assert st(cap(T[-90:])) == "own", "the scrolled tail of the own text"
+assert st(cap("")) == "empty"
+assert st(cap("please check the handoff")) == "foreign"
+assert st(cap("[Pasted text #1 +11 lines] and more")) == "foreign"
+# audit M1: short fragments of the text, a second placeholder are not the own burst
+assert st(cap("the")) == "foreign" and st(cap("re")) == "foreign"
+assert st(cap("[Pasted text #1] [Pasted text #2]")) == "foreign"
+assert w.burst_state(cap("x"), "x")[0] == "own", "a text shorter than OWN_MIN_CHARS, whole"
+# after Enter only the snapshot taken right before it counts as own (capture vs capture)
+snap = w.norm("[Pasted text #1 +11 lines]")
+sst = lambda c: w.burst_state(c, T, snap)[0]
+assert sst(cap("[Pasted text #1 +11 lines]")) == "own"
+assert sst(cap("[Pasted text #2]")) == "foreign", "an owner paste after the submit"
+assert sst(cap("[Pasted text #1 +11 lines] [Pasted text #2]")) == "foreign"
+assert sst(cap(T[-90:])) == "foreign", "text that is not the snapshot"
+assert sst(cap("")) == "empty"
+assert sst("") == "dialog"
+# audit m1: a stale or quoted dialog footer above the box makes the pane unknown -> no burst
+foot = ["Enter to select · ↑/↓ to navigate · Esc to cancel"] + [""] * 8 + ["● Done."]
+assert st(cap("", above=foot)) == "dialog"
+quoted = ["❯ 2. Lock hook hooks/example-guard.py", "  3. something else",
+          "Do you want to continue? [Y/n] Abort.", "", "● Working on it.", "", "● Done.",
+          "", "", ""]
+assert st(cap("[Pasted text #1 +11 lines]", above=quoted)) == "own", "transcript is no dialog"
+assert st(cap("", above=quoted)) == "empty"
+assert st(cap("[Pasted text #1]", below=("  /compact   Clear history",))) == "dialog"
+assert st("● Done.\n\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n") == "dialog"
+assert st("") == "dialog"
+# audit NIT: a stop during the removal never submits a half removed reminder; a stop before
+# any removal still sends one Enter while the field shows the own burst
+class P(object):
+    plan = {"pane": "%1"}
+    tim = {"key_pause": 0, "confirm_wait": 0.5}
+    cancelled = staticmethod(lambda: False)
+    log = staticmethod(lambda m: None)
+for removing, want in ((True, []), (False, ["Enter"])):
+    sent, caps = [], [cap(""), cap("[Pasted text #1 +11 lines]")]
+    w.clear_leftover = lambda pane: True
+    w.guard.capture = lambda pane, sock=None: caps.pop(0) if len(caps) > 1 else caps[0]
+    w._pane_unfit = lambda pane: None
+    w.send_keys = lambda plan, keys, literal=False: sent.append(keys) or True
+    def stop(pane, text, ctx, r=removing):
+        ctx["removing"] = r
+        raise w.Cancelled()
+    w._submit_burst = stop
+    try:
+        w.send_whole(P(), T)
+        raise AssertionError("no Cancelled")
+    except w.Cancelled:
+        pass
+    assert sent[1:] == want, (removing, sent[1:])
+PYEOF
+ok "burst_state: own burst, empty, foreign text, dialog; transcript rows are no dialog; stop during removal" "$?"
+
 # --- hook wiring ---------------------------------------------------------------------
 [ -x "$HOOK_SH" ]; ok "hook wrapper is executable" "$?"
 jq -e '[.hooks.UserPromptSubmit[].hooks[].command] | any(. == "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-reminder.sh\" turn")' "$HOOKS_JSON" >/dev/null
@@ -213,7 +285,12 @@ printf '%s\n' "$*" >> "$FAKE_TMUX_LOG"
 R="────────────────────────────────────────────────────────────"
 PASTE_LIMIT=800
 show() { # the input box as Claude Code shows it
-    local buf n ph="[Pasted text #1]"
+    local buf n ph="[Pasted text #1]" t
+    # FAKE_RENDER_DELAY_MS: a burst shows in the field only this long after it was sent
+    if [ -n "${FAKE_RENDER_DELAY_MS:-}" ] && [ -f "$FAKE_RENDER_TS" ]; then
+        t="$(cat "$FAKE_RENDER_TS")"
+        [ $(( ($(date +%s%N) - t) / 1000000 )) -lt "$FAKE_RENDER_DELAY_MS" ] && return 0
+    fi
     buf="$(cat "$FAKE_BUF" 2>/dev/null)"
     n="$(cat "$FAKE_PASTE" 2>/dev/null)"
     # the second placeholder form (a burst with newlines), as measured on the real pane
@@ -234,6 +311,7 @@ literal_send() { # send-keys -t <pane> -l [--] <text>
     n="$(grep -c '' "$FAKE_TYPE_LOG" 2>/dev/null)"
     if [ -n "$FAKE_FAIL_AT" ] && [ "$n" = "$FAKE_FAIL_AT" ]; then return 1; fi
     printf '%s %s\n' "$(date +%s%N)" "${#txt}" >> "$FAKE_TYPE_LOG"
+    [ -n "${FAKE_RENDER_DELAY_MS:-}" ] && date +%s%N > "$FAKE_RENDER_TS"
     if [ -n "$(cat "$FAKE_PASTE" 2>/dev/null)" ] && [ -s "$FAKE_BUF" ]; then
         printf '%s' "$txt" >> "$FAKE_BUF"
     elif [ "${#txt}" -gt "$PASTE_LIMIT" ] && [ ! -s "$FAKE_BUF" ]; then
@@ -244,21 +322,10 @@ literal_send() { # send-keys -t <pane> -l [--] <text>
     # FAKE_NOBOX_ON_TYPE: a dialog covers the input box right after this send (the box is gone)
     if [ -n "$FAKE_NOBOX_ON_TYPE" ]; then : > "$FAKE_NOBOX_FLAG"; fi
 }
-bspace_one() { # a placeholder goes as a whole, else one character
-    local buf n
-    buf="$(cat "$FAKE_BUF" 2>/dev/null)"
-    n="$(cat "$FAKE_PASTE" 2>/dev/null)"
-    if [ -n "$n" ] && [ -n "$buf" ]; then
-        if [ "${#buf}" -le "$n" ]; then
-            : > "$FAKE_BUF"; rm -f "$FAKE_PASTE"; return 0
-        fi
-    fi
-    printf '%s' "${buf%?}" > "$FAKE_BUF"
-}
 case "$1" in
     display-message)
         [ "$4" = "$FAKE_PANE_ID" ] || exit 1
-        printf '%s\t%s\t0\t0\n' "$4" "$(cat "$FAKE_PANE_PIDFILE")" ;;
+        printf '%s\t%s\t%s\t0\n' "$4" "$(cat "$FAKE_PANE_PIDFILE")" "$(cat "$FAKE_IN_MODE" 2>/dev/null || echo 0)" ;;
     capture-pane)
         if [ -n "$FAKE_NOBOX_FLAG" ] && [ -f "$FAKE_NOBOX_FLAG" ]; then
             cat "$FAKE_NOBOX_VIEW"; exit 0
@@ -271,11 +338,35 @@ case "$1" in
             End) ;;
             Enter)
                 printf '%s\n' "$(date +%s%N)" >> "$FAKE_ENTER_LOG"
+                # $FAKE_ENTER_IGNORE holds a count: that many Enter presses are swallowed
+                # (Claude Code still busy with the paste), the field keeps the burst
+                ign="$(cat "$FAKE_ENTER_IGNORE" 2>/dev/null)"
+                if [ -n "$ign" ] && [ "$ign" -gt 0 ]; then
+                    printf '%s' "$((ign - 1))" > "$FAKE_ENTER_IGNORE"
+                    # FAKE_ENTER_REPLACE: meanwhile the owner typed or pasted this into the field
+                    if [ -n "${FAKE_ENTER_REPLACE:-}" ]; then
+                        printf '%s' "$FAKE_ENTER_REPLACE" > "$FAKE_BUF"; rm -f "$FAKE_PASTE"
+                    fi
+                    # FAKE_COPY_MODE_ON_SWALLOW: the pane enters tmux copy mode meanwhile
+                    [ -n "${FAKE_COPY_MODE_ON_SWALLOW:-}" ] && printf '1' > "$FAKE_IN_MODE"
+                    printf '%s\n' "$(show)" >> "$FAKE_BUFLOG"; exit 0
+                fi
                 buf="$(cat "$FAKE_BUF" 2>/dev/null)"
                 [ -n "$buf" ] && printf '%s\n' "$buf" >> "$FAKE_SUBMITS"
                 : > "$FAKE_BUF"; rm -f "$FAKE_PASTE" ;;
             *)
-                for _ in "${@:4}"; do bspace_one; done ;;
+                # BSpace keys: a placeholder goes as a whole, else one character each; on an
+                # empty field they do nothing. Every call is logged to $FAKE_BSPACE_LOG.
+                nk=$(( $# - 3 ))
+                printf '%s\n' "$nk" >> "$FAKE_BSPACE_LOG"
+                buf="$(cat "$FAKE_BUF" 2>/dev/null)"; n="$(cat "$FAKE_PASTE" 2>/dev/null)"
+                if [ -n "$n" ] && [ -n "$buf" ] && [ "${#buf}" -le "$n" ]; then
+                    : > "$FAKE_BUF"; rm -f "$FAKE_PASTE"
+                elif [ "$nk" -ge "${#buf}" ]; then
+                    : > "$FAKE_BUF"
+                else
+                    printf '%s' "${buf:0:$(( ${#buf} - nk ))}" > "$FAKE_BUF"
+                fi ;;
         esac
         printf '%s\n' "$(show)" >> "$FAKE_BUFLOG" ;;
 esac
@@ -305,7 +396,9 @@ printf '%s\n' "● Done." "" "Do you want to proceed?" "❯ 1. Yes" "  2. No" ""
 export FAKE_TMUX_LOG="$TMP/tmux.log" FAKE_ABOVE="$TMP/above.txt" FAKE_BUF="$TMP/buf.txt" \
     FAKE_SUBMITS="$TMP/submits.txt" FAKE_BUFLOG="$TMP/buflog.txt" FAKE_PANE_ID=%5 \
     FAKE_TYPE_LOG="$TMP/type.log" FAKE_PASTE="$TMP/paste.txt" FAKE_ENTER_LOG="$TMP/enter.log" \
-    FAKE_NOBOX_FLAG="$TMP/nobox.flag" FAKE_NOBOX_VIEW="$TMP/nobox_view.txt"
+    FAKE_NOBOX_FLAG="$TMP/nobox.flag" FAKE_NOBOX_VIEW="$TMP/nobox_view.txt" \
+    FAKE_ENTER_IGNORE="$TMP/enter_ignore.txt" FAKE_IN_MODE="$TMP/in_mode.txt" \
+    FAKE_BSPACE_LOG="$TMP/bspace.log" FAKE_RENDER_TS="$TMP/render_ts.txt"
 printf '%s\n' "● Done." "" "Do you want to proceed?" "❯ 1. Yes" "  2. No" "" > "$FAKE_NOBOX_VIEW"
 cp "$TMP/above_idle.txt" "$FAKE_ABOVE"
 : > "$FAKE_SUBMITS"; : > "$FAKE_BUF"; : > "$FAKE_TMUX_LOG"; : > "$FAKE_BUFLOG"; : > "$FAKE_TYPE_LOG"
@@ -658,6 +751,128 @@ unset FAKE_NOBOX_ON_TYPE; rm -f "$FAKE_NOBOX_FLAG"
 check "dialog after the burst: no Enter sent" "$EN0" "$(grep -c '' "$FAKE_ENTER_LOG")"
 check "dialog after the burst: nothing submitted" "$S0" "$(n_submits)"
 ok "dialog after the burst: the burst is left in the field" "$([ -s "$FAKE_BUF" ] && echo 0 || echo 1)"
+: > "$FAKE_BUF"; rm -f "$FAKE_PASTE"
+
+# item 204: Enter swallowed once (Claude Code still busy with the paste): the placeholder is
+# still in the field, Enter is re-sent and the reminder is submitted
+SID_R1="aaaaaaaa-1111-2222-3333-rrrrrrrrrrr1"
+cfg "reminder:\n  autonomous: {minutes: 0.02}\n"
+set_state "$SID_R1"; mode_of "$SID_R1" autonomous
+S0="$(n_submits)"; EN0="$(grep -c '' "$FAKE_ENTER_LOG")"
+printf '1' > "$FAKE_ENTER_IGNORE"
+hook start "$SID_R1" startup
+wait_for 60 subs_gt "$S0"; ok "Enter swallowed once: the reminder is submitted after a re-send" "$?"
+stop_worker "$SID_R1"
+check "Enter swallowed once: two Enter presses" "2" "$(( $(grep -c '' "$FAKE_ENTER_LOG") - EN0 ))"
+ok "Enter swallowed once: the re-send is logged" "$(grep -q 'Enter re-sent (1 of 3)' "$CFG/credo/reminder-$SID_R1.log" && echo 0 || echo 1)"
+ok "Enter swallowed once: the field is empty" "$([ ! -s "$FAKE_BUF" ] && echo 0 || echo 1)"
+rm -f "$FAKE_ENTER_IGNORE"
+
+# item 204: Enter never takes effect: 1 + 3 Enter presses, then the own burst is removed from
+# the field (it would block self-compact, self-reload and self-restart), logged loudly
+SID_R2="aaaaaaaa-1111-2222-3333-rrrrrrrrrrr2"
+set_state "$SID_R2"; mode_of "$SID_R2" autonomous
+S0="$(n_submits)"; EN0="$(grep -c '' "$FAKE_ENTER_LOG")"
+printf '99' > "$FAKE_ENTER_IGNORE"; : > "$FAKE_BSPACE_LOG"
+hook start "$SID_R2" startup
+wait_for 80 grep -q "the own text was removed" "$CFG/credo/reminder-$SID_R2.log"; ok "Enter never works: the own burst is removed, logged" "$?"
+stop_worker "$SID_R2"
+rm -f "$FAKE_ENTER_IGNORE"
+check "Enter never works: four Enter presses" "4" "$(( $(grep -c '' "$FAKE_ENTER_LOG") - EN0 ))"
+check "Enter never works: nothing submitted" "$S0" "$(n_submits)"
+ok "Enter never works: the field is empty again" "$([ ! -s "$FAKE_BUF" ] && echo 0 || echo 1)"
+ok "Enter never works: the log says WARNING" "$(grep -q 'WARNING: the reminder stayed' "$CFG/credo/reminder-$SID_R2.log" && echo 0 || echo 1)"
+check "Enter never works: the placeholder goes with one single BSpace" "1" "$(cat "$FAKE_BSPACE_LOG")"
+: > "$FAKE_BUF"; rm -f "$FAKE_PASTE"
+
+# item 204 root cause: an earlier numbered owner message (drawn with the prompt marker) and a
+# quoted "Do you want to" line in the transcript above the box are no dialog: Enter is sent
+SID_R3="aaaaaaaa-1111-2222-3333-rrrrrrrrrrr3"
+printf '%s\n' "❯ 2. Lock hook hooks/example-guard.py" "  3. something else" \
+    "Do you want to continue? [Y/n] Abort." "" "● Working on it." "" "● Still working." "" \
+    "● Done, fixture finished." "" > "$FAKE_ABOVE"
+set_state "$SID_R3"; mode_of "$SID_R3" autonomous
+S0="$(n_submits)"
+hook start "$SID_R3" startup
+wait_for 60 subs_gt "$S0"; ok "transcript rows with dialog words above the box: the reminder is submitted" "$?"
+stop_worker "$SID_R3"
+ok "transcript rows above the box: no Enter withheld" "$(grep -q 'Enter withheld' "$CFG/credo/reminder-$SID_R3.log" && echo 1 || echo 0)"
+cp "$TMP/above_idle.txt" "$FAKE_ABOVE"
+
+# audit M1: after a swallowed Enter the owner types (or pastes) into the field: that is not the
+# reminder any more - no further Enter, nothing removed, nothing submitted
+n=4
+for repl in "please check the handoff" "[Pasted text #2]"; do
+    n=$((n + 1))
+    SID_RX="aaaaaaaa-1111-2222-3333-rrrrrrrrrrr$n"
+    set_state "$SID_RX"; mode_of "$SID_RX" autonomous
+    S0="$(n_submits)"; EN0="$(grep -c '' "$FAKE_ENTER_LOG")"; BS0="$(grep -c '' "$FAKE_BSPACE_LOG" 2>/dev/null || echo 0)"
+    printf '1' > "$FAKE_ENTER_IGNORE"; export FAKE_ENTER_REPLACE="$repl"
+    hook start "$SID_RX" startup
+    wait_for 60 grep -q "nothing removed" "$CFG/credo/reminder-$SID_RX.log"; ok "owner input after Enter ($repl): left alone, logged" "$?"
+    stop_worker "$SID_RX"
+    unset FAKE_ENTER_REPLACE; rm -f "$FAKE_ENTER_IGNORE"
+    check "owner input after Enter ($repl): one Enter only" "1" "$(( $(grep -c '' "$FAKE_ENTER_LOG") - EN0 ))"
+    check "owner input after Enter ($repl): no BSpace" "$BS0" "$(grep -c '' "$FAKE_BSPACE_LOG" 2>/dev/null || echo 0)"
+    check "owner input after Enter ($repl): nothing submitted" "$S0" "$(n_submits)"
+    check "owner input after Enter ($repl): the field keeps it" "$repl" "$(cat "$FAKE_BUF")"
+    : > "$FAKE_BUF"; rm -f "$FAKE_PASTE"
+done
+
+# audit M2: the burst shows in the field only 1.5 s after it was sent (longer than the first
+# wait): the worker keeps waiting up to the confirm wait and then submits as normal
+SID_R7="aaaaaaaa-1111-2222-3333-rrrrrrrrrrr7"
+set_state "$SID_R7"; mode_of "$SID_R7" autonomous
+S0="$(n_submits)"
+export FAKE_RENDER_DELAY_MS=1500 CREDO_REMINDER_CONFIRM_WAIT=3
+hook start "$SID_R7" startup
+wait_for 80 subs_gt "$S0"; ok "slow rendering: the reminder is submitted" "$?"
+stop_worker "$SID_R7"
+unset FAKE_RENDER_DELAY_MS; export CREDO_REMINDER_CONFIRM_WAIT=0.5; rm -f "$FAKE_RENDER_TS"
+ok "slow rendering: no give-up logged" "$(grep -q 'did not show' "$CFG/credo/reminder-$SID_R7.log" && echo 1 || echo 0)"
+
+# audit m3: plain text (short custom text, no placeholder) that is never submitted is removed in
+# chunks with a capture between them
+SID_R8="aaaaaaaa-1111-2222-3333-rrrrrrrrrrr8"
+cfg "reminder:\n  autonomous: {minutes: 0.02}\n  text: \"Check the rules now\"\n"
+set_state "$SID_R8"; mode_of "$SID_R8" autonomous
+S0="$(n_submits)"; : > "$FAKE_BSPACE_LOG"
+printf '99' > "$FAKE_ENTER_IGNORE"
+hook start "$SID_R8" startup
+wait_for 80 grep -q "the own text was removed" "$CFG/credo/reminder-$SID_R8.log"; ok "plain text never submitted: removed, logged" "$?"
+stop_worker "$SID_R8"
+rm -f "$FAKE_ENTER_IGNORE"
+ok "plain text: removed in chunks of at most 200" "$([ "$(grep -c '' "$FAKE_BSPACE_LOG")" -ge 2 ] && [ "$(sort -n "$FAKE_BSPACE_LOG" | tail -1)" -le 200 ] && echo 0 || echo 1)"
+ok "plain text: the field is empty again" "$([ ! -s "$FAKE_BUF" ] && echo 0 || echo 1)"
+check "plain text: nothing submitted" "$S0" "$(n_submits)"
+: > "$FAKE_BUF"; rm -f "$FAKE_PASTE"
+cfg "reminder:\n  autonomous: {minutes: 0.02}\n"
+
+# audit m1: a stale dialog footer far above the input box (the idle check only looks 6 rows up):
+# the same classification as after the burst calls the pane unknown, so nothing is typed
+SID_RF="aaaaaaaa-1111-2222-3333-rrrrrrrrrrrf"
+printf '%s\n' "Enter to select · ↑/↓ to navigate · Esc to cancel" "" "" "" "" "" "" "" "" \
+    "● Done, fixture finished." "" > "$FAKE_ABOVE"
+set_state "$SID_RF"; mode_of "$SID_RF" autonomous
+T0="$(n_typed)"
+hook start "$SID_RF" startup
+wait_for 60 grep -q "nothing typed" "$CFG/credo/reminder-$SID_RF.log"; ok "stale footer above the box: skipped before the burst" "$?"
+stop_worker "$SID_RF"
+check "stale footer above the box: nothing typed" "$T0" "$(n_typed)"
+cp "$TMP/above_idle.txt" "$FAKE_ABOVE"
+
+# audit m2: the pane enters tmux copy mode after a swallowed Enter: no further key at all, the
+# reminder is reported as possibly left in the field
+SID_R9="aaaaaaaa-1111-2222-3333-rrrrrrrrrrr9"
+set_state "$SID_R9"; mode_of "$SID_R9" autonomous
+EN0="$(grep -c '' "$FAKE_ENTER_LOG")"; : > "$FAKE_BSPACE_LOG"
+printf '1' > "$FAKE_ENTER_IGNORE"; export FAKE_COPY_MODE_ON_SWALLOW=1
+hook start "$SID_R9" startup
+wait_for 60 grep -q "copy/view mode); the reminder may still be" "$CFG/credo/reminder-$SID_R9.log"; ok "copy mode after Enter: no further key, reported" "$?"
+stop_worker "$SID_R9"
+unset FAKE_COPY_MODE_ON_SWALLOW; rm -f "$FAKE_ENTER_IGNORE" "$FAKE_IN_MODE"
+check "copy mode after Enter: one Enter only" "1" "$(( $(grep -c '' "$FAKE_ENTER_LOG") - EN0 ))"
+check "copy mode after Enter: no BSpace" "0" "$(grep -c '' "$FAKE_BSPACE_LOG")"
 : > "$FAKE_BUF"; rm -f "$FAKE_PASTE"
 
 # a field that holds text when the reminder is due: skipped at once (logged), the text is left
