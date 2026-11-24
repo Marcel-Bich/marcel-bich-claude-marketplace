@@ -87,6 +87,10 @@ has "NO-BLOCK: own-rm with the literal helper path" "delete it with python3 $(cd
 has "NO-BLOCK: own-rm also for subagent files" "also when a subagent wrote them" "$gp_ctx"
 has "NO-BLOCK: never write and run in one command" "Never write and run a file in the same command" "$gp_ctx"
 has "NO-BLOCK: no variable script paths" 'No VAR=$(...); $VAR/script calls - use literal paths' "$gp_ctx"
+has "NO-BLOCK: Edit per file, no sed -i loop on \$var" 'Multi-file edits: the Edit tool per file with a literal path (or one literal sed per file), never for f in ...; do sed -i ... $f or any $var as a target path' "$gp_ctx"
+has "NO-BLOCK: why (readable, passes dogma)" "more readable, reviewable, and it passes dogma without a prompt" "$gp_ctx"
+has "NO-BLOCK: Read tool, no cat loops" "Read files with the Read tool (no cat loops to dump sources), no for-loops over files" "$gp_ctx"
+has "NO-BLOCK: redirects only into TMPDIR or scratchpad" "redirect (> or >>) only into the session TMPDIR or scratchpad" "$gp_ctx"
 has "NO-BLOCK: local bin over npx" "prefer ./node_modules/.bin/<tool> over npx" "$gp_ctx"
 has "NO-BLOCK: Playwright filename parameter" "browser_run_code: put long code in a file and pass the filename parameter" "$gp_ctx"
 case "$(ctx_of Explore)" in

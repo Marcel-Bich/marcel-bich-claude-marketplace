@@ -13,6 +13,8 @@
 #
 # ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch for all hooks
 # ENV: CLAUDE_MB_DOGMA_GIT_PERMISSIONS=true (default) | false
+# ENV: CLAUDE_MB_DOGMA_UNATTENDED_DENY=true (default) | false - in a credo autonomous run an
+#      ask becomes a deny with the same reason (lib-decision.sh)
 # ENV: CLAUDE_MB_DOGMA_DEBUG=true | false (default) - debug logging to /tmp/dogma-debug.log
 
 # NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
@@ -22,6 +24,8 @@ trap 'exit 0' ERR
 # Load shared permissions library
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib-permissions.sh"
+# shellcheck source=lib-decision.sh
+. "$SCRIPT_DIR/lib-decision.sh"
 
 # === JSON OUTPUT FOR BLOCKING ===
 # Claude Code expects JSON with permissionDecision
@@ -33,11 +37,9 @@ EOF
     exit 0
 }
 
+# An ask, or a deny with the same reason when no human can answer (lib-decision.sh)
 output_ask() {
-    local reason="$1"
-    cat <<EOF
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"$reason"}}
-EOF
+    dogma_emit_ask "$INPUT" "$1"
     exit 0
 }
 

@@ -167,6 +167,11 @@ the security block):
   prompt for the session's own TMPDIR and scratchpad files, for the main agent and its
   subagents alike; a file changed in the last 2 minutes is only reported, the done-gate
   purge takes it later); never write and run a file in the same command; no `VAR=$(...); $VAR/script` calls, literal paths only;
+  multi-file edits with the Edit tool per file and a literal path (or one literal `sed` per
+  file), never `for f in ...; do sed -i ... $f` or any `$var` as a target path (more readable,
+  reviewable, and it passes dogma without a prompt); read files with the Read tool (no `cat`
+  loops to dump sources), no for-loops over files, redirects (`>`, `>>`) only into the session
+  TMPDIR or scratchpad;
   `./node_modules/.bin/<tool>` instead of `npx` for an installed tool; Playwright
   `browser_run_code` with the `filename` parameter for long code. The SubagentStart inject
   carries the same block and the PreToolUse inline guard denies inline code over

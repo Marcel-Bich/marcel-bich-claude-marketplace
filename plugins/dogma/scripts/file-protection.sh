@@ -18,6 +18,8 @@
 #
 # ENV: CLAUDE_MB_DOGMA_ENABLED=true (default) | false - master switch for all hooks
 # ENV: CLAUDE_MB_DOGMA_FILE_PROTECTION=true (default) | false
+# ENV: CLAUDE_MB_DOGMA_UNATTENDED_DENY=true (default) | false - in a credo autonomous run an
+#      ask becomes a deny with the same reason (lib-decision.sh)
 # ENV: CLAUDE_MB_DOGMA_DEBUG=true | false (default) - debug logging to /tmp/dogma-debug.log
 
 # NOTE: Do NOT use set -e, it causes issues in Claude Code hooks
@@ -29,6 +31,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib-permissions.sh"
 # shellcheck source=lib-python.sh
 . "$SCRIPT_DIR/lib-python.sh"
+# shellcheck source=lib-decision.sh
+. "$SCRIPT_DIR/lib-decision.sh"
 
 # === JSON OUTPUT FOR BLOCKING ===
 # Claude Code expects JSON with permissionDecision
@@ -42,11 +46,9 @@ json_text() {
     printf '%s' "$text"
 }
 
+# An ask, or a deny with the same reason when no human can answer (lib-decision.sh)
 output_ask() {
-    local reason="$1"
-    cat <<EOF
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"$(json_text "$reason")"}}
-EOF
+    dogma_emit_ask "$INPUT" "$1"
     exit 0
 }
 
@@ -222,8 +224,11 @@ if [ "$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)" = "Bash" ] && 
     # allowed, whatever the delete setting; anything unsure keeps the setting below (delete-guard.py).
     # Discards get no temp-root exemption: they always follow their own setting.
     EVENT_CWD="$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)"
+    # A redirect truncation (`for ...; done > file`) is exempt only inside this session's own TMPDIR or
+    # scratchpad, named by the session id of the hook input (delete-guard.py session_truncate).
+    EVENT_SESSION="$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)"
     # (the same POSIX Python 3 that produced the findings, see dogma_bash_findings)
-    if [ "$DELETE_ENTRIES" != "[]" ] && dogma_find_python && [ "$(printf '{"deletes": %s}' "$DELETE_ENTRIES" | dogma_python -I "$SCRIPT_DIR/delete-guard.py" --temp-only "$EVENT_CWD" 2>/dev/null)" = "temp" ]; then
+    if [ "$DELETE_ENTRIES" != "[]" ] && dogma_find_python && [ "$(printf '{"deletes": %s}' "$DELETE_ENTRIES" | dogma_python -I "$SCRIPT_DIR/delete-guard.py" --temp-only "$EVENT_CWD" "$EVENT_SESSION" 2>/dev/null)" = "temp" ]; then
         DELETE_ENTRIES="[]"
     fi
     decide_group "$DELETE_ENTRIES" "§0lgy|delete files" deny

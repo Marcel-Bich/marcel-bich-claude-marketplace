@@ -118,3 +118,22 @@ dogma_credo_active() {
     [ "$dir_decision" = "accepted" ] || return 1
     dogma_credo_plugin_enabled "$top"
 }
+
+# Can no human answer a confirmation prompt in this session? 0 = yes (credo's autonomy
+# keep-alive is running for the session: credo/autonomy/<session_id>/active exists and
+# credo/autonomy/<session_id>/paused does not), 1 = no or unsure. Subagents share the
+# session_id of their parent, so a subagent of an autonomous run counts as well.
+# The state paths mirror credo-autonomy-lib.sh (CREDO_AUTONOMY_DIR overrides the base).
+# Fail safe for the caller: anything unclear (no or invalid session id, missing state)
+# returns 1, so the caller keeps its "ask".
+dogma_credo_unattended() {
+    local input="${1:-}" sid dir
+    sid="$(printf '%s' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9._-]*\)".*/\1/p' | head -n1)"
+    case "$sid" in
+        ""|.|*..*) return 1 ;;
+    esac
+    dir="${CREDO_AUTONOMY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/autonomy}/$sid"
+    [ -f "$dir/active" ] || return 1
+    [ -e "$dir/paused" ] && return 1
+    return 0
+}
