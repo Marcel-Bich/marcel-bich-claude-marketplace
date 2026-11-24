@@ -196,7 +196,7 @@ Auto-discovered under `skills/`. Each auto-triggers when it applies, including i
 
 ## Subagent self-sufficiency
 
-credo primes every subagent at start. The `SubagentStart` hook (`credo-subagent-inject.sh`) injects the load-bearing rules (security, quality gates, honesty, delegation, the claim rule, the git rule for own worktrees, output hygiene) into each subagent before its first prompt, for all subagent types. In a repo with `.credo/RULES.md` it also tells the subagent to read that file first, because the repo's rules override the credo defaults. A `PreToolUse` check on Agent calls (`credo-agent-spawn-check.sh`) warns when a spawn has no model or effort, or a pair outside the active preset ladder. It also injects a fresh, authoritative time (and best-effort live budget from the statusline cache) so a subagent works from the real clock instead of the possibly frozen time/limit values inherited from the main agent's context. This complements the skill descriptions, which are written to auto-trigger inside subagents as well. So even a main agent that only delegates gets correct results, independently of its own context state.
+credo primes every subagent at start. The `SubagentStart` hook (`credo-subagent-inject.sh`) injects the load-bearing rules (security, quality gates, honesty, delegation, the claim rule, the git rule for own worktrees, no-block commands, output hygiene) into each subagent before its first prompt, for all subagent types. In a repo with `.credo/RULES.md` it also tells the subagent to read that file first, because the repo's rules override the credo defaults. A `PreToolUse` check on Agent calls (`credo-agent-spawn-check.sh`) warns when a spawn has no model or effort, or a pair outside the active preset ladder. It also injects a fresh, authoritative time (and best-effort live budget from the statusline cache) so a subagent works from the real clock instead of the possibly frozen time/limit values inherited from the main agent's context. This complements the skill descriptions, which are written to auto-trigger inside subagents as well. So even a main agent that only delegates gets correct results, independently of its own context state.
 
 ## Cross-profile peer bridge
 
@@ -483,6 +483,16 @@ Tests: `scripts/test-optimize-state.sh`, `scripts/test-optimize-idle.sh`, `scrip
 ## Wait-loop hint
 
 `credo-wait-hint.sh` (PreToolUse Bash) adds a hint when a command loops on `pgrep -f` (`until ! pgrep -f "X"` matches the waiting shell's own command line and never ends): wait on a result file or one specific PID with a time limit, or rely on the harness completion notification. It never blocks; the rule itself is in the orchestration skill. Disable with `CREDO_WAIT_HINT=0`.
+
+## Inline code guard
+
+Long inline interpreter code cannot be reviewed by the permission layer and stalls unattended runs on a prompt. `credo-inline-guard.sh` (PreToolUse on `Bash` and every `*browser_run_code*` tool; it fires for subagent tool calls too) denies a call when the inline code of one interpreter invocation is longer than `guards.inline_code_max` characters (default 1500):
+
+- `python3 -c`, `node -e/-p/--eval`, `bun -e`, `deno eval`, `perl -e`, `ruby -e` (also clusters like `-lne`), `php -r`, behind env assignments and wrappers (`sudo`, `env`, `nice`, `timeout`, `taskset`, ...), also inside `$(...)` and subshells
+- a heredoc or here-string fed to an interpreter that reads its program from stdin (`python3 - <<EOF`, `node <<EOF`, `cat <<EOF | python3`, `echo ... | python3`)
+- Playwright `browser_run_code` / `browser_run_code_unsafe` with a long `code` value
+
+The reason names the alternative: Write the script to the session TMPDIR or scratchpad and run it in a separate call with a literal path (`browser_run_code`: the `filename` parameter). Only the size counts, short multi-line code passes. Not affected: commands without interpreter code (`git commit -m` with a long message, long pipes), heredocs into files or non-interpreters (`cat > f <<EOF`), heredocs that are data for a script (`python3 tool.py <<EOF`). `0` switches the guard off; `CREDO_INLINE_CODE_MAX` overrides the config value. It fails open on every error (unparsable command, no Python 3, unreadable limit). The same rules travel in the subagent inject (NO-BLOCK COMMANDS) and in the orchestration brief checklist. Tests: `scripts/test-credo-inline-guard.sh`.
 
 ## Claude Code band (optional)
 

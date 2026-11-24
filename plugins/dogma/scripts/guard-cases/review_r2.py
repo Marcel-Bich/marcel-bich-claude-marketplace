@@ -691,5 +691,19 @@ CASES = (
     (669, 'BYPASS', 'deny', 'X', 'Bash', 'start-stop-daemon -S -x /bin/rm -- -rf home'),  # starts in /
     (670, 'BYPASS', 'deny', 'X', 'Bash', 'chroot /srv/jail rm -rf home'),
     (671, 'BYPASS', 'deny', 'X', 'Bash', 'nsenter -t 1 -m rm -rf /x'),
+    # npx of a tool installed in node_modules/.bin downloads nothing (vite only in {N}/web)
+    (672, 'FP', 'allow', 'N', 'Bash', 'cd web && npx vite build'),
+    (673, 'FP', 'allow', 'N', 'Bash', 'cd web && npx tsc --noEmit'),  # found in the parent project
+    (674, 'FP', 'allow', 'N', 'Bash', 'npx --no-install tsc --noEmit'),
+    (675, 'FP', 'allow', 'N', 'Bash', 'npx -- tsc --noEmit'),
+    (676, 'BYPASS', 'deny', 'N', 'Bash', 'npx vite build'),  # not installed in {N} itself
+    (677, 'BYPASS', 'deny', 'N', 'Bash', 'cd /tmp && npx tsc --noEmit'),
+    (678, 'BYPASS', 'deny', 'N', 'Bash', 'npx tsc@5 --noEmit'),
+    (679, 'BYPASS', 'deny', 'N', 'Bash', 'npx -y tsc'),
+    (680, 'BYPASS', 'deny', 'N', 'Bash', 'npx --yes tsc'),
+    (681, 'BYPASS', 'deny', 'N', 'Bash', 'npx -p tsc tsc'),
+    (682, 'BYPASS', 'deny', 'N', 'Bash', 'npx --package=left-pad tsc'),
+    (683, 'BYPASS', 'deny', 'N', 'Bash', "npx -c 'tsc'"),
+    (684, 'BYPASS', 'deny', 'N', 'Bash', 'npx @acme/tool run'),
 )
 # fmt: on

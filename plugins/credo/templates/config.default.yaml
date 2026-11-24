@@ -318,6 +318,17 @@ cleanup:
 items:
   go_stall_hours: 24
 
+# --- inline code guard (hooks/credo-inline-guard.sh, PreToolUse) ---------------
+# Denies a Bash call whose inline interpreter code (python3 -c, node -e, perl/ruby -e,
+# php -r, deno eval, a heredoc, here-string or pipe into an interpreter) or a Playwright
+# browser_run_code call whose inline code is longer than inline_code_max characters,
+# and names the alternative (Write a script file, run it separately with a literal path;
+# browser_run_code: the filename parameter). Applies in subagents too. Only the size
+# counts. 0 switches the guard off; env CREDO_INLINE_CODE_MAX overrides this value. An
+# unreadable value counts as off (fail open).
+guards:
+  inline_code_max: 1500
+
 # --- tmux hint (SessionStart) -----------------------------------------------
 # When credo is active and a session starts outside tmux, the SessionStart hook adds
 # one short line recommending tmux (self-compact and self-reload need it). false ->

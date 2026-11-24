@@ -74,6 +74,21 @@ case "$gp_ctx" in
     *) check "DECISIONS: old catch-all needs_decision line gone" no no ;;
 esac
 
+# --- no-block commands: no long inline code, literal paths, local bins, filename -------
+has "NO-BLOCK: block present" "NO-BLOCK COMMANDS:" "$gp_ctx"
+has "NO-BLOCK: inline interpreters named" "python -c, node -e, perl -e, ruby -e, a heredoc or pipe into an interpreter" "$gp_ctx"
+has "NO-BLOCK: write the script to TMPDIR or scratchpad" "Write the script to the session TMPDIR or scratchpad" "$gp_ctx"
+has "NO-BLOCK: separate call with a literal path" "run it in a separate call with a literal path" "$gp_ctx"
+has "NO-BLOCK: guard limit named" "guards.inline_code_max characters, default 1500" "$gp_ctx"
+has "NO-BLOCK: never write and run in one command" "Never write and run a file in the same command" "$gp_ctx"
+has "NO-BLOCK: no variable script paths" 'No VAR=$(...); $VAR/script calls - use literal paths' "$gp_ctx"
+has "NO-BLOCK: local bin over npx" "prefer ./node_modules/.bin/<tool> over npx" "$gp_ctx"
+has "NO-BLOCK: Playwright filename parameter" "browser_run_code: put long code in a file and pass the filename parameter" "$gp_ctx"
+case "$(ctx_of Explore)" in
+    *"NO-BLOCK COMMANDS:"*) check "Explore: light block has no NO-BLOCK block" no yes ;;
+    *) check "Explore: light block has no NO-BLOCK block" no no ;;
+esac
+
 # --- full block: unknown or empty agent_type gets the same rule ---------------------
 empty_ctx="$(ctx_of "")"
 has "empty agent_type: no-delete rule present" "$NO_DELETE" "$empty_ctx"

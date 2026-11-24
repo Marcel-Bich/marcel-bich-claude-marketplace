@@ -155,6 +155,16 @@ the security block):
 - No background shells. The agent runs no command with `run_in_background`. This holds for
   every subagent brief, not only builders and auditors ("Monitoring without context
   flooding" below).
+- No-block commands, in every subagent brief (a command that needs a review prompt stalls
+  an unattended run): no long inline interpreter code (`python -c`, `node -e`, `perl -e`,
+  `ruby -e`, a heredoc or pipe into an interpreter) - Write the script to the session
+  TMPDIR or scratchpad and run it in a separate call with a literal path; never write and
+  run a file in the same command; no `VAR=$(...); $VAR/script` calls, literal paths only;
+  `./node_modules/.bin/<tool>` instead of `npx` for an installed tool; Playwright
+  `browser_run_code` with the `filename` parameter for long code. The SubagentStart inject
+  carries the same block and the PreToolUse inline guard denies inline code over
+  `guards.inline_code_max` characters (default 1500), but the brief names it anyway, and
+  the main agent follows it itself.
 - Every brief carries the repo's mandatory brief lines from `.credo/RULES.md` (for example a
   path-safety note), copied verbatim. A repo's `.credo/RULES.md` overrides these defaults, and
   the subagent reads that file first.

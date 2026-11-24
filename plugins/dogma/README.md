@@ -115,7 +115,7 @@ When dogma runs inside Claude Code with mods support, `hooks/band.tsx` (listed u
 - Git permissions, secrets detection
 - File and search protection, prompt injection detection
 - AI traces validation, language rules reminders
-- Dependency verification (asks before package installs)
+- Dependency verification (asks before package installs and download-and-run tools such as `npx`; `npx <tool>` passes when `node_modules/.bin/<tool>` exists for every folder the command runs in, also after `cd sub &&`, and no `-y`/`--yes`, `-p`/`--package`, `-c`/`--call` or version/scope in the name asks for a download)
 - All hooks toggleable via environment variables
 
 ### Working with credo
