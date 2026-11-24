@@ -1378,7 +1378,9 @@ done
 ok "ensure (older running): the old daemon is replaced by a new one" "$([ -n "$replaced" ] && echo 0 || echo 1)"
 grep -q "replacing older daemon" "$TMP/EN/replace.log"; ok "ensure logs the replace decision" "$?"
 check "ensure (replaced): pidfile now records the new version 9.9.9" "9.9.9" "$(pf_ver "$PIDFILE_EN")"
-kill -TERM "$EN_NEW" 2>/dev/null || true
+# ensure only launches: the new daemon runs detached, stop it by its pidfile pid
+EN_P1="$(pf_pid "$PIDFILE_EN")"; [ -n "$EN_P1" ] && PIDS="$PIDS $EN_P1"
+kill -TERM "$EN_NEW" $EN_P1 2>/dev/null || true
 
 # --- RS: restart reclaims the port (stop-then-start regardless of version) -----
 read PRS < <(free_port)
