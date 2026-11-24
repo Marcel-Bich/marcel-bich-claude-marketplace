@@ -1,9 +1,0 @@
----
-bump: minor
----
-
-### Added
-
-- Inline code guard `credo-inline-guard.sh` (PreToolUse on `Bash` and `*browser_run_code*`, subagent tool calls included): denies inline code longer than `guards.inline_code_max` characters (default 1500, `0` = off, env `CREDO_INLINE_CODE_MAX` overrides). Counted are `python3 -c`, `node -e`, `perl -e`, `ruby -e`, `php -r`, `deno eval`, the string of `bash -c` / `sh -c` / `zsh -c` / `dash -c`, the text after `powershell` / `pwsh` `-Command` / `-c`, a heredoc, here-string or pipe into an interpreter, and Playwright `browser_run_code` code (not checked when `filename` is set). The guard steers instead of blocking work: the reason offers splitting into several smaller commands (allowed) or a script in the session TMPDIR run in a separate call with a literal path (PowerShell from WSL via `powershell.exe -File "$(wslpath -w <path>)"`), and deleting the throwaway script afterwards with `credo-cleanup.py own-rm`. Only the size counts; commands without inline code and heredocs into files are never hit; the config is read only for code over 1500 characters; any error fails open
-- Subagent inject and orchestration brief checklist carry a NO-BLOCK COMMANDS block: no huge inline code, split or Write a script into the session TMPDIR, delete throwaway scripts with `python3 <credo>/scripts/credo-cleanup.py own-rm <literal path>` (resolved path in the inject; no prompt for the main agent and its subagents alike), never write and run a file in one command, no `VAR=$(...); $VAR/script` calls, `./node_modules/.bin/<tool>` over `npx`, `browser_run_code` with `filename`
-- Cleanup tests prove that throwaway scripts a subagent writes into the session TMPDIR, the scratchpad or a temp dir are removed by own-rm (the subagent transcript confirms its Write calls), like those of the main agent
