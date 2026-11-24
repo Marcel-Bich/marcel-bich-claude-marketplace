@@ -33,7 +33,10 @@ command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 missing"; exit 0; }
 TMP="$(mktemp -d /tmp/cwb.XXXXXX)"
 WINFIX=""
 WINFIX2=""
+DD_PIDS=""
 cleanup() {
+    # detached test daemons (section 2b) first, by their recorded pids only
+    for p in $DD_PIDS; do kill -TERM "$p" 2>/dev/null; done
     # only the files this test created in its own fixture dirs, then the dirs themselves
     for wf in "$WINFIX" "$WINFIX2"; do
         [ -n "$wf" ] && [ -d "$wf" ] || continue
@@ -622,6 +625,147 @@ check("holder process ended", wait(lambda: not os.path.exists("/proc/%d" % hp) o
 check("quit sent to PowerShell", any('"quit"' in l for l in open(rec)))
 PY
 run_py "fake powershell daemon" "$TMP/t2.py"
+
+# --------------------------------------------------------------------------------
+# 2b. detached daemon (item #206, parity with the LAN relay #203): log format, the
+#     environment a detached daemon gets, `ensure` leaving the hook's process group
+#     (double fork) and the starting session's systemd scope (own user service), and a
+#     logged shutdown reason. Own state dir, HOME and profile; a minimal fake PowerShell
+#     that needs no environment (the systemd unit only gets the allowlist).
+# --------------------------------------------------------------------------------
+cat > "$TMP/t2b.py" <<'PY'
+import os, re, sys
+from wbt import wb, check
+os.environ["CREDO_WIN_BRIDGE_STATE"] = os.path.join(os.getcwd(), "lf")
+wb.ensure_dirs()
+wb.log("first line\nsecond line")
+lines = open(wb.log_path()).read().splitlines()
+pat = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d \[credo-win-bridge %d\] " % os.getpid())
+check("log: ISO 8601 stamp with ms + offset and process tag on every line",
+      len(lines) == 2 and all(pat.match(l) for l in lines), lines)
+check("log: message lines kept", lines[0].endswith("first line") and lines[1].endswith("second line"), lines)
+
+dropped = ["CREDO_SESSION_ID", "CREDO_PEER_TARGET_PID", "CREDO_SCRATCHPAD", "CREDO_WIN_BRIDGE_EVENT",
+           "CREDO_WIN_BRIDGE_SPAWNED", "CREDO_X_TOKEN", "CREDO_NTFY_URL", "CREDO_AUTH_HEADER",
+           "CREDO_COOKIE_JAR", "CREDO_WIFI_PSK", "CREDO_API_KEY"]
+kept = ["CREDO_WIN_BRIDGE", "CREDO_WIN_BRIDGE_PS_CMD", "CREDO_WIN_BRIDGE_INTERVAL", "CREDO_WIN_BRIDGE_SPAWN"]
+for k in dropped + kept:
+    os.environ[k] = "v-" + k
+os.environ.update(MY_SECRET="x", WSL_INTEROP="/run/x_interop", TMPDIR="/tmp/session-x")
+for name, env in (("systemd", wb._spawn_env()), ("fork", wb._fork_env())):
+    bad = [k for k in dropped + ["TMPDIR"] if k in env]
+    if name == "systemd":
+        bad += [k for k in ("MY_SECRET", "WSL_INTEROP") if k in env]
+    miss = [k for k in kept + ["PATH", "HOME"] if k not in env]
+    check("env %s: no session-bound or secret-like names" % name, not bad, bad)
+    check("env %s: bridge settings, PATH and HOME kept" % name, not miss, miss)
+    check("env %s: state dir pinned" % name, env.get("CREDO_WIN_BRIDGE_STATE") == wb.state_dir())
+    if name == "fork":
+        check("env fork: WSL_INTEROP kept (no systemd, its only interop path)",
+              env.get("WSL_INTEROP") == "/run/x_interop")
+os.environ["CREDO_WIN_BRIDGE_SPAWN"] = "bogus"
+check("spawn mode: unknown value falls back to auto", wb.spawn_mode() == "auto")
+PY
+run_py "detached daemon: log + env" "$TMP/t2b.py"
+
+cat > "$TMP/fakeps-min.py" <<'PY'
+# minimal PowerShell stand-in for the detached-daemon checks: ready, empty lists, quit
+import json, os, sys
+def emit(o):
+    sys.stdout.write(json.dumps(o) + "\n"); sys.stdout.flush()
+emit({"op": "ready", "pid": os.getpid(), "host": "box-1", "user": "alice", "pidDomain": "win32:box-1"})
+for line in sys.stdin:
+    cmd = json.loads(line)
+    if cmd.get("op") == "list":
+        emit({"op": "list", "id": cmd["id"], "sessions": []})
+    elif cmd.get("op") == "publish":
+        emit({"op": "published", "mirrors": []})
+    elif cmd.get("op") == "quit":
+        break
+PY
+DD="$TMP/DD"
+mkdir -p "$DD/home/.claude/sessions"
+DD_PS_CMD="[\"$(command -v python3)\",\"$TMP/fakeps-min.py\"]"
+dd_env() { # run a command with the isolated bridge environment
+    env HOME="$DD/home" CLAUDE_CONFIG_DIR="$DD/home/.claude" CREDO_WIN_BRIDGE=1 \
+        CREDO_WIN_BRIDGE_STATE="$DD/st" CREDO_WIN_BRIDGE_PS_CMD="$DD_PS_CMD" \
+        CREDO_WIN_BRIDGE_INTERVAL=1 CREDO_SKIP_ENSURE=1 "$@"
+}
+dd_pid() { # -> daemon pid from the pidfile once alive (up to ~10 s)
+    local p=""
+    for _ in $(seq 1 100); do
+        p="$(sed -n 's/.*"pid": *\([0-9][0-9]*\).*/\1/p' "$DD/st/bridge.pid" 2>/dev/null)"
+        [ -n "$p" ] && kill -0 "$p" 2>/dev/null && { echo "$p"; return 0; }
+        sleep 0.1
+    done
+    return 1
+}
+dd_stop() { # pid -> waits until it is gone
+    [ -n "$1" ] || return 0
+    kill -TERM "$1" 2>/dev/null
+    for _ in $(seq 1 100); do kill -0 "$1" 2>/dev/null || return 0; sleep 0.1; done
+    return 1
+}
+okb() { if [ "$2" = "0" ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL $1"; fi; }
+
+# double fork: ensure started like the hook does, from a shell that leads its own process
+# group; a SIGTERM to that whole group must not reach the daemon
+mkfifo "$DD/hold.fifo"
+( dd_env CREDO_WIN_BRIDGE_SPAWN=setsid setsid bash -c 'echo $$ >"$3"; "$1" "$2" ensure >/dev/null 2>&1; read -r -t 30 _ <>"$4"' \
+    _ "$(command -v python3)" "$BRIDGE" "$DD/hook.pid" "$DD/hold.fifo" & ) 2>/dev/null
+DD_P1="$(dd_pid)"; DD_PIDS="$DD_PIDS $DD_P1"
+DD_HOOK_PGID="$(cat "$DD/hook.pid" 2>/dev/null)"
+okb "detached (fork): ensure started a daemon" "$([ -n "$DD_P1" ] && echo 0 || echo 1)"
+okb "detached (fork): daemon is not in the hook shell's process group" \
+    "$([ -n "$DD_P1" ] && [ -n "$DD_HOOK_PGID" ] && [ "$(ps -o pgid= -p "$DD_P1" | tr -d ' ')" != "$DD_HOOK_PGID" ] && echo 0 || echo 1)"
+[ -n "$DD_HOOK_PGID" ] && kill -TERM -- "-$DD_HOOK_PGID" 2>/dev/null
+sleep 1
+okb "detached (fork): a SIGTERM to the hook's process group does not reach the daemon" \
+    "$([ -n "$DD_P1" ] && kill -0 "$DD_P1" 2>/dev/null && echo 0 || echo 1)"
+grep -q "\[credo-win-bridge $DD_P1\] daemon up (version .*); daemon process: .*spawned double-fork" "$DD/st/bridge.log"
+okb "detached (fork): daemon logs how it was spawned" "$?"
+[ -n "$DD_P1" ] && kill -HUP "$DD_P1" 2>/dev/null
+sleep 0.5
+okb "detached (fork): SIGHUP leaves the daemon running" "$([ -n "$DD_P1" ] && kill -0 "$DD_P1" 2>/dev/null && echo 0 || echo 1)"
+grep -q "\[credo-win-bridge $DD_P1\] SIGHUP received and ignored" "$DD/st/bridge.log"
+okb "detached (fork): SIGHUP is logged" "$?"
+dd_stop "$DD_P1"
+okb "detached (fork): SIGTERM stops the daemon" "$?"
+grep -q "\[credo-win-bridge $DD_P1\] shutting down: received SIGTERM (sender pid unknown; ppid .*spawned double-fork" "$DD/st/bridge.log"
+okb "detached (fork): shutdown logs its reason (signal + process context)" "$?"
+okb "detached (fork): pidfile removed on shutdown" "$([ ! -e "$DD/st/bridge.pid" ] && echo 0 || echo 1)"
+
+# systemd: ensure inside a transient scope (like a Claude Code session started via
+# systemd-run --scope); the daemon must be its own user service and survive a scope stop
+if command -v systemd-run >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1 \
+   && systemctl --user show-environment >/dev/null 2>&1 \
+   && [ "${CREDO_TEST_NO_SYSTEMD:-0}" != 1 ]; then
+    DD_SCOPE="credo-test-wb-$$"
+    rm -f "$DD/hold2.fifo"; mkfifo "$DD/hold2.fifo"
+    ( dd_env CREDO_WIN_BRIDGE_SPAWN=systemd systemd-run --user --scope --quiet --unit="$DD_SCOPE" bash -c \
+        '"$1" "$2" ensure >/dev/null 2>&1; read -r -t 30 _ <>"$3"' _ "$(command -v python3)" "$BRIDGE" "$DD/hold2.fifo" & ) 2>/dev/null
+    DD_P2="$(dd_pid)"; DD_PIDS="$DD_PIDS $DD_P2"
+    DD_CG="$(cat "/proc/$DD_P2/cgroup" 2>/dev/null)"
+    okb "detached (systemd): daemon runs in its own user service" \
+        "$(case "$DD_CG" in *"/credo-win-bridge-"*.service) echo 0 ;; *) echo 1 ;; esac)"
+    okb "detached (systemd): daemon is not in the launcher's scope" \
+        "$([ -n "$DD_CG" ] && case "$DD_CG" in *"$DD_SCOPE"*) echo 1 ;; *) echo 0 ;; esac)"
+    DD_UNIT="$(printf '%s' "$DD_CG" | sed -n 's#.*/\(credo-win-bridge-[0-9-]*\.service\)$#\1#p')"
+    systemctl --user stop "$DD_SCOPE.scope" 2>/dev/null
+    sleep 1
+    okb "detached (systemd): stopping the launcher's scope does not kill the daemon" \
+        "$([ -n "$DD_P2" ] && kill -0 "$DD_P2" 2>/dev/null && echo 0 || echo 1)"
+    grep -q "\[credo-win-bridge $DD_P2\] daemon up .*spawned systemd:credo-win-bridge-[0-9-]*\.service, cgroup .*credo-win-bridge-" "$DD/st/bridge.log"
+    okb "detached (systemd): daemon logs its unit and cgroup" "$?"
+    dd_stop "$DD_P2"
+    grep -q "\[credo-win-bridge $DD_P2\] shutting down: received SIGTERM" "$DD/st/bridge.log"
+    okb "detached (systemd): shutdown reason logged" "$?"
+    sleep 0.5
+    okb "detached (systemd): the unit is collected after the daemon stopped" \
+        "$([ -n "$DD_UNIT" ] && [ -z "$(systemctl --user list-units --all --no-legend "$DD_UNIT" 2>/dev/null)" ] && echo 0 || echo 1)"
+else
+    echo "SKIP detached (systemd): no systemd user manager (systemd-run path not testable here)"
+fi
 
 # --------------------------------------------------------------------------------
 # 3. the real PowerShell half (WSL with interop only)
