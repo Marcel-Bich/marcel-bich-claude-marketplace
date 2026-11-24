@@ -199,15 +199,75 @@ def temp_candidates(candidates, label):
                and _temp_resolved(path, label) for path in candidates)
 
 
-def temp_only(findings, cwd):
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _own_plain_dir(path):
+    """True when path is a real directory (no symlink anywhere on the way) owned by this user."""
+    try:
+        if os.path.realpath(path) != path or not os.path.isdir(path):
+            return False
+        return os.stat(path).st_uid == os.getuid()
+    except (OSError, AttributeError):
+        return False
+
+
+def session_dirs(session_id):
+    """The directories bound to this session by name: the credo session TMPDIR
+    /tmp/credo-tmp-<uid>/<session_id> and the Claude Code scratchpads /tmp/claude-<uid>/<project>/<session_id>/
+    scratchpad. Only real directories owned by this user count (no symlink on the way); POSIX only.
+    DOGMA_SESSION_TMP_BASE and DOGMA_SESSION_SCRATCH_BASE replace the two bases (tests)."""
+    if not session_id or not SESSION_ID_RE.match(session_id) or session_id.strip(".") == "" or ".." in session_id:
+        return []
+    if not hasattr(os, "getuid"):
+        return []
+    uid = os.getuid()
+    roots = []
+    tmp_base = os.environ.get("DOGMA_SESSION_TMP_BASE") or "/tmp/credo-tmp-%d" % uid
+    tmp = os.path.join(tmp_base, session_id)
+    if _own_plain_dir(tmp_base) and _own_plain_dir(tmp):
+        roots.append(tmp)
+    base = os.environ.get("DOGMA_SESSION_SCRATCH_BASE") or "/tmp/claude-%d" % uid
+    if _own_plain_dir(base):
+        try:
+            projects = os.listdir(base)
+        except OSError:
+            projects = []
+        for project in projects:
+            pad = os.path.join(base, project, session_id, "scratchpad")
+            if _own_plain_dir(pad):
+                roots.append(pad)
+    return roots
+
+
+def session_truncate(entry, session_id):
+    """True when a redirect truncation ("truncate", e.g. `for ...; done > file`) writes a literal absolute path
+    strictly inside one of this session's own directories (session_dirs). The target's parent must exist and
+    the target, links followed, must stay inside that directory, so a link cannot redirect the write elsewhere.
+    A shell variable, a glob or a ".." segment keeps the normal rules."""
+    target = entry.get("target") or ""
+    if entry.get("label") != "truncate" or "candidates" in entry or not target.startswith("/"):
+        return False
+    if UNRESOLVED_RE.search(target) or ".." in target.split("/"):
+        return False
+    real = os.path.realpath(target)
+    if not os.path.isdir(os.path.dirname(real)):
+        return False
+    return any(real.startswith(root + "/") for root in session_dirs(session_id))
+
+
+def temp_only(findings, cwd, session_id=""):
     """True when every recorded delete is a plain rm, unlink, shred, rmdir or find -delete and every
     target resolves strictly inside a temp root. A target with candidate paths (variables set by the command,
-    see bash-guard.py) counts by its candidates. Anything unsure returns False (normal rules)."""
+    see bash-guard.py) counts by its candidates. A redirect truncation counts only inside this session's own
+    TMPDIR or scratchpad (session_truncate). Anything unsure returns False (normal rules)."""
     deletes = findings.get("deletes") or []
     if not deletes:
         return False
     tmpdir = os.environ.get("TMPDIR") or ""
     for entry in deletes:
+        if session_truncate(entry, session_id):
+            continue
         if "candidates" in entry:
             if not temp_candidates(entry["candidates"], entry.get("label")):
                 return False
@@ -1274,10 +1334,11 @@ def check_command(cmd, ctx, nest=0):
 
 def main():
     if sys.argv[1:2] == ["--temp-only"]:
-        # file-protection.sh: findings JSON on stdin, the command's working directory as argument;
-        # prints "temp" only when every delete is inside a temp root (see temp_only)
+        # file-protection.sh: findings JSON on stdin, the command's working directory and the hook's session id
+        # as arguments; prints "temp" only when every delete is inside a temp root (see temp_only)
         try:
-            if temp_only(json.load(sys.stdin), sys.argv[2] if len(sys.argv) > 2 else ""):
+            if temp_only(json.load(sys.stdin), sys.argv[2] if len(sys.argv) > 2 else "",
+                         sys.argv[3] if len(sys.argv) > 3 else ""):
                 print("temp")
         except Exception:
             return

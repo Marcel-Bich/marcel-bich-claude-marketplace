@@ -788,6 +788,9 @@ push per the granted authorization, so each unit of work is secured as it comple
 commit-identity gate (credo `budget` skill) must pass before every commit. If commit or
 push is forbidden by permissions, that is a SHOWSTOPPER for autonomous work - the work
 cannot be secured - so warn via ntfy and stop; do not keep building unsecured work.
+While autonomy is active, dogma denies (no longer asks) a git add/commit/push that needs the
+owner's OK (`[?]`), so the permission-notify ntfy no longer fires: send the ntfy yourself
+(`credo-ntfy-send.sh`), then stop.
 
 ### Handoff-rules check (before every autonomous start)
 
