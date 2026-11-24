@@ -191,6 +191,11 @@
           },
           {
             "type": "command",
+            "command": "CREDO_PEER_LAN_EVENT=prompt \"${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-lan-autostart.sh\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/role-inject.sh\"",
             "timeout": 10
           },
