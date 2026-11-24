@@ -338,7 +338,9 @@ def split_segments(cmd):
     return [s.strip() for s in segs if s.strip()]
 
 
-REDIR_RE = re.compile(r"(?<![\w$])\d*(?:&?>>?|<)&?\s*(?:'[^']*'|\"[^\"]*\"|\S+)")
+# the redirect word is its quoted and unquoted parts; an unmatched quote ends it (the closing quote
+# of sh -c 'echo x >/tmp/x' belongs to the outer word, not to the redirect target)
+REDIR_RE = re.compile(r"(?<![\w$])\d*(?:&?>>?|<)&?\s*(?:'[^']*'|\"[^\"]*\"|[^\s'\"]+)+")
 
 
 def tokens(seg):
@@ -1168,6 +1170,9 @@ HOME_PERSISTENCE_RE = re.compile(
     % "|".join(re.escape(name) for name in HOME_RC_NAMES))
 # the standard streams are no files; bash-guard.py does not resolve them (realpath leads to /proc/<pid>/fd/...)
 STREAM_RE = re.compile(r"^/dev/(?:stdin|stdout|stderr|fd/\d+)$")
+# bash network redirections (/dev/tcp/<host>/<port>, /dev/udp/<host>/<port>) open a socket, no file.
+# Literal words only: no "." or ".." part, no further slash, no expansion.
+NETWORK_RE = re.compile(r"^/dev/(?:tcp|udp)/(?!\.\.?/)[^/$`]+/(?!\.\.?$)[^/$`]+$")
 
 
 def ansi_c(raw):
@@ -1264,6 +1269,8 @@ def critical_redirect(target, append=False, unknown=False):
     A word with an unresolved variable or substitution is judged by its literal part before the
     first "$": a file name that starts there could be any name, a dot name too (~/$X, ~/.$X,
     /etc/$X); a word that starts with the variable is unknown."""
+    if NETWORK_RE.match(target):
+        return False
     m = re.match(r"^(~|\$HOME|\$\{HOME\})(/.*)?$", target)
     if m:
         target = home() + (m.group(2) or "")

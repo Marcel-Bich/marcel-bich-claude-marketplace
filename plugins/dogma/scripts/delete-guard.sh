@@ -71,6 +71,12 @@ text_write_protected() {
     case "$t" in
         /dev/null|/dev/stdout|/dev/stderr|/dev/stdin|/dev/tty) return 1 ;;
         /dev/fd/[0-9]|/dev/fd/[0-9][0-9]) return 1 ;;
+        /dev/tcp/*/*|/dev/udp/*/*)
+            # a bash network socket (/dev/tcp/<host>/<port>), no file: exactly two parts, no . or ..
+            case "${t#/dev/???/}" in
+                */*/*|.|./*|..|../*|*/.|*/..) ;;
+                *) return 1 ;;
+            esac ;;
     esac
     # shellcheck disable=SC2088  # the literal word ~ is matched here, not expanded
     case "$t" in

@@ -209,6 +209,9 @@ STREAM_TARGET_RE = re.compile(r"^/dev/(?:stdin|stdout|stderr|fd/\d+)$")
 # removal), so no path resolution can turn them into one (a native Windows Python resolved
 # /dev/null to C:\dev\null). "/dev//null" or "x/../dev/null" are not literal and stay checked.
 NULL_REDIRECT_TARGETS = frozenset({"/dev/null"})
+# bash network redirections (/dev/tcp/<host>/<port>, /dev/udp/<host>/<port>) open a socket, no file: bash
+# never opens such a word as a path. Literal words only: no "." or ".." part, no further slash, no expansion.
+NETWORK_TARGET_RE = re.compile(r"^/dev/(?:tcp|udp)/(?!\.\.?/)[^/$`]+/(?!\.\.?$)[^/$`]+$")
 # text that can redefine cat, tee or an interpreter in the running shell: a function, an alias, hash, enable,
 # builtin, a changed PATH, a sourced file (a heredoc body is data only when these words are the real ones)
 SHADOW_RE = re.compile(
@@ -2004,6 +2007,8 @@ class Analysis:
         verb = os.path.basename(self.expand(tokens[0])) if tokens and not bare else ""
         for operator, word in segment.redirects:
             target = _unquote(word)
+            if NETWORK_TARGET_RE.match(target):
+                continue  # a bash socket (/dev/tcp/<host>/<port>), no file to read, protect or remember
             if operator in ("<", "<&", "<>"):
                 self.check_path(target, directories, "read", force=True)
             if operator.startswith((">", "&>")) or operator == "<>":
