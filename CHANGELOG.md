@@ -8,6 +8,46 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 #### v0.89
 
+##### v0.89.2
+
+###### Added
+
+- Self-healing relay: the autostart hook also runs on UserPromptSubmit, silent and
+  throttled to one `ensure` per profile every 5 minutes (`CREDO_PEER_LAN_ENSURE_MINUTES`),
+  only for a served profile with a bound network, fail-open.
+- `peer-lan.log` lines carry an ISO 8601 local timestamp; the daemon logs its process
+  context (parent, process group, session, spawn method, cgroup) at start and the reason
+  of every shutdown (signal name plus that context); uncaught exceptions are logged.
+
+###### Fixed
+
+- LAN relay no longer dies with the session that started it: `ensure`, `start` and
+  `restart` launch the daemon as its own transient systemd user service
+  (`systemd-run --user --collect`) where a systemd user manager answers, else via a
+  double fork with `setsid` and SIGHUP ignored. Before, a daemon started by the
+  SessionStart hook stayed in that session's process group and systemd scope and was
+  killed with them (`shutting down` without a reason, holders `rc=-15`).
+  `CREDO_PEER_LAN_SPAWN` (`auto`, `systemd`, `setsid`) selects the method.
+- The periodic reminder no longer stays in the input field as `[Pasted text #n +x lines]` without
+  being submitted: the check before Enter reads only the input box and what is drawn next to it, so
+  an earlier numbered message or a quoted "Do you want to" line in the transcript above the box no
+  longer holds back Enter. The worker waits up to 10 s for the burst to show, then presses Enter;
+  while the field still shows exactly what it showed before the first Enter, Enter is re-sent up
+  to 3 times with a growing wait, and text the owner typed or pasted meanwhile is never touched.
+  A reminder that is still not submitted is removed from the field again (WARNING in the log), so
+  it never blocks `/credo:self-compact`, `/credo:self-reload` or `/credo:self-restart`; one that
+  may be left (a dialog, copy mode, not shown in time, not removable) is reported by ntfy
+- An owner decision already logged in the requirements log or the item History is no longer raised again as a
+  new owner question. One central rule "Never re-ask a decided point" in the items skill, referenced from the
+  verify typed codes (no Q code for a decided point), session-active, session-passive, session-autonomous, the
+  orchestration owner-question and return-and-resume paths and the subagent DECISIONS inject
+- The audit skill checks the requirements log for the audited area; a finding that is exactly an owner-accepted point goes
+  into an own "Accepted (owner)" report section as `accepted (owner <date>, "<quote>")`, never as BLOCKER or
+  MAJOR and never as a new owner question; only the owner's own words count, for exactly the decided point with
+  unchanged facts; the orchestration audit brief points the auditor to the log
+- The periodic reminder re-checks every open Q code against the requirements log and closes what the owner
+  already decided
+
 ##### v0.89.1
 
 ###### Changed
