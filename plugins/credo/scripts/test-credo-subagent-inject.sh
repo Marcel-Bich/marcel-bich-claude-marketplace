@@ -66,6 +66,13 @@ has "DECISIONS: SOTA > best effort > note order" "the best possible solution (SO
 has "DECISIONS: per-repo grant honoured" "per-repo grant" "$gp_ctx"
 has "DECISIONS: decision logged in the report" "Log each such decision with its reason in your report" "$gp_ctx"
 has "DECISIONS: needs_decision only for owner-only decisions" "Return {status: needs_decision, question: ...} only for a genuine owner-only decision" "$gp_ctx"
+has "DECISIONS: requirements log checked before needs_decision" "Before returning needs_decision or raising any owner question, check the requirements log (main-checkout path of .credo/process/requirements/*.md)" "$gp_ctx"
+has "DECISIONS: decided point never asked again" "A point the owner already decided is quoted with its date and never asked again" "$gp_ctx"
+has "DECISIONS: accepted audit finding never BLOCKER or MAJOR" "accepted (owner <date>, \"<quote>\"), never as BLOCKER or MAJOR" "$gp_ctx"
+has "DECISIONS: accepted only for exactly the decided point" "an audit finding that is exactly such a point" "$gp_ctx"
+has "DECISIONS: accepted exception scoped" "Covers only exactly the point decided, same scope and facts unchanged since the decision; quote it verbatim with date and source file" "$gp_ctx"
+has "DECISIONS: agent decisions never count as owner decisions" "only the owner's own words count, never an agent decision (e.g. a \"DECIDED by agent\" line)" "$gp_ctx"
+has "DECISIONS: wider scope stays a ranked finding" "a wider scope, new facts or a different risk stay a normal ranked finding that quotes the decision; the newest owner decision on the point wins." "$gp_ctx"
 for kind in "taste or preference" "money" "deleting user data" "installs" "safety" "infeasible"; do
     has "DECISIONS: owner-only case named: $kind" "$kind" "$gp_ctx"
 done

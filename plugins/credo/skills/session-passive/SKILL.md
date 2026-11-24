@@ -99,6 +99,8 @@ Batch and minimize interruptions - the user's attention is the scarce resource. 
 you do bring still gets its own Ask round - see "One item per Ask round" in the common core
 (session-active skill).
 
+In every case a point the owner already decided is never asked again (credo
+`items`, "Never re-ask a decided point").
 With the opt-in setting `dont_ask_twice` (default false) set to true, search the requirement
 logs, the items, the handoff and earlier Ask answers before any question; an earlier
 approval counts as the user's answer and is not asked again.
