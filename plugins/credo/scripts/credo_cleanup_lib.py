@@ -891,13 +891,15 @@ def hard_refusal(p, cfg_keep_paths=()):
         return "the provenance ledger itself"
     if p == keep_root() or p == keep_list_path() or is_under(keep_root(), p):
         return "the keep store or its parents"
-    for top in ("/mnt", "/media") if not NT else ():
-        if is_under(p, top) and p.count("/") <= 4:
-            return "mounted storage (depth <= 4)"
     try:
         st = os.lstat(p)
     except OSError:
         st = None
+    # a single file directly in a Windows temp dir (/mnt/c/tmp/<f>) is no mounted storage (#208)
+    win_file = win_temp_root_of(p) is not None and (st is None or not stat.S_ISDIR(st.st_mode))
+    for top in ("/mnt", "/media") if not NT else ():
+        if is_under(p, top) and p.count("/") <= 4 and not win_file:
+            return "mounted storage (depth <= 4)"
     if NT and st is not None and is_reparse(st):
         return "a junction, symlink or other reparse point (never followed or deleted on Windows)"
     if st is not None and stat.S_ISDIR(st.st_mode):
@@ -931,6 +933,27 @@ def in_temp_root(p):
     if is_under(p, home()):
         return False
     return any(p != r and is_under(p, r) for r in temp_roots())
+
+
+_WIN_TEMP_RE = re.compile(r"^/[A-Za-z]/(?:users/[^/]+/appdata/local/temp|users/public|tmp)(?=/)",
+                          re.IGNORECASE)
+
+
+def win_temp_root_of(p):
+    """WSL only: the Windows temp-ish dir a /mnt/<drive>/... path lies strictly below, else None.
+    Windows temp-ish = a user's %TEMP% (C:\\Users\\<name>\\AppData\\Local\\Temp), C:\\Users\\Public
+    or C:\\tmp, on any drive letter (drvfs). Only a single Write-created file there may go (#208):
+    drvfs has no birth time, so it is never a temp root for scans or directories."""
+    if NT:
+        return None
+    root = strip_sep(ov("drvfs_root") or "/mnt")
+    if not is_under(p, root) or same_path(p, root):
+        return None
+    m = _WIN_TEMP_RE.match(p[len(root):])
+    if not m:
+        return None
+    top = root + m.group(0)
+    return top if not same_path(p, top) else None
 
 
 def _git_refusal(d, git_entry):
@@ -1222,8 +1245,9 @@ def not_deletable_entry(p, e, sid=None):
                 "process may have created it - the owner decides" % e.get("evidence"))
     if e.get("type") != "file":
         return "report only: a directory created as a side effect of a Write"
-    if not in_temp_root(p):
-        return "report only: outside the temp roots (home, worktrees dir or elsewhere)"
+    if not in_temp_root(p) and not win_temp_root_of(p):
+        return ("report only: outside the temp roots (home, worktrees dir or elsewhere; on the "
+                "Windows side only %TEMP%, C:\\Users\\Public and C:\\tmp)")
     if sid is not None and not transcript_wrote(sid, p):
         return "report only: no successful Write/Edit call for exactly this file in this session's transcript"
     return None

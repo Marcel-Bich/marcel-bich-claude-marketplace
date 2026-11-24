@@ -119,6 +119,32 @@ If a Windows-side service must accept inbound connections from WSL and still can
 reached after both methods above, a Windows Firewall inbound rule for that port may be
 required. Propose it; do not silently change the firewall.
 
+## Temp files for Windows tools: keep them in the session TMPDIR
+
+When a Windows tool needs a file (for example a note text that `powershell.exe` writes into an
+Obsidian vault through its Windows path), do NOT create a Windows-side temp file
+(`C:\Users\Public\...`, `%TEMP%`, `C:\tmp`). dogma blocks every Windows delete command
+(`Remove-Item`, `del`, ...), so such a file cannot be cleaned up through PowerShell.
+
+- Write the file into the session TMPDIR (`$TMPDIR`) with the Write tool.
+- Hand the Windows tool its UNC path: `wslpath -w <literal path>` gives
+  `\\wsl.localhost\<distro>\tmp\credo-tmp-<uid>\<session id>\<file>`.
+  Example: `[IO.File]::ReadAllText('<that path>', [Text.Encoding]::UTF8)` in a `.ps1` run with
+  `powershell.exe -File "$(wslpath -w <script>)"`; umlauts survive (verified live).
+- Remove it afterwards with `credo-cleanup.py own-rm <literal path>` like any throwaway file.
+- Cost: measured on WSL2, reading through `\\wsl.localhost` added about 5 ms for a 5 KB note and
+  about 25 ms for 200 KB per read, against about 400 ms for starting `powershell.exe` at all. Not
+  a reason to use a Windows-side temp file.
+
+Fallback, only if a tool cannot read a `\\wsl.localhost` path: create the file with the Write
+tool under `/mnt/<drive>/Users/<you>/AppData/Local/Temp/`, `/mnt/<drive>/Users/Public/` or
+`/mnt/<drive>/tmp/` and remove it with `credo-cleanup.py own-rm /mnt/<drive>/<path>` (Windows
+paths: convert with `wslpath -u` first). own-rm accepts there only a single regular file this
+session's Write tool created (ledger plus transcript, NTFS file id unchanged; drvfs has no birth
+time) that has not changed for 2 minutes, and deletes it through drvfs, never through
+PowerShell. Files created by `powershell.exe` or a Bash command, directories and every other
+Windows path stay report-only: hand them to the user.
+
 ## Dual-platform parity (.sh + .ps1)
 
 When a repo is meant to run on both Linux/WSL and Windows, entry points and helper

@@ -326,6 +326,69 @@ mkdir -p "$CTMP/$SC"; chmod 700 "$CTMP/$SC"; mkdir "$CTMP/$SC/x"
 o="$(CLAUDE_CODE_SESSION_ID="$SC" helper own-rm "$CTMP/$SC/x")"
 contains "unbound session id is report-only" "cannot be bound to the calling process tree" "$o"
 
+# --- 3c. Windows-side temp files on WSL (#208) -------------------------------------------------
+# A fixture drvfs root inside the fixture home (never a temp root by itself) stands in for /mnt.
+# Only a single Write-created file below %TEMP%, Users\Public or \tmp of a drive may go; with
+# no_btime the drvfs case (no birth time) is simulated.
+DRV="$FH/drv"
+export CREDO_TEST_OV_EXTRA="{\"drvfs_root\": \"$DRV\"}"
+write_call "$DRV/c/Users/Public/note-tmp.md"
+contains "Write into Users\\Public recorded with write evidence" '"evidence": "write"' \
+    "$(grep "\"$DRV/c/Users/Public/note-tmp.md\"" "$LEDGER_FILE")"
+o="$(helper own-rm "$DRV/c/Users/Public/note-tmp.md")"
+contains "Write-created file in Users\\Public removed" "removed $DRV/c/Users/Public/note-tmp.md" "$o"
+write_call "$DRV/c/Users/alice/AppData/Local/Temp/n.md"
+o="$(helper own-rm "$DRV/c/Users/alice/AppData/Local/Temp/n.md")"
+contains "Write-created file in %TEMP% removed" "removed $DRV/c/Users/alice/AppData/Local/Temp/n.md" "$o"
+write_call "$DRV/c/Users/alice/Documents/n.md"
+o="$(helper own-rm "$DRV/c/Users/alice/Documents/n.md")"
+contains "Write-created file outside the Windows temp dirs is report-only" "outside the temp roots" "$o"
+check "Documents file kept" yes "$(exists "$DRV/c/Users/alice/Documents/n.md")"
+mkdir -p "$DRV/c/tmp"; echo owner > "$DRV/c/tmp/owner.md"
+o="$(helper own-rm "$DRV/c/tmp/owner.md")"
+contains "file not created by a Write refused" "not created by this session" "$o"
+write_call "$DRV/d/tmp/sub208/f.md"
+o="$(helper own-rm "$DRV/d/tmp/sub208")"
+contains "dir a Write created on the way stays report-only" "refused $DRV/d/tmp/sub208" "$o"
+check "that dir kept" yes "$(exists "$DRV/d/tmp/sub208/f.md")"
+export CREDO_TEST_OV_EXTRA="{\"drvfs_root\": \"$DRV\", \"no_btime\": true}"
+write_call "$DRV/c/tmp/nobt.md"
+contains "drvfs Write without birth time recorded" '"btime": null' "$(grep "\"$DRV/c/tmp/nobt.md\"" "$LEDGER_FILE")"
+o="$(helper own-rm "$DRV/c/tmp/nobt.md")"
+contains "drvfs Write-created file without birth time removed" "removed $DRV/c/tmp/nobt.md" "$o"
+write_call "$DRV/c/tmp/nobt-swap.md"
+rm "$DRV/c/tmp/nobt-swap.md"; echo new > "$DRV/c/tmp/nobt-swap.md"
+o="$(helper own-rm "$DRV/c/tmp/nobt-swap.md")"
+contains "drvfs file replaced after the Write refused" "replaced since it was recorded" "$o"
+write_call "$DRV/c/Users/alice/Desktop/nobt.md"
+check "drvfs Write outside the temp dirs without birth time not recorded" 0 \
+    "$(grep -c "\"$DRV/c/Users/alice/Desktop/nobt.md\"" "$LEDGER_FILE")"
+echo pre > "$DRV/c/tmp/existing.md"
+N=$((N + 1)); hook pre Write "{\"file_path\":\"$DRV/c/tmp/existing.md\"}" >/dev/null
+echo w > "$DRV/c/tmp/existing.md"; hook post Write "{\"file_path\":\"$DRV/c/tmp/existing.md\"}"
+tx_write "$DRV/c/tmp/existing.md"
+o="$(helper own-rm "$DRV/c/tmp/existing.md")"
+contains "overwritten pre-existing drvfs file refused" "not created by this session" "$o"
+unset CREDO_TEST_OV_EXTRA
+WTP="$TMP/wintemp-paths.py"
+cat > "$WTP" <<'EOF'
+import sys
+sys.path.insert(0, sys.argv[1])
+import credo_cleanup_lib as L
+for p in sys.argv[2:]:
+    print("%s root=%s hard=%s" % (p, L.win_temp_root_of(p), L.hard_refusal(p)))
+EOF
+o="$(python3 -I "$WTP" "$SCRIPT_DIR" /mnt/c/tmp/x.md /mnt/c/tmp /mnt/c/foo /mnt/c/Users/Public /mnt/e/TMP/y.md \
+    /mnt/c/Users/bob/AppData/Local/Temp/z.md /mnt/c/Users/bob/AppData/Local/Templates/z.md /mnt/c/tmpx/a.md)"
+contains "file directly in C:\\tmp is no mounted storage" "/mnt/c/tmp/x.md root=/mnt/c/tmp hard=None" "$o"
+contains "C:\\tmp itself stays refused" "/mnt/c/tmp root=None hard=mounted storage" "$o"
+contains "other drive-root dirs stay refused" "/mnt/c/foo root=None hard=mounted storage" "$o"
+contains "Users\\Public itself is no temp file" "/mnt/c/Users/Public root=None" "$o"
+contains "drive letter and case do not matter" "/mnt/e/TMP/y.md root=/mnt/e/TMP" "$o"
+contains "a user's %TEMP% counts" "Temp/z.md root=/mnt/c/Users/bob/AppData/Local/Temp" "$o"
+contains "a lookalike dir does not count" "Templates/z.md root=None" "$o"
+contains "a name prefix does not count" "/mnt/c/tmpx/a.md root=None" "$o"
+
 # --- 4. env overrides are ignored (B1) ------------------------------------------------------
 o="$(CREDO_CLEANUP_SCRATCH_GLOB="$FH/Documents" CREDO_TMP_BASE="$FH" CREDO_CLEANUP_STATE="$TMP/fake" \
     CREDO_KEEP_ROOT="$TMP/fk" CREDO_CLEANUP_PROFILES="$TMP/fp" CREDO_CLEANUP_MOUNTINFO=/dev/null \

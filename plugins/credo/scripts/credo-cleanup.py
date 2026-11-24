@@ -255,6 +255,15 @@ def check_target(raw, sid, entries, cfg, keep_items):
     elif entry is not None and entry.get("evidence") == "window" and entry.get("ambiguous"):
         t.reason = "report only: born while other sessions ran tool calls"
         return t
+    if since is None and entry is not None and L.win_temp_root_of(p) and stat.S_ISREG(st.st_mode) \
+            and entry.get("btime") is None and L.birth_time(p) is None:
+        # a Write-created file in a Windows temp dir (#208): drvfs has no birth time; the identity
+        # is the NTFS file id (dev+ino, sequence number included) recorded right after the Write
+        t.since = False
+        t.info.count, t.info.newest = 1, max(st.st_mtime, st.st_ctime)
+        if L.git_tracked(p):
+            t.reason = "tracked by git (use git rm, not the cleanup helper)"
+        return t
     t.since = since
     # the whole tree must be this session's work: born after the entry, never older content
     reason, t.info = L.inspect_tree(p, st, since)

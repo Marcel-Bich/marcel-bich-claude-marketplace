@@ -758,5 +758,15 @@ if grep -nE '"command": *"[^"]*\.py' "$HERE/../hooks/hooks.json" >/dev/null; the
     FAIL=$((FAIL + 1)); echo "FAIL hooks.json runs a .py through its shebang"
 else PASS=$((PASS + 1)); fi
 
+# --- #208: the Windows delete block stays a deny and names the allowed route for own temp files
+for wcmd in 'powershell.exe -NoProfile -Command "Remove-Item C:\Users\Public\note-tmp.md"' 'cmd.exe /c del C:\tmp\a.md'; do
+    out="$(jq -n --arg c "$wcmd" --arg d "$T" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+        HOME="$FH" CLAUDE_MB_DOGMA_ENABLED=true bash "$HOOK" 2>/dev/null)"
+    case "$out" in
+        *'"deny"'*'session TMPDIR'*'wslpath -w'*'own-rm'*) PASS=$((PASS + 1)) ;;
+        *) FAIL=$((FAIL + 1)); echo "FAIL Windows delete block hint ($wcmd): $out" ;;
+    esac
+done
+
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

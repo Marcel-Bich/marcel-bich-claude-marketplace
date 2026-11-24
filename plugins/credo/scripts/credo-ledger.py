@@ -505,6 +505,11 @@ def post(data):
                 continue  # ~/.claude*/** is never recorded (and never deleted by the helper)
             st = os.lstat(p)
             bt = L.birth_time(p)
+            if bt is None and ev == "write" and L.win_temp_root_of(p) and stat.S_ISREG(st.st_mode) \
+                    and st.st_ctime >= t0 - L.SLACK:
+                # drvfs (/mnt/<drive>) has no birth time: pre saw no file, it is new since t0 (#208)
+                recs.append(L.make_record(p, st, tool, ev, "write", agent_id, None, None))
+                continue
             if bt is None or bt < t0:
                 continue
             if ev == "write" and not stat.S_ISREG(st.st_mode):
