@@ -38,12 +38,21 @@ dogma_emit_decision() {
         "$1" "$(dogma_json_text "$2")"
 }
 
+# The hint for a git add/commit/push the owner must confirm ([?]): in an autonomous run that is a
+# showstopper per credo (work cannot be secured), so the agent warns via ntfy and stops.
+# Usage: dogma_unattended_git_hint <op>
+dogma_unattended_git_hint() {
+    printf '[unattended] git %s needs the owner'"'"'s OK here (DOGMA [?]); per credo this is a showstopper in an autonomous run: warn the owner via ntfy (credo-ntfy-send.sh) and stop instead of building on unsaved work.' "$1"
+}
+
 # Print the decision for a confirmation the hook wants: "ask", or "deny" with the
-# reason plus DOGMA_UNATTENDED_HINT when no human can answer. Does not exit.
+# reason plus a hint when no human can answer: the given hint, else DOGMA_UNATTENDED_HINT.
+# Does not exit.
+# Usage: dogma_emit_ask <input> <reason> [hint]
 dogma_emit_ask() {
-    local input="$1" reason="$2"
-    if [ "${CLAUDE_MB_DOGMA_UNATTENDED_DENY:-true}" = "true" ] &&dogma_credo_unattended "$input"; then
-        dogma_emit_decision deny "$reason $DOGMA_UNATTENDED_HINT"
+    local input="$1" reason="$2" hint="${3:-$DOGMA_UNATTENDED_HINT}"
+    if [ "${CLAUDE_MB_DOGMA_UNATTENDED_DENY:-true}" = "true" ] && dogma_credo_unattended "$input"; then
+        dogma_emit_decision deny "$reason $hint"
         return 0
     fi
     dogma_emit_decision ask "$reason"

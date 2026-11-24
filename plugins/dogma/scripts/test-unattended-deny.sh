@@ -88,10 +88,22 @@ expect_text "repro reason kept" "$OUT" 'in-place edit test/$f.test.ts requires c
 expect_text "repro variable hint" "$OUT" "retry with the literal path"
 expect_text "repro unattended hint" "$OUT" "[unattended] No human can answer"
 expect_text "repro edit per file" "$OUT" "the Edit or Write tool per file"
+expect_no_text() { # label haystack needle
+    case "$2" in *"$3"*) FAIL=$((FAIL + 1)); printf 'FAIL %s: unexpected "%s" in %s\n' "$1" "$3" "$2" ;; *) PASS=$((PASS + 1)) ;; esac
+}
+expect_no_text "repro: no git showstopper hint" "$OUT" "showstopper"
+# git asks get their own hint: an unconfirmed commit/push is a showstopper per credo (ntfy + stop)
 OUT="$(hook $GP "git add src/a.ts")"
 expect_text "git add reason kept" "$OUT" "git add requires confirmation"
-expect_text "git add unattended hint" "$OUT" "[unattended]"
+expect_text "git add showstopper hint" "$OUT" "[unattended] git add needs the owner's OK here (DOGMA [?]); per credo this is a showstopper in an autonomous run: warn the owner via ntfy (credo-ntfy-send.sh) and stop instead of building on unsaved work."
+expect_no_text "git add: no note-and-go-on hint" "$OUT" "go on with other work"
 printf '%s' "$OUT" | jq -e . >/dev/null 2>&1 && PASS=$((PASS + 1)) || { FAIL=$((FAIL + 1)); echo "FAIL deny output is no valid JSON: $OUT"; }
+# an indirect form names its op as well
+OUT="$(hook $GP "eval 'git add src/a.ts'")"
+expect_text "indirect git add showstopper hint" "$OUT" "git add needs the owner's OK here"
+OUT="$(hook $FP "rm -f $PROJ/src/old.txt")"
+expect_text "delete keeps the general hint" "$OUT" "go on with other work"
+expect_no_text "delete: no git showstopper hint" "$OUT" "showstopper"
 # a subagent of the run carries the same session id; another session's id is not affected
 expect ask  $FP "$REPRO" "sess-2"
 # no session id or an unsafe one: detection unsure, the ask stays

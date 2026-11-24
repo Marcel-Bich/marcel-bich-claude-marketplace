@@ -37,9 +37,11 @@ EOF
     exit 0
 }
 
-# An ask, or a deny with the same reason when no human can answer (lib-decision.sh)
+# An ask, or a deny with the same reason when no human can answer (lib-decision.sh). The deny
+# carries the git hint: an unconfirmed git <op> is a showstopper in an autonomous run (ntfy + stop).
+# Usage: output_ask <reason> <op>
 output_ask() {
-    dogma_emit_ask "$INPUT" "$1"
+    dogma_emit_ask "$INPUT" "$1" "$(dogma_unattended_git_hint "${2:-add/commit/push}")"
     exit 0
 }
 
@@ -116,7 +118,7 @@ if FINDINGS="$(dogma_bash_findings "$INPUT")"; then
                 output_deny "BLOCKED by dogma: git $OP not permitted. Change [ ] to [x] or [?] for git $OP in $DOGMA_STRICT_SRC or run manually."
                 ;;
             ask)
-                output_ask "dogma: git $OP requires confirmation. Change [?] to [x] in $DOGMA_STRICT_SRC to allow automatically."
+                output_ask "dogma: git $OP requires confirmation. Change [?] to [x] in $DOGMA_STRICT_SRC to allow automatically." "$OP"
                 ;;
         esac
     done
@@ -132,7 +134,7 @@ if FINDINGS="$(dogma_bash_findings "$INPUT")"; then
                     output_deny "BLOCKED by dogma: $LABEL may run git $OP, which is not permitted ($DOGMA_STRICT_SRC). Run it as a plain git command or let the user run it."
                     ;;
                 ask)
-                    output_ask "dogma: $LABEL may run git $OP (indirect command), which requires confirmation ($DOGMA_STRICT_SRC). Confirm?"
+                    output_ask "dogma: $LABEL may run git $OP (indirect command), which requires confirmation ($DOGMA_STRICT_SRC). Confirm?" "$OP"
                     ;;
             esac
         done
@@ -166,7 +168,7 @@ if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\||\||\$\(|\(|`)\s*git\s+(-C\s+\S+\s
             output_deny "BLOCKED by dogma: git add not permitted. Change [ ] to [x] or [?] for git add in $SRC or run manually."
             ;;
         ask)
-            output_ask "dogma: git add requires confirmation. Change [?] to [x] in $SRC to allow automatically."
+            output_ask "dogma: git add requires confirmation. Change [?] to [x] in $SRC to allow automatically." add
             ;;
     esac
 fi
@@ -180,7 +182,7 @@ if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\||\||\$\(|\(|`)\s*git\s+(-C\s+\S+\s
             output_deny "BLOCKED by dogma: git commit not permitted. Change [ ] to [x] or [?] for git commit in $SRC or run manually."
             ;;
         ask)
-            output_ask "dogma: git commit requires confirmation. Change [?] to [x] in $SRC to allow automatically."
+            output_ask "dogma: git commit requires confirmation. Change [?] to [x] in $SRC to allow automatically." commit
             ;;
     esac
 fi
@@ -194,7 +196,7 @@ if echo "$TOOL_INPUT" | grep -qE '(^|&&|;|\|\||\||\$\(|\(|`)\s*git\s+(-C\s+\S+\s
             output_deny "BLOCKED by dogma: git push not permitted. Change [ ] to [x] or [?] for git push in $SRC or push manually."
             ;;
         ask)
-            output_ask "dogma: git push requires confirmation. Change [?] to [x] in $SRC to allow automatically."
+            output_ask "dogma: git push requires confirmation. Change [?] to [x] in $SRC to allow automatically." push
             ;;
     esac
 fi
@@ -219,7 +221,7 @@ check_evasion() {
             output_deny "BLOCKED by dogma: Potential $perm_name evasion detected. Run manually if legitimate."
             ;;
         ask)
-            output_ask "dogma: Potential $perm_name detected (indirect command). Confirm?"
+            output_ask "dogma: Potential $perm_name detected (indirect command). Confirm?" "$keyword"
             ;;
     esac
 }
