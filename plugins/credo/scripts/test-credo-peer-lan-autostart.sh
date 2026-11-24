@@ -350,6 +350,77 @@ OUT_D="$(run_sib "$SIBHOME/.claude-extra")"
 check "unserved sibling declined before: silent" "" "$OUT_D"
 rm -f "$SIBHOME/.claude-extra/credo/peer-lan-onboarding-declined"
 
+# --- prompt mode (UserPromptSubmit): throttled, silent self-healing ensure ---------
+# CREDO_PEER_LAN_EVENT=prompt runs at most one ensure per profile per interval (stamp file
+# in the profile), only for a served profile with a bound network, prints nothing and
+# never triggers the Windows portproxy.
+printf '{"this_machine":"X","token":"t","peers":[]}\n' > "$CFG"
+STAMP="$CFGDIR/credo/peer-lan-ensure.stamp"
+rm -f "$SENTINEL" "$STAMP"
+OUT_P="$(run_hook CREDO_PEER_LAN_EVENT=prompt FAKE_ONB_STATE=bound)"; rc=$?
+ok "prompt mode exits 0" "$rc"
+ok "prompt mode (bound, no stamp) runs ensure" "$(wait_sentinel && grep -q 'started ensure' "$SENTINEL" && echo 0 || echo 1)"
+check "prompt mode prints nothing" "" "$OUT_P"
+ok "prompt mode writes the throttle stamp in the profile" "$([ -f "$STAMP" ] && echo 0 || echo 1)"
+rm -f "$SENTINEL"
+OUT_P="$(run_hook CREDO_PEER_LAN_EVENT=prompt FAKE_ONB_STATE=bound)"; rc=$?
+sleep 0.4
+ok "prompt mode within the interval: exits 0" "$rc"
+ok "prompt mode within the interval: no second ensure (throttled)" "$([ ! -f "$SENTINEL" ] && echo 0 || echo 1)"
+check "prompt mode within the interval: silent" "" "$OUT_P"
+touch -d '6 minutes ago' "$STAMP"
+rm -f "$SENTINEL"
+run_hook CREDO_PEER_LAN_EVENT=prompt FAKE_ONB_STATE=bound >/dev/null
+ok "prompt mode after the interval (stamp 6 min old): ensure again" "$(wait_sentinel && echo 0 || echo 1)"
+touch -d '6 minutes ago' "$STAMP"
+rm -f "$SENTINEL"
+run_hook CREDO_PEER_LAN_EVENT=prompt FAKE_ONB_STATE=bound CREDO_PEER_LAN_ENSURE_MINUTES=10 >/dev/null
+sleep 0.4
+ok "prompt mode honors CREDO_PEER_LAN_ENSURE_MINUTES (6 min old < 10)" "$([ ! -f "$SENTINEL" ] && echo 0 || echo 1)"
+rm -f "$SENTINEL"
+run_hook CREDO_PEER_LAN_EVENT=prompt FAKE_ONB_STATE=bound CREDO_PEER_LAN_ENSURE_MINUTES=0 >/dev/null
+ok "prompt mode with interval 0: no throttle" "$(wait_sentinel && echo 0 || echo 1)"
+for st in unbound not-configured unserved declined; do
+    rm -f "$SENTINEL" "$STAMP"
+    OUT_P="$(run_hook CREDO_PEER_LAN_EVENT=prompt FAKE_ONB_STATE="$st")"; rc=$?
+    sleep 0.3
+    ok "prompt mode ($st): exits 0" "$rc"
+    ok "prompt mode ($st): starts nothing" "$([ ! -f "$SENTINEL" ] && echo 0 || echo 1)"
+    check "prompt mode ($st): silent (no onboarding text)" "" "$OUT_P"
+done
+rm -f "$SENTINEL" "$STAMP"
+run_hook CREDO_PEER_LAN_EVENT=prompt FAKE_ONB_STATE=bound CREDO_PEER_LAN=0 >/dev/null; rc=$?
+sleep 0.3
+ok "prompt mode with CREDO_PEER_LAN=0: exits 0, starts nothing, no stamp" \
+    "$([ "$rc" = 0 ] && [ ! -f "$SENTINEL" ] && [ ! -f "$STAMP" ] && echo 0 || echo 1)"
+# no credo dir in the profile: fail open, nothing created
+NOCREDO="$TMP/nocredo"
+mkdir -p "$NOCREDO"
+rm -f "$SENTINEL"
+run_hook CREDO_PEER_LAN_EVENT=prompt FAKE_ONB_STATE=bound CLAUDE_CONFIG_DIR="$NOCREDO" >/dev/null; rc=$?
+sleep 0.3
+ok "prompt mode without a credo dir: exits 0, starts nothing, creates nothing" \
+    "$([ "$rc" = 0 ] && [ ! -f "$SENTINEL" ] && [ ! -e "$NOCREDO/credo" ] && echo 0 || echo 1)"
+# a pending pairing repair and a WSL host: still silent, and no portproxy trigger
+mkdir -p "$CFGDIR/credo/peer-lan-keys"
+printf '{"slot":"x"}\n' > "$CFGDIR/credo/peer-lan-keys/pending-repair.json"
+rm -f "$SENTINEL" "$STAMP" "$PSLOG"
+OUT_P="$(run_hook CREDO_PEER_LAN_EVENT=prompt FAKE_ONB_STATE=bound FAKE_ONB_DIR="$CFGDIR/credo" \
+    PATH="$PSBIN:$BIN:/usr/bin:/bin" CREDO_PEER_LAN_PROCVERSION="$PROCVER_WSL")"
+ok "prompt mode (WSL, pending repair): ensure runs" "$(wait_sentinel && echo 0 || echo 1)"
+sleep 0.4
+check "prompt mode (WSL, pending repair): silent" "" "$OUT_P"
+ok "prompt mode (WSL): no Windows portproxy trigger" "$([ ! -f "$PSLOG" ] && echo 0 || echo 1)"
+rm -f "$CFGDIR/credo/peer-lan-keys/pending-repair.json" "$STAMP"
+# the UserPromptSubmit registration in hooks.json
+grep -q 'CREDO_PEER_LAN_EVENT=prompt \\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-peer-lan-autostart.sh\\"' "$SCRIPT_DIR/../hooks/hooks.json"
+ok "hooks.json registers the prompt-mode hook" "$?"
+"$PY_BIN" -c 'import json,sys
+d = json.load(open(sys.argv[1]))
+cmds = [h.get("command", "") for m in d["hooks"]["UserPromptSubmit"] for h in m["hooks"]]
+sys.exit(0 if any("CREDO_PEER_LAN_EVENT=prompt" in c for c in cmds) else 1)' "$SCRIPT_DIR/../hooks/hooks.json"
+ok "the prompt-mode hook is registered under UserPromptSubmit" "$?"
+
 # --- ensure via the hook: older running daemon replaced, same/newer left untouched ---
 # Drives the REAL daemon through the hook, loopback only, ephemeral port. ensure reads the
 # running daemon's pidfile (pid + version) and either replaces an older one or no-ops.
@@ -376,7 +447,8 @@ EOF
     RD_SAFE=(CREDO_PEER_LAN_PROCVERSION="$PROCVER_LINUX" CREDO_PEER_LAN_MOUNTS="$TMP/no-mounts"
              CREDO_PEER_LAN_WSLCONF="$TMP/no-wslconf" CREDO_PEER_LAN_WSLINTEROP="$TMP/no-wslinterop"
              CREDO_PEER_LAN_NETINFO='{"ip":"127.0.0.1"}' CREDO_PEER_LAN_WINPROXY=0
-             CREDO_PEER_LAN_WINALLOW_FILE="$TMP/no-winallow/allow.json")
+             CREDO_PEER_LAN_WINALLOW_FILE="$TMP/no-winallow/allow.json"
+             CREDO_PEER_LAN_SPAWN=setsid)
     # start a real incumbent daemon directly (not via hook) with a chosen version
     start_incumbent() { # version
         rm -f "$RD_PIDFILE"

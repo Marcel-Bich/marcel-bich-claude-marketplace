@@ -86,6 +86,9 @@ export CREDO_PEER_LAN_WSLINTEROP=/nonexistent-credo-test/WSLInterop
 # never consult the real ufw/firewalld of the test host (empty = inactive)
 export CREDO_PEER_LAN_UFW_STATUS=''
 export CREDO_PEER_LAN_FIREWALLD_STATE=none
+# test daemons are started with the double fork, never as systemd user units; only the
+# SV section below drives the systemd-run path on purpose (and skips without systemd)
+export CREDO_PEER_LAN_SPAWN=setsid
 
 # short temp root so unix socket paths stay well under the 108-char sun_path limit
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/clt.XXXXXX")"
@@ -1375,7 +1378,9 @@ done
 ok "ensure (older running): the old daemon is replaced by a new one" "$([ -n "$replaced" ] && echo 0 || echo 1)"
 grep -q "replacing older daemon" "$TMP/EN/replace.log"; ok "ensure logs the replace decision" "$?"
 check "ensure (replaced): pidfile now records the new version 9.9.9" "9.9.9" "$(pf_ver "$PIDFILE_EN")"
-kill -TERM "$EN_NEW" 2>/dev/null || true
+# ensure only launches: the new daemon runs detached, stop it by its pidfile pid
+EN_P1="$(pf_pid "$PIDFILE_EN")"; [ -n "$EN_P1" ] && PIDS="$PIDS $EN_P1"
+kill -TERM "$EN_NEW" $EN_P1 2>/dev/null || true
 
 # --- RS: restart reclaims the port (stop-then-start regardless of version) -----
 read PRS < <(free_port)
@@ -1455,7 +1460,7 @@ ok "LC restart: a new daemon is alive after the shell exited" \
 LC_SHSID="$(printf '%s\n' "$LC_SH" | sed -n 's/.*shell-alive sid=\([0-9]*\).*/\1/p')"
 LC_NSID="$(ps -o sid= -p "$LC_P2" 2>/dev/null | tr -d ' ')"
 ok "LC restart: the new daemon runs in its own session (detached from the shell)" \
-    "$([ -n "$LC_NSID" ] && [ "$LC_NSID" != "$LC_SHSID" ] && [ "$LC_NSID" = "$LC_P2" ] && echo 0 || echo 1)"
+    "$([ -n "$LC_NSID" ] && [ "$LC_NSID" != "$LC_SHSID" ] && [ "$LC_NSID" != "$(ps -o sid= -p $$ | tr -d ' ')" ] && echo 0 || echo 1)"
 grep -q "\[credo-peer-lan $LC_P2\] listening on" "$TMP/LC/cfg/credo/peer-lan.log"
 ok "LC restart: the new daemon logs to the relay log next to the config" "$?"
 ok "LC restart: a process merely mentioning the script is never signaled" "$(kill -0 "$LC_DECOY" 2>/dev/null && echo 0 || echo 1)"
@@ -1502,14 +1507,148 @@ LC_SH="$(CLAUDE_CONFIG_DIR="$TMP/LC/cfg" CREDO_PEER_LAN_CONFIG="$LC_CFG" CREDO_P
 case "$LC_SH" in *"rc=0"*"shell-alive"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL LC start shell: %s / %s\n' "$LC_SH" "$(cat "$TMP/LC/start.out" 2>/dev/null)" ;; esac
 LC_P4="$(pf_pid "$PIDFILE_LC")"; [ -n "$LC_P4" ] && PIDS="$PIDS $LC_P4"
 LC_NSID="$(ps -o sid= -p "$LC_P4" 2>/dev/null | tr -d ' ')"
+LC_SHSID="$(printf '%s\n' "$LC_SH" | sed -n 's/.*shell-alive sid=\([0-9]*\).*/\1/p')"
+# double fork: the daemon's session is the one its first (exited) child opened, not the
+# shell's and not the test's
 ok "LC start: a daemon is alive in its own session after the shell exited" \
-    "$([ -n "$LC_P4" ] && kill -0 "$LC_P4" 2>/dev/null && [ "$LC_NSID" = "$LC_P4" ] && echo 0 || echo 1)"
+    "$([ -n "$LC_P4" ] && kill -0 "$LC_P4" 2>/dev/null && [ -n "$LC_NSID" ] && [ "$LC_NSID" != "$LC_SHSID" ] && [ "$LC_NSID" != "$(ps -o sid= -p $$ | tr -d ' ')" ] && echo 0 || echo 1)"
 LC_OUT="$(lc start 2>&1)"; LC_RC=$?
 case "$LC_RC $LC_OUT" in "0 "*"already running"*"pid $LC_P4"*) PASS=$((PASS + 1)) ;; *) FAIL=$((FAIL + 1)); printf 'FAIL LC start (running): rc=%s %s\n' "$LC_RC" "$LC_OUT" ;; esac
 check "LC start: a second start keeps the same daemon" "$LC_P4" "$(pf_pid "$PIDFILE_LC")"
 lc stop >/dev/null 2>&1
 ok "LC start: the started daemon stops cleanly" "$([ -n "$LC_P4" ] && ! kill -0 "$LC_P4" 2>/dev/null && echo 0 || echo 1)"
 kill -TERM "$LC_DECOY" 2>/dev/null || true
+# log format: every line of the relay log starts with an ISO 8601 local timestamp, the
+# daemon logs its process context at start and the reason of a signal shutdown
+LC_LOG="$TMP/LC/cfg/credo/peer-lan.log"
+LC_BAD="$(grep -cvE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}[+-][0-9]{2}:[0-9]{2} \[credo-peer-lan [0-9]+\] ' "$LC_LOG")"
+check "LC log: every relay log line carries a timestamp" "0" "$LC_BAD"
+grep -q "\[credo-peer-lan $LC_P4\] daemon process: ppid [0-9]*, pgid [0-9]*, sid [0-9]*, spawned double-fork" "$LC_LOG"
+ok "LC log: the daemon logs its process context and spawn method at start" "$?"
+grep -q "\[credo-peer-lan $LC_P4\] shutting down: received SIGTERM (sender pid unknown; ppid " "$LC_LOG"
+ok "LC log: a signal shutdown logs the signal name and the process context" "$?"
+grep -q "ensure: started daemon pid [0-9]* (detached: setsid" "$LC_LOG"
+ok "LC log: ensure launches a detached daemon instead of serving itself" "$?"
+
+# --- SV: the relay survives the end of the session / scope that started it --------
+# #203: a daemon started by the SessionStart hook (`ensure`, backgrounded) stayed in the
+# hook's process group and systemd scope, and a SIGTERM to that group or scope killed it.
+read PSV < <(free_port)
+mkdir -p "$TMP/SV/cfg/sessions" "$TMP/SV/cfg/credo" "$TMP/SV/sock"
+SV_CFG="$TMP/SV/cfg/credo/peer-lan.json"
+cat > "$SV_CFG" <<EOF
+{"this_machine":"SV","listen_host":"127.0.0.1","listen_port":$PSV,
+ "roster_interval":60,"machine_timeout":600,"bind_retry_total":3,"bind_retry_interval":0.2,"peers":[]}
+EOF
+PIDFILE_SV="$TMP/SV/cfg/credo/peer-lan.pid"
+SV_LOG="$TMP/SV/cfg/credo/peer-lan.log"
+sv_wait_pid() { # -> prints the pidfile daemon pid once alive (up to ~8 s)
+    local p=""
+    for _ in $(seq 1 80); do
+        p="$(pf_pid "$PIDFILE_SV")"
+        [ -n "$p" ] && kill -0 "$p" 2>/dev/null && { echo "$p"; return 0; }
+        sleep 0.1
+    done
+    return 1
+}
+sv_stop() { # pid
+    [ -n "$1" ] || return 0
+    kill -TERM "$1" 2>/dev/null
+    for _ in $(seq 1 50); do kill -0 "$1" 2>/dev/null || break; sleep 0.1; done
+    rm -f -- "$PIDFILE_SV"
+}
+# SV1 (double fork): `ensure` started like the hook does, in a shell that is the leader of
+# its own process group (a hook shell); a SIGTERM to that whole group must not reach the
+# daemon, and SIGHUP to the daemon is logged and ignored
+mkfifo "$TMP/SV/hold.fifo"
+setsid bash -c 'echo $$ >"$8"; CLAUDE_CONFIG_DIR="$1" CREDO_PEER_LAN_CONFIG="$2" CREDO_PEER_LAN_SOCKDIR="$3" \
+    nohup "$4" "$5" ensure >>"$6" 2>&1 & read -r -t 30 _ <>"$7"' \
+    _ "$TMP/SV/cfg" "$SV_CFG" "$TMP/SV/sock" "$PY" "$DAEMON" "$SV_LOG" "$TMP/SV/hold.fifo" "$TMP/SV/hook.pid" &
+SV_P1="$(sv_wait_pid)"; [ -n "$SV_P1" ] && PIDS="$PIDS $SV_P1"
+# the hook shell is a session leader, so its pid is its process group id
+SV_HOOK_PGID="$(cat "$TMP/SV/hook.pid" 2>/dev/null)"
+ok "SV1: ensure started a daemon" "$([ -n "$SV_P1" ] && echo 0 || echo 1)"
+ok "SV1: the daemon is not in the hook shell's process group" \
+    "$([ -n "$SV_HOOK_PGID" ] && [ "$(ps -o pgid= -p "$SV_P1" | tr -d ' ')" != "$SV_HOOK_PGID" ] && echo 0 || echo 1)"
+[ -n "$SV_HOOK_PGID" ] && kill -TERM -- "-$SV_HOOK_PGID" 2>/dev/null
+sleep 1
+ok "SV1: a SIGTERM to the hook's process group does not reach the daemon" \
+    "$([ -n "$SV_P1" ] && kill -0 "$SV_P1" 2>/dev/null && echo 0 || echo 1)"
+kill -HUP "$SV_P1" 2>/dev/null
+sleep 0.5
+ok "SV1: SIGHUP leaves the daemon running" "$(kill -0 "$SV_P1" 2>/dev/null && echo 0 || echo 1)"
+grep -q "\[credo-peer-lan $SV_P1\] SIGHUP received and ignored" "$SV_LOG"
+ok "SV1: SIGHUP is logged" "$?"
+sv_stop "$SV_P1"
+# SV2 (systemd): with a systemd user manager the daemon is its own transient service. A
+# launcher inside a transient scope (like a Claude Code session started via systemd-run
+# --scope) starts it, the scope is stopped (SIGTERM to every process in it), the daemon
+# must survive; after the daemon stops, the unit is collected.
+if command -v systemd-run >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1 \
+   && systemctl --user show-environment >/dev/null 2>&1 \
+   && [ "${CREDO_TEST_NO_SYSTEMD:-0}" != 1 ]; then
+    SV_SCOPE="credo-test-sv-$$"
+    rm -f "$TMP/SV/hold2.fifo"; mkfifo "$TMP/SV/hold2.fifo"
+    systemd-run --user --scope --quiet --unit="$SV_SCOPE" env \
+        CREDO_PEER_LAN_SPAWN=systemd CLAUDE_CONFIG_DIR="$TMP/SV/cfg" CREDO_PEER_LAN_CONFIG="$SV_CFG" \
+        CREDO_PEER_LAN_SOCKDIR="$TMP/SV/sock" bash -c \
+        '"$1" "$2" start >>"$3" 2>&1; read -r -t 30 _ <>"$4"' _ "$PY" "$DAEMON" "$TMP/SV/start.out" "$TMP/SV/hold2.fifo" &
+    SV_SC=$!; PIDS="$PIDS $SV_SC"
+    SV_P2="$(sv_wait_pid)"; [ -n "$SV_P2" ] && PIDS="$PIDS $SV_P2"
+    SV_CG="$(cat "/proc/$SV_P2/cgroup" 2>/dev/null)"
+    ok "SV2: the daemon runs in its own systemd user service" \
+        "$(case "$SV_CG" in *"/credo-peer-lan-$PSV-"*.service) echo 0 ;; *) echo 1 ;; esac)"
+    ok "SV2: the daemon is not in the launcher's scope" \
+        "$(case "$SV_CG" in *"$SV_SCOPE"*) echo 1 ;; *) echo 0 ;; esac)"
+    SV_UNIT="$(printf '%s' "$SV_CG" | sed -n 's#.*/\(credo-peer-lan-[0-9-]*\.service\)$#\1#p')"
+    systemctl --user stop "$SV_SCOPE.scope" 2>/dev/null
+    sleep 1
+    ok "SV2: stopping the launcher's scope does not kill the daemon" \
+        "$([ -n "$SV_P2" ] && kill -0 "$SV_P2" 2>/dev/null && echo 0 || echo 1)"
+    grep -q "\[credo-peer-lan $SV_P2\] daemon process: .*spawned systemd:credo-peer-lan-$PSV-" "$SV_LOG"
+    ok "SV2: the daemon logs its systemd unit" "$?"
+    sv_stop "$SV_P2"
+    sleep 0.5
+    ok "SV2: the unit is collected after the daemon stopped" \
+        "$([ -n "$SV_UNIT" ] && [ -z "$(systemctl --user list-units --all --no-legend "$SV_UNIT" 2>/dev/null)" ] && echo 0 || echo 1)"
+else
+    echo "SKIP SV2: no systemd user manager (systemd-run path not testable here)"
+fi
+# SV3: the environment of a detached daemon. The systemd unit (allowlist) and the double
+# fork (caller env minus the same names) never forward session-bound values or names that
+# may carry a secret, and both pin the config path.
+cat > "$TMP/SV/envcheck.py" <<'PYEOF'
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("m", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+cfg = sys.argv[2]
+dropped = ["CREDO_SESSION_ID", "CREDO_PEER_TARGET_PID", "CREDO_SCRATCHPAD", "CREDO_PEER_LAN_EVENT",
+           "CREDO_PEER_LAN_TOKEN_X", "CREDO_NTFY_URL", "CREDO_RELAY_URL", "CREDO_AUTH_HEADER",
+           "CREDO_COOKIE_JAR", "CREDO_WIFI_PSK", "CREDO_API_KEY", "CREDO_PEER_LAN_SPAWNED"]
+kept = ["CREDO_PEER_LAN_NETINFO", "CREDO_PEER_LAN_SPAWN", "CREDO_PEER_LAN_WINPROXY"]
+for k in dropped:
+    os.environ[k] = "v-" + k
+os.environ["MY_SECRET"] = "x"
+os.environ["WSL_INTEROP"] = "/run/x_interop"
+os.environ["TMPDIR"] = "/tmp/session-x"
+os.environ["CREDO_PEER_LAN_CONFIG"] = cfg
+out = []
+for name, env in (("systemd", m._spawn_env()), ("fork", m._fork_env())):
+    bad = [k for k in dropped + ["TMPDIR"] if k in env]
+    if name == "systemd":
+        bad += [k for k in ("MY_SECRET", "WSL_INTEROP") if k in env]
+    miss = [k for k in kept + ["PATH", "CLAUDE_CONFIG_DIR"] if k not in env]
+    if env.get("CREDO_PEER_LAN_CONFIG") != cfg:
+        miss.append("CREDO_PEER_LAN_CONFIG")
+    if name == "fork" and env.get("WSL_INTEROP") != "/run/x_interop":
+        miss.append("WSL_INTEROP (fork keeps it)")
+    out.append("%s:%s" % (name, "ok" if not bad and not miss else "bad=%s miss=%s" % (bad, miss)))
+print(" ".join(out))
+PYEOF
+SV_ENV_OK="$(CLAUDE_CONFIG_DIR="$TMP/SV/cfg" "$PY" "$TMP/SV/envcheck.py" "$DAEMON" "$SV_CFG" 2>&1)"
+check "SV3: detached daemon env (systemd + fork) drops session-bound and secret-like names" \
+    "systemd:ok fork:ok" "$SV_ENV_OK"
 
 # ===========================================================================
 # ALLOWLIST + NETWORK BINDING (fail-closed). Deterministic: CREDO_PEER_LAN_NETINFO

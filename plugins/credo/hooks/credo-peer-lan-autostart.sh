@@ -7,6 +7,10 @@
 # /credo:peer-lan start. The daemon is started DETACHED, so this hook returns
 # immediately and never blocks session start.
 #
+# It also runs on UserPromptSubmit with CREDO_PEER_LAN_EVENT=prompt (see the prompt-mode
+# block below): a throttled, silent ensure that brings a dead relay back between
+# SessionStarts.
+#
 # There is ONE relay per machine with ONE machine config (see credo-peer-lan.py
 # config_path). The hook starts it only from a profile that this config serves (the
 # profile holding it, or a sibling profile the config lists or every sibling when it
@@ -56,6 +60,27 @@ credo_find_python || exit 0
 to5=""
 command -v timeout >/dev/null 2>&1 && to5="timeout 5"
 
+# Prompt mode (UserPromptSubmit, CREDO_PEER_LAN_EVENT=prompt): self-healing between
+# SessionStarts. A relay that died (or never came up) is brought back by a later prompt,
+# not only by the next session start. Throttled to one ensure per profile per
+# CREDO_PEER_LAN_ENSURE_MINUTES (default 5) via a stamp file; silent (no onboarding or
+# hint text, no Windows portproxy trigger: the WSL address does not change while a session
+# runs and SessionStart refreshes the portproxy) and fail-open: any error ends the hook
+# with exit 0 and the prompt goes through untouched.
+prompt_mode=""
+if [ "${CREDO_PEER_LAN_EVENT:-}" = "prompt" ]; then
+  prompt_mode=1
+  mins="${CREDO_PEER_LAN_ENSURE_MINUTES:-5}"
+  case "$mins" in ''|*[!0-9]*) mins=5 ;; esac
+  stampdir="$cfgdir/credo"
+  [ -d "$stampdir" ] || exit 0
+  stamp="$stampdir/peer-lan-ensure.stamp"
+  if [ "$mins" -gt 0 ] && [ -e "$stamp" ] && [ -n "$(find "$stamp" -mmin "-$mins" 2>/dev/null)" ]; then
+    exit 0
+  fi
+  touch "$stamp" 2>/dev/null || exit 0
+fi
+
 # Onboarding context for the AGENT (SessionStart stdout = injected context; this hook
 # never prompts). The lines stay English (agent-facing) but tell the agent to talk to
 # the user in the user's language, English fallback. Cheap: one config-only daemon call,
@@ -74,19 +99,22 @@ state="${out%% *}"
 mdir="${out#* }"
 [ "$mdir" = "$out" ] && mdir=""
 profile="$(basename "$cfgdir")"
-if [ "$state" = "not-configured" ]; then
+# prompt mode stays silent: blank the state for the text blocks only
+txt_state="$state"
+[ -n "$prompt_mode" ] && txt_state="quiet"
+if [ "$txt_state" = "not-configured" ]; then
   echo "[credo-peer-lan] credo can now connect Claude Code sessions across your machines on the home LAN (no cloud). One relay serves every Claude Code profile of this machine, so the setup asks which profiles to serve (default: all found). In an interactive session ask the user once (Ask tool) whether to set it up (guided, /credo:peer-lan Setup flow); if they decline, run \`\${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py onboarding --decline\` so this is never offered again. In autonomous mode do not ask. Ask and explain in the user's language (the language of the conversation); fall back to English if unknown or unsure."
 fi
-if [ "$state" = "unserved" ]; then
+if [ "$txt_state" = "unserved" ]; then
   echo "[credo-peer-lan] This Claude Code profile ($profile) is not served by the LAN relay of this machine (one relay per machine; its config lives in $mdir). Do not set up a second config or relay here. In an interactive session ask the user once (Ask tool) whether this profile should be served too; if yes, run \`\${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py profiles add $profile\`; if no, run \`\${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py onboarding --decline\` so this is never offered again. In autonomous mode do not ask. Ask and explain in the user's language (the language of the conversation); fall back to English if unknown or unsure."
 fi
-if [ "$state" = "unbound" ] && { [ -z "$mdir" ] || [ "$mdir" = "$cfgdir/credo" ]; }; then
+if [ "$txt_state" = "unbound" ] && { [ -z "$mdir" ] || [ "$mdir" = "$cfgdir/credo" ]; }; then
   echo "[credo-peer-lan] The LAN relay is DISABLED: no network is bound yet (new allowlist + network binding since credo 0.72). In an interactive session offer the user the guided setup from /credo:peer-lan (Setup flow) via the Ask tool; in autonomous mode do not ask, just mention it in the next report. Ask and explain in the user's language (the language of the conversation); fall back to English if unknown or unsure."
 fi
 
 # A served profile that does not hold the machine config is never offered the setup again:
 # the holder profile offers it. Only an informational note here.
-if [ "$state" = "unbound" ] && [ -n "$mdir" ] && [ "$mdir" != "$cfgdir/credo" ]; then
+if [ "$txt_state" = "unbound" ] && [ -n "$mdir" ] && [ "$mdir" != "$cfgdir/credo" ]; then
   echo "[credo-peer-lan] The machine LAN relay is DISABLED: no network is bound yet. Its config lives in another profile ($mdir), where the setup belongs. Do not offer the LAN setup in this profile; mention the state only when the user asks about LAN peers. Explain in the user's language (the language of the conversation); fall back to English if unknown or unsure."
 fi
 
@@ -97,6 +125,9 @@ case "$state" in
   unbound|bound) ;;
   *) exit 0 ;;
 esac
+# prompt mode heals only a relay that is configured AND enabled (a bound network); an
+# unbound relay has the LAN off anyway and is started by the next SessionStart
+[ -n "$prompt_mode" ] && [ "$state" != "bound" ] && exit 0
 [ -n "$mdir" ] || mdir="$cfgdir/credo"
 
 # Pairing repair pending (the relay refused a new peer id at the address of a paired
@@ -104,7 +135,7 @@ esac
 # paired address, and recorded it): tell the agent, never accept it on its own.
 # Reads one file.
 pending="$mdir/peer-lan-keys/pending-repair.json"
-if [ -s "$pending" ] && grep -q '"slot"' "$pending" 2>/dev/null; then
+if [ -z "$prompt_mode" ] && [ -s "$pending" ] && grep -q '"slot"' "$pending" 2>/dev/null; then
   echo "[credo-peer-lan] A LAN peer pairing repair is pending: the relay saw an unexpected key or address change (a new id at the address of a paired peer, a paired peer at another address, or a relay without pairing support at a paired address) and refused it. Run \`\${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py pairs\` and tell the user; run the pair-reset command it prints only after the user confirmed (Ask tool) that this peer really was reinstalled, reset or moved (or that the older relay really lives at that address). In autonomous mode never run it, just mention it in the next report. Explain in the user's language (the language of the conversation); fall back to English if unknown or unsure."
 fi
 
@@ -113,7 +144,7 @@ fi
 # writes it, the CLI keeps it in step). The text is rendered by the daemon's network-hint
 # subcommand, which reads that one file and detects nothing. Nothing is changed here.
 hint="$mdir/peer-lan-network-hint.json"
-if [ -s "$hint" ] && grep -q '"kind"' "$hint" 2>/dev/null; then
+if [ -z "$prompt_mode" ] && [ -s "$hint" ] && grep -q '"kind"' "$hint" 2>/dev/null; then
   # shellcheck disable=SC2086  # $to5 is an intentional optional command prefix
   hint_text="$($to5 "$CREDO_PYTHON" "$script" network-hint 2>/dev/null)"
   [ -n "$hint_text" ] && echo "$hint_text"
@@ -125,9 +156,21 @@ mkdir -p "$mdir" 2>/dev/null || true
 # start. ensure itself decides running/replace/start (reading the daemon's pidfile) and
 # the daemon's bind-retry guards concurrent starts, so no pgrep pre-check is needed: a
 # current/newer daemon is left alone, an older one (after cc-up) is replaced, and a
-# losing racer exits 0 without disturbing the incumbent.
-nohup "$CREDO_PYTHON" "$script" ensure >>"$mdir/peer-lan.log" 2>&1 &
+# losing racer exits 0 without disturbing the incumbent. ensure is only the launcher: the
+# daemon itself is started detached from this hook (own systemd user service where one
+# answers, else a double fork), so the end of this session, its process group or its
+# systemd scope never takes the relay along. ensure runs in its own session too.
+if command -v setsid >/dev/null 2>&1; then
+  setsid "$CREDO_PYTHON" "$script" ensure </dev/null >>"$mdir/peer-lan.log" 2>&1 &
+else
+  nohup "$CREDO_PYTHON" "$script" ensure </dev/null >>"$mdir/peer-lan.log" 2>&1 &
+fi
 disown 2>/dev/null || true
+
+# prompt mode: no Windows portproxy trigger. The WSL address does not change while a
+# session runs (SessionStart refreshes the portproxy) and a powershell start on every
+# throttled prompt would cost more than it brings.
+[ -n "$prompt_mode" ] && exit 0
 
 # WSL only: refresh the Windows portproxy so the just-started daemon is reachable from
 # the LAN despite a changed WSL IP. Best-effort, non-blocking, fail-safe - it only

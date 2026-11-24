@@ -402,6 +402,43 @@ another `listen_port` in the config.
 
 Disable the auto-start (and the relay) with `CREDO_PEER_LAN` set to `0`/`false`/`no`/`off`.
 
+**Detached from the session that started it.** `ensure`, `start` and `restart` never run
+the daemon themselves; they launch it detached and wait until it listens. On Linux with a
+systemd user manager (also WSL with systemd) the daemon gets its own transient user service
+(`systemd-run --user --collect`, unit `credo-peer-lan-<port>-<time>-<pid>.service`), so it
+lives outside the process group, the session and the systemd scope of the Claude Code
+session whose hook started it. Before, a daemon started by a session hook stayed in that
+session's process group and scope (for example a `systemd-run --scope` CPU-limit wrapper):
+when that session or its scope ended, the SIGTERM for the whole group also hit the relay
+and its holders. Without a usable systemd user manager (macOS, WSL without systemd,
+containers) it falls back to a double fork with `setsid` and SIGHUP ignored, which leaves
+the caller's process group and session but not a cgroup scope. `CREDO_PEER_LAN_SPAWN`
+selects the method: `auto` (default), `systemd` (no fallback) or `setsid`. The systemd unit
+gets only a small environment (PATH, HOME, locale, XDG dirs, `CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`, `WSL_DISTRO_NAME` and the `CREDO_*` settings) plus the pinned
+`CREDO_PEER_LAN_CONFIG`. `CREDO_*` names that are session-bound (`SESSION_ID`,
+`TARGET_PID`, `SCRATCHPAD`, `CREDO_PEER_LAN_EVENT`) or may carry a secret (`TOKEN`,
+`SECRET`, `PASSW`, `CREDENTIAL`, `KEY`, `NTFY`, `URL`, `AUTH`, `COOKIE`, `PSK`) are never
+passed; the double fork drops the same names and a session's `TMPDIR`. The relay unit
+belongs to the systemd user manager: without `loginctl enable-linger` that manager, and
+with it the relay, stops at the user's last logout (the next session start or prompt
+starts it again).
+
+**Self-healing between session starts.** The same hook also runs on every
+UserPromptSubmit (`CREDO_PEER_LAN_EVENT=prompt`). It is silent and throttled: at most one
+`ensure` per profile every 5 minutes (stamp file `credo/peer-lan-ensure.stamp` in the
+profile, interval `CREDO_PEER_LAN_ENSURE_MINUTES`), only when this profile is served and a
+network is bound, and without the Windows portproxy trigger. `ensure` itself leaves a
+running current daemon alone, so a healthy relay costs one short Python run per 5 minutes.
+Any error ends the hook with exit 0; the prompt is never blocked.
+
+**Log.** Every line of `peer-lan.log` starts with an ISO 8601 local timestamp
+(`2026-01-02T03:04:05.678+01:00 [credo-peer-lan <pid>] ...`). At start the daemon logs
+its parent pid, process group, session, spawn method and cgroup; on shutdown it logs the
+reason, for a signal its name and the same process context (Python has no `SA_SIGINFO`
+handler, so the sender pid is not available). An uncaught exception is logged with its
+traceback, every line stamped.
+
 Served profiles start the same relay. The hook asks the daemon for the one machine config
 and its directory (`credo-peer-lan.py onboarding --state --dir`). A session in the profile
 that holds the config, or in a sibling profile that the config serves, runs `ensure` on
@@ -413,8 +450,9 @@ After `cc-up` the autostart `ensure` auto-replaces an OLDER running daemon with 
 version (it only ever replaces a daemon it can POSITIVELY confirm is older; on any doubt
 it leaves the running one alone). Parallel sessions on one machine share the single daemon
 and never kill each other. A deliberate `restart` is race-safe: it waits for the old
-daemon's port to actually free, then starts the new daemon detached (own session, output
-appended to `peer-lan.log` next to the config) and returns once it listens, so it is safe
+daemon's port to actually free, then starts the new daemon detached (own systemd user
+service or own session, see above; output appended to `peer-lan.log` next to the config)
+and returns once it listens, so it is safe
 to run from any shell and never ends with no daemon running.
 
 ## Token (optional)
@@ -1139,7 +1177,8 @@ reported as FAILED, never as a silent exit 0.
   `${CLAUDE_CONFIG_DIR:-~/.claude}/credo/peer-lan.json` exists (create it with `init`).
 
 - **start** - run it in the foreground: like `restart` it starts the daemon detached
-  from this shell (own session, output appended to `peer-lan.log` next to the config)
+  from this shell (own systemd user service or own session, output appended to
+  `peer-lan.log` next to the config)
   and returns once it listens (it prints its pid). It is safe to call when a daemon may
   already be up: a current one is left alone (`relay already running`), an OLDER one
   (after `cc-up`) is replaced like the autostart `ensure` does.

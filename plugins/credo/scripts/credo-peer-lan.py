@@ -112,6 +112,7 @@ import os
 import re
 import unicodedata
 import secrets
+import shutil
 import signal
 import socket
 import stat
@@ -215,9 +216,50 @@ def _read_version():
 VERSION = _read_version()
 
 
+def _log_stamp():
+    """ISO 8601 local time with offset and milliseconds, e.g. 2026-01-02T03:04:05.678+01:00."""
+    try:
+        now = time.time()
+        local = time.localtime(now)
+        off = time.strftime("%z", local)
+        if len(off) == 5:
+            off = off[:3] + ":" + off[3:]
+        return "%s.%03d%s" % (time.strftime("%Y-%m-%dT%H:%M:%S", local),
+                              int((now % 1) * 1000), off)
+    except Exception:
+        return "?"
+
+
 def log(msg):
-    sys.stderr.write("[credo-peer-lan %d] %s\n" % (os.getpid(), msg))
-    sys.stderr.flush()
+    """One stamped line per message line, so the relay log keeps a timeline (a
+    multi-line message, e.g. a traceback, gets the prefix on every line)."""
+    prefix = "%s [credo-peer-lan %d] " % (_log_stamp(), os.getpid())
+    lines = str(msg).splitlines() or [""]
+    try:
+        sys.stderr.write("".join(prefix + ln + "\n" for ln in lines))
+        sys.stderr.flush()
+    except (OSError, ValueError):
+        pass
+
+
+def _install_log_excepthooks():
+    """Route uncaught exceptions of the main thread and of worker threads through log(),
+    so a crash lands in the relay log with a timestamp instead of a bare traceback."""
+    import traceback
+
+    def _main_hook(etype, value, tb):
+        log("uncaught exception:\n" + "".join(traceback.format_exception(etype, value, tb)))
+
+    def _thread_hook(hook_args):
+        if hook_args.exc_type is SystemExit:
+            return
+        name = getattr(hook_args.thread, "name", "?")
+        log("uncaught exception in thread %s:\n%s" % (name, "".join(traceback.format_exception(
+            hook_args.exc_type, hook_args.exc_value, hook_args.exc_traceback))))
+
+    sys.excepthook = _main_hook
+    if hasattr(threading, "excepthook"):
+        threading.excepthook = _thread_hook
 
 
 def disabled():
@@ -3321,24 +3363,203 @@ def prune_pending_for(store, cfg):
         return 0
 
 
+# How the relay daemon is launched (CREDO_PEER_LAN_SPAWN): "auto" (default) = its own
+# transient systemd user service when a systemd user manager answers (Linux, WSL with
+# systemd), else a double fork; "systemd" = only systemd-run (no fallback, for tests);
+# "setsid" = always the double fork.
+SPAWN_MODES = ("auto", "systemd", "setsid")
+SYSTEMD_RUN_TIMEOUT = 15.0
+# environment handed to a systemd-run daemon (a transient unit does not inherit the
+# caller's environment): these names plus every CREDO_* variable except the session-
+# bound ones. Session-bound values (TMPDIR of a session, WSL_INTEROP of one terminal,
+# session ids) are left out on purpose: the relay outlives the session that started it.
+SPAWN_ENV_NAMES = (
+    "PATH", "HOME", "USER", "LOGNAME", "LANG", "LANGUAGE", "TZ",
+    "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+    "XDG_RUNTIME_DIR", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "WSL_DISTRO_NAME",
+)
+SPAWN_ENV_SKIP = ("CREDO_PEER_LAN_SPAWNED", "CREDO_PEER_LAN_EVENT")
+# session-bound values (one session's id, pid, scratchpad) never reach the relay
+SPAWN_ENV_SESSION_RE = re.compile(r"SESSION_ID|TARGET_PID|SCRATCHPAD", re.I)
+# names that may carry a secret (a ntfy topic in a *_NTFY_URL, tokens, cookies, ...)
+SPAWN_ENV_SECRET_RE = re.compile(
+    r"TOKEN|SECRET|PASSW|CREDENTIAL|_KEY$|APIKEY|NTFY|URL|AUTH|COOKIE|PSK", re.I)
+
+
+def _spawn_env_dropped(k):
+    """True for a CREDO_* variable that must not reach a detached daemon: session-bound,
+    secret-like, or one of SPAWN_ENV_SKIP."""
+    return (k in SPAWN_ENV_SKIP or bool(SPAWN_ENV_SESSION_RE.search(k))
+            or bool(SPAWN_ENV_SECRET_RE.search(k)))
+
+
+def spawn_mode():
+    mode = str(os.environ.get("CREDO_PEER_LAN_SPAWN", "auto")).strip().lower()
+    return mode if mode in SPAWN_MODES else "auto"
+
+
+def _spawn_env():
+    """The environment for a systemd-run daemon (see SPAWN_ENV_NAMES), as a dict."""
+    env = {}
+    for k, v in os.environ.items():
+        if "\n" in v or "\0" in v:
+            continue
+        if k in SPAWN_ENV_NAMES or k.startswith("LC_"):
+            env[k] = v
+        elif k.startswith("CREDO_") and not _spawn_env_dropped(k):
+            env[k] = v
+    env["CREDO_PEER_LAN_CONFIG"] = config_path()
+    return env
+
+
+def _fork_env():
+    """The environment for a double-forked daemon: the caller's environment as before,
+    minus the same CREDO_* session-bound and secret-like variables the systemd path
+    drops (_spawn_env_dropped) and a session's TMPDIR (purged when that session ends),
+    plus the pinned config path. WSL_INTEROP stays: without systemd it is the only way
+    this daemon reaches Windows tools, as before."""
+    env = {k: v for k, v in os.environ.items()
+           if not (k.startswith("CREDO_") and _spawn_env_dropped(k)) and k != "TMPDIR"}
+    env["CREDO_PEER_LAN_CONFIG"] = config_path()
+    return env
+
+
+def _systemd_unit_name():
+    """A unique, valid unit name for one daemon start."""
+    try:
+        port = int((load_config() or {}).get("listen_port", DEFAULT_PORT))
+    except (TypeError, ValueError):
+        port = 0
+    return "credo-peer-lan-%d-%d-%d" % (port, int(time.time()), os.getpid())
+
+
+def _spawn_systemd(path):
+    """Start the daemon as its own transient systemd user service (systemd-run --user
+    --collect). The unit lives in the user manager's app.slice, outside the cgroup scope
+    and the process group of the caller, so the end or stop of the Claude Code session
+    (or its systemd scope, e.g. a CPU-limit slice) that started it never reaches it.
+    Returns the daemon pid, or None when systemd-run is not usable here (the caller then
+    falls back to the double fork). Raises RuntimeError when the unit started but its
+    main process is already gone."""
+    if not sys.platform.startswith("linux"):
+        return None
+    exe = shutil.which("systemd-run")
+    sysctl = shutil.which("systemctl")
+    if not exe or not sysctl:
+        return None
+    # StandardOutput=append: needs a path without whitespace (property value syntax)
+    if any(c.isspace() for c in path):
+        return None
+    unit = _systemd_unit_name()
+    env = _spawn_env()
+    env["CREDO_PEER_LAN_SPAWNED"] = "systemd:%s.service" % unit
+    cmd = [exe, "--user", "--quiet", "--collect", "--unit=" + unit,
+           "--description=credo peer-lan relay",
+           "--property=StandardInput=null",
+           "--property=StandardOutput=append:" + path,
+           "--property=StandardError=append:" + path,
+           "--property=WorkingDirectory=/",
+           "--property=KillMode=control-group"]
+    cmd += ["--setenv=%s=%s" % (k, v) for k, v in sorted(env.items())]
+    cmd += ["--", sys.executable, os.path.abspath(__file__), "daemon"]
+    try:
+        r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, timeout=SYSTEMD_RUN_TIMEOUT, cwd="/")
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        log("systemd-run not usable (rc=%d: %s); falling back to a double fork"
+            % (r.returncode, (r.stderr or b"").decode("utf-8", "replace").strip()[:200]))
+        return None
+    try:
+        q = subprocess.run([sysctl, "--user", "show", "-p", "MainPID", "--value",
+                            unit + ".service"], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           timeout=SYSTEMD_RUN_TIMEOUT, cwd="/")
+        pid = int((q.stdout or b"0").decode().strip() or "0")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pid = 0
+    if pid <= 0:
+        raise RuntimeError("unit %s.service started but has no main process" % unit)
+    return pid
+
+
+def _spawn_double_fork(path):
+    """Classic daemonization: fork, setsid (new session, own process group, no
+    controlling terminal), fork again (the daemon is no session leader and is reparented
+    at once), SIGHUP ignored, stdin /dev/null, stdout/stderr appended to the relay log,
+    cwd /. Returns the daemon (grandchild) pid. Used where no systemd user manager
+    answers (macOS, WSL without systemd, containers). Note: this leaves the process
+    group and session of the caller, not a cgroup scope (only systemd-run does that)."""
+    script = os.path.abspath(__file__)
+    argv = [sys.executable, script, "daemon"]
+    env = _fork_env()
+    env["CREDO_PEER_LAN_SPAWNED"] = "double-fork"
+    rfd, wfd = os.pipe()
+    pid = os.fork()
+    if pid == 0:  # first child
+        try:
+            os.close(rfd)
+            os.setsid()
+            gpid = os.fork()
+            if gpid == 0:  # the daemon
+                try:
+                    os.close(wfd)
+                    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+                    os.chdir("/")
+                    nfd = os.open(os.devnull, os.O_RDONLY)
+                    lfd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                    os.dup2(nfd, 0)
+                    os.dup2(lfd, 1)
+                    os.dup2(lfd, 2)
+                    os.closerange(3, 65536)
+                    os.execve(sys.executable, argv, env)
+                finally:
+                    os._exit(127)
+            os.write(wfd, str(gpid).encode())
+        finally:
+            os._exit(0)
+    os.close(wfd)
+    data = b""
+    try:
+        while True:
+            chunk = os.read(rfd, 64)
+            if not chunk:
+                break
+            data += chunk
+    finally:
+        os.close(rfd)
+        try:
+            os.waitpid(pid, 0)
+        except ChildProcessError:
+            pass
+    try:
+        return int(data.decode() or "0") or None
+    except ValueError:
+        return None
+
+
 def spawn_detached_daemon():
-    """Start `credo-peer-lan.py daemon` fully detached from the caller: a new session
-    (no controlling terminal, own process group, so the caller's shell exiting or being
-    killed never takes it along), stdin from /dev/null, stdout/stderr appended to the
-    relay log. Returns the child pid."""
+    """Start `credo-peer-lan.py daemon` fully detached from the caller and return its pid.
+    Preferred (Linux with a systemd user manager): its own transient service via
+    systemd-run, so neither the caller's process group, session nor cgroup scope (a
+    Claude Code session ending, or its systemd scope being stopped) can take it along.
+    Otherwise (or CREDO_PEER_LAN_SPAWN=setsid) a double fork with setsid and SIGHUP
+    ignored. stdin /dev/null, stdout/stderr appended to the relay log either way."""
     path = relay_log_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(os.devnull, "rb") as devnull, open(path, "ab") as out:
-        proc = subprocess.Popen(
-            [sys.executable, os.path.abspath(__file__), "daemon"],
-            stdin=devnull,
-            stdout=out,
-            stderr=subprocess.STDOUT,
-            close_fds=True,
-            start_new_session=True,
-            cwd="/",
-        )
-    return proc.pid
+    mode = spawn_mode()
+    if mode in ("auto", "systemd"):
+        pid = _spawn_systemd(path)
+        if pid:
+            return pid
+        if mode == "systemd":
+            raise RuntimeError("systemd-run --user is not usable here "
+                               "(CREDO_PEER_LAN_SPAWN=systemd)")
+    pid = _spawn_double_fork(path)
+    if not pid:
+        raise RuntimeError("double fork did not report a daemon pid")
+    return pid
 
 
 def version_tuple(s):
@@ -4254,6 +4475,7 @@ def verify_trust_prompt(prompt, pairs=None, store=None, target=None, now=None):
 # owning remote daemon over TCP.
 # ===========================================================================
 def run_holder(args):
+    _install_log_excepthooks()
     cfg = load_config()
     if cfg is None:
         log("holder: no config, exiting")
@@ -5001,11 +5223,11 @@ class Daemon(object):
         except Exception:
             pass
 
-    def shutdown(self):
+    def shutdown(self, reason="requested"):
         if self.stop.is_set():
             return
         self.stop.set()
-        log("shutting down")
+        log("shutting down: %s" % reason)
         try:
             if self.srv:
                 self.srv.close()
@@ -7011,31 +7233,89 @@ def _live_proxy_sockets(sess_dir):
 def _serve(cfg):
     """Build the Daemon, install SIGTERM/SIGINT handlers, start it (start() now
     bind-retries on EADDRINUSE), run until stopped, and always shut down in finally.
-    Shared by run_daemon / run_ensure (restart spawns a detached `daemon`). Returns 0 normally, 0 on a clean
-    AlreadyRunning give-up, 1 on an unexpected start failure."""
+    Used by run_daemon only: ensure, start and restart spawn a detached `daemon`
+    (spawn_detached_daemon). Returns 0 normally, 0 on a clean AlreadyRunning give-up,
+    1 on an unexpected start failure."""
     # pin the machine config this daemon runs with: a profile config created later must
     # not move the state dirs (pidfile, keys, trust, sockets) of a running relay
     os.environ["CREDO_PEER_LAN_CONFIG"] = config_path()
+    _install_log_excepthooks()
     daemon = Daemon(cfg)
 
-    def _sig(_signo, _frame):
-        daemon.shutdown()
+    def _sig(signo, _frame):
+        daemon.shutdown(signal_reason(signo))
+
+    def _hup(_signo, _frame):
+        log("SIGHUP received and ignored (%s)" % process_context())
 
     signal.signal(signal.SIGTERM, _sig)
     signal.signal(signal.SIGINT, _sig)
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, _hup)
     try:
         daemon.start()
     except AlreadyRunning:
         return 0
     except Exception as exc:
-        log("failed to start: %s" % exc)
+        log("failed to start: %s (%s)" % (exc, process_context(with_cgroup=True)))
         return 1
+    # after start(): it rotates an oversized log first
+    log("daemon process: %s" % process_context(with_cgroup=True))
     try:
         while not daemon.stop.wait(1.0):
             daemon.keep_pidfile()
+    except BaseException as exc:
+        daemon.shutdown("main loop ended by %s: %s" % (type(exc).__name__, exc))
+        raise
     finally:
-        daemon.shutdown()
+        daemon.shutdown("main loop ended")
     return 0
+
+
+def _cgroup_text():
+    """This process's cgroup (Linux /proc/self/cgroup, the v2 line or the first one), or ""."""
+    try:
+        with open("/proc/self/cgroup") as fh:
+            lines = [ln.strip() for ln in fh if ln.strip()]
+    except OSError:
+        return ""
+    for ln in lines:
+        if ln.startswith("0::"):
+            return ln[3:]
+    return lines[0] if lines else ""
+
+
+def process_context(with_cgroup=False):
+    """Where this process lives: parent pid, process group, session, how it was spawned
+    and (optionally) its cgroup. Logged at start and with every shutdown signal, so a
+    kill that comes with a session's process group or systemd scope can be told apart
+    from a targeted stop. Never raises."""
+    parts = []
+    try:
+        parts.append("ppid %d" % os.getppid())
+        if hasattr(os, "getpgrp"):
+            parts.append("pgid %d" % os.getpgrp())
+        if hasattr(os, "getsid"):
+            parts.append("sid %d" % os.getsid(0))
+    except OSError:
+        pass
+    parts.append("spawned %s" % (os.environ.get("CREDO_PEER_LAN_SPAWNED") or "in the foreground"))
+    if with_cgroup:
+        cg = _cgroup_text()
+        if cg:
+            parts.append("cgroup %s" % cg)
+    return ", ".join(parts)
+
+
+def signal_reason(signo):
+    """Shutdown reason for a signal: its name plus the process context. Python offers no
+    SA_SIGINFO handler, so the sender pid is not available; the parent pid and the
+    process group / session show whether the daemon still hung in a caller's tree."""
+    try:
+        name = signal.Signals(signo).name
+    except (ValueError, AttributeError):
+        name = "signal %s" % signo
+    return "received %s (sender pid unknown; %s)" % (name, process_context(with_cgroup=True))
 
 
 def run_daemon(_args):
@@ -7059,10 +7339,14 @@ def run_ensure(_args):
       - a live daemon on the pidfile pid:
           * running or current version unparseable, or running >= current
                                    -> leave it, return 0 (no-op).
-          * running < current      -> SIGTERM it; if the port frees, serve the new
+          * running < current      -> SIGTERM it; if the port frees, start the new
                                       version, else leave the old one and return 0.
-      - no live daemon            -> serve (start() bind-retries past any lingering
-                                      hold). AlreadyRunning -> return 0."""
+      - no live daemon            -> start one (its start() bind-retries past any
+                                      lingering hold; losing a race to a concurrent
+                                      start reads as running, return 0).
+    The daemon is never this process: it is started DETACHED (spawn_detached_daemon,
+    own systemd user service or double fork), so the session, process group or systemd
+    scope of the hook that ran ensure can end without taking the relay along."""
     if disabled():
         log("disabled via CREDO_PEER_LAN; exiting")
         return 0
@@ -7088,7 +7372,7 @@ def run_ensure(_args):
         host = cfg.get("listen_host", "127.0.0.1")
         port = int(cfg.get("listen_port", DEFAULT_PORT))
         if _terminate_incumbent(old_pid, host, port, pstart=pf.get("pstart")):
-            return _serve(cfg)
+            return _start_detached(cfg, "ensure")
         log(
             "could not reclaim %s:%d from older daemon pid %s; leaving it running"
             % (host, port, old_pid)
@@ -7097,7 +7381,7 @@ def run_ensure(_args):
     if relay_port_held(cfg):
         log("%s; leaving it" % held_port_text(cfg))
         return 0
-    return _serve(cfg)
+    return _start_detached(cfg, "ensure")
 
 
 def run_restart(_args):
@@ -7163,39 +7447,63 @@ def run_start(_args):
 
 
 def _start_detached(cfg, what):
+    """Start the daemon detached and wait until it listens. `ensure` (hook, log output)
+    reports through log(); start/restart (CLI) print the result and write errors to
+    stderr as before."""
     try:
         child = spawn_detached_daemon()
     except Exception as exc:
-        sys.stderr.write("credo-peer-lan %s: could not start the daemon: %s\n" % (what, exc))
+        _say_error(what, "could not start the daemon: %s" % exc)
         return 1
-    log("%s: started daemon pid %d (detached, log %s)" % (what, child, relay_log_path()))
+    log("%s: started daemon pid %d (detached: %s, log %s)"
+        % (what, child, spawn_mode(), relay_log_path()))
     return _await_daemon(child, cfg, what)
+
+
+def _say_error(what, text):
+    if what == "ensure":
+        log("%s: %s" % (what, text))
+    else:
+        sys.stderr.write("credo-peer-lan %s: %s\n" % (what, text))
 
 
 def _await_daemon(child, cfg, what="restart"):
     """Wait until the detached daemon child recorded itself in the pidfile (it is
-    listening). Returns 0 then, 1 when it exited first or never came up in time."""
+    listening). Returns 0 then, 1 when it exited first or never came up in time. A child
+    that lost the port to a concurrent start (another live daemon of this config now in
+    the pidfile) is no failure: that relay runs, 0."""
     wait = float(cfg.get("bind_retry_total", BIND_RETRY_TOTAL)) + 10.0
     deadline = time.monotonic() + wait
     while time.monotonic() < deadline:
         pf = read_pidfile()
         if pf and pf.get("pid") == child and pidfile_daemon(pf) == child:
-            print("relay %s: pid %d, version %s, port %s"
-                  % ("restarted" if what == "restart" else "started", child,
-                     pf.get("version"), pf.get("listen_port")))
+            text = ("relay %s: pid %d, version %s, port %s"
+                    % ("restarted" if what == "restart" else "started", child,
+                       pf.get("version"), pf.get("listen_port")))
+            if what == "ensure":
+                log(text)
+            else:
+                print(text)
             return 0
         try:
-            # reap it if it already exited (it is our child until it is reparented)
+            # reap it if it already exited (only a direct child; a double-forked or
+            # systemd daemon is no child of ours)
             done, _status = os.waitpid(child, os.WNOHANG)
         except ChildProcessError:
             done = 0
         if done == child or not pid_alive(child):
-            sys.stderr.write("credo-peer-lan %s: the new daemon exited at once; see %s\n"
-                             % (what, relay_log_path()))
+            other = pidfile_daemon(read_pidfile())
+            if other is not None and other != child:
+                if what == "ensure":
+                    log("%s: another start won the race; relay pid %d runs" % (what, other))
+                else:
+                    print("relay already running: pid %d" % other)
+                return 0
+            _say_error(what, "the new daemon exited at once; see %s" % relay_log_path())
             return 1
         time.sleep(0.2)
-    sys.stderr.write("credo-peer-lan %s: the new daemon (pid %d) did not come up within "
-                     "%.0fs; see %s\n" % (what, child, wait, relay_log_path()))
+    _say_error(what, "the new daemon (pid %d) did not come up within %.0fs; see %s"
+               % (child, wait, relay_log_path()))
     return 1
 
 
