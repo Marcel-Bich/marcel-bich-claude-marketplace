@@ -76,10 +76,15 @@ esac
 
 # --- no-block commands: no long inline code, literal paths, local bins, filename -------
 has "NO-BLOCK: block present" "NO-BLOCK COMMANDS:" "$gp_ctx"
-has "NO-BLOCK: inline interpreters named" "python -c, node -e, perl -e, ruby -e, a heredoc or pipe into an interpreter" "$gp_ctx"
-has "NO-BLOCK: write the script to TMPDIR or scratchpad" "Write the script to the session TMPDIR or scratchpad" "$gp_ctx"
-has "NO-BLOCK: separate call with a literal path" "run it in a separate call with a literal path" "$gp_ctx"
+has "NO-BLOCK: inline code forms named" "python -c, node -e, perl -e, ruby -e, bash -c, powershell -Command, a heredoc or pipe into an interpreter" "$gp_ctx"
+has "NO-BLOCK: steering reason (error-prone, hooks)" "huge commands are error-prone and often stopped by hooks" "$gp_ctx"
 has "NO-BLOCK: guard limit named" "guards.inline_code_max characters, default 1500" "$gp_ctx"
+has "NO-BLOCK: splitting into smaller commands allowed" "split the work into several smaller commands (allowed)" "$gp_ctx"
+has "NO-BLOCK: script into the session TMPDIR" "Write the script (.py/.sh/.ps1) to the session TMPDIR (\$TMPDIR, normally /tmp/credo-tmp-<uid>/<session id>/" "$gp_ctx"
+has "NO-BLOCK: separate call with a literal path" "run it in a separate call with a literal path" "$gp_ctx"
+has "NO-BLOCK: PowerShell script from WSL" "powershell.exe -File \"\$(wslpath -w <path>)\"" "$gp_ctx"
+has "NO-BLOCK: own-rm with the literal helper path" "delete it with python3 $(cd "$HERE" && pwd)/credo-cleanup.py own-rm <literal path>" "$gp_ctx"
+has "NO-BLOCK: own-rm also for subagent files" "also when a subagent wrote them" "$gp_ctx"
 has "NO-BLOCK: never write and run in one command" "Never write and run a file in the same command" "$gp_ctx"
 has "NO-BLOCK: no variable script paths" 'No VAR=$(...); $VAR/script calls - use literal paths' "$gp_ctx"
 has "NO-BLOCK: local bin over npx" "prefer ./node_modules/.bin/<tool> over npx" "$gp_ctx"

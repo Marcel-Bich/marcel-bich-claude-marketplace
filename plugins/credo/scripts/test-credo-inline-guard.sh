@@ -111,6 +111,23 @@ bash_case "inside a command substitution" deny "echo \"\$(python3 -c '$BIG')\""
 bash_case "inside a subshell" deny "( cd /tmp; node -e '$BIG' )"
 bash_case "redirects around it" deny "python3 -c '$BIG' > out.txt 2>&1"
 
+# --- denied: shell -c and PowerShell -Command strings (measured, not parsed again) --------
+bash_case "bash -c" deny "bash -c '$BIG'"
+bash_case "bash -lc cluster" deny "bash -lc '$BIG'"
+bash_case "bash -o pipefail -c" deny "bash -o pipefail -c '$BIG'"
+bash_case "sh -c" deny "sh -c '$BIG'"
+bash_case "zsh -c" deny "zsh -c '$BIG'"
+bash_case "dash -c" deny "dash -c '$BIG'"
+bash_case "/bin/bash -c by path" deny "/bin/bash -c '$BIG'"
+bash_case "powershell.exe -Command" deny "powershell.exe -NoProfile -Command '$BIG'"
+bash_case "powershell -c" deny "powershell -c '$BIG'"
+bash_case "pwsh -Command" deny "pwsh -Command '$BIG'"
+bash_case "pwsh.exe -command lowercase" deny "pwsh.exe -command '$BIG'"
+bash_case "PowerShell -ExecutionPolicy Bypass -Command" deny \
+    "powershell.exe -ExecutionPolicy Bypass -Command '$BIG'"
+bash_case "PowerShell -Command rest of line counts" deny \
+    "powershell.exe -Command Get-ChildItem $(code 799 | tr '\n' ' ') $(code 799 | tr '\n' ' ')"
+
 # --- denied: browser_run_code -------------------------------------------------------------
 check "browser_run_code over the limit" deny \
     "$(decide mcp__plugin_playwright_playwright__browser_run_code code "$BIG")"
@@ -120,15 +137,30 @@ check "other server prefix, same tool name" deny "$(decide mcp__playwright__brow
 
 # --- deny reasons name the alternative ----------------------------------------------------
 r="$(reason_of Bash command "python3 -c '$BIG'")"
-case "$r" in *"Write tool"*"SEPARATE Bash call with a literal path"*) ok=yes ;; *) ok=no ;; esac
+case "$r" in *"Write tool"*"SEPARATE call with a literal path"*) ok=yes ;; *) ok=no ;; esac
 check "Bash reason: Write a script, run it separately with a literal path" yes "$ok"
-case "$r" in *"1600 characters, over the limit of 1500"*) ok=yes ;; *) ok=no ;; esac
+case "$r" in *"split it into several smaller commands (allowed)"*) ok=yes ;; *) ok=no ;; esac
+check "Bash reason: splitting into smaller commands is offered as allowed" yes "$ok"
+case "$r" in *"Not a ban on the work"*) ok=yes ;; *) ok=no ;; esac
+check "Bash reason: steers instead of banning the work" yes "$ok"
+case "$r" in *'powershell.exe -File "$(wslpath -w'*) ok=yes ;; *) ok=no ;; esac
+check "Bash reason: PowerShell script route from WSL" yes "$ok"
+case "$r" in *"1600 characters of inline python3 code, over the limit of 1500"*) ok=yes ;; *) ok=no ;; esac
 check "Bash reason: size and limit" yes "$ok"
 case "$r" in *"guards.inline_code_max"*) ok=yes ;; *) ok=no ;; esac
 check "Bash reason: config key named" yes "$ok"
+case "$r" in *'session TMPDIR ($TMPDIR, normally /tmp/credo-tmp-<uid>/<session id>/)'*) ok=yes ;; *) ok=no ;; esac
+check "Bash reason: throwaway scripts into the session TMPDIR" yes "$ok"
+case "$r" in *"python3 $HERE/credo-cleanup.py own-rm <literal path>"*) ok=yes ;; *) ok=no ;; esac
+check "Bash reason: own-rm with the literal helper path" yes "$ok"
+r="$(reason_of Bash command "powershell.exe -NoProfile -Command '$BIG'")"
+case "$r" in *"inline powershell code"*) ok=yes ;; *) ok=no ;; esac
+check "PowerShell reason names powershell" yes "$ok"
 r="$(reason_of mcp__plugin_playwright_playwright__browser_run_code code "$BIG")"
 case "$r" in *"filename parameter"*) ok=yes ;; *) ok=no ;; esac
 check "browser_run_code reason: filename parameter" yes "$ok"
+case "$r" in *"several smaller browser_run_code calls (allowed)"*) ok=yes ;; *) ok=no ;; esac
+check "browser_run_code reason: splitting offered" yes "$ok"
 
 # --- allowed: size only, short multi-line code passes ------------------------------------
 bash_case "short multi-line python3 -c" allow "python3 -c '$SMALL'"
@@ -166,7 +198,12 @@ bash_case "long echo piped into a non-interpreter" allow "echo \"$LONGMSG\" | gr
 bash_case "long pipe without interpreter code" allow \
     "grep -rn python3 . | sed -e 's/a/b/' | awk '{print \$1}' | sort | uniq -c | sort -rn | head -50 # $LONGMSG"
 bash_case "interpreter only inside a quoted word" allow "printf '%s' \"python3 -c '$BIG'\""
-bash_case "bash -c is not an interpreter here" allow "bash -c '$BIG'"
+bash_case "short bash -c passes" allow "bash -c 'cd /tmp && ls -la | head'"
+bash_case "short powershell.exe -Command passes" allow "powershell.exe -NoProfile -Command 'Get-ChildItem C:\\ | Select-Object -First 5'"
+bash_case "short multi-line bash -c passes" allow "bash -c '$SMALL'"
+bash_case "powershell -File is not inline text" allow "powershell.exe -File C:\\tmp\\check.ps1 $LONGMSG"
+bash_case "powershell -EncodedCommand out of scope" allow "powershell.exe -EncodedCommand $(code 2000 | tr -d ' =+\\n')"
+bash_case "bash script with long args" allow "bash tool.sh \"$LONGMSG\""
 bash_case "short perl -i -pe" allow "perl -i -pe 's/a/b/' file.txt"
 bash_case "npx is not inline code" allow "npx tsc --noEmit"
 

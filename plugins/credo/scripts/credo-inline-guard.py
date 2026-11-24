@@ -17,6 +17,9 @@ Detected (per simple command, after env assignments and wrappers like sudo, env,
 timeout, taskset, nohup, time, command, exec):
   python*/py/pypy -c CODE    node/nodejs/bun -e|-p|--eval|--print CODE    deno eval CODE
   perl/ruby -e CODE (also clusters like -ne, -lpe)    php -r CODE
+  bash/sh/zsh/dash -c STRING (also -lc)    powershell/pwsh -Command|-c TEXT (the rest of the
+  line; -EncodedCommand and -File are not inline text). These strings are only measured,
+  never parsed again.
   an interpreter reading its program from stdin (no script operand, or "-") with a
   heredoc (<<EOF) or here-string (<<<) body, also through "cat <<EOF | python3" and
   "echo/printf ... | python3"
@@ -64,6 +67,11 @@ WRAPPERS = {
 ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
 PYTHON_RE = re.compile(r"^(python(\d+(\.\d+)*)?[tw]?|py|pypy\d*)$")
 PY_NOARG_FLAGS = set("bBdEhiIOPqRsSuvx")
+SHELLS = {"bash", "sh", "zsh", "dash"}
+# PowerShell parameters that take a value (lowercase, without the dash)
+PS_VALUED = {"executionpolicy", "ep", "ex", "windowstyle", "w", "outputformat", "of", "o",
+             "inputformat", "if", "i", "workingdirectory", "wd", "configurationname", "config",
+             "settingsfile", "settings", "psconsolefile", "version", "v", "custompipename"}
 
 
 class Simple(object):
@@ -357,6 +365,58 @@ def strip_prefix(words):
     return words[i:]
 
 
+def shell_code(args):
+    """The command string of bash/sh/zsh/dash -c (also clusters like -lc), else None.
+
+    Only its size is measured; the string is not parsed again."""
+    has_c = False
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            i += 1
+            break
+        if a in ("-o", "+o", "-O", "+O"):
+            i += 2
+            continue
+        if a.startswith("--"):
+            i += 1
+            continue
+        if len(a) > 1 and a[0] in "-+":
+            if a[0] == "-" and "c" in a[1:]:
+                has_c = True
+            i += 1
+            continue
+        break
+    if not has_c or i >= len(args):
+        return None
+    return args[i]
+
+
+def powershell_code(args):
+    """The text after -Command/-c of powershell or pwsh (the rest of the line), else None.
+
+    -EncodedCommand and -File are not inline text here; only the size is measured."""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if not a or a[0] not in "-/":
+            return None
+        bare = a.lstrip("-/").lower()
+        if bare == "c" or len(bare) >= 3 and "command".startswith(bare):
+            rest = args[i + 1:]
+            if not rest or rest == ["-"]:
+                return None
+            return " ".join(rest)
+        if bare in PS_VALUED:
+            i += 2
+            continue
+        if bare in ("file", "f", "encodedcommand", "e", "ec", "enc"):
+            return None
+        i += 1
+    return None
+
+
 def inline_code(words):
     """(code or None, reads_stdin_program) for one command word list (prefix stripped)."""
     if not words:
@@ -425,6 +485,10 @@ def inline_code(words):
                 return (args[i + 1] if i + 1 < len(args) else None), False
             i += 1
         return None, True
+    if name in SHELLS:
+        return shell_code(args), False
+    if name.lower() in ("powershell", "pwsh"):
+        return powershell_code(args), False
     if name == "php":
         i = 0
         while i < len(args):
@@ -571,17 +635,29 @@ def main():
     if limit is None or size <= limit:
         return
     if kind == "playwright":
-        deny("credo: the inline code of this browser_run_code call has %d characters, over the limit of %d "
-             "(guards.inline_code_max). Long inline code blocks unattended runs on review prompts. Write the code "
-             "to a .js file in the session scratchpad/TMPDIR with the Write tool and pass its path in the "
-             "filename parameter of browser_run_code instead of code." % (size, limit))
+        deny("credo: this browser_run_code call carries %d characters of inline code, over the limit of %d "
+             "(guards.inline_code_max). Not a ban on the work, only on the oversized call: huge inline code is "
+             "error-prone and often stopped by hooks. Either split it into several smaller browser_run_code "
+             "calls (allowed), or Write the code to a .js file in the session TMPDIR/scratchpad and pass its "
+             "path in the filename parameter instead of code.%s" % (size, limit, cleanup_hint()))
         return
-    deny("credo: the inline %s code in this command has %d characters, over the limit of %d "
-         "(guards.inline_code_max). Long inline interpreter code (-c/-e, heredoc or pipe into an interpreter) "
-         "blocks unattended runs on review prompts. Write the code to a script file in the session "
-         "scratchpad/TMPDIR with the Write tool, then run it in a SEPARATE Bash call with a literal path "
-         "(for example: python3 /path/to/scratchpad/check.py). Do not write and run the file in the same "
-         "command, and do not call it through a variable." % (name or "interpreter", size, limit))
+    deny("credo: this command carries %d characters of inline %s code, over the limit of %d "
+         "(guards.inline_code_max). Not a ban on the work, only on the oversized command: huge inline code is "
+         "error-prone and often stopped by hooks. Do the same work one of these ways: (a) split it into several "
+         "smaller commands (allowed); (b) Write the code to a script file (.py/.sh/.js/.ps1) in the session "
+         "TMPDIR (or scratchpad) with the Write tool, then run it in a SEPARATE call with a literal path (for example "
+         "python3 /path/to/scratchpad/check.py; PowerShell from WSL: powershell.exe -File \"$(wslpath -w "
+         "/path/to/scratchpad/check.ps1)\"). Do not write and run the file in the same command, and do not call "
+         "it through a variable.%s" % (size, name or "interpreter", limit, cleanup_hint()))
+
+
+def cleanup_hint():
+    """The own-rm line for throwaway scripts, with the literal helper path."""
+    helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), "credo-cleanup.py")
+    return (" Put throwaway scripts into the session TMPDIR ($TMPDIR, normally /tmp/credo-tmp-<uid>/<session "
+            "id>/) and delete each one once it is no longer needed with: python3 %s own-rm <literal path> "
+            "(no prompt for files of this session, a file changed in the last 2 minutes is only reported and "
+            "the done-gate purge takes it later)." % helper)
 
 
 if __name__ == "__main__":

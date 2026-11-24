@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # credo-inline-guard.sh - credo plugin (PreToolUse hook, matcher Bash and *browser_run_code*).
 #
-# Purpose: long inline interpreter code (python3 -c "...", node -e "...", a heredoc fed
-# to an interpreter) and long inline Playwright browser_run_code blobs cannot be reviewed
-# by the permission layer and stall unattended runs (main agent and subagents alike;
+# Purpose: long inline code (python3 -c "...", node -e "...", bash -c "...", powershell
+# -Command "...", a heredoc fed to an interpreter) and long inline Playwright
+# browser_run_code blobs are error-prone, often stopped by hooks or review prompts, and
+# stall unattended runs (main agent and subagents alike;
 # PreToolUse hooks also fire for tool calls made inside subagents). Above the size limit
 # (guards.inline_code_max, default 1500 characters, 0 = off; env CREDO_INLINE_CODE_MAX
-# overrides) the call is denied with the alternative: Write the code to a script file and
-# run it in a separate call with a literal path (browser_run_code: the filename parameter).
+# overrides) the call is denied with the alternatives: split it into several smaller calls
+# (allowed), or Write the code to a script file and run it in a separate call with a
+# literal path (browser_run_code: the filename parameter).
 # Only the size counts; short multi-line code passes. The analysis lives in
 # scripts/credo-inline-guard.py (stdlib only).
 #
@@ -32,7 +34,7 @@ INPUT="$(cat 2>/dev/null)" || exit 0
 
 # Prefilter: an interpreter name or the Playwright tool must appear somewhere.
 case "$INPUT" in
-    *python*|*pypy*|*node*|*bun*|*deno*|*perl*|*ruby*|*php*|*browser_run_code*|*"py "*|*"py.exe"*) ;;
+    *python*|*pypy*|*node*|*bun*|*deno*|*perl*|*ruby*|*php*|*bash*|*"sh -"*|*zsh*|*dash*|*owershell*|*OWERSHELL*|*wsh*|*browser_run_code*|*"py "*|*"py.exe"*) ;;
     *) exit 0 ;;
 esac
 
