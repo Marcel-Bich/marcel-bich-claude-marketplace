@@ -31,6 +31,9 @@
 #     placeholder forms are accepted as they are; a dialog after the burst -> no Enter; a
 #     field that holds text -> skipped at once and left as it is; a failed send -> nothing
 #     typed
+#   - confirmed submit (item 204): an Enter that is swallowed is re-sent; a burst that is never
+#     submitted is removed again (WARNING logged); transcript rows with dialog words above the
+#     input box never withhold Enter; burst_state classifies fake captures
 #   - turns trigger: after the mode's turns since the last reminder, once idle; the
 #     reminder itself is no user turn
 #   - minutes trigger (shortened to 1.2 s): every interval, counted from the last reminder
@@ -182,6 +185,36 @@ assert w.type_chunks("") == [] and w.type_chunks("short") == ["short"]
 PYEOF
 ok "pieces join back to the text, at most TYPE_CHUNK_CHARS each" "$?"
 
+# burst_state (item 204): the field around a reminder burst, from fake captures. Transcript
+# rows above the input box (an earlier numbered message drawn with the prompt marker, a quoted
+# "Do you want to" line) are never a dialog; a menu below the box or no box at all is.
+SCRIPT_DIR="$SCRIPT_DIR" "$PY" - <<'PYEOF'
+import os, sys
+sys.path.insert(0, os.environ["SCRIPT_DIR"])
+import credo_pane_wake as w
+R = "─" * 60
+T = "[credo-reminder] Check yourself against what we agreed: re-read the rules " * 20
+def cap(field, above=("● Done.", ""), below=("  ? for shortcuts",)):
+    return "\n".join(list(above) + [R, "❯ " + field, R] + list(below)) + "\n"
+st = lambda c: w.burst_state(c, T)[0]
+assert st(cap("[Pasted text #1]")) == "own"
+assert st(cap("[Pasted text #1 +11 lines]")) == "own"
+assert st(cap("[Pasted text #1 +11 lines] ")) == "own"
+assert st(cap(T[-90:])) == "own", "the scrolled tail of the own text"
+assert st(cap("")) == "empty"
+assert st(cap("please check the handoff")) == "foreign"
+assert st(cap("[Pasted text #1 +11 lines] and more")) == "foreign"
+quoted = ["❯ 2. Lock hook hooks/example-guard.py", "  3. something else",
+          "Do you want to continue? [Y/n] Abort.", "", "● Working on it.", "", "● Done.",
+          "", "", ""]
+assert st(cap("[Pasted text #1 +11 lines]", above=quoted)) == "own", "transcript is no dialog"
+assert st(cap("", above=quoted)) == "empty"
+assert st(cap("[Pasted text #1]", below=("  /compact   Clear history",))) == "dialog"
+assert st("● Done.\n\nDo you want to proceed?\n❯ 1. Yes\n  2. No\n") == "dialog"
+assert st("") == "dialog"
+PYEOF
+ok "burst_state: own burst, empty, foreign text, dialog; transcript rows are no dialog" "$?"
+
 # --- hook wiring ---------------------------------------------------------------------
 [ -x "$HOOK_SH" ]; ok "hook wrapper is executable" "$?"
 jq -e '[.hooks.UserPromptSubmit[].hooks[].command] | any(. == "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-reminder.sh\" turn")' "$HOOKS_JSON" >/dev/null
@@ -270,11 +303,21 @@ case "$1" in
             End) ;;
             Enter)
                 printf '%s\n' "$(date +%s%N)" >> "$FAKE_ENTER_LOG"
+                # $FAKE_ENTER_IGNORE holds a count: that many Enter presses are swallowed
+                # (Claude Code still busy with the paste), the field keeps the burst
+                ign="$(cat "$FAKE_ENTER_IGNORE" 2>/dev/null)"
+                if [ -n "$ign" ] && [ "$ign" -gt 0 ]; then
+                    printf '%s' "$((ign - 1))" > "$FAKE_ENTER_IGNORE"
+                    printf '%s\n' "$(show)" >> "$FAKE_BUFLOG"; exit 0
+                fi
                 buf="$(cat "$FAKE_BUF" 2>/dev/null)"
                 [ -n "$buf" ] && printf '%s\n' "$buf" >> "$FAKE_SUBMITS"
                 : > "$FAKE_BUF"; rm -f "$FAKE_PASTE" ;;
             *)
-                for _ in "${@:4}"; do bspace_one; done ;;
+                for _ in "${@:4}"; do
+                    [ -s "$FAKE_BUF" ] || break  # BSpace on an empty field does nothing
+                    bspace_one
+                done ;;
         esac
         printf '%s\n' "$(show)" >> "$FAKE_BUFLOG" ;;
 esac
@@ -304,7 +347,8 @@ printf '%s\n' "● Done." "" "Do you want to proceed?" "❯ 1. Yes" "  2. No" ""
 export FAKE_TMUX_LOG="$TMP/tmux.log" FAKE_ABOVE="$TMP/above.txt" FAKE_BUF="$TMP/buf.txt" \
     FAKE_SUBMITS="$TMP/submits.txt" FAKE_BUFLOG="$TMP/buflog.txt" FAKE_PANE_ID=%5 \
     FAKE_TYPE_LOG="$TMP/type.log" FAKE_PASTE="$TMP/paste.txt" FAKE_ENTER_LOG="$TMP/enter.log" \
-    FAKE_NOBOX_FLAG="$TMP/nobox.flag" FAKE_NOBOX_VIEW="$TMP/nobox_view.txt"
+    FAKE_NOBOX_FLAG="$TMP/nobox.flag" FAKE_NOBOX_VIEW="$TMP/nobox_view.txt" \
+    FAKE_ENTER_IGNORE="$TMP/enter_ignore.txt"
 printf '%s\n' "● Done." "" "Do you want to proceed?" "❯ 1. Yes" "  2. No" "" > "$FAKE_NOBOX_VIEW"
 cp "$TMP/above_idle.txt" "$FAKE_ABOVE"
 : > "$FAKE_SUBMITS"; : > "$FAKE_BUF"; : > "$FAKE_TMUX_LOG"; : > "$FAKE_BUFLOG"; : > "$FAKE_TYPE_LOG"
@@ -658,6 +702,51 @@ check "dialog after the burst: no Enter sent" "$EN0" "$(grep -c '' "$FAKE_ENTER_
 check "dialog after the burst: nothing submitted" "$S0" "$(n_submits)"
 ok "dialog after the burst: the burst is left in the field" "$([ -s "$FAKE_BUF" ] && echo 0 || echo 1)"
 : > "$FAKE_BUF"; rm -f "$FAKE_PASTE"
+
+# item 204: Enter swallowed once (Claude Code still busy with the paste): the placeholder is
+# still in the field, Enter is re-sent and the reminder is submitted
+SID_R1="aaaaaaaa-1111-2222-3333-rrrrrrrrrrr1"
+cfg "reminder:\n  autonomous: {minutes: 0.02}\n"
+set_state "$SID_R1"; mode_of "$SID_R1" autonomous
+S0="$(n_submits)"; EN0="$(grep -c '' "$FAKE_ENTER_LOG")"
+printf '1' > "$FAKE_ENTER_IGNORE"
+hook start "$SID_R1" startup
+wait_for 60 subs_gt "$S0"; ok "Enter swallowed once: the reminder is submitted after a re-send" "$?"
+stop_worker "$SID_R1"
+check "Enter swallowed once: two Enter presses" "2" "$(( $(grep -c '' "$FAKE_ENTER_LOG") - EN0 ))"
+ok "Enter swallowed once: the re-send is logged" "$(grep -q 'Enter re-sent (1 of 3)' "$CFG/credo/reminder-$SID_R1.log" && echo 0 || echo 1)"
+ok "Enter swallowed once: the field is empty" "$([ ! -s "$FAKE_BUF" ] && echo 0 || echo 1)"
+rm -f "$FAKE_ENTER_IGNORE"
+
+# item 204: Enter never takes effect: 1 + 3 Enter presses, then the own burst is removed from
+# the field (it would block self-compact, self-reload and self-restart), logged loudly
+SID_R2="aaaaaaaa-1111-2222-3333-rrrrrrrrrrr2"
+set_state "$SID_R2"; mode_of "$SID_R2" autonomous
+S0="$(n_submits)"; EN0="$(grep -c '' "$FAKE_ENTER_LOG")"
+printf '99' > "$FAKE_ENTER_IGNORE"
+hook start "$SID_R2" startup
+wait_for 80 grep -q "the own text was removed" "$CFG/credo/reminder-$SID_R2.log"; ok "Enter never works: the own burst is removed, logged" "$?"
+stop_worker "$SID_R2"
+rm -f "$FAKE_ENTER_IGNORE"
+check "Enter never works: four Enter presses" "4" "$(( $(grep -c '' "$FAKE_ENTER_LOG") - EN0 ))"
+check "Enter never works: nothing submitted" "$S0" "$(n_submits)"
+ok "Enter never works: the field is empty again" "$([ ! -s "$FAKE_BUF" ] && echo 0 || echo 1)"
+ok "Enter never works: the log says WARNING" "$(grep -q 'WARNING: the reminder stayed' "$CFG/credo/reminder-$SID_R2.log" && echo 0 || echo 1)"
+: > "$FAKE_BUF"; rm -f "$FAKE_PASTE"
+
+# item 204 root cause: an earlier numbered owner message (drawn with the prompt marker) and a
+# quoted "Do you want to" line in the transcript above the box are no dialog: Enter is sent
+SID_R3="aaaaaaaa-1111-2222-3333-rrrrrrrrrrr3"
+printf '%s\n' "❯ 2. Lock hook hooks/example-guard.py" "  3. something else" \
+    "Do you want to continue? [Y/n] Abort." "" "● Working on it." "" "● Still working." "" \
+    "● Done, fixture finished." "" > "$FAKE_ABOVE"
+set_state "$SID_R3"; mode_of "$SID_R3" autonomous
+S0="$(n_submits)"
+hook start "$SID_R3" startup
+wait_for 60 subs_gt "$S0"; ok "transcript rows with dialog words above the box: the reminder is submitted" "$?"
+stop_worker "$SID_R3"
+ok "transcript rows above the box: no Enter withheld" "$(grep -q 'Enter withheld' "$CFG/credo/reminder-$SID_R3.log" && echo 1 || echo 0)"
+cp "$TMP/above_idle.txt" "$FAKE_ABOVE"
 
 # a field that holds text when the reminder is due: skipped at once (logged), the text is left
 SID_K2="aaaaaaaa-1111-2222-3333-kkkkkkkkkk22"

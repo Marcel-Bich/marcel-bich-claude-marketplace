@@ -290,18 +290,128 @@ def type_and_enter(pane, text, before_enter=None):
     return False
 
 
+# One or more paste placeholders and nothing else (both forms Claude Code shows for a burst).
+PLACEHOLDER_ONLY_RE = re.compile(r"^(?:\[Pasted text #\d+(?: \+\d+ lines?)?\]\s*)+$")
+# After the first Enter of a reminder burst: at most this many re-sends of Enter, each after
+# a growing wait of SUBMIT_WAIT_SHARES[i] * confirm_wait seconds (default 1, 2, 3, 4 s).
+ENTER_RESENDS = 3
+SUBMIT_WAIT_SHARES = (0.1, 0.2, 0.3, 0.4)
+STATE_POLL = 0.2
+
+
+def burst_state(cap, text):
+    """(state, reason) of the input field around a reminder burst, from one capture. No exact
+    text compare (owner Q56): the field scrolls and a burst may show as a paste placeholder.
+      dialog   no input box, or a dialog, picker or menu next to it (classify_pane: transcript
+               rows above the box never count) - no key may be sent
+      empty    the field is empty (after Enter: the reminder was submitted)
+      own      the field shows only the own burst: paste placeholders, or a part of `text`
+      foreign  the field holds other text (someone typed) - it is never touched"""
+    info = guard.classify_pane(cap or "")
+    if info.get("kind") != "input":
+        return "dialog", info.get("reason") or "no input box"
+    content = guard.input_content(cap)
+    if content is None:
+        return "dialog", "no input box"
+    seen = norm(content)
+    if not seen:
+        return "empty", "the input field is empty"
+    if PLACEHOLDER_ONLY_RE.match(content.strip()) or seen in norm(text):
+        return "own", "the input field shows the own burst: %s" % content.strip()[:60]
+    return "foreign", "the input field holds other text"
+
+
+def _field_state(pane, text):
+    plan = pane.plan
+    return burst_state(guard.capture(plan["pane"], plan.get("socket")), text)
+
+
+def _poll_state(pane, text, seconds, until):
+    """Capture every STATE_POLL seconds until the state is in `until` or `seconds` are over
+    (at least one capture). Returns the last (state, reason)."""
+    end = time.time() + max(0.0, seconds)
+    while True:
+        state = _field_state(pane, text)
+        if state[0] in until or time.time() >= end:
+            return state
+        time.sleep(min(STATE_POLL, max(0.0, end - time.time())))
+
+
+def _remove_own(pane, text):
+    """Remove the own, unsubmitted burst from the field: End, then one BSpace per character
+    of `text` (a paste placeholder goes as a whole, extra BSpace on an empty field do
+    nothing). Only right after a capture shows the input box with nothing but the own burst.
+    True when the field is empty afterwards."""
+    if _field_state(pane, text)[0] != "own":
+        return False
+    try:
+        if not (send_key_list(pane.plan, ["End"]) and
+                send_key_list(pane.plan, ["BSpace"] * len(text))):
+            return False
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return _poll_state(pane, text, 1.0, ("empty",))[0] == "empty"
+
+
+def _submit_burst(pane, text):
+    """Enter after the burst, confirmed: the burst must show in the field first (as text or
+    placeholder), then Enter; the reminder counts as submitted once the field is empty. Enter
+    is re-sent up to ENTER_RESENDS times with a growing wait while the own burst is still in
+    the field, and never while a dialog is visible. Not submitted in the end: the own burst
+    is removed, so it never blocks the field. Raises StepFailed with a status that says
+    whether the text was removed ("failed: not submitted") or left ("failed: left in field",
+    "failed: dialog open")."""
+    plan, log = pane.plan, pane.log
+    waits = [pane.tim["confirm_wait"] * s for s in SUBMIT_WAIT_SHARES[:ENTER_RESENDS + 1]]
+    state, why = _poll_state(pane, text, waits[0], ("own", "foreign"))
+    if state == "dialog":
+        raise StepFailed("failed: dialog open", "a dialog opened, Enter withheld, the own "
+                         "text is left in the field: %s" % why)
+    if state == "foreign":
+        raise StepFailed("failed: left in field", "the input field holds other text after "
+                         "the burst, Enter withheld, left as it is")
+    if state == "empty":
+        raise StepFailed("failed: not submitted", "the burst did not show in the input "
+                         "field, no Enter sent")
+    for i, wait in enumerate(waits):
+        if not send_keys(plan, "Enter"):
+            raise StepFailed("failed: send-keys Enter", "Enter after the reminder failed")
+        log("Enter sent after the reminder burst" if not i else
+            "the reminder was still in the input field, Enter re-sent (%d of %d)"
+            % (i, ENTER_RESENDS))
+        state, why = _poll_state(pane, text, wait, ("empty", "dialog", "foreign"))
+        if state == "empty":
+            log("reminder submitted (the input field is empty again)")
+            return True
+        if state != "own":
+            # a dialog right after Enter (the new turn asks something) or someone typing:
+            # no further key; the submission is not proven, nothing is removed
+            log("after Enter: %s; no further Enter" % why)
+            return False
+    if _remove_own(pane, text):
+        raise StepFailed("failed: not submitted", "WARNING: the reminder stayed in the input "
+                         "field after %d Enter presses; the own text was removed from it"
+                         % len(waits))
+    raise StepFailed("failed: left in field", "WARNING: the reminder stayed in the input field "
+                     "after %d Enter presses and could not be removed" % len(waits))
+
+
 def send_whole(pane, text):
     """Periodic reminder delivery: `text` in ONE burst (one literal send-keys), then the
-    pane settles for the key pause, then Enter. Claude Code shows a fast burst as a paste
-    placeholder ("[Pasted text #1]" or "[Pasted text #1 +11 lines]") or as text; either
-    rendering is accepted, the text itself is not compared. The caller has waited for an idle
-    pane. The field must be empty (clear_leftover, as in type_and_enter). Before Enter the
-    pane must still show an input box without dialog, busy turn or background prompt, so
-    Enter never answers a dialog.
-    Failures: before the burst nothing is typed; after it the text stays in the field and is
-    neither removed nor submitted (the next attempt skips a field that holds text). A stop
-    during the settle still sends Enter, so the line is not left behind by a stop alone.
-    Raises StepFailed (Enter not sent) or Cancelled (raised after Enter, if at all)."""
+    pane settles for the key pause, then Enter with confirmation (_submit_burst). Claude Code
+    shows a fast burst as a paste placeholder ("[Pasted text #1]" or "[Pasted text #1 +11
+    lines]") or as text; either rendering is accepted, the text itself is not compared exactly
+    (owner Q56). The caller has waited for an idle pane. The field must be empty
+    (clear_leftover, as in type_and_enter). Enter is pressed only while the pane shows the
+    input box with nothing dialog-shaped next to it (classify_pane), so Enter never answers a
+    dialog; transcript rows above the box (an earlier numbered message, a quoted prompt) do
+    not count.
+    Failures: before the burst nothing is typed; a burst that is not submitted after the
+    re-sends is removed again (only the own burst), one that cannot be removed safely (a
+    dialog, other text) is left and reported in the StepFailed. A stop after the burst still
+    sends one Enter when the field shows the own burst, so the line is not left behind by a
+    stop alone. Returns True when submitted, False when a dialog or other text after Enter
+    leaves it unproven. Raises StepFailed or Cancelled."""
     plan, log = pane.plan, pane.log
     if pane.cancelled():
         raise Cancelled()
@@ -310,30 +420,16 @@ def send_whole(pane, text):
     if not send_keys(plan, text, literal=True):
         raise StepFailed("failed: send-keys", "typing the reminder failed, nothing typed")
     log("typed %d characters in one burst" % len(text))
-    stopped = None
     try:
         time.sleep(pane.tim["key_pause"])
-    except Cancelled as exc:
-        stopped = exc
-    # Best effort (owner Q56): the input field is NOT read back after the burst. Reading it
-    # depends on the screen layout (box lines, height, pane size) and a failed read left the
-    # text stuck. Only a visible dialog withholds Enter, so Enter never answers a dialog.
-    cap = guard.capture(plan["pane"], plan.get("socket")) or ""
-    tail = [guard.strip_ansi(l) for l in cap.rstrip("\n").split("\n")[-guard.NO_BOX_SCAN:]]
-    own = "".join(text.split())
-    for line in tail:
-        row = "".join(line.split()).lstrip("❯>")
-        if row and row in own:
-            continue  # a row of the typed text itself (it may quote dialog words)
-        if guard.PERMISSION_RE.search(line) or guard.DIALOG_RE.search(line):
-            raise StepFailed("failed: dialog open", "a dialog opened, Enter withheld: %s"
-                             % line.strip()[:80])
-    if not send_keys(plan, "Enter"):
-        raise StepFailed("failed: send-keys Enter", "Enter after the reminder failed")
-    log("Enter sent after the reminder burst")
-    if stopped:
-        raise stopped
-    return True
+        return _submit_burst(pane, text)
+    except Cancelled:
+        try:
+            if _field_state(pane, text)[0] == "own" and send_keys(plan, "Enter"):
+                log("stopped after the burst: Enter sent once")
+        except Exception:
+            pass
+        raise
 
 
 def write_json(path, data):

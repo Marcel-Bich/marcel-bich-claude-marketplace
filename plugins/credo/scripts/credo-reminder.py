@@ -38,9 +38,12 @@ of the current credo mode, and when it is due waits until the pane is idle and n
 open (credo_pane_guard, confirmed twice). A field that holds text (two or more visible
 characters, or a paste placeholder) is skipped at once and left as it is; a leftover of one
 character is removed first. Otherwise the prompt is typed in one burst (one send-keys), the
-pane settles for 0.5 s, the pane is checked once more for an input box without dialog or busy
-turn (the text is not compared), and Enter is pressed. Claude Code shows the burst as a paste
-placeholder or as text; both are accepted. The reference point (last reminder time and turn)
+pane settles for 0.5 s, and Enter is pressed once the burst shows in the field and the input
+box has nothing dialog-shaped next to it (credo_pane_wake.send_whole; the text is not compared
+exactly). Claude Code shows the burst as a paste placeholder or as text; both are accepted.
+Submitted means the field is empty again; Enter is re-sent up to 3 times while the own burst
+is still there, then the own burst is removed (WARNING in the log). A burst left in the field
+(dialog, other text) is reported by ntfy. The reference point (last reminder time and turn)
 moves to every attempt. A reminder that could not be sent safely is skipped and counts as
 sent. It stops when no mode is configured any more and when the Claude process of its session
 is gone. Background work never blocks it.
@@ -546,6 +549,11 @@ def attempt(pane, plan, text, mode, trig):
             raise
         log("reminder skipped: %s" % exc.detail)
         status, sent = "skipped: %s" % exc.detail, False
+        if exc.status in ("failed: left in field", "failed: dialog open"):
+            # the own burst stays in the field and blocks the self-* helpers until cleared
+            ntfy("credo: reminder left in input",
+                 "The periodic reminder could not be submitted in tmux pane %s and is still "
+                 "in the input field - please submit or clear it." % plan["pane"], plan)
     now = time.time()
 
     def reference(st):
