@@ -12,4 +12,6 @@ bump: patch
   in a Windows temp dir (`%TEMP%`, `C:\Users\Public`, `C:\tmp` as `/mnt/<drive>/...`): drvfs has
   no birth time, so the ledger records it when the pre hook saw no file and its change time is
   not older than the call, and the NTFS file id must be unchanged; deleted through drvfs, same
-  2-minute rule, everything else stays report-only
+  2-minute rule, everything else stays report-only. Only on WSL (kernel facts): a native Linux
+  `/mnt/<x>` never qualifies. The done-gate purge never removes a `C:\Users\Public` file (results
+  for the owner may live there), only an explicit `own-rm <path>` does

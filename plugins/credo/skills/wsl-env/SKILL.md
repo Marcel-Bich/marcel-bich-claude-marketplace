@@ -142,8 +142,12 @@ tool under `/mnt/<drive>/Users/<you>/AppData/Local/Temp/`, `/mnt/<drive>/Users/P
 paths: convert with `wslpath -u` first). own-rm accepts there only a single regular file this
 session's Write tool created (ledger plus transcript, NTFS file id unchanged; drvfs has no birth
 time) that has not changed for 2 minutes, and deletes it through drvfs, never through
-PowerShell. Files created by `powershell.exe` or a Bash command, directories and every other
-Windows path stay report-only: hand them to the user.
+PowerShell. A file below `Users\Public` goes only by an explicit `own-rm <path>` (the done-gate
+purge only lists it: results for the owner may live there); `%TEMP%` and `C:\tmp` files the purge
+may take. Files created by `powershell.exe` or a Bash command, directories and every other
+Windows path stay report-only: hand them to the user. If the Windows clock (which stamps drvfs
+files) lags behind the WSL clock by more than about 2 seconds, a Write there can go unrecorded; the file is then only
+reported (no delete risk) and goes to the user like any other.
 
 ## Dual-platform parity (.sh + .ps1)
 

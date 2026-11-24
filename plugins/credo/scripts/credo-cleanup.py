@@ -468,6 +468,10 @@ def purge(args):
         if why:
             listed.append((p, why))
             continue
+        if L.win_public(p):
+            listed.append((p, "Windows Users\\Public (results for the owner may live there): only an "
+                              "explicit own-rm of this path removes it"))
+            continue
         targets.append(p)
     stmp = L.session_tmp(sid)
     if L.private_dir(stmp):

@@ -106,7 +106,17 @@ this), and the helper deletes only in three places:
 - a single FILE the Write/Edit tool created in a temp dir (`/tmp`, `/var/tmp`, `/dev/shm`), born
   after that call started, when the hook ledger recorded it AND the session's own transcript holds
   a successful Write/Edit call for exactly that path (a directory the Write created on the way,
-  and whatever lands in it later, is report-only);
+  and whatever lands in it later, is report-only). On WSL (kernel facts, never an environment
+  variable) also below the Windows temp locations `/mnt/<drive>/Users/<name>/AppData/Local/Temp`
+  (`%TEMP%`), `/mnt/<drive>/Users/Public` and `/mnt/<drive>/tmp` (also a single file directly
+  in `C:\tmp`). drvfs has no birth time, so there the rule is: the pre hook saw no file, the
+  file's change time is not older than the call, the dev+inode (NTFS file id) recorded right
+  after the Write is unchanged, the transcript confirms the Write, and nothing changed for 2
+  minutes; deleted through drvfs, never through PowerShell (a Windows clock lagging behind WSL
+  by more than about 2 seconds can leave a Write unrecorded: report-only, no delete risk). A file below `Users\Public`
+  (`Public\Desktop`, `Public\Documents` included) goes only by an explicit `own-rm <path>`: the
+  done-gate purge lists it and never removes it, since results for the owner may live there;
+  `%TEMP%` and `C:\tmp` files the purge may take;
 - known build-output directories (`node_modules`, `dist`, `build`, `out`, `coverage`, `.next`,
   `.nuxt`, `.turbo`, `.cache`, `target`, `__pycache__`, `.pytest_cache`, `.mypy_cache`,
   `playwright-report`, `test-results`, `.venv`) ignored by a tracked `.gitignore` (no negation
@@ -126,7 +136,8 @@ a kept result, by hand). Even inside the three places the helper refuses `/`, th
 parents, `~/.claude*/**` and `$CLAUDE_CONFIG_DIR`, mount points (bind mounts included), linked
 worktrees, repositories outside the temp roots, git-tracked files, `cleanup.keep_paths` of the
 LOCAL config, any tree with content born before the entry or with a modification time older than
-its birth (moved in, extracted, copied with preserved times), a socket or fifo, a process with
+its birth (moved in, extracted, copied with preserved times; on the Windows side, without birth
+time, any file whose NTFS file id changed), a socket or fifo, a process with
 its cwd or an open file inside, and a change within the last 2 minutes. Symlinks are unlinked,
 never followed. A refusal or failure is a report line, never a blocker: note the path for the
 owner and carry on. `credo-cleanup.py report` lists what the ledger recorded. The ledger guard

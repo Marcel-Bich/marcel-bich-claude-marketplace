@@ -331,7 +331,7 @@ contains "unbound session id is report-only" "cannot be bound to the calling pro
 # Only a single Write-created file below %TEMP%, Users\Public or \tmp of a drive may go; with
 # no_btime the drvfs case (no birth time) is simulated.
 DRV="$FH/drv"
-export CREDO_TEST_OV_EXTRA="{\"drvfs_root\": \"$DRV\"}"
+export CREDO_TEST_OV_EXTRA="{\"drvfs_root\": \"$DRV\", \"wsl\": true}"
 write_call "$DRV/c/Users/Public/note-tmp.md"
 contains "Write into Users\\Public recorded with write evidence" '"evidence": "write"' \
     "$(grep "\"$DRV/c/Users/Public/note-tmp.md\"" "$LEDGER_FILE")"
@@ -351,7 +351,7 @@ write_call "$DRV/d/tmp/sub208/f.md"
 o="$(helper own-rm "$DRV/d/tmp/sub208")"
 contains "dir a Write created on the way stays report-only" "refused $DRV/d/tmp/sub208" "$o"
 check "that dir kept" yes "$(exists "$DRV/d/tmp/sub208/f.md")"
-export CREDO_TEST_OV_EXTRA="{\"drvfs_root\": \"$DRV\", \"no_btime\": true}"
+export CREDO_TEST_OV_EXTRA="{\"drvfs_root\": \"$DRV\", \"wsl\": true, \"no_btime\": true}"
 write_call "$DRV/c/tmp/nobt.md"
 contains "drvfs Write without birth time recorded" '"btime": null' "$(grep "\"$DRV/c/tmp/nobt.md\"" "$LEDGER_FILE")"
 o="$(helper own-rm "$DRV/c/tmp/nobt.md")"
@@ -369,16 +369,41 @@ echo w > "$DRV/c/tmp/existing.md"; hook post Write "{\"file_path\":\"$DRV/c/tmp/
 tx_write "$DRV/c/tmp/existing.md"
 o="$(helper own-rm "$DRV/c/tmp/existing.md")"
 contains "overwritten pre-existing drvfs file refused" "not created by this session" "$o"
+# the done-gate purge never takes Users\Public files (results for the owner may live there);
+# %TEMP% and \tmp ones it may take; an explicit own-rm still removes a Public file
+write_call "$DRV/c/Users/Public/Desktop/result.md"
+write_call "$DRV/c/Users/alice/AppData/Local/Temp/purge-me.md"
+write_call "$DRV/c/tmp/purge-me.md"
+o="$(helper purge --dry-run)"
+contains "purge only lists a Write-created Users\\Public file" \
+    "listed $DRV/c/Users/Public/Desktop/result.md: Windows Users\\Public" "$o"
+contains "purge takes a Write-created %TEMP% file" "would-remove $DRV/c/Users/alice/AppData/Local/Temp/purge-me.md" "$o"
+contains "purge takes a Write-created C:\\tmp file" "would-remove $DRV/c/tmp/purge-me.md" "$o"
+o="$(helper own-rm "$DRV/c/Users/Public/Desktop/result.md" "$DRV/c/Users/alice/AppData/Local/Temp/purge-me.md" "$DRV/c/tmp/purge-me.md")"
+contains "explicit own-rm removes the Users\\Public file" "removed $DRV/c/Users/Public/Desktop/result.md" "$o"
+# a native Linux host (no WSL) never treats /mnt/<x>/tmp and the like as Windows temp
+export CREDO_TEST_OV_EXTRA="{\"drvfs_root\": \"$DRV\", \"wsl\": false, \"no_btime\": true}"
+write_call "$DRV/c/tmp/native.md"
+check "no WSL: drvfs-like Write without birth time not recorded" 0 \
+    "$(grep -c "\"$DRV/c/tmp/native.md\"" "$LEDGER_FILE")"
+export CREDO_TEST_OV_EXTRA="{\"drvfs_root\": \"$DRV\", \"wsl\": false}"
+write_call "$DRV/c/Users/Public/native.md"
+o="$(helper own-rm "$DRV/c/Users/Public/native.md")"
+contains "no WSL: Users\\Public path is no temp root" "outside the temp roots" "$o"
 unset CREDO_TEST_OV_EXTRA
 WTP="$TMP/wintemp-paths.py"
 cat > "$WTP" <<'EOF'
 import sys
 sys.path.insert(0, sys.argv[1])
 import credo_cleanup_lib as L
-for p in sys.argv[2:]:
+L.OVERRIDES["wsl"] = sys.argv[2] == "1"
+for p in sys.argv[3:]:
     print("%s root=%s hard=%s" % (p, L.win_temp_root_of(p), L.hard_refusal(p)))
 EOF
-o="$(python3 -I "$WTP" "$SCRIPT_DIR" /mnt/c/tmp/x.md /mnt/c/tmp /mnt/c/foo /mnt/c/Users/Public /mnt/e/TMP/y.md \
+o="$(python3 -I "$WTP" "$SCRIPT_DIR" 0 /mnt/c/tmp/x.md /mnt/c/Users/Public/a.md)"
+contains "no WSL: C:\\tmp file pattern does not count" "/mnt/c/tmp/x.md root=None hard=mounted storage" "$o"
+contains "no WSL: Users\\Public pattern does not count" "/mnt/c/Users/Public/a.md root=None" "$o"
+o="$(python3 -I "$WTP" "$SCRIPT_DIR" 1 /mnt/c/tmp/x.md /mnt/c/tmp /mnt/c/foo /mnt/c/Users/Public /mnt/e/TMP/y.md \
     /mnt/c/Users/bob/AppData/Local/Temp/z.md /mnt/c/Users/bob/AppData/Local/Templates/z.md /mnt/c/tmpx/a.md)"
 contains "file directly in C:\\tmp is no mounted storage" "/mnt/c/tmp/x.md root=/mnt/c/tmp hard=None" "$o"
 contains "C:\\tmp itself stays refused" "/mnt/c/tmp root=None hard=mounted storage" "$o"

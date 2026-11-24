@@ -943,8 +943,9 @@ def win_temp_root_of(p):
     """WSL only: the Windows temp-ish dir a /mnt/<drive>/... path lies strictly below, else None.
     Windows temp-ish = a user's %TEMP% (C:\\Users\\<name>\\AppData\\Local\\Temp), C:\\Users\\Public
     or C:\\tmp, on any drive letter (drvfs). Only a single Write-created file there may go (#208):
-    drvfs has no birth time, so it is never a temp root for scans or directories."""
-    if NT:
+    drvfs has no birth time, so it is never a temp root for scans or directories. A native Linux
+    host never qualifies (see on_wsl), whatever is mounted below /mnt."""
+    if NT or not on_wsl():
         return None
     root = strip_sep(ov("drvfs_root") or "/mnt")
     if not is_under(p, root) or same_path(p, root):
@@ -954,6 +955,34 @@ def win_temp_root_of(p):
         return None
     top = root + m.group(0)
     return top if not same_path(p, top) else None
+
+
+def win_public(p):
+    """True below a drive's Users\\Public (people leave results for the owner there, Public\\Desktop
+    and Public\\Documents included): only an explicit own-rm of the path removes such a file, the
+    done-gate purge only lists it."""
+    top = win_temp_root_of(p)
+    return bool(top) and top.lower().endswith("/users/public")
+
+
+_WSL = None
+
+
+def on_wsl():
+    """True on WSL, from kernel facts only (no environment variable, which a command could
+    prefix): the WSLInterop binfmt entry or a Microsoft kernel release string."""
+    global _WSL
+    if ov("wsl") is not None:
+        return bool(ov("wsl"))
+    if _WSL is None:
+        _WSL = os.path.exists("/proc/sys/fs/binfmt_misc/WSLInterop")
+        if not _WSL:
+            try:
+                with open("/proc/sys/kernel/osrelease", encoding="utf-8") as fh:
+                    _WSL = "microsoft" in fh.read().lower()
+            except OSError:
+                _WSL = False
+    return _WSL
 
 
 def _git_refusal(d, git_entry):
