@@ -64,8 +64,9 @@ command -v timeout >/dev/null 2>&1 && to5="timeout 5"
 # SessionStarts. A relay that died (or never came up) is brought back by a later prompt,
 # not only by the next session start. Throttled to one ensure per profile per
 # CREDO_PEER_LAN_ENSURE_MINUTES (default 5) via a stamp file; silent (no onboarding or
-# hint text, no Windows portproxy trigger, the daemon itself refreshes that on start) and
-# fail-open: any error ends the hook with exit 0 and the prompt goes through untouched.
+# hint text, no Windows portproxy trigger: the WSL address does not change while a session
+# runs and SessionStart refreshes the portproxy) and fail-open: any error ends the hook
+# with exit 0 and the prompt goes through untouched.
 prompt_mode=""
 if [ "${CREDO_PEER_LAN_EVENT:-}" = "prompt" ]; then
   prompt_mode=1

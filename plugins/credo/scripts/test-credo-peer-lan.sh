@@ -1614,21 +1614,41 @@ if command -v systemd-run >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&
 else
     echo "SKIP SV2: no systemd user manager (systemd-run path not testable here)"
 fi
-# SV3: the systemd environment allowlist never forwards session-bound values or names
-# that look like secrets, and pins the config path
-SV_ENV="$(CREDO_SESSION_ID=s1 CREDO_PEER_LAN_TOKEN_X=t1 MY_SECRET=t2 WSL_INTEROP=/x TMPDIR=/tmp/sess \
-    CREDO_PEER_LAN_CONFIG="$SV_CFG" CLAUDE_CONFIG_DIR="$TMP/SV/cfg" "$PY" -c '
-import importlib.util, json, sys
-spec = importlib.util.spec_from_file_location("m", sys.argv[1]); m = importlib.util.module_from_spec(spec)
+# SV3: the environment of a detached daemon. The systemd unit (allowlist) and the double
+# fork (caller env minus the same names) never forward session-bound values or names that
+# may carry a secret, and both pin the config path.
+cat > "$TMP/SV/envcheck.py" <<'PYEOF'
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("m", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
-print(json.dumps(m._spawn_env(), sort_keys=True))' "$DAEMON")"
-SV_ENV_OK="$(printf '%s' "$SV_ENV" | "$PY" -c '
-import json, sys
-e = json.load(sys.stdin); cfg = sys.argv[1]
-bad = [k for k in ("CREDO_SESSION_ID", "CREDO_PEER_LAN_TOKEN_X", "MY_SECRET", "WSL_INTEROP", "TMPDIR") if k in e]
-need = e.get("CREDO_PEER_LAN_CONFIG") == cfg and "PATH" in e and "CLAUDE_CONFIG_DIR" in e and e.get("CREDO_PEER_LAN_SPAWN") == "setsid"
-print("ok" if not bad and need else "bad %s %s" % (bad, sorted(e)))' "$SV_CFG")"
-check "SV3: systemd daemon env keeps settings, drops session-bound and secret-like values" "ok" "$SV_ENV_OK"
+cfg = sys.argv[2]
+dropped = ["CREDO_SESSION_ID", "CREDO_PEER_TARGET_PID", "CREDO_SCRATCHPAD", "CREDO_PEER_LAN_EVENT",
+           "CREDO_PEER_LAN_TOKEN_X", "CREDO_NTFY_URL", "CREDO_RELAY_URL", "CREDO_AUTH_HEADER",
+           "CREDO_COOKIE_JAR", "CREDO_WIFI_PSK", "CREDO_API_KEY", "CREDO_PEER_LAN_SPAWNED"]
+kept = ["CREDO_PEER_LAN_NETINFO", "CREDO_PEER_LAN_SPAWN", "CREDO_PEER_LAN_WINPROXY"]
+for k in dropped:
+    os.environ[k] = "v-" + k
+os.environ["MY_SECRET"] = "x"
+os.environ["WSL_INTEROP"] = "/run/x_interop"
+os.environ["TMPDIR"] = "/tmp/session-x"
+os.environ["CREDO_PEER_LAN_CONFIG"] = cfg
+out = []
+for name, env in (("systemd", m._spawn_env()), ("fork", m._fork_env())):
+    bad = [k for k in dropped + ["TMPDIR"] if k in env]
+    if name == "systemd":
+        bad += [k for k in ("MY_SECRET", "WSL_INTEROP") if k in env]
+    miss = [k for k in kept + ["PATH", "CLAUDE_CONFIG_DIR"] if k not in env]
+    if env.get("CREDO_PEER_LAN_CONFIG") != cfg:
+        miss.append("CREDO_PEER_LAN_CONFIG")
+    if name == "fork" and env.get("WSL_INTEROP") != "/run/x_interop":
+        miss.append("WSL_INTEROP (fork keeps it)")
+    out.append("%s:%s" % (name, "ok" if not bad and not miss else "bad=%s miss=%s" % (bad, miss)))
+print(" ".join(out))
+PYEOF
+SV_ENV_OK="$(CLAUDE_CONFIG_DIR="$TMP/SV/cfg" "$PY" "$TMP/SV/envcheck.py" "$DAEMON" "$SV_CFG" 2>&1)"
+check "SV3: detached daemon env (systemd + fork) drops session-bound and secret-like names" \
+    "systemd:ok fork:ok" "$SV_ENV_OK"
 
 # ===========================================================================
 # ALLOWLIST + NETWORK BINDING (fail-closed). Deterministic: CREDO_PEER_LAN_NETINFO

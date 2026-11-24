@@ -3378,8 +3378,19 @@ SPAWN_ENV_NAMES = (
     "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
     "XDG_RUNTIME_DIR", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "WSL_DISTRO_NAME",
 )
-SPAWN_ENV_SKIP = ("CREDO_SESSION_ID", "CREDO_PEER_LAN_SPAWNED")
-SPAWN_ENV_SECRET_RE = re.compile(r"TOKEN|SECRET|PASSW|CREDENTIAL|_KEY$|APIKEY", re.I)
+SPAWN_ENV_SKIP = ("CREDO_PEER_LAN_SPAWNED", "CREDO_PEER_LAN_EVENT")
+# session-bound values (one session's id, pid, scratchpad) never reach the relay
+SPAWN_ENV_SESSION_RE = re.compile(r"SESSION_ID|TARGET_PID|SCRATCHPAD", re.I)
+# names that may carry a secret (a ntfy topic in a *_NTFY_URL, tokens, cookies, ...)
+SPAWN_ENV_SECRET_RE = re.compile(
+    r"TOKEN|SECRET|PASSW|CREDENTIAL|_KEY$|APIKEY|NTFY|URL|AUTH|COOKIE|PSK", re.I)
+
+
+def _spawn_env_dropped(k):
+    """True for a CREDO_* variable that must not reach a detached daemon: session-bound,
+    secret-like, or one of SPAWN_ENV_SKIP."""
+    return (k in SPAWN_ENV_SKIP or bool(SPAWN_ENV_SESSION_RE.search(k))
+            or bool(SPAWN_ENV_SECRET_RE.search(k)))
 
 
 def spawn_mode():
@@ -3395,9 +3406,20 @@ def _spawn_env():
             continue
         if k in SPAWN_ENV_NAMES or k.startswith("LC_"):
             env[k] = v
-        elif (k.startswith("CREDO_") and k not in SPAWN_ENV_SKIP
-              and not SPAWN_ENV_SECRET_RE.search(k)):
+        elif k.startswith("CREDO_") and not _spawn_env_dropped(k):
             env[k] = v
+    env["CREDO_PEER_LAN_CONFIG"] = config_path()
+    return env
+
+
+def _fork_env():
+    """The environment for a double-forked daemon: the caller's environment as before,
+    minus the same CREDO_* session-bound and secret-like variables the systemd path
+    drops (_spawn_env_dropped) and a session's TMPDIR (purged when that session ends),
+    plus the pinned config path. WSL_INTEROP stays: without systemd it is the only way
+    this daemon reaches Windows tools, as before."""
+    env = {k: v for k, v in os.environ.items()
+           if not (k.startswith("CREDO_") and _spawn_env_dropped(k)) and k != "TMPDIR"}
     env["CREDO_PEER_LAN_CONFIG"] = config_path()
     return env
 
@@ -3471,8 +3493,7 @@ def _spawn_double_fork(path):
     group and session of the caller, not a cgroup scope (only systemd-run does that)."""
     script = os.path.abspath(__file__)
     argv = [sys.executable, script, "daemon"]
-    env = dict(os.environ)
-    env["CREDO_PEER_LAN_CONFIG"] = config_path()
+    env = _fork_env()
     env["CREDO_PEER_LAN_SPAWNED"] = "double-fork"
     rfd, wfd = os.pipe()
     pid = os.fork()

@@ -415,8 +415,14 @@ containers) it falls back to a double fork with `setsid` and SIGHUP ignored, whi
 the caller's process group and session but not a cgroup scope. `CREDO_PEER_LAN_SPAWN`
 selects the method: `auto` (default), `systemd` (no fallback) or `setsid`. The systemd unit
 gets only a small environment (PATH, HOME, locale, XDG dirs, `CLAUDE_CONFIG_DIR`,
-`CODEX_HOME`, `WSL_DISTRO_NAME` and the `CREDO_*` settings, never session-bound values or
-names that look like secrets) plus the pinned `CREDO_PEER_LAN_CONFIG`.
+`CODEX_HOME`, `WSL_DISTRO_NAME` and the `CREDO_*` settings) plus the pinned
+`CREDO_PEER_LAN_CONFIG`. `CREDO_*` names that are session-bound (`SESSION_ID`,
+`TARGET_PID`, `SCRATCHPAD`, `CREDO_PEER_LAN_EVENT`) or may carry a secret (`TOKEN`,
+`SECRET`, `PASSW`, `CREDENTIAL`, `KEY`, `NTFY`, `URL`, `AUTH`, `COOKIE`, `PSK`) are never
+passed; the double fork drops the same names and a session's `TMPDIR`. The relay unit
+belongs to the systemd user manager: without `loginctl enable-linger` that manager, and
+with it the relay, stops at the user's last logout (the next session start or prompt
+starts it again).
 
 **Self-healing between session starts.** The same hook also runs on every
 UserPromptSubmit (`CREDO_PEER_LAN_EVENT=prompt`). It is silent and throttled: at most one
