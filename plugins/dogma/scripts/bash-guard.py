@@ -410,6 +410,14 @@ class Deny(Exception):
     pass
 
 
+WINDOWS_DELETE_BLOCKED = (
+    "dogma: Windows delete or format command blocked. Own temp files: keep them in the session "
+    "TMPDIR and hand Windows tools its wslpath -w path (\\\\wsl.localhost\\<distro>\\...) instead of "
+    "creating Windows-side temp files; a file your Write tool created in %TEMP%, C:\\Users\\Public "
+    "or C:\\tmp goes with credo-cleanup.py own-rm /mnt/<drive>/<path> (credo). Anything else: ask "
+    "the user.")
+
+
 def deny(reason):
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                    "permissionDecisionReason": reason}}
@@ -3330,7 +3338,7 @@ class Analysis:
         text = " ".join(args)
         if windows == "cmd" and re.search(r"(?i)(^|[\s&|(\"/])(rd|rmdir|del|erase|format|deltree|cipher|diskpart)"
                                           r"(\s|$|\")", text):
-            raise Deny("dogma: Windows delete or format command blocked.")
+            raise Deny(WINDOWS_DELETE_BLOCKED)
         if windows in ("powershell", "pwsh"):
             for arg in args:
                 bare = arg.lower().lstrip("-/")
@@ -3339,7 +3347,7 @@ class Analysis:
             if re.search(r"(?i)(^|[\s;|&({\"'])(remove-item|ri|rm|del|rd|rmdir|erase|clear-content|clear-item|"
                          r"format-volume|clear-disk|remove-partition|initialize-disk|clear-recyclebin)(\s|$|[\"';)])",
                          text):
-                raise Deny("dogma: Windows delete or format command blocked.")
+                raise Deny(WINDOWS_DELETE_BLOCKED)
         if windows == "robocopy" and any(arg.upper() in ("/MIR", "/PURGE", "/MOV", "/MOVE") for arg in args):
             raise Deny("dogma: robocopy /MIR or /PURGE deletes files at the destination; blocked.")
         if windows in ("wsl", "wslg") and args:
