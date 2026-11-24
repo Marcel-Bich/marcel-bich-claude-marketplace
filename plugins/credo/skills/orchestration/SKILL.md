@@ -182,7 +182,9 @@ the security block):
   the subagent reads that file first.
 - Blocker and owner-decision claims are proposals. The main agent reads the source the
   subagent cites (file:line or command output) before it asks the owner or declares a blocker,
-  especially for a claim from a model below its own.
+  especially for a claim from a model below its own. It also checks the requirements log, so a
+  point the owner already decided is never asked again (credo `items`, "Never re-ask a decided
+  point").
 
 ### Fix rounds after a failing audit (default)
 
@@ -487,7 +489,9 @@ A bundle gets ONE audit; other finished `lean` items may be batched into one aud
 subagent (one verdict and report section per item); `full` items are always audited
 singly. The tier changes only the depth, never whether the audit runs. The auditor
 records its findings first, then fixes small ones itself on the item's worktree branch
-(credo `audit`, "Fixing small findings").
+(credo `audit`, "Fixing small findings"). The brief points the auditor to the requirements log
+(`.credo/process/requirements/*.md`, main-checkout path). A finding on an owner-accepted risk
+is reported as accepted, never as a new owner question (credo `audit`, "Owner-accepted points").
 
 ## Delegating verify / UI subagents
 
@@ -567,7 +571,9 @@ Proven pattern for a subagent that hits a question it cannot answer:
 
 1. The subagent returns `{status: needs_decision, question: <the question>}` instead of
    guessing or finishing with a wrong assumption.
-2. The main agent obtains the answer. A build-time detail of a GO item it decides itself per
+2. The main agent obtains the answer. First it checks the requirements log and the item
+   History. An owner decision already logged there is the answer (credo `items`, "Never re-ask
+   a decided point"). A build-time detail of a GO item it decides itself per
    the mainagent-prompt and logs it. A clarify question on an agent-owned item it decides itself
    ONLY in an autonomous run (as the plan agent, or in the pseudo plan role when no plan agent
    peer is known - credo `items`), and logs it; in an interactive mode it goes to the user.

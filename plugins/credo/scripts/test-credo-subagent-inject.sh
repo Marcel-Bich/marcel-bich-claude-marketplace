@@ -66,6 +66,9 @@ has "DECISIONS: SOTA > best effort > note order" "the best possible solution (SO
 has "DECISIONS: per-repo grant honoured" "per-repo grant" "$gp_ctx"
 has "DECISIONS: decision logged in the report" "Log each such decision with its reason in your report" "$gp_ctx"
 has "DECISIONS: needs_decision only for owner-only decisions" "Return {status: needs_decision, question: ...} only for a genuine owner-only decision" "$gp_ctx"
+has "DECISIONS: requirements log checked before needs_decision" "Before returning needs_decision or raising any owner question, check the requirements log (.credo/process/requirements/*.md)" "$gp_ctx"
+has "DECISIONS: decided point never asked again" "A point the owner already decided is quoted with its date and never asked again" "$gp_ctx"
+has "DECISIONS: accepted audit finding never BLOCKER or MAJOR" "\"accepted (owner <date>, <quote>)\", never as BLOCKER or MAJOR" "$gp_ctx"
 for kind in "taste or preference" "money" "deleting user data" "installs" "safety" "infeasible"; do
     has "DECISIONS: owner-only case named: $kind" "$kind" "$gp_ctx"
 done

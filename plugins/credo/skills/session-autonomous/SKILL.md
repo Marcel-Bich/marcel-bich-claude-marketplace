@@ -444,7 +444,8 @@ self-resolve up to authority level 3 - do NOT stop the whole run and do NOT gues
 confirm it is genuinely still open: read the WHOLE item body plus the requirements log and
 existing audit reports before raising it (read/build-gate, credo `items` skill) - a question
 that merely looks open in a stale head is often already clarified there, and must not be
-re-raised. Only if it is truly unanswered:
+re-raised. A point the owner already decided is never asked again, not even as an audit
+finding (credo `items`, "Never re-ask a decided point"). Only if it is truly unanswered:
 
 1. State the question in the reply as text with a Q code (credo `verify`, "Typed codes";
    no Ask tool) and send an immediate ntfy `high` stating it clearly (come to the PC).

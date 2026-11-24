@@ -105,7 +105,8 @@ DEFAULT_TEXT = ("Check yourself against what we agreed: re-read the credo rules,
                 "expired and sourceless ones, never present an agent decision as an owner order, and "
                 "propose permanent rules as a .credo/RULES.md entry instead. Check the "
                 "open-codes footer and drop every code that is answered, verified, superseded, "
-                "moved into an item or moot. "
+                "moved into an item or moot. Re-check every open Q code against the "
+                "requirements log and close what the owner already decided, never ask it again. "
                 "Check every open veto code against its item: close it yourself, noted in the handoff, when the item is done or verified and nothing of the decision is still open, or when later work superseded it. Raise a veto only for a decision the owner notices in the product (behaviour, visible text, money, taste, data); internal process decisions go only into the log and the item History. "
                 "Keep credo's output format unless something speaks against it: every test, question and veto code carries its emoji wherever it asks something of the user (🧪 T5, ❓ Q4, ✋ V2 in headings, Ask text and mentions), and the reply ends with the open-codes footer. Clean up merged worktrees and branches with credo-worktree-cleanup.sh; a worktree that may still be needed goes to the owner as a question. GO items never just wait on the owner, so classify each stalled one with credo-go-stall.sh and re-check handoff labels against the open DoD. Shortened questions repeat the full copyable command. If anything "
                 "drifted, fix it now and continue as agreed.")

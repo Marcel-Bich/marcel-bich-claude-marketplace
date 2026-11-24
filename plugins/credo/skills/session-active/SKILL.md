@@ -54,8 +54,9 @@ decides them, an interactive mode asks the user.
 - Trivial, self-evident fixes need no question - a syntax error on line 10 is just fixed.
 - Before asking a clarify question about an EXISTING item - or judging it "still open" - read
   the WHOLE item body plus the requirements log (`.credo/process/requirements/*.md`): a stale
-  head can read open when the point is already clarified and locked. Do not re-ask what is
-  already answered there (read/build-gate + Body-freshness invariant, credo `items` skill).
+  head can read open when the point is already clarified and locked. Never re-ask a decided
+  point (credo `items`, "Never re-ask a decided point"; read/build-gate + Body-freshness
+  invariant).
 - The clarify gate is carried physically by the item folders: only `1_todo/2_go` is
   buildable, `1_todo/1_clarify` is not. See the credo `items` skill (the go-gate, C9).
 
@@ -146,9 +147,8 @@ decision on agent-owned items in an interactive mode, and the escalated question
 decides" above) is ALWAYS the Ask tool. Short decisions and
 choices go through Ask. For long lists, use prose in the normal message instead - Ask
 truncates - but the decision itself still comes back through Ask where practical. Before
-raising an Ask about an existing item, apply the CLARIFY-FIRST precondition above: read the
-whole body plus the requirements log so a stale head does not make you re-ask what is
-already clarified (read/build-gate, credo `items` skill).
+raising any Ask, apply "Never re-ask a decided point" (credo `items`). A point the owner
+already decided in the requirements log or the item History is quoted, not asked again.
 
 Text before an Ask call stays visible only as the FIRST text of a turn: with the current models, text that follows a tool call in the same turn reaches the owner only as a one-line summary ("· summary"), and nothing can bring the original back. So (1) when the explanation needs no tool call first, write it as the first text of the turn, before any tool call; then get the code with credo-code-next.sh Q (its number goes into the Ask question text as "❓ Qn"), then make one separate Bash call whose ENTIRE command is `echo ok` (never appended to another command; kept in case the summary behaviour goes away again), then call the Ask tool. (2) When a tool call is needed first (check a file, run a command), do it, then END the turn with the explanation and the question "### ❓ Qn) <topic>" as text, and the owner answers "Qn: ..." in chat - no Ask call in that turn. A hook denies an Ask call after any other tool call in the same turn (only credo-code-next.sh and `echo ok` may come before it).
 

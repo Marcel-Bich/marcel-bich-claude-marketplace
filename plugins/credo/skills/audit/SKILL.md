@@ -128,6 +128,9 @@ For the item under review, gather the ground truth first (read, do not guess):
 - Owner facts. Facts the owner already stated (requirements log, recorded answers) must be
   written into the item, so the owner never has to repeat them. A stated fact missing from
   the item is a finding, ranked by its effect on the result.
+- Owner decisions. Search the requirements log (`.credo/process/requirements/*.md`) for the
+  audited area. A risk or design point the owner already accepted is not escalated
+  ("Owner-accepted points" below).
 - Acceptance measurement (credo `items`, Success Criteria): an item whose result is an
   algorithm, a detection, or a quality or numeric outcome must name a data set and a target
   value in its DoD and record the measured value. Target missed: **BLOCKER**. Not measured,
@@ -184,6 +187,15 @@ Rank every finding with exactly one level:
 - **MINOR** - a small defect or deviation that should be fixed but does not endanger
   the core.
 - **NIT** - cosmetic or stylistic; optional.
+
+### Owner-accepted points
+
+A finding that touches a risk or decision the owner already accepted in the requirements log
+or the item History is reported in its own report section as
+`accepted (owner <date>, "<quote>")`. It is never ranked BLOCKER or MAJOR, never counts toward
+the verdict, and never becomes a new owner question (credo `items`, "Never re-ask a decided
+point"). Only a fact the decision did not cover (a changed risk, a new attack path) is a normal
+finding, and it quotes the earlier decision.
 
 ## Evidence (required for every finding)
 
@@ -356,6 +368,9 @@ auditor: <subagent role, not the builder>
 ## Findings
 - [BLOCKER] <what> - evidence: path/to/file.ext:42 (or screenshot path) - contradicts: "<criterion text>"
 - [MINOR] <what> - evidence: ...
+
+## Accepted (owner)
+- <what> - accepted (owner YYYY-MM-DD, "<quote>") - source: .credo/process/requirements/YYYY-MM-DD.md
 
 ## Recommendation
 <move item back to 1_todo/2_go | 1_clarify | allow into 2_done/; collection item entries and new independent items, if any>

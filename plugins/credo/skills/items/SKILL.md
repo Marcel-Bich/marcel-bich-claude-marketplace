@@ -307,6 +307,15 @@ details of a GO item are the agent's to decide and log.
 A user GO in the user's own words is always a valid GO for any item; this rule only adds
 that, in an autonomous run, agent-owned items do not wait for one.
 
+### Never re-ask a decided point
+
+Before raising ANY owner question (a new Q code, an owner-question collection line, an Ask call,
+a `needs_decision` return), search the requirements log (`.credo/process/requirements/*.md`) and
+the item History for a prior owner decision on the same point. If one exists, do not ask; quote it
+with its date and act on it, at most noting `accepted (owner <date>, "<quote>")`. Only a newer
+fact the decision did not cover (a changed risk, a new option) justifies a new question, and that
+question quotes the earlier decision. The same check closes an open Q code that is already decided.
+
 ## Mandatory frontmatter (lean)
 
 Exactly five required fields. Keep it minimal:
