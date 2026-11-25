@@ -92,6 +92,13 @@ has "NO-BLOCK: separate call with a literal path" "run it in a separate call wit
 has "NO-BLOCK: PowerShell script from WSL" "powershell.exe -File \"\$(wslpath -w <path>)\"" "$gp_ctx"
 has "NO-BLOCK: own-rm with the literal helper path" "delete it with python3 $(cd "$HERE" && pwd)/credo-cleanup.py own-rm <literal path>" "$gp_ctx"
 has "NO-BLOCK: own-rm also for subagent files" "also when a subagent wrote them" "$gp_ctx"
+has "DELEGATION: preset per spawn with the literal helper path" "pass model and effort per the active preset (bash $(cd "$HERE" && pwd)/credo-preset.sh stage <role> <attempt>), never below it" "$gp_ctx"
+has "DELEGATION: role tag" "[credo-role: explore|build|review|hard]" "$gp_ctx"
+has "DELEGATION: stronger only on purpose" "stronger only on purpose" "$gp_ctx"
+case "$gp_ctx" in
+    *"at least as capable as yours"*) fail=$((fail + 1)); echo "FAIL: DELEGATION: old capability wording still present" ;;
+    *) pass=$((pass + 1)) ;;
+esac
 has "NO-BLOCK: never write and run in one command" "Never write and run a file in the same command" "$gp_ctx"
 has "NO-BLOCK: no variable script paths" 'No VAR=$(...); $VAR/script calls - use literal paths' "$gp_ctx"
 has "NO-BLOCK: Edit per file, no sed -i loop on \$var" 'Multi-file edits: the Edit tool per file with a literal path (or one literal sed per file), never for f in ...; do sed -i ... $f or any $var as a target path' "$gp_ctx"

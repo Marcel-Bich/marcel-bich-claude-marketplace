@@ -9,17 +9,22 @@ Rules:
 - Deny only BELOW the preset (owner decision Q425). The hook cannot know the role or the
   attempt of a spawn, so a spawn passes when its (model, effort) is equal to or stronger
   than ANY rung of the ladders that fit its kind:
-    subagent_type Explore or Plan -> the explore role only;
+    a [credo-role: explore|build|review|hard] tag in the description or prompt
+                                  -> only that role;
+    read-only types (Explore, Plan, web-fetch, claude-code-guide, *:cavecrew-investigator)
+                                  -> the explore role;
     any other type                -> the build, review and hard roles.
   Stronger = model rank haiku < sonnet < opus < fable and effort rank
   low < medium < high < xhigh < max, both >= the rung. An exact rung match gets a short
   "ok" context line; a stronger spawn passes with a visible line
   "stronger than preset: <model>/<effort> vs <rung>" (context + systemMessage) for the
   main agent to report.
-- Missing model is a mismatch (the spawn would inherit the parent's model); missing effort
-  is a mismatch (every rung defines one); an unknown model or effort cannot be ranked and
-  is a mismatch. A mismatch or a weaker pair is denied with the minimum pairs and the lookup
-  command `credo-preset.sh stage <role> <attempt>`.
+- Missing model is a mismatch (the agent definition's or the parent's model cannot be
+  checked); missing effort is a mismatch (every rung defines one); an unknown model or
+  effort cannot be ranked and is a mismatch. Model ids are normalised (context suffix like
+  [1m], Bedrock/Vertex prefixes like us.anthropic., version suffixes like -v1:0, full ids
+  claude-<name>-x-y). A mismatch or a weaker pair is denied with the minimum pairs, the
+  lookup command (absolute path of credo-preset.sh) and how to declare the role.
 - subagent_type "fork" inherits the parent's model and effort (a model on the call is
   ignored). It passes only when the parent's model (last assistant model in the parent
   transcript) is >= the model of a fitting rung; the inherited effort cannot be read and is
@@ -30,7 +35,8 @@ Rules:
       preset exception: <scope> -> <model>/<effort>[, <model>/<effort> ...]
   scope: all, or one or more roles (explore, build, review, hard) separated by commas.
   a) .credo/RULES.md: such a line anywhere outside code fences (bullet optional, text
-     after a further `|` is ignored). Permanent until removed.
+     after a further `|` is ignored; a line in inline backticks is an example and is
+     ignored). Permanent until removed.
   b) The handoff section "## Rules (temporary)" of .credo/process/handoffs/HANDOFF.md:
      - preset exception: build -> opus/max | source: owner "<quote>" (<YYYY-MM-DD>) | until: <YYYY-MM-DD>
      valid only with an owner source with date and an until that starts with a date that
@@ -38,10 +44,15 @@ Rules:
      rules and undated or expired untils never grant an exception.
   The .credo files are read from the main checkout (git common dir) of the hook's cwd,
   then from the cwd's own top level.
+- The preset helpers run with CREDO_SESSION_ID = the hook's session_id and the hook's cwd,
+  so a session pin or a hub resolves the same preset as the main agent.
 - Internal errors fail open: a warning goes to stderr and to the log file
   (CREDO_PRESET_GUARD_LOG, default <CLAUDE_CONFIG_DIR or ~/.claude>/credo/logs/preset-guard.log).
+  All subprocesses share a time budget of 8 s (below the 10 s hook timeout); running out
+  counts as an internal error. If the harness aborts the hook at its timeout, the call
+  proceeds too (a timed-out hook is non-blocking): abort = allow.
 
-Test hooks: CREDO_PRESET_GUARD_TODAY=YYYY-MM-DD fixes today's date.
+Test hooks: CREDO_PRESET_GUARD_TODAY=YYYY-MM-DD fixes today's date; CREDO_PRESET_GUARD_BUDGET=<s> shortens the time budget.
 """
 import datetime
 import importlib.util
@@ -50,19 +61,31 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRESET_SH = os.path.join(HERE, "credo-preset.sh")
 CONFIG_SH = os.path.join(HERE, "credo-config.sh")
 HANDOFF_RULES_PY = os.path.join(HERE, "credo-handoff-rules.py")
 ROLES = ("explore", "build", "review", "hard")
-EXPLORE_TYPES = ("Explore", "Plan")
+# read-only subagent types that default to the explore role (exact names or plugin suffixes)
+EXPLORE_TYPES = ("Explore", "Plan", "web-fetch", "claude-code-guide")
+EXPLORE_SUFFIXES = (":cavecrew-investigator", "cavecrew-investigator")
 BUILD_ROLES = ("build", "review", "hard")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")  # ascending strength
 MODEL_RANK = {"haiku": 1, "sonnet": 2, "opus": 3, "fable": 4}  # ascending strength
-LOOKUP = "credo-preset.sh stage <role> <attempt>"
-EXC_RE = re.compile(r"^\s*(?:[-*+]\s+)?`?preset\s+exception\s*:\s*(.+?)`?\s*$", re.I)
+LOOKUP = "bash %s stage <role> <attempt>" % PRESET_SH
+ROLE_TAG_RE = re.compile(r"\[credo-role:\s*(explore|build|review|hard)\s*\]", re.I)
+ROLE_TAG_HINT = ("Declare the role with [credo-role: explore|build|review|hard] in the description "
+                 "or prompt (read-only search: subagent_type Explore, or the explore tag)")
+# a real exception line starts (after an optional bullet) with the bare words; a line in
+# inline backticks is a documentation example and is ignored
+EXC_RE = re.compile(r"^\s*(?:[-*+]\s+)?preset\s+exception\s*:\s*(.+?)\s*$", re.I)
 PAIR_RE = re.compile(r"^([A-Za-z0-9._-]+)\s*/\s*([a-z]+)$")
+# total time budget, below the 10 s hook timeout in hooks.json; a hook the harness aborts is
+# non-blocking, so an abort also means allow
+BUDGET_S = float(os.environ.get("CREDO_PRESET_GUARD_BUDGET") or 8.0)  # tests may shorten it
+CTX = {"deadline": 0.0, "session": "", "cwd": ""}
 
 
 class GuardError(Exception):
@@ -70,11 +93,27 @@ class GuardError(Exception):
 
 
 def alias_of(model):
+    """Model id or alias -> haiku/sonnet/opus/fable; unknown -> the normalised id.
+    Strips a context suffix ([1m]), Bedrock/Vertex prefixes (us.anthropic.) and version
+    suffixes (-v1:0, @20250101)."""
     m = (model or "").strip().lower()
-    for name in ("haiku", "opus", "sonnet", "fable"):
-        if m == name or m.startswith("claude-%s-" % name):
-            return name
+    m = re.sub(r"\[[^\]]*\]$", "", m)
+    m = m.rsplit(".", 1)[-1] if "anthropic." in m else m
+    m = re.sub(r"(-v\d+(:\d+)?|@[\w-]+)$", "", m)
+    if m in MODEL_RANK:
+        return m
+    if m.startswith("claude-"):
+        for part in m.split("-")[1:]:
+            if part in MODEL_RANK:
+                return part
     return m
+
+
+def remaining():
+    left = CTX["deadline"] - time.monotonic()
+    if left <= 0.2:
+        raise GuardError("time budget of %.0f s used up" % BUDGET_S)
+    return left - 0.1
 
 
 def log_warning(msg):
@@ -92,8 +131,13 @@ def log_warning(msg):
 
 
 def run(cmd):
+    """Run a credo helper with the session id and cwd of the hook input, so a session pin
+    or a hub resolves the same preset as the main agent."""
     env = dict(os.environ, CREDO_SKIP_ENSURE="1")
-    res = subprocess.run(cmd, capture_output=True, text=True, timeout=8, env=env)
+    if CTX["session"]:
+        env["CREDO_SESSION_ID"] = CTX["session"]
+    cwd = CTX["cwd"] if CTX["cwd"] and os.path.isdir(CTX["cwd"]) else None
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=remaining(), env=env, cwd=cwd)
     if res.returncode != 0:
         raise GuardError("%s exited %d" % (os.path.basename(cmd[1]), res.returncode))
     return res.stdout
@@ -249,7 +293,8 @@ def credo_roots(cwd):
     for args in (["rev-parse", "--path-format=absolute", "--git-common-dir"],
                  ["rev-parse", "--show-toplevel"]):
         try:
-            res = subprocess.run(["git", "-C", cwd] + args, capture_output=True, text=True, timeout=5)
+            res = subprocess.run(["git", "-C", cwd] + args, capture_output=True, text=True,
+                                 timeout=min(3.0, remaining()))
         except (OSError, subprocess.SubprocessError):
             continue
         if res.returncode != 0 or not res.stdout.strip():
@@ -331,6 +376,27 @@ def at_least(pair, rung):
             and EFFORTS.index(pair[1]) >= EFFORTS.index(rung[1]))
 
 
+def mixed(pair, rung):
+    """True when one dimension of pair beats the rung and the other falls short."""
+    dm = MODEL_RANK[pair[0]] - MODEL_RANK.get(rung[0], 0)
+    de = EFFORTS.index(pair[1]) - (EFFORTS.index(rung[1]) if rung[1] in EFFORTS else 0)
+    return (dm > 0 > de) or (de > 0 > dm)
+
+
+def spawn_kind(sub, ti):
+    """(roles to check, label). An explicit [credo-role: <role>] tag in the description or
+    the prompt wins; else read-only types map to explore, everything else to
+    build/review/hard."""
+    for key in ("description", "prompt"):
+        m = ROLE_TAG_RE.search(str(ti.get(key) or ""))
+        if m:
+            role = m.group(1).lower()
+            return (role,), "%s role (tagged)" % role
+    if sub in EXPLORE_TYPES or sub.endswith(EXPLORE_SUFFIXES):
+        return ("explore",), "explore role (%s)" % sub
+    return BUILD_ROLES, "build/review/hard roles"
+
+
 def decide(data, today):
     if data.get("tool_name") not in ("Agent", "Task"):
         return
@@ -341,8 +407,7 @@ def decide(data, today):
         return
     ladder = read_ladder()
     sub = str(ti.get("subagent_type") or "")
-    kind_roles = ("explore",) if sub in EXPLORE_TYPES else BUILD_ROLES
-    kind = "explore role (%s)" % sub if sub in EXPLORE_TYPES else "build/review/hard roles"
+    kind_roles, kind = spawn_kind(sub, ti)
     allowed = set()
     for role in kind_roles:
         allowed.update((a, e) for a, e, _n in ladder["roles"][role])
@@ -358,8 +423,8 @@ def decide(data, today):
             "Pick the rung of this role and attempt with %s and pass its alias as model and its "
             "effort as effort. Active ladder: %s. A weaker pair only via a valid owner rule with "
             "an until date in the handoff \"## Rules (temporary)\" or a line in .credo/RULES.md "
-            "(format: preset exception: <all|role,...> -> <model>/<effort>)."
-            % (kind, fmt_pairs(every), LOOKUP, ladder_line))
+            "(format: preset exception: <all|role,...> -> <model>/<effort>). %s."
+            % (kind, fmt_pairs(every), LOOKUP, ladder_line, ROLE_TAG_HINT))
 
     if sub == "fork":
         parent = alias_of(parent_model(data))
@@ -378,7 +443,8 @@ def decide(data, today):
     effort = str(ti.get("effort") or "").strip().lower()
     reasons = []
     if not model:
-        reasons.append("no model (it would inherit the parent's model)")
+        reasons.append("no model given - the agent definition's or the parent's model cannot "
+                       "be checked; pass model and effort explicitly")
     elif alias_of(model) not in MODEL_RANK:
         reasons.append("unknown model %s" % model)
     if not effort:
@@ -390,6 +456,9 @@ def decide(data, today):
     if not reasons and not covered:
         reasons.append("%s/%s is below every rung of the %s (weaker model or lower effort)"
                        % (pair[0], pair[1], kind))
+        if any(mixed(pair, p) for p in every):
+            reasons.append("model and effort must both reach the rung - a stronger model does "
+                           "not make up for a lower effort, nor the other way round")
     if reasons:
         emit("deny", "[credo-preset] Spawn denied (preset %s): %s. %s"
              % (pname, "; ".join(reasons), tail))
@@ -418,6 +487,9 @@ def main():
         except ValueError:
             return 0
         if isinstance(data, dict):
+            CTX["deadline"] = time.monotonic() + BUDGET_S
+            CTX["session"] = str(data.get("session_id") or "")
+            CTX["cwd"] = str(data.get("cwd") or "")
             decide(data, today)
     except Exception as exc:  # fail open on any internal error
         log_warning("%s: %s - spawn allowed unchecked" % (type(exc).__name__, exc))

@@ -95,7 +95,17 @@ check "weaker sonnet/medium: denied" deny "$(decision "$out")"
 r="$(reason "$out")"
 has "deny names the weakness" "sonnet/medium is below every rung of the build/review/hard roles" "$r"
 has "deny lists the minimum pairs" "Minimum for the build/review/hard roles: one of haiku/xhigh, opus/medium" "$r"
-has "deny names the lookup command" "credo-preset.sh stage <role> <attempt>" "$r"
+has "deny names the lookup command with its absolute path" "bash $HERE/credo-preset.sh stage <role> <attempt>" "$r"
+has "deny says how to declare the role" "Declare the role with [credo-role: explore|build|review|hard]" "$r"
+out="$(run_hook "$(call Agent '{"model":"opus","effort":"low"}')")"
+check "stronger model but lower effort: denied" deny "$(decision "$out")"
+has "mixed: both must reach the rung" "model and effort must both reach the rung" "$(reason "$out")"
+out="$(run_hook "$(call Agent '{"model":"haiku","effort":"low"}')")"
+check "haiku/low: denied" deny "$(decision "$out")"
+case "$(reason "$out")" in
+    *"must both reach"*) fail=$((fail + 1)); echo "FAIL: purely weaker pair gets no mixed sentence" ;;
+    *) pass=$((pass + 1)) ;;
+esac
 has "deny shows the ladder" "Active ladder: $LADDER_BAL." "$r"
 has "deny names the exception format" "preset exception: <all|role,...> -> <model>/<effort>" "$r"
 out="$(run_hook "$(call Agent '{"model":"haiku","effort":"low"}')")"
@@ -109,10 +119,36 @@ check "missing effort: denied" deny "$(decision "$out")"
 has "missing effort: named" "(preset balanced): no effort." "$(reason "$out")"
 out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","effort":"max"}')")"
 check "missing model: denied" deny "$(decision "$out")"
-has "missing model: named" "no model (it would inherit the parent's model)" "$(reason "$out")"
+has "missing model: named" "no model given - the agent definition's or the parent's model cannot be checked; pass model and effort explicitly" "$(reason "$out")"
 out="$(run_hook "$(call Task '{"subagent_type":"general-purpose"}')")"
 check "Task tool name is checked too" deny "$(decision "$out")"
-has "neither: both named" "no model (it would inherit the parent's model); no effort." "$(reason "$out")"
+has "neither: both named" "pass model and effort explicitly; no effort." "$(reason "$out")"
+
+# --- model id normalisation -----------------------------------------------------------
+out="$(run_hook "$(call Agent '{"model":"us.anthropic.claude-opus-4-v1:0","effort":"medium"}')")"
+check "Bedrock id us.anthropic.claude-opus-4-v1:0 -> opus: allowed" allow "$(decision "$out")"
+out="$(run_hook "$(call Agent '{"model":"claude-opus-5-5[1m]","effort":"medium"}')")"
+check "context suffix [1m] stripped: allowed" allow "$(decision "$out")"
+out="$(run_hook "$(call Agent '{"model":"claude-opus-4@20250514","effort":"medium"}')")"
+check "Vertex id with @date: allowed" allow "$(decision "$out")"
+out="$(run_hook "$(call Agent '{"model":"claude-3-5-sonnet-20241022","effort":"max"}')")"
+has "old-style full id maps to sonnet" "stronger than preset: sonnet/max" "$(ctx "$out")"
+
+# --- role tag and read-only types -----------------------------------------------------
+out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","description":"find X [credo-role: explore]","model":"haiku","effort":"low"}')")"
+check "general-purpose tagged explore at the explore rung: allowed" allow "$(decision "$out")"
+has "tag named in the advisory" "explore role (tagged)" "$(ctx "$out")"
+out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","prompt":"x\n[credo-role: review]\ny","model":"haiku","effort":"xhigh"}')")"
+check "role tag in the prompt: allowed" allow "$(decision "$out")"
+out="$(run_hook "$(call Agent '{"subagent_type":"Explore","description":"[credo-role: build]","model":"haiku","effort":"low"}')")"
+check "Explore tagged build checks the build ladder: denied" deny "$(decision "$out")"
+has "tagged deny names the role" "Minimum for the build role (tagged): one of haiku/xhigh (" "$(reason "$out")"
+out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","description":"[credo-role: hard]","model":"opus","effort":"medium"}')")"
+check "tag hard: opus/medium allowed" allow "$(decision "$out")"
+for t in web-fetch claude-code-guide caveman:cavecrew-investigator; do
+    out="$(run_hook "$(call Agent "{\"subagent_type\":\"$t\",\"model\":\"haiku\",\"effort\":\"low\"}")")"
+    check "read-only type $t maps to explore: allowed" allow "$(decision "$out")"
+done
 
 # --- Explore / Plan: explore role only ------------------------------------------------
 out="$(run_hook "$(call Agent '{"subagent_type":"Explore","model":"haiku","effort":"low"}')")"
@@ -162,10 +198,13 @@ cat > "$RR/.credo/RULES.md" <<'MD'
 preset exception: all -> haiku/low
 ```
 
-- `preset exception: build, review -> haiku/high` | owner allows haiku high here
+- preset exception: build, review -> haiku/high | owner allows haiku high here
 preset exception: explore -> haiku/medium
 preset exception: nonsense -> sonnet/low
+- `preset exception: build -> sonnet/medium` (an example in backticks)
 MD
+out="$(run_hook "$(call Agent '{"model":"sonnet","effort":"medium"}' "$RR")")"
+check "override in inline backticks is an example and ignored: denied" deny "$(decision "$out")"
 out="$(run_hook "$(call Agent '{"model":"haiku","effort":"high"}' "$RR")")"
 check "RULES.md override haiku/high for build: allowed" allow "$(decision "$out")"
 has "override advisory names the source" "ok by preset exception (RULES.md): haiku/high" "$(ctx "$out")"
@@ -254,6 +293,35 @@ mkdir -p "$BARE/hooks"
 cp "$HOOK" "$BARE/hooks/"
 out="$(printf '%s' "$(call Agent '{"model":"sonnet"}')" | bash "$BARE/hooks/credo-agent-spawn-check.sh" 2>/dev/null)"
 check "no guard script: silent" "" "$out"
+
+# time budget: a hanging helper is cut off below the hook timeout and fails open
+printf '#!/bin/bash\nsleep 30\n' > "$STUB/scripts/credo-preset.sh"
+rm -f "$CREDO_PRESET_GUARD_LOG"
+t0=$(date +%s)
+out="$(printf '%s' "$(call Agent '{"model":"sonnet"}')" | CREDO_PRESET_GUARD_BUDGET=2 bash "$STUB/hooks/credo-agent-spawn-check.sh" 2>/dev/null)"
+t1=$(date +%s)
+check "hanging preset helper: fail open (silent)" "" "$out"
+check "hanging preset helper: cut off by the budget" yes "$([ $((t1 - t0)) -le 5 ] && echo yes || echo no)"
+has "budget cut-off is logged" "spawn allowed unchecked" "$(cat "$CREDO_PRESET_GUARD_LOG" 2>/dev/null)"
+
+# session id and cwd reach the preset helpers (pins and hubs resolve the same preset)
+SP="$TMP/sessplugin"
+mkdir -p "$SP/hooks" "$SP/scripts" "$TMP/pinned"
+cp "$HOOK" "$HERE/../hooks/credo-python-lib.sh" "$SP/hooks/"
+cp "$HERE/credo-preset-guard.py" "$HERE/credo-handoff-rules.py" "$SP/scripts/"
+cat > "$SP/scripts/credo-config.sh" <<SH
+#!/bin/bash
+[ "\$CREDO_SESSION_ID" = "11111111-2222-3333-4444-555555555555" ] && [ "\$PWD" = "$TMP/pinned" ] && echo pinned
+SH
+cat > "$SP/scripts/credo-preset.sh" <<'SH'
+#!/bin/bash
+printf 'preset: pinned (custom)\nexplore:\n  1. claude-haiku-5-5 / low, attempts until-done\nbuild:\n  1. claude-opus-5-5 / high, attempts until-done\nreview:\n  1. claude-opus-5-5 / high, attempts until-done\nhard:\n  1. claude-opus-5-5 / high, attempts until-done\n'
+SH
+out="$(printf '%s' "$(call Agent '{"model":"opus","effort":"medium"}' "$TMP/pinned")" | bash "$SP/hooks/credo-agent-spawn-check.sh" 2>/dev/null)"
+check "session id + cwd passed: pinned preset enforced" deny "$(decision "$out")"
+has "pinned preset named" "(preset pinned)" "$(reason "$out")"
+out="$(printf '%s' "$(call Agent '{"model":"opus","effort":"medium"}' "$REPO")" | bash "$SP/hooks/credo-agent-spawn-check.sh" 2>/dev/null)"
+check "other cwd: the stub sees no preset: silent" "" "$out"
 
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]

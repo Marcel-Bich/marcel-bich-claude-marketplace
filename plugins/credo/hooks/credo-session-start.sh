@@ -220,7 +220,7 @@ if [[ -x "$PRESET_SCRIPT" ]]; then
     _preset_prompt="$(CREDO_SESSION_ID="$session_id" "$PRESET_SCRIPT" mainagent --field prompt 2>/dev/null)" || _preset_prompt=""
     if [[ -n "$_preset_prompt" ]]; then
         _preset_name="$(CREDO_SESSION_ID="$session_id" "$PRESET_SCRIPT" active 2>/dev/null)" || _preset_name="balanced"
-        _spawn_rule="Before each subagent spawn, run \"${PRESET_SCRIPT}\" stage <role> <attempt> (roles explore, build, review and hard; attempt 1 for the first try of that role on an item, plus one per failed try). Pass its alias as the Agent model, its effort as effort, and append its prompt block to the Agent prompt. action back-to-human means do not spawn."
+        _spawn_rule="Before each subagent spawn, run \"${PRESET_SCRIPT}\" stage <role> <attempt> (roles explore, build, review and hard; attempt 1 for the first try of that role on an item, plus one per failed try). Pass its alias as the Agent model, its effort as effort, append its prompt block to the Agent prompt and tag the role in the Agent description ([credo-role: <role>]); the spawn guard denies anything below the preset. action back-to-human means do not spawn."
         PRESET_BLOCK="[credo] Model preset '${_preset_name}' - instructions for the main agent (they apply to the whole session, also after a compaction):"$'\n'"${_preset_prompt}"$'\n\n'"${_spawn_rule}"
     fi
 fi
