@@ -28,9 +28,11 @@
 # (written by scripts/credo_pane_wake.py for /credo:self-reload and
 # /credo:self-compact, which typed that "." to start a turn); any prompt consumes
 # the file and gets the wake note, but only that "." skips the pause. When another
-# prompt consumed the file first, a "." within 2 min still counts as the helper's.
+# prompt consumed the file first, the NEXT prompt still counts as the helper's when it
+# is a "." within 2 min (single-use stamp, dropped by any next prompt).
 # credo's own typed prompts ([credo-reminder], [credo-self-restart], [remote chat])
-# are exempt also when Claude Code shows them wrapped as <pasted_content ...>.
+# are exempt also when Claude Code shows them as ONE <pasted_content ...> block with
+# nothing else around it; own text after the paste, or two pastes, still pause.
 #
 # PER SESSION: the autonomy state lives under
 #   ${CREDO_AUTONOMY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/autonomy}/<session_id>/
@@ -205,13 +207,12 @@ if [ -n "$sw_sid" ] && [ -f "$CONFIG_DIR/credo/self-wake-$sw_sid" ]; then
     fi
 elif [ -n "$sw_sid" ] && [ -f "$CONFIG_DIR/credo/self-wake-$sw_sid.used" ]; then
     # A bare "." within 2 min after another prompt consumed this session's wake file is
-    # the helper's queued "." - never a pause. Older stamps are dropped.
+    # the helper's queued "." - never a pause. The stamp is single-use: the very next
+    # prompt drops it, whatever it is, so a later owner "." always pauses.
     sw_used="$CONFIG_DIR/credo/self-wake-$sw_sid.used"
     sw_fresh="$(find "$sw_used" -mmin -2 2>/dev/null)"
     sw_dot="$(bare_dot)"
-    if [ -z "$sw_fresh" ] || [ "$sw_dot" = yes ]; then
-        rm -f "$sw_used" 2>/dev/null || true
-    fi
+    rm -f "$sw_used" 2>/dev/null || true
     if [ -n "$sw_fresh" ] && [ "$sw_dot" = yes ]; then
         exit 0
     fi
@@ -235,8 +236,28 @@ esac
 #   [credo-self-restart]   resume prompt of /credo:self-restart (credo-self-restart.py)
 #   [remote chat <id>]     remote app message (credo-owner-type send); owner order
 #                          "nie pausieren wenn was von der app kommt" - prior state stays
-auto_head=$(printf '%s' "$prompt" | sed -e 's/^[[:space:]]*<pasted_content[^>]*>[[:space:]]*//' \
-    | sed -n '/[^[:space:]]/{s/^[[:space:]]*//;p;q;}')
+# A pasted prompt counts only when it is exactly ONE paste block with nothing but
+# whitespace before the opening and after the closing tag: an owner who pastes a
+# reminder and writes own text below it (or pastes two blocks) is a real message.
+first_line() { sed -n '/[^[:space:]]/{s/^[[:space:]]*//;p;q;}'; }
+is_blank() { [ -z "$(printf '%s' "$1" | tr -d '[:space:]')" ]; }
+auto_head=""
+case "$prompt" in
+    *"<pasted_content"*)
+        paste_pre="${prompt%%"<pasted_content"*}"
+        paste_rest="${prompt#*"<pasted_content"}"
+        paste_post="${paste_rest#*"</pasted_content"}"
+        if is_blank "$paste_pre" && [ "$paste_post" != "$paste_rest" ] \
+            && [ "$(printf '%s' "$prompt" | grep -o '<pasted_content' | wc -l)" -eq 1 ] \
+            && is_blank "${paste_post#*>}" && [ "${paste_post#*>}" != "$paste_post" ]; then
+            paste_inner="${paste_rest%%"</pasted_content"*}"
+            auto_head=$(printf '%s' "${paste_inner#*>}" | first_line)
+        fi
+        ;;
+    *)
+        auto_head=$(printf '%s' "$prompt" | first_line)
+        ;;
+esac
 case "$auto_head" in
     "[Cross-session idle notice]"* | "[Cross-session delivery notice]"* \
     | "[credo-reminder]"* | "[credo-self-restart]"* | "[remote chat "*"]"*)

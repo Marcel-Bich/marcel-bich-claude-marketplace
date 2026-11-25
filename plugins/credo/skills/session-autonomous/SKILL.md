@@ -320,9 +320,12 @@ and lets the stop through once a future wake is marked, so it can NOT spin forev
 autonomous mode (no flag set) the hook is completely inert - a plain no-op stop.
 
 Only a real owner message pauses: credo's own typed prompts never do - the `[credo-reminder]`
-(also when Claude Code shows it as a `<pasted_content ...>` paste), the `[credo-self-restart]`
-resume prompt, the `.` of `/credo:self-reload` / `/credo:self-compact` (also when a queued
-notification consumed the wake file first, within 2 min), `[remote chat ...]`, peer messages,
+(also when Claude Code shows it as exactly one `<pasted_content ...>` block with nothing
+else around it; own text after the paste or two pastes are an owner message and pause), the
+`[credo-self-restart]` resume prompt, the `.` of `/credo:self-reload` / `/credo:self-compact`
+(also when a queued notification consumed the wake file first: the next prompt, if a `.`
+within 2 min, is still the helper's; the single-use stamp is dropped by any next prompt),
+`[remote chat ...]` (same one-paste rule), peer messages,
 task notifications and harness notices. The `paused` file records the cause: `user-message`
 for a pause by an owner message, empty for a deliberate `credo-autonomy-off.sh`.
 

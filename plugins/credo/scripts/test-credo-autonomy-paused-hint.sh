@@ -11,7 +11,7 @@ SID="11111111-2222-3333-4444-555555555555"
 pass=0
 fail=0
 TMP="$(mktemp -d)"
-trap 'rm -rf -- "$TMP"' EXIT
+# no trap cleanup: the temp dir is printed at the end for removal by its literal path
 export CREDO_AUTONOMY_DIR="$TMP/autonomy"
 export CREDO_SESSION_MODES_DIR="$TMP/modes"
 export CLAUDE_CONFIG_DIR="$TMP/cfg"
@@ -97,5 +97,6 @@ check "no jq: exit 0" 0 "$RC"
 state none autonomous; : > "$CREDO_AUTONOMY_DIR/$SID/active"; stop
 check "active autonomy without wake still blocks" 2 "$RC"
 
+echo "temp dir (remove by this literal path): $TMP"
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]

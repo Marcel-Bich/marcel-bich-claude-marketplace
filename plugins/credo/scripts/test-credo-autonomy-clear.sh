@@ -219,6 +219,25 @@ arm; run_prompt "please look at [credo-self-restart] later"
 expect "user message quoting the self-restart tag still pauses" paused
 arm; run_prompt "$(printf '<pasted_content id="r1">\n[remote chat 42] hello\n</pasted_content>')"
 expect "pasted remote chat keeps autonomy" kept
+# real closing tag form of Claude Code, trailing newline
+arm; run_prompt "$(printf '\n\n<pasted_content id="f330">\n%s\n</pasted_content id="f330">\n' "$REM")"
+expect "reminder paste with id on the closing tag keeps autonomy" kept
+# owner pastes a reminder and writes own text below it: a real message
+arm; run_prompt "$(printf '<pasted_content id="f330">\n%s\n</pasted_content id="f330">\n\n\ndas ist mir zu langweilig - mach vorschläge' "$REM")"
+expect "reminder paste + own text after it pauses" paused
+arm; run_prompt "$(printf 'look at this:\n<pasted_content id="f330">\n%s\n</pasted_content id="f330">' "$REM")"
+expect "own text before a reminder paste pauses" paused
+arm; run_prompt "$(printf '<pasted_content id="a">\n%s\n</pasted_content id="a">\n<pasted_content id="b">\n%s\n</pasted_content id="b">' "$REM" "$REM")"
+expect "two reminder pastes pause" paused
+arm; run_prompt "$(printf '<pasted_content id="f330">\n%s\n' "$REM")"
+expect "reminder paste without a closing tag pauses (fail-safe)" paused
+# R6 parity: the same rule for [remote chat ...]
+arm; run_prompt "$(printf '<pasted_content id="r1">\n[remote chat 42] hello\n</pasted_content id="r1">\nplus my own note')"
+expect "remote chat paste + own text after it pauses" paused
+arm; run_prompt "$(printf '<pasted_content id="r1">\n[remote chat 42] a\n</pasted_content id="r1">\n<pasted_content id="r2">\n[remote chat 42] b\n</pasted_content id="r2">')"
+expect "two remote chat pastes pause" paused
+arm; run_prompt "[remote chat 42] hello from the app"
+expect "bare remote chat keeps autonomy" kept
 
 # helper "." queued behind another prompt that consumed the wake file first
 USED="$SW.used"
@@ -240,6 +259,14 @@ check "expired .used stamp removed" removed "$got"
 arm; : > "$USED"
 run_prompt "a real user message"
 expect "a real message with a fresh .used stamp still pauses" paused
+if [ -e "$USED" ]; then got=kept; else got=removed; fi
+check "the first non-'.' prompt clears the .used stamp" removed "$got"
+arm; run_prompt "."
+expect "'.' after the stamp was cleared by another prompt pauses" paused
+arm; : > "$USED"
+run_prompt "<task-notification>done</task-notification>"
+if [ -e "$USED" ]; then got=kept; else got=removed; fi
+check "an exempt non-'.' prompt also clears the .used stamp" removed "$got"
 
 # paused marker: who paused, and the re-arm nudge while a user pause lasts
 P="$CREDO_AUTONOMY_DIR/$SID/paused"

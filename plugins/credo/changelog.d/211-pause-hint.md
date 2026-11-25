@@ -8,8 +8,11 @@ bump: patch
   autonomous run on every delivery because Claude Code shows the typed burst as a
   `<pasted_content ...>` paste with leading blank lines, which the prefix check missed; the
   `[credo-self-restart]` resume prompt paused it too. `credo-autonomy-clear.sh` now unwraps
-  the paste and matches all credo prompts on the first non-empty line, and a self-reload or
-  self-compact `.` stays exempt when a queued notification consumed the wake file first.
+  a prompt that is exactly one paste block (nothing but whitespace around it) and matches all
+  credo prompts on its first non-empty line; own text after a paste or two pastes still
+  pause, for `[remote chat ...]` too. A self-reload or self-compact `.` stays exempt when a
+  queued notification consumed the wake file first (single-use stamp, valid 2 min for the
+  next prompt only).
 
 ### Added
 
