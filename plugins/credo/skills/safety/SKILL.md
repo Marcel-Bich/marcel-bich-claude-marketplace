@@ -119,10 +119,12 @@ this), and the helper deletes only in these places:
   `%TEMP%` and `C:\tmp` files the purge may take;
 - a single FILE a Bash command of this session provably wrote in a temp dir (`/tmp`, `/var/tmp`,
   `/dev/shm`, #212): the path is literally a write target of the command (`>`, `>>`, `tee [-a]`,
-  `cp`/`mv`/`install ... <target>`, `dd of=`; an absolute literal path, never through a variable,
-  glob or `~`), the pre hook saw no file there, it was born during the call, dev+inode are
-  unchanged, and the session's transcript (main agent or a subagent) holds that successful Bash
-  call; the usual 2-minute and open-file checks apply. Directories stay report-only;
+  `cp`/`install ... <target>`, `dd of=`; never `mv`, whose cross-filesystem copy births the only
+  copy of the source; an absolute literal path, never through a variable, glob or `~`), the pre
+  hook saw no file there, it was born during the call while no other credo session had a tool
+  call open, dev+inode are unchanged, and a transcript of the session (main agent or a subagent)
+  holds a successful Bash call naming exactly that path as a write target; the usual 2-minute
+  and open-file checks apply. Directories stay report-only;
 - known build-output directories (`node_modules`, `dist`, `build`, `out`, `coverage`, `.next`,
   `.nuxt`, `.turbo`, `.cache`, `target`, `__pycache__`, `.pytest_cache`, `.mypy_cache`,
   `playwright-report`, `test-results`, `.venv`) ignored by a tracked `.gitignore` (no negation

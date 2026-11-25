@@ -1213,10 +1213,11 @@ def transcript_files(sid):
 
 
 def _bash_targets(command):
-    """Literal write targets of a Bash command (credo_write_targets); none when it cannot load."""
+    """Literal write targets of a Bash command that count as own-rm evidence (credo_write_targets,
+    no mv destinations); none when it cannot load."""
     try:
         import credo_write_targets
-        return credo_write_targets.write_targets(command)
+        return credo_write_targets.evidence_targets(command)
     except Exception:  # noqa: BLE001 - no parser: no command evidence
         return []
 
@@ -1224,7 +1225,7 @@ def _bash_targets(command):
 def _written_paths(f):
     """{"write": paths, "bash": paths} of successful calls in one transcript. "write": the file
     of a Write/Edit/MultiEdit/NotebookEdit call; "bash" (#212): the literal write targets of a
-    Bash command (> / >> / tee / cp|mv|install ... DEST / dd of=). A call counts with its
+    Bash command (> / >> / tee / cp|install ... DEST / dd of=; never mv). A call counts with its
     tool_result that is no error (is_error not true and no error text as toolUseResult). Read
     calls, rejected and failed calls do not count."""
     uses, ok = {}, set()
@@ -1288,12 +1289,13 @@ def not_deletable_entry(p, e, sid=None):
     are, inside a temp root (not in the home, not in a worktrees dir): a file the Write/Edit tool
     created, and (#212) a file a Bash command of this session provably wrote - the scan found it
     born during the call, it is a literal write target of that command that pre saw missing
-    ("write_target"), and the transcript holds that successful Bash call. Anything else the
-    birth-time scan of a Bash call found may have been created by the owner or another program
-    during the call, so it is only reported."""
+    ("write_target"), no other credo session had a tool call open at its birth (not
+    "ambiguous"), and a transcript of this session holds a successful Bash call naming exactly
+    this path as a write target. Anything else the birth-time scan of a Bash call found may have
+    been created by the owner or another program during the call, so it is only reported."""
     bash_target = (e.get("evidence") == "command" and e.get("write_target") is True
                    and e.get("tool") == "Bash" and e.get("root_kind") == "temp"
-                   and e.get("btime") is not None)
+                   and e.get("btime") is not None and not e.get("ambiguous"))
     if e.get("evidence") != "write" and not bash_target:
         return ("report only: not a file the Write/Edit tool created nor a literal write target "
                 "of a Bash command that was missing before the call (%s evidence); another "
@@ -1325,8 +1327,9 @@ def owned_entry(p, st, entries, sid):
     if e.get("dev") != st.st_dev or e.get("ino") != st.st_ino or not same_birth(e, p):
         return False, e, "replaced since it was recorded (dev/inode/birth differ)", None
     if not stat.S_ISREG(st.st_mode):
-        return False, e, ("report only: only a single file the Write/Edit tool created is deletable "
-                          "outside the session TMPDIR and scratchpad"), None
+        return False, e, ("report only: outside the session TMPDIR and scratchpad only a single "
+                          "regular file is deletable (Write/Edit-created or a proven Bash write "
+                          "target)"), None
     why = not_deletable_entry(p, e, sid)
     if why:
         return False, e, why, None

@@ -14,6 +14,10 @@ taskset, timeout):
                                 that name a directory, not with fewer than two operands)
   dd ... of=FILE
 
+mv targets count for the new-file guard only (write_targets), never as own-rm evidence
+(evidence_targets): a cross-filesystem mv copies and then deletes the source, so its target is
+a new inode born during the call that holds the only copy of someone else's file.
+
 Conservative on purpose: only absolute literal paths count. A word with a variable, command
 substitution, glob or brace character ($ ` * ? [ ] { }), a ~ path, a relative path or a path
 ending in / never counts. Commands inside bash -c "..." strings are not parsed. Any parse error
@@ -75,7 +79,7 @@ def _copy_dest(name, args):
     return operands[-1]
 
 
-def _targets_of(words, redirects):
+def _targets_of(words, redirects, moves=True):
     out = []
     for op, word in redirects:
         if "<" in op and ">" not in op:
@@ -98,7 +102,7 @@ def _targets_of(words, redirects):
                 continue
             else:
                 out.append(a)
-    elif name in COPY_CMDS:
+    elif name in COPY_CMDS and (moves or name != "mv"):
         dest = _copy_dest(name, args)
         if dest is not None:
             out.append(dest)
@@ -107,22 +111,38 @@ def _targets_of(words, redirects):
     return out
 
 
-def write_targets(command):
-    """Sorted list of the absolute literal paths the command writes as a file target."""
+_LAST = [None, None]  # (command, parsed simple commands): the ledger pre hook asks twice
+
+
+def _commands(command):
+    if _LAST[0] != command:
+        try:
+            parser = _guard().Parser(command)
+            parser.parse()
+            cmds = parser.commands
+        except Exception:  # noqa: BLE001 - unparsable: no evidence, no guard decision
+            cmds = []
+        _LAST[0], _LAST[1] = command, cmds
+    return _LAST[1]
+
+
+def write_targets(command, moves=True):
+    """Sorted list of the absolute literal paths the command writes as a file target (moves=False:
+    without mv destinations)."""
     if not isinstance(command, str) or not command:
         return []
-    try:
-        parser = _guard().Parser(command)
-        parser.parse()
-    except Exception:  # noqa: BLE001 - unparsable: no evidence, no guard decision
-        return []
     found = set()
-    for cmd in parser.commands:
-        for word in _targets_of(cmd.words, cmd.redirects):
+    for cmd in _commands(command):
+        for word in _targets_of(cmd.words, cmd.redirects, moves):
             p = literal_path(word)
             if p:
                 found.add(p)
     return sorted(found)
+
+
+def evidence_targets(command):
+    """The write targets that may count as own-rm evidence: write_targets without mv (see above)."""
+    return write_targets(command, moves=False)
 
 
 def uses_mktemp(command):

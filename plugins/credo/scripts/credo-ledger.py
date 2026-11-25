@@ -299,8 +299,9 @@ def pre(data):
         st = L.session_tmp(sid)
         if os.path.isdir(L.tmp_base()) and not os.path.isdir(st):
             os.makedirs(st, mode=0o700, exist_ok=True)  # TMPDIR of this session vanished: recreate
-        # #212: the literal write targets that do not exist before the call (own-rm evidence)
-        absent = [p for p in W.write_targets((data.get("tool_input") or {}).get("command"))
+        # #212: the literal write targets that do not exist before the call (own-rm evidence;
+        # mv destinations never count, a cross-filesystem mv births the only copy of the source)
+        absent = [p for p in W.evidence_targets((data.get("tool_input") or {}).get("command"))
                   if not os.path.lexists(p)]
         if absent:
             info["absent"] = absent[:64]
@@ -543,11 +544,13 @@ def build_records(found, sid, tool, cmd, kind, agent_id, windows, cwd="", absent
     recs = []
     for path, st, bt in found:
         ev = "command" if path in absent else evidence_for(path, cmd, cwd)  # absent: dd of=PATH too
-        amb = ambiguous_for(bt, windows) if ev == "window" else []
+        target = ev == "command" and kind == "temp" and path in absent and stat.S_ISREG(st.st_mode)
+        # a write target is checked too: another session may have created the file during the call
+        amb = ambiguous_for(bt, windows) if ev == "window" or target else []
         rec = L.make_record(path, st, tool, ev, kind, agent_id, amb, bt)
-        if ev == "command" and kind == "temp" and path in absent and stat.S_ISREG(st.st_mode):
+        if target and not amb:
             # #212: a literal write target of the command (> / tee / cp ... / dd of=) that pre
-            # saw missing and that was born during the call
+            # saw missing, that was born during the call and while no other session had a call open
             rec["write_target"] = True
         recs.append(rec)
     return recs

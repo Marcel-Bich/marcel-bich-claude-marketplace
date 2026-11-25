@@ -18,7 +18,10 @@ bump: patch
 
 - `own-rm` (and the done-gate purge) now also remove a single file in a temp root that a Bash
   command of the session provably wrote (#212): a literal write target of the command that the
-  pre hook saw missing (ledger flag `write_target`), born during the call, dev+inode unchanged,
-  and the session transcript (main agent or a subagent) holds that successful Bash call; the
-  2-minute and open-file checks apply. Directories and everything else the Bash scan found stay
-  report-only.
+  pre hook saw missing (ledger flag `write_target`; `mv` targets never count), born during the
+  call while no other credo session had a tool call open, dev+inode unchanged, and a transcript
+  of the session (main agent or a subagent) holds a successful Bash call naming exactly that path
+  as a write target; the 2-minute and open-file checks apply. Directories and everything else
+  the Bash scan found stay report-only.
+- The bash lexer of the inline guard no longer reads `<` / `>` inside `[[ ... ]]` (a string
+  comparison) as a redirect, so `[[ a > /tmp/x ]]` is not denied by the new-file guard.

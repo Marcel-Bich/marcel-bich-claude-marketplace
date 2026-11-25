@@ -448,9 +448,9 @@ def excepted(p, excepts):
 
 def purge(args):
     """Done-gate. Removes only files the Write/Edit tool or a Bash write target (#212) created in
-    a temp root, each with every check of own-rm and an idle time of 30 minutes (--now: the 2 minutes of own-rm). Everything
-    else is listed: other Bash-recorded entries (report only), entries outside the temp roots, and the
-    children of the session TMPDIR (shared with parallel subagents; own-rm them by name, or the
+    a temp root, each with every check of own-rm and an idle time of 30 minutes (--now: the 2
+    minutes of own-rm). Everything else is listed: other Bash-recorded entries (report only),
+    entries outside the temp roots, and the children of the session TMPDIR (shared with parallel subagents; own-rm them by name, or the
     sweep removes them once the session has ended)."""
     sid = session_id()
     if not sid:

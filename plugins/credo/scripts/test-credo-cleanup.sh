@@ -430,6 +430,40 @@ N=$((N + 1)); cj="$(cmdjson "echo h > $FH/bt-home.txt")"
 hook pre Bash "$cj"; echo h > "$FH/bt-home.txt"; hook post Bash "$cj"; tx_bash "echo h > $FH/bt-home.txt" ok
 o="$(helper own-rm "$FH/bt-home.txt")"
 contains "a Bash target in the home is report-only" "refused $FH/bt-home.txt" "$o"
+# audit M1: another credo session has a call open and creates the target during our call
+SBM="$TMP/state/marks/eeeeeeee-0000-4000-8000-000000000005"
+mkdir -p "$SBM"
+python3 -c 'import sys, time; open(sys.argv[1] + "/%.6f_tuB" % time.time(), "w").write("{}")' "$SBM"
+bash_call "echo mine >> $R/bt-shared.log"
+contains "a write target born while another session had a call open is ambiguous" '"ambiguous"' \
+    "$(grep "\"$R/bt-shared.log\"" "$LEDGER_FILE")"
+check "ambiguous write target is not flagged" 0 "$(grep "\"$R/bt-shared.log\"" "$LEDGER_FILE" | grep -c write_target)"
+o="$(helper own-rm "$R/bt-shared.log")"
+contains "ambiguous write target is report-only" "refused $R/bt-shared.log: report only" "$o"
+check "ambiguous write target kept" yes "$(exists "$R/bt-shared.log")"
+rm -f "$SBM"/*_tuB
+echo data > "$R/bt-amb-forged.txt"
+python3 -I -c '
+import json, os, sys
+sys.path.insert(0, sys.argv[3]); import credo_cleanup_lib as L
+p = sys.argv[1]; st = os.lstat(p)
+open(sys.argv[2], "a").write(json.dumps({"event": "record", "path": p, "dev": st.st_dev, "ino": st.st_ino,
+    "type": "file", "btime": L.birth_time(p), "tool": "Bash", "evidence": "command", "write_target": True,
+    "root_kind": "temp", "ambiguous": ["eeeeeeee-0000-4000-8000-000000000005"]}) + "\n")
+' "$R/bt-amb-forged.txt" "$LEDGER_FILE" "$SCRIPT_DIR"
+tx_bash "echo data > $R/bt-amb-forged.txt" ok
+o="$(helper own-rm "$R/bt-amb-forged.txt")"
+contains "a write_target line marked ambiguous is report-only" "refused $R/bt-amb-forged.txt: report only" "$o"
+# audit M2: an mv destination is never own-rm evidence (a cross-filesystem mv copies, then
+# deletes the source: the target is a new inode holding the only copy)
+echo only-copy > "$FH/userdata/mvsrc.txt"
+N=$((N + 1)); cj="$(cmdjson "mv $FH/userdata/mvsrc.txt $R/bt-mv.txt")"
+hook pre Bash "$cj"; cp "$FH/userdata/mvsrc.txt" "$R/bt-mv.txt"; rm "$FH/userdata/mvsrc.txt"
+hook post Bash "$cj"; tx_bash "mv $FH/userdata/mvsrc.txt $R/bt-mv.txt" ok
+check "mv destination is not flagged write_target" 0 "$(grep "\"$R/bt-mv.txt\"" "$LEDGER_FILE" | grep -c write_target)"
+o="$(helper own-rm "$R/bt-mv.txt")"
+contains "mv destination is report-only" "refused $R/bt-mv.txt: report only" "$o"
+check "moved file kept" yes "$(exists "$R/bt-mv.txt")"
 
 # --- 3e. guard: no new files directly in a shared temp dir (#212) --------------------------------
 G="$TMP/sharedtmp"
@@ -443,6 +477,10 @@ contains "cp into /tmp denied" "deny" "$(gpre "cp $FH/userdata/thesis.txt $G/new
 contains "tee into /tmp denied" "deny" "$(gpre "echo a | tee $G/newtee")"
 contains "dd of= into /tmp denied" "deny" "$(gpre "dd if=/dev/zero of=$G/newdd count=1")"
 contains "a later command in a chain denied" "deny" "$(gpre "cd /x && ls >> $G/new.log")"
+contains "mv into /tmp still denied (guard keeps mv)" "deny" "$(gpre "mv $FH/a $G/newmv")"
+check "[[ a > /tmp/x ]] is a string comparison" "" "$(gpre "[[ a > $G/cmp ]] && echo y")"
+check "[[ a < /tmp/x ]] is a string comparison" "" "$(gpre "[[ b < $G/cmp ]]")"
+contains "a redirect after ]] still counts" "deny" "$(gpre "[[ a > b ]] > $G/after-cond")"
 check "existing file allowed" "" "$(gpre "echo x > $G/exists")"
 check "2>/dev/null allowed" "" "$(gpre "ls $G 2>/dev/null")"
 check "tee -a existing log allowed" "" "$(gpre "echo a | tee -a $G/existing.log")"

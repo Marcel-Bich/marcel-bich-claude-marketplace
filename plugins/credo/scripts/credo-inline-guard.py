@@ -183,6 +183,13 @@ class Parser(object):
                 finish_word()
                 i += 1
                 continue
+            if c in "<>" and expect_redirect is None and cur.words and cur.words[0] == "[[" \
+                    and "]]" not in cur.words[1:] and not self.s.startswith(("<(", ">("), i):
+                # inside [[ ... ]] a lone < or > is a string comparison, not a redirect
+                finish_word()
+                cur.words.append(c)
+                i += 1
+                continue
             if c in "<>":
                 if word is not None and word.isdigit() and expect_redirect is None:
                     word = None  # fd number of the redirect
