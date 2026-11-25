@@ -133,6 +133,19 @@ run_sut Q
 check "jump: a headed Q120 still reconciles (121)" "121" "$OUT"
 has "jump: a jump over 50 warns loudly" "WARNING: that is a jump of 115 numbers" "$ERR"
 
+# --- 3d. block-format headings "### <emoji> Q12 <middle dot> topic" count too (item #213) ---
+DOT=$'\xc2\xb7'
+export CREDO_DIR="$(new_credo blockfmt)"
+printf '%s\n' "### $QMARK Q130 $DOT block question" "### 🧪 T40 $DOT block test" \
+    "### $VETO$VETO V9 $DOT Veto possible: x $VETO$VETO" "### $QMARK Q999${DOT}glued, no space" \
+    "### $QMARK Q125) older form" > "$CREDO_DIR/process/requirements/req-block.md"
+run_sut Q
+check "block format: Q continues above a headed Q130 (glued Q999 ignored)" "131" "$OUT"
+run_sut T
+check "block format: T continues above T40" "41" "$OUT"
+run_sut V
+check "block format: V continues above V9" "10" "$OUT"
+
 # --- 4. the regex ignores glued, lower-case, item-id and over-long tokens ------
 export CREDO_DIR="$(new_credo noise)"
 fixture_noise "$CREDO_DIR"

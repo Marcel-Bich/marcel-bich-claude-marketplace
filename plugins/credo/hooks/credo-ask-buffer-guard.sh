@@ -44,7 +44,7 @@ bad=$(tail -c 2097152 -- "$tpath" 2>/dev/null | jq -R -c 'fromjson? // empty' 2>
 
 [[ -n "$bad" ]] || exit 0
 
-reason="credo Ask rule (owner decision Q398): text after a tool call in the same turn reaches the owner only as a one-line summary, so an Ask call may only follow credo-code-next.sh and one separate \`echo ok\` in its turn. This turn already ran: ${bad}. Do NOT call the Ask tool now: end the turn with the explanation and the question as text (heading \"### ❓ Qn) <topic>\", code from credo-code-next.sh Q) - the owner answers \"Qn: ...\" in chat."
+reason="credo Ask rule (owner decision Q398): text after a tool call in the same turn reaches the owner only as a one-line summary, so an Ask call may only follow credo-code-next.sh and one separate \`echo ok\` in its turn. This turn already ran: ${bad}. Do NOT call the Ask tool now: end the turn with the explanation and the question as text (heading \"### ❓ Qn · <topic>\" in the block format of the credo verify skill, code from credo-code-next.sh Q) - the owner answers \"Qn: ...\" in chat."
 jq -n --arg r "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse",
   permissionDecision: "deny", permissionDecisionReason: $r}}'
 exit 0

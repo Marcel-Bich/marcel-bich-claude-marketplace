@@ -773,7 +773,7 @@ suspended even though it had announced it would).
   prompt ended the run and the user is present and reachable (a real user message just paused
   autonomy via `credo-autonomy-clear.sh`, as opposed to a `[CREDO-AUTONOMY-WAKE]` self-wake).
   No Ask tool here either, also not for the power-down. Announce the pending power-down in
-  the reply as a veto (`### ✋✋ V<n>) Veto possible: power down the machine ✋✋`, credo
+  the reply as a veto (`### ✋✋ V<n> · Veto possible: power down the machine ✋✋`, credo
   `verify`, "Typed codes") that names the directive and the veto window, then run the same
   path as unattended - the `high` ntfy, the `windows.veto_minutes` veto window, power down if
   not vetoed, and `credo-autonomy-off.sh --after-suspend` as the final step (the directive

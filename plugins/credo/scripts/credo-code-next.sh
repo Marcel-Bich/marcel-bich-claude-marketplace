@@ -20,8 +20,9 @@
 #   <CREDO_DIR>/process/requirements/*.md   (direct files)
 #   <CREDO_DIR>/process/handoffs/**/*.md    (recursive, includes handoffs/archive/)
 # Only a code in its own heading counts - the form in which a project issues its codes:
-# a markdown heading (## to ####), its emoji (one or two), a space, then X<n>) with X = T, Q
-# or V, e.g. "### <question emoji> Q382) topic" or "### <veto emoji x2> V5) Veto possible".
+# a markdown heading (## to ####), its emoji (one or two), a space, then X<n> followed by
+# " <middle dot>" (block format) or ")" (older form), with X = T, Q or V, e.g.
+# "### <question emoji> Q382 <dot> topic" or "### <veto emoji x2> V5) Veto possible".
 # A mere mention ("answer Q390:", "see the other repo's Q398", a footer "**<emoji>: Q4**")
 # never counts, so a code of another project or session quoted in the logs cannot push
 # this project's counter. When the floor is above the counter, the counter is reconciled
@@ -103,6 +104,7 @@ stored_counter() {
 }
 
 # Highest code of one type in the project's text logs (0 when there is none).
+DOT=$'\xc2\xb7' # U+00B7 middle dot of the block-format heading "### <emoji> Q12 <dot> topic"
 floor_of() {
     local type="$1" found=""
     found="$(
@@ -113,8 +115,8 @@ floor_of() {
             if [ -d "$HANDOFF_DIR" ]; then
                 find "$HANDOFF_DIR" -type f -name '*.md' -print0
             fi
-        } | xargs -0 -r grep -ohE "^#{2,4} [^ [:alnum:]]{1,16} ${type}[0-9]{1,12}\\)" 2>/dev/null \
-            | sed -E "s/.* ${type}([0-9]+)\\)\$/\\1/" | sort -n | tail -n 1
+        } | xargs -0 -r grep -ohE "^#{2,4} [^ [:alnum:]]{1,16} ${type}[0-9]{1,12}(\\)| +${DOT})" 2>/dev/null \
+            | sed -E "s/.* ${type}([0-9]+)(\\)| +${DOT})\$/\\1/" | sort -n | tail -n 1
     )" || true
     printf '%d' "$((10#${found:-0}))"
 }

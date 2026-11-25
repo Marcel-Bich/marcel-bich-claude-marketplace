@@ -91,6 +91,12 @@ eq('english veto heading is not a footer', parseLetters('### ✋✋ V2) Veto pos
   { tests: [], questions: [], vetos: [] })
 eq('veto heading plus footer', parseLetters('### ✋✋ V2) Veto possible: Renamed the file ✋✋\n\nDone.\n\n**✋: V2**'),
   { tests: [], questions: [], vetos: ['V2'] })
+eq('block-format headings are not a footer (item #213)',
+  parseLetters('---\n\n### ❓ Q12 · Scope: which one?\n\nContext.\n**Recommendation:** option 2\n\n---\n\n### 🧪 T3 · Login: check\n1. open it\n\n---\n\n### ✋✋ V2 · Veto possible: renamed ✋✋'),
+  { tests: [], questions: [], vetos: [] })
+eq('block-format reply plus footer',
+  parseLetters('---\n\n### ❓ Q12 · Scope\n\n**Empfehlung:** option 2\n\n---\n\n**🧪: T3** · **❓: Q12** · **✋: V2**'),
+  { tests: ['T3'], questions: ['Q12'], vetos: ['V2'] })
 eq('typed test codes in prose keep only codes', t('Offen zum Testen: T12 und T13 laufen noch'), ['T12', 'T13'])
 // resolution by the person's prompt (band): a typed code answered in the prompt leaves the list
 const open = { tests: ['T3', 'T3.2'], questions: ['Q4', '#177'], vetos: ['V2', 'V5'] }
