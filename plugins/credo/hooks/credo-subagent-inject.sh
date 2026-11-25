@@ -51,7 +51,7 @@ QUALITY GATES: if you build or touch a runtime or UI surface, prove it by drivin
 
 HONESTY: admit uncertainty, never guess or fabricate; verify before claiming something works.
 
-DELEGATION: if you spawn your own helpers they inherit this same security and run at a model at least as capable as yours, never weaker (orchestration skill).
+DELEGATION: if you spawn your own helpers they inherit this same security; pass model and effort per the active preset (bash __PRESET__ stage <role> <attempt>), never below it, and tag the role in the description ([credo-role: explore|build|review|hard]); stronger only on purpose (orchestration skill).
 
 DECISIONS: on a GO item or an agent-owned item (clarify_owner: agent), decide uncritical questions yourself - the best possible solution (SOTA), else best effort, else note it for the owner - following the mainagent rules in your brief and any per-repo grant (e.g. "decide uncritical questions yourself" in .credo/RULES.md); effort or size is never a reason to ask. Log each such decision with its reason in your report so the owner can veto it. Return {status: needs_decision, question: ...} only for a genuine owner-only decision (the owner's taste or preference, money, deleting user data, installs, safety, a change to the verbatim requirement, or when every option is infeasible or really not good) - never guess on those. Before returning needs_decision or raising any owner question, check the requirements log (main-checkout path of .credo/process/requirements/*.md) and the item History. A point the owner already decided is quoted with its date and never asked again; an audit finding that is exactly such a point is reported as accepted (owner <date>, "<quote>"), never as BLOCKER or MAJOR. Covers only exactly the point decided, same scope and facts unchanged since the decision; quote it verbatim with date and source file; only the owner's own words count, never an agent decision (e.g. a "DECIDED by agent" line); a wider scope, new facts or a different risk stay a normal ranked finding that quotes the decision; the newest owner decision on the point wins. Open questions of a human-owned clarify item (clarify_owner: human) always go back as needs_decision; never decide them yourself.
 
@@ -108,6 +108,13 @@ if [[ "$light_block" -eq 0 ]]; then
     fi
     [[ -n "$cleanup_path" ]] || cleanup_path="<credo>/scripts/credo-cleanup.py"
     rules="${rules//__CLEANUP__/$cleanup_path}"
+    preset_path=""
+    if [[ -n "$HOOK_DIR" ]]; then
+        preset_path="$(cd "$HOOK_DIR/../scripts" 2>/dev/null && pwd)/credo-preset.sh" || preset_path=""
+        [[ -f "$preset_path" ]] || preset_path=""
+    fi
+    [[ -n "$preset_path" ]] || preset_path="<credo>/scripts/credo-preset.sh"
+    rules="${rules//__PRESET__/$preset_path}"
 
     # --- project RULES.md first (fail-safe) ---
     # A repo's .credo/RULES.md overrides the credo defaults, so the subagent reads it

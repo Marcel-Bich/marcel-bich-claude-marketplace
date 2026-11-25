@@ -536,11 +536,27 @@ Per spawn:
 2. Pass `alias` as the Agent tool's `model`, `effort` as its `effort`, and append the printed
    `prompt` block (universal-prompt plus the stage's subagent-prompt) verbatim to the Agent
    prompt.
-3. `action: back-to-human` means the chain is used up: do not spawn; hand the item back (below).
+3. Tag the role in the Agent `description` (or the prompt): `[credo-role: <role>]`, e.g.
+   `description: "find the config loader [credo-role: explore]"` with
+   `subagent_type: general-purpose, model: haiku, effort: low`, or
+   `description: "build #42 slice 1 [credo-role: build]"`. The spawn guard then checks only
+   that role's ladder.
+4. `action: back-to-human` means the chain is used up: do not spawn; hand the item back (below).
 
-The credo `PreToolUse` hook on Agent and Task calls (`hooks/credo-agent-spawn-check.sh`) checks
-each spawn: a call without `model` or `effort`, or with a pair that matches no stage of the
-active preset, gets a warning with the active ladder per role. It warns and never blocks.
+The credo `PreToolUse` hook on Agent and Task calls (`hooks/credo-agent-spawn-check.sh`)
+enforces the preset as a minimum. It DENIES a call without `model` or `effort`, or with a pair
+below every rung of the roles that fit the spawn; the reason lists the minimum pairs and how to
+declare the role. Roles that fit: the `[credo-role: ...]` tag if present; else read-only types
+(Explore, Plan, web-fetch, claude-code-guide, `*:cavecrew-investigator`) -> explore; else
+build/review/hard. Model and effort must both reach the rung (a stronger model does not make
+up for a lower effort). An equal or stronger pair passes
+(model haiku < sonnet < opus < fable, effort low < medium < high < xhigh < max); a stronger
+one adds a visible line `stronger than preset: <model>/<effort> vs <rung>` - report it to the
+owner. A `fork` passes only when your own model is at least a fitting rung model; otherwise
+spawn a regular subagent with model and effort. A weaker pair needs a `preset exception:`
+line in `.credo/RULES.md` or a valid owner rule with an until date in the handoff
+`## Rules (temporary)` (format in the credo guide, "Model presets"). On a deny, run the stage
+helper and retry with its alias and effort; never work around the hook.
 
 A failed attempt is a red gate: tests red, the done-gate red, an audit FAIL, or the subagent
 reports itself stuck. The next attempt gets the findings (file:line, failing test, audit
