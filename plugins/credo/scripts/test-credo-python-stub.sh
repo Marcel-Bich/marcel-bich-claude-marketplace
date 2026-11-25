@@ -220,6 +220,7 @@ hook_ok "peer-bridge" "$(start_input "$SA")" "$HOOKS/credo-peer-bridge.sh"
 hook_ok "peer-split-hint" "$(start_input "$SA")" "$HOOKS/credo-peer-split-hint.sh"
 hook_ok "win-bridge-autostart" "$(start_input "$SA")" env WSL_DISTRO_NAME=fixture "$HOOKS/credo-win-bridge-autostart.sh"
 hook_ok "peer-lan-autostart" "$(start_input "$SA")" "$HOOKS/credo-peer-lan-autostart.sh"
+hook_ok "linger-hint" "$(start_input "$SA")" "$HOOKS/credo-linger-hint.sh"
 hook_ok "reminder start" "$(start_input "$SA")" "$HOOKS/credo-reminder.sh" start
 hook_ok "reminder turn" '{"session_id":"x","hook_event_name":"UserPromptSubmit","prompt":"hi"}' "$HOOKS/credo-reminder.sh" turn
 hook_ok "session-start" "$(start_input "$SA")" "$HOOKS/credo-session-start.sh"

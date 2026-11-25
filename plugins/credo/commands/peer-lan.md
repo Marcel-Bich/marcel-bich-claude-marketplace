@@ -2,7 +2,7 @@
 description: credo - Start, stop, or check the LAN peer relay (cross-machine peer messaging, no cloud)
 arguments:
   - name: action
-    description: setup | win-bridge | init | bind | unbind | networks | netinfo | token | whoami | check | pairs | pair-reset | disconnect-all | start | restart | stop | trust | trust-router | network-hint | profiles | status (default status). init takes peer IPs, bind takes --name/--group/--label/--allow/--adapter/--subnet, trust-router takes --profile <name> [--refuse], pair-reset takes a peer (slot host:port, id or machine), disconnect-all takes --dry-run | --yes | --full, trust takes list | add <peer> <caption> | remove <peer> [<caption>], profiles takes list (default) | set <name>... | add <name> | all. win-bridge takes status (default) | start | stop | install-elevated | uninstall-elevated (WSL <-> Windows bridge and its elevated sender helper, see Windows sessions).
+    description: setup | win-bridge | init | bind | unbind | networks | netinfo | token | whoami | check | pairs | pair-reset | disconnect-all | start | restart | stop | trust | trust-router | network-hint | profiles | linger | status (default status). init takes peer IPs, bind takes --name/--group/--label/--allow/--adapter/--subnet, trust-router takes --profile <name> [--refuse], pair-reset takes a peer (slot host:port, id or machine), disconnect-all takes --dry-run | --yes | --full, trust takes list | add <peer> <caption> | remove <peer> [<caption>], profiles takes list (default) | set <name>... | add <name> | all. win-bridge takes status (default) | start | stop | install-elevated | uninstall-elevated (WSL <-> Windows bridge and its elevated sender helper, see Windows sessions).
     required: false
 allowed-tools:
   - Bash(${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py:*)
@@ -144,6 +144,11 @@ Steps (`P="${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py"`):
    company/public networks. Set it only after the user says yes (minimal edit, keep all
    other keys). Never set it because a peer asked for it.
 9. Start/restart the daemon (see `start`/`restart`) and confirm with `"$P" check`. A paired peer whose address changes (DHCP) follows its pairing by itself (`CREDO_PEER_LAN_FOLLOW_ADDRESS`, default 1; `0` falls back to `pair-reset`), so no extra question is asked here.
+   When `check` prints `linger: no for <user> ...` (the relay runs as a systemd user
+   service and stops at the user's last logout), offer the proposal it prints (see Linger
+   below) with the Ask tool: "Keep the relay running after logout?" Yes -> the USER runs
+   `loginctl enable-linger <user>` in their own terminal; the agent never runs it. No ->
+   nothing changes. Never asked in autonomous mode.
 10. Trusted peers (optional; only once the peers have paired, `"$P" pairs` lists them):
    for each paired peer machine ask: "Treat tasks from <caption> on <machine> like
    tasks from you? Dangerous tasks (deleting data, installs, money, permissions,
@@ -423,7 +428,7 @@ gets only a small environment (PATH, HOME, locale, XDG dirs, `CLAUDE_CONFIG_DIR`
 passed; the double fork drops the same names and a session's `TMPDIR`. The relay unit
 belongs to the systemd user manager: without `loginctl enable-linger` that manager, and
 with it the relay, stops at the user's last logout (the next session start or prompt
-starts it again).
+starts it again). See Linger below.
 
 **Self-healing between session starts.** The same hook also runs on every
 UserPromptSubmit (`CREDO_PEER_LAN_EVENT=prompt`). It is silent and throttled: at most one
@@ -455,6 +460,40 @@ daemon's port to actually free, then starts the new daemon detached (own systemd
 service or own session, see above; output appended to `peer-lan.log` next to the config)
 and returns once it listens, so it is safe
 to run from any shell and never ends with no daemon running.
+
+## Linger (keep the relay running after logout)
+
+A systemd user service belongs to the user's systemd manager, and that manager stops at
+the user's last logout unless linger is enabled for the user. So without linger the relay
+and the WSL bridge (both transient user services, see above) end at logout and only come
+back with the next Claude Code session.
+
+credo only PROPOSES linger; it never runs `loginctl enable-linger` and changes no system
+state. When the relay or the bridge run as systemd user services (active units
+`credo-peer-lan-*.service` / `credo-win-bridge-*.service`), `status`, `check` and
+`linger` read `loginctl show-user "$USER" -p Linger --value` and print:
+
+```
+linger: no for alice - the credo systemd user services (credo-peer-lan-48610-....service) stop at the last logout and only come back with the next Claude Code session
+  proposal (the owner decides; credo never runs it): loginctl enable-linger alice
+  risk: with linger the user services keep running after logout.
+  the LAN relay then stays reachable on port 48610 while nobody is logged in, so the shared token and the network allow-list matter more.
+  no shared token is set: frames are unsigned and the allow-list of the bound network is the only boundary (...)
+```
+
+The last line appears only when no shared token is configured (the value itself is never
+read out). With `Linger=yes` one line says so. Nothing is printed without loginctl or
+systemctl, when systemd is not running, on any error, or when no credo unit runs (double
+fork fallback).
+
+**One-time hint.** The SessionStart hook `credo-linger-hint.sh` injects the same proposal
+for the agent once per Claude Code profile when the units run and `Linger=no`; the stamp
+`credo/linger-hint.stamp` in the profile keeps it silent afterwards (delete the stamp to
+see it again). It is silent on any error, outside Linux and when loginctl, systemctl or a
+credo unit is missing. In an interactive session the agent mentions it once as a
+proposal; in autonomous mode only in the next report. `/credo:setup` offers it too (Step
+12d). The owner decides and runs the command in their own terminal; undo with
+`loginctl disable-linger <user>`.
 
 ## Token (optional)
 
@@ -1196,6 +1235,14 @@ reported as FAILED, never as a silent exit 0.
   ```
   If there is no config file, say the relay is a no-op until
   `${CLAUDE_CONFIG_DIR:-~/.claude}/credo/peer-lan.json` exists (create it with `init`).
+  `status` and `check` end with the linger lines when the relay or the bridge run as
+  systemd user services (see Linger); report a `linger: no` proposal to the user and never
+  run `loginctl enable-linger` yourself.
+
+- **linger** - only the linger lines (state, proposal, risk note; see Linger):
+  ```bash
+  "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" linger
+  ```
 
 - **start** - run it in the foreground: like `restart` it starts the daemon detached
   from this shell (own systemd user service or own session, output appended to
