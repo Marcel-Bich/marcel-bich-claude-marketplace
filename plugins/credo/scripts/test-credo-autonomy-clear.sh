@@ -184,7 +184,8 @@ if [ -e "$SW" ]; then got=kept; else got=consumed; fi
 check "task notification consumes the wake file" consumed "$got"
 has "compact note without done signal asks to check" "check whether the compact" "$out"
 # another session's wake file is never touched
-arm; echo '{"kind": "reload"}' > "$CLAUDE_CONFIG_DIR/credo/self-wake-other-session"
+arm; rm -f "$SW.used"  # the consumption above stamped it; this case is about a foreign file
+echo '{"kind": "reload"}' > "$CLAUDE_CONFIG_DIR/credo/self-wake-other-session"
 out="$(out_of ".")"
 if [ -e "$CLAUDE_CONFIG_DIR/credo/self-wake-other-session" ]; then got=kept; else got=consumed; fi
 check "other session's wake file untouched" kept "$got"
@@ -203,6 +204,81 @@ cp -r "$CACHE/0.1.0" "$TMP/cache2/plugins/cache/mkt-a/credo/0.3.0"
 echo '{"version": "0.3.0"}' > "$TMP/cache2/plugins/cache/mkt-a/credo/0.3.0/.claude-plugin/plugin.json"
 out="$(jq -n --arg p "." --arg s "$SID" '{prompt: $p, session_id: $s}' | bash "$TMP/cache2/plugins/cache/mkt-a/credo/0.3.0/hooks/credo-autonomy-clear.sh" 2>/dev/null)"
 has "version match reported" "loaded credo 0.3.0 = newest in the plugin cache" "$out"
+
+# --- #211: credo's own typed prompts never pause, also when pasted -------------
+REM='[credo-reminder] Check yourself against what we agreed'
+arm; run_prompt "$(printf '\n\n<pasted_content id="f330">\n%s\n</pasted_content>' "$REM")"
+expect "pasted reminder with leading blank lines keeps autonomy" kept
+arm; run_prompt "$(printf '<pasted_content id="f330">%s</pasted_content>' "$REM")"
+expect "pasted reminder on one line keeps autonomy" kept
+arm; run_prompt "$(printf '<pasted_content id="f9">\nmy notes about [credo-reminder]\n</pasted_content>')"
+expect "pasted user text quoting the reminder still pauses" paused
+arm; run_prompt "[credo-self-restart] Resumed after a self-restart (reason: cc-up; plugin update: none). Continue where you left off."
+expect "self-restart resume prompt keeps autonomy" kept
+arm; run_prompt "please look at [credo-self-restart] later"
+expect "user message quoting the self-restart tag still pauses" paused
+arm; run_prompt "$(printf '<pasted_content id="r1">\n[remote chat 42] hello\n</pasted_content>')"
+expect "pasted remote chat keeps autonomy" kept
+# real closing tag form of Claude Code, trailing newline
+arm; run_prompt "$(printf '\n\n<pasted_content id="f330">\n%s\n</pasted_content id="f330">\n' "$REM")"
+expect "reminder paste with id on the closing tag keeps autonomy" kept
+# owner pastes a reminder and writes own text below it: a real message
+arm; run_prompt "$(printf '<pasted_content id="f330">\n%s\n</pasted_content id="f330">\n\n\ndas ist mir zu langweilig - mach vorschläge' "$REM")"
+expect "reminder paste + own text after it pauses" paused
+arm; run_prompt "$(printf 'look at this:\n<pasted_content id="f330">\n%s\n</pasted_content id="f330">' "$REM")"
+expect "own text before a reminder paste pauses" paused
+arm; run_prompt "$(printf '<pasted_content id="a">\n%s\n</pasted_content id="a">\n<pasted_content id="b">\n%s\n</pasted_content id="b">' "$REM" "$REM")"
+expect "two reminder pastes pause" paused
+arm; run_prompt "$(printf '<pasted_content id="f330">\n%s\n' "$REM")"
+expect "reminder paste without a closing tag pauses (fail-safe)" paused
+# R6 parity: the same rule for [remote chat ...]
+arm; run_prompt "$(printf '<pasted_content id="r1">\n[remote chat 42] hello\n</pasted_content id="r1">\nplus my own note')"
+expect "remote chat paste + own text after it pauses" paused
+arm; run_prompt "$(printf '<pasted_content id="r1">\n[remote chat 42] a\n</pasted_content id="r1">\n<pasted_content id="r2">\n[remote chat 42] b\n</pasted_content id="r2">')"
+expect "two remote chat pastes pause" paused
+arm; run_prompt "[remote chat 42] hello from the app"
+expect "bare remote chat keeps autonomy" kept
+
+# helper "." queued behind another prompt that consumed the wake file first
+USED="$SW.used"
+arm; rm -f "$USED"; echo '{"kind": "reload"}' > "$SW"
+run_prompt "<task-notification>done</task-notification>"
+if [ -e "$USED" ]; then got=stamped; else got=missing; fi
+check "consumption by another prompt leaves a .used stamp" stamped "$got"
+run_prompt "."
+expect "'.' right after another prompt consumed the wake file keeps autonomy" kept
+if [ -e "$USED" ]; then got=kept; else got=removed; fi
+check "the '.' clears the .used stamp" removed "$got"
+run_prompt "."
+expect "a second '.' (no stamp left) pauses" paused
+arm; : > "$USED"; touch -d '5 minutes ago' "$USED"
+run_prompt "."
+expect "'.' after an expired .used stamp pauses" paused
+if [ -e "$USED" ]; then got=kept; else got=removed; fi
+check "expired .used stamp removed" removed "$got"
+arm; : > "$USED"
+run_prompt "a real user message"
+expect "a real message with a fresh .used stamp still pauses" paused
+if [ -e "$USED" ]; then got=kept; else got=removed; fi
+check "the first non-'.' prompt clears the .used stamp" removed "$got"
+arm; run_prompt "."
+expect "'.' after the stamp was cleared by another prompt pauses" paused
+arm; : > "$USED"
+run_prompt "<task-notification>done</task-notification>"
+if [ -e "$USED" ]; then got=kept; else got=removed; fi
+check "an exempt non-'.' prompt also clears the .used stamp" removed "$got"
+
+# paused marker: who paused, and the re-arm nudge while a user pause lasts
+P="$CREDO_AUTONOMY_DIR/$SID/paused"
+arm; run_prompt "a real user message"
+check "user pause writes the user-message marker" user-message "$(tr -d '[:space:]' < "$P")"
+out="$(out_of "another owner message")"
+has "later owner message while user-paused gets the re-arm nudge" "still PAUSED by an earlier owner message" "$out"
+has "re-arm nudge names credo-autonomy-on" "credo-autonomy-on.sh --session $SID" "$out"
+arm; bash "$HOOKS/credo-autonomy-off.sh" --override "$SID" >/dev/null 2>&1
+out="$(out_of "hello after a deliberate off")"
+check "deliberate off keeps an empty paused marker" "" "$(tr -d '[:space:]' < "$P")"
+case "$out" in *"still PAUSED"*) check "no re-arm nudge after a deliberate off" yes no ;; *) check "no re-arm nudge after a deliberate off" yes yes ;; esac
 
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]

@@ -27,7 +27,12 @@
 # A bare "." prompt is exempt only when it consumes this session's self-wake file
 # (written by scripts/credo_pane_wake.py for /credo:self-reload and
 # /credo:self-compact, which typed that "." to start a turn); any prompt consumes
-# the file and gets the wake note, but only that "." skips the pause.
+# the file and gets the wake note, but only that "." skips the pause. When another
+# prompt consumed the file first, the NEXT prompt still counts as the helper's when it
+# is a "." within 2 min (single-use stamp, dropped by any next prompt).
+# credo's own typed prompts ([credo-reminder], [credo-self-restart], [remote chat])
+# are exempt also when Claude Code shows them as ONE <pasted_content ...> block with
+# nothing else around it; own text after the paste, or two pastes, still pause.
 #
 # PER SESSION: the autonomy state lives under
 #   ${CREDO_AUTONOMY_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/autonomy}/<session_id>/
@@ -164,6 +169,14 @@ emit_self_wake() {
         printf '%s\n' "$SELF_WAKE_NOTE"  # plain stdout of a UserPromptSubmit hook reaches the context
     fi
 }
+bare_dot() { # prints yes when the prompt is a bare "." (jq, else a grep fallback)
+    if command -v jq >/dev/null 2>&1; then
+        [ "$(printf '%s' "$prompt" | tr -d '[:space:]')" = "." ] && { echo yes; return 0; }
+    elif printf '%s' "$input" | grep -qE '"prompt"[[:space:]]*:[[:space:]]*"[[:space:]]*\.[[:space:]]*"'; then
+        echo yes; return 0
+    fi
+    echo no
+}
 sw_sid="$stdin_session_id"
 if [ -z "$sw_sid" ] && ! command -v jq >/dev/null 2>&1; then
     sw_sid="$(printf '%s' "$input" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
@@ -181,17 +194,27 @@ if [ -n "$sw_sid" ] && [ -f "$CONFIG_DIR/credo/self-wake-$sw_sid" ]; then
         sw_update="$(sw_json_str update "$sw_file")"
         sw_done="$(sw_json_str compact_done "$sw_file")"
         rm -f "$sw_file" 2>/dev/null || true
-        sw_dot=no
-        if command -v jq >/dev/null 2>&1; then
-            [ "$(printf '%s' "$prompt" | tr -d '[:space:]')" = "." ] && sw_dot=yes
-        elif printf '%s' "$input" | grep -qE '"prompt"[[:space:]]*:[[:space:]]*"[[:space:]]*\.[[:space:]]*"'; then
-            sw_dot=yes
-        fi
+        sw_dot="$(bare_dot)"
         SELF_WAKE_NOTE="$(self_wake_note "$sw_kind" "$sw_update" "$sw_done" "$sw_dot")"
         if [ "$sw_dot" = yes ]; then
             emit_self_wake
             exit 0
         fi
+        # Another prompt (often a queued task-notification or peer message) took the
+        # wake file first; the helper's "." may already be submitted behind it. Stamp
+        # the consumption so that "." still counts as the helper's (below).
+        : > "$sw_file.used" 2>/dev/null || true
+    fi
+elif [ -n "$sw_sid" ] && [ -f "$CONFIG_DIR/credo/self-wake-$sw_sid.used" ]; then
+    # A bare "." within 2 min after another prompt consumed this session's wake file is
+    # the helper's queued "." - never a pause. The stamp is single-use: the very next
+    # prompt drops it, whatever it is, so a later owner "." always pauses.
+    sw_used="$CONFIG_DIR/credo/self-wake-$sw_sid.used"
+    sw_fresh="$(find "$sw_used" -mmin -2 2>/dev/null)"
+    sw_dot="$(bare_dot)"
+    rm -f "$sw_used" 2>/dev/null || true
+    if [ -n "$sw_fresh" ] && [ "$sw_dot" = yes ]; then
+        exit 0
     fi
 fi
 
@@ -202,33 +225,42 @@ case "$prompt$input" in
         ;;
 esac
 
-# Harness notices about other sessions (idle / delivery) are automated, not the
-# user; match them only as a prompt prefix so a user quoting one still pauses.
+# Prompts credo or the harness types itself never pause autonomy. They are matched as a
+# PREFIX of the prompt's first non-empty line, after an optional paste placeholder
+# wrapper: a burst typed into the pane (credo-reminder.py, credo-owner-type send) is
+# shown by Claude Code as "<pasted_content id=...>" and may start with blank lines.
+# Without the unwrap the hourly reminder paused autonomy on every delivery (#211).
+# Prefix only, so a user quoting a marker inside a message still pauses.
+#   [Cross-session idle notice] / [Cross-session delivery notice]  harness notices
+#   [credo-reminder]       periodic quality reminder (scripts/credo-reminder.py)
+#   [credo-self-restart]   resume prompt of /credo:self-restart (credo-self-restart.py)
+#   [remote chat <id>]     remote app message (credo-owner-type send); owner order
+#                          "nie pausieren wenn was von der app kommt" - prior state stays
+# A pasted prompt counts only when it is exactly ONE paste block with nothing but
+# whitespace before the opening and after the closing tag: an owner who pastes a
+# reminder and writes own text below it (or pastes two blocks) is a real message.
+first_line() { sed -n '/[^[:space:]]/{s/^[[:space:]]*//;p;q;}'; }
+is_blank() { [ -z "$(printf '%s' "$1" | tr -d '[:space:]')" ]; }
+auto_head=""
 case "$prompt" in
-    "[Cross-session idle notice]"* | "[Cross-session delivery notice]"*)
-        emit_self_wake
-        exit 0
+    *"<pasted_content"*)
+        paste_pre="${prompt%%"<pasted_content"*}"
+        paste_rest="${prompt#*"<pasted_content"}"
+        paste_post="${paste_rest#*"</pasted_content"}"
+        if is_blank "$paste_pre" && [ "$paste_post" != "$paste_rest" ] \
+            && [ "$(printf '%s' "$prompt" | grep -o '<pasted_content' | wc -l)" -eq 1 ] \
+            && is_blank "${paste_post#*>}" && [ "${paste_post#*>}" != "$paste_post" ]; then
+            paste_inner="${paste_rest%%"</pasted_content"*}"
+            auto_head=$(printf '%s' "${paste_inner#*>}" | first_line)
+        fi
+        ;;
+    *)
+        auto_head=$(printf '%s' "$prompt" | first_line)
         ;;
 esac
-
-# The periodic quality reminder (scripts/credo-reminder.py) is an injected prompt that
-# starts with its marker: it never pauses autonomy and is no user turn (the turn counter
-# in that script skips it too). Prefix match only, so a user quoting it still pauses.
-case "$prompt" in
-    "[credo-reminder]"*)
-        emit_self_wake
-        exit 0
-        ;;
-esac
-
-# A message delivered from a remote app (credo-owner-type send, prefix "[remote chat <id>]",
-# possibly wrapped by Claude Code as <pasted_content ...> when pasted) never changes the
-# autonomy state: owner order "nie pausieren wenn was von der app kommt"; the prior state
-# (active or already paused) stays. Prefix match only.
-remote_head=$(printf '%s' "$prompt" | sed -e '1{/^[[:space:]]*<pasted_content[^>]*>[[:space:]]*$/d;}' \
-    -e 's/^[[:space:]]*<pasted_content[^>]*>[[:space:]]*//' | sed -n '/./{p;q;}')
-case "$remote_head" in
-    "[remote chat "*"]"*)
+case "$auto_head" in
+    "[Cross-session idle notice]"* | "[Cross-session delivery notice]"* \
+    | "[credo-reminder]"* | "[credo-self-restart]"* | "[remote chat "*"]"*)
         emit_self_wake
         exit 0
         ;;
@@ -267,19 +299,36 @@ if [ -d "$STATE_DIR" ]; then
             rm -f "$STATE_DIR/wake-scheduled" 2>/dev/null || true
         fi
     fi
-    : > "$STATE_DIR/paused" 2>/dev/null || true
+    # The paused file records WHO paused: "user-message" for a pause by a real owner
+    # message (the Stop hook's paused hint keys on it), empty for a deliberate
+    # credo-autonomy-off (run finished, mode switch) - a later owner message while
+    # already paused keeps that cause instead of overwriting it.
+    if [ "$had_flag" = true ] || [ ! -f "$STATE_DIR/paused" ]; then
+        printf 'user-message\n' > "$STATE_DIR/paused" 2>/dev/null || true
+    fi
 fi
 
-# If we just paused an ACTIVE autonomy and the session mode is still autonomous,
-# let the agent judge intent (pure context -> re-arm; intervention -> stay).
-if [ "$had_flag" = true ] && command -v jq >/dev/null 2>&1; then
+# Mode still autonomous: let the agent judge intent (pure context -> re-arm;
+# intervention -> stay). Fires when this message paused an ACTIVE autonomy, and on
+# every later owner message while that user pause lasts, so the agent can end the
+# pause itself once the owner's points are settled instead of idling for hours.
+paused_by_user=false
+if [ "$had_flag" = false ] && [ -f "$STATE_DIR/paused" ] \
+    && [ "$(tr -d '[:space:]' < "$STATE_DIR/paused" 2>/dev/null)" = "user-message" ]; then
+    paused_by_user=true
+fi
+if { [ "$had_flag" = true ] || [ "$paused_by_user" = true ]; } && command -v jq >/dev/null 2>&1; then
     mode=""
     MODES_DIR="${CREDO_SESSION_MODES_DIR:-$CONFIG_DIR/credo/session-modes}"
     [ -f "$MODES_DIR/$session_id" ] && \
         mode=$(tr -d '[:space:]' < "$MODES_DIR/$session_id" 2>/dev/null | tr '[:upper:]' '[:lower:]')
     if [ "$mode" = "autonomous" ]; then
         on_script="${SCRIPT_DIR:+$SCRIPT_DIR/}credo-autonomy-on.sh --session $session_id"
-        line="[credo] Your message paused autonomous mode (fail-safe). Judge its intent: only context/info to improve the run, no alignment needed -> re-arm autonomy (run ${on_script}) and continue unattended. Needs a decision, alignment, or steering -> stay attended and address it (/credo:session-active if you will keep collaborating). Re-arm is allowed only because this session was already authorized for autonomy; when unsure, stay attended."
+        if [ "$had_flag" = true ]; then
+            line="[credo] Your message paused autonomous mode (fail-safe). Judge its intent: only context/info to improve the run, no alignment needed -> re-arm autonomy (run ${on_script}) and continue unattended. Needs a decision, alignment, or steering -> stay attended and address it (/credo:session-active if you will keep collaborating). Re-arm is allowed only because this session was already authorized for autonomy; when unsure, stay attended."
+        else
+            line="[credo] Autonomy is still PAUSED by an earlier owner message (mode autonomous). Once this message is handled and no decision, alignment or steering is left open, re-arm autonomy (run ${on_script}) and continue the GO items unattended; otherwise stay attended. When unsure, stay attended."
+        fi
         [ -n "$SELF_WAKE_NOTE" ] && line="$line
 $SELF_WAKE_NOTE"
         SELF_WAKE_NOTE="$line"
