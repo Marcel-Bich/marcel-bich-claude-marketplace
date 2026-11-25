@@ -4,6 +4,64 @@ Changelog of the credo plugin. Newest first. Months group releases; no day dates
 
 ## v0
 
+### v0.90
+
+#### v0.90.0
+
+##### Added
+
+- Role tag `[credo-role: explore|build|review|hard]` in the Agent description or prompt: the spawn guard then checks only that role's ladder; without a tag, read-only types (Explore, Plan, web-fetch, claude-code-guide, `*:cavecrew-investigator`) count as explore
+- Preset exceptions for weaker pairs: `preset exception: <all|role,...> -> <model>/<effort>` as a line in `.credo/RULES.md`, or in the handoff `## Rules (temporary)` with an owner source and an unexpired until date
+- Paused hint: while an owner message keeps an autonomous run paused and GO items are open,
+  the Stop hook (`credo-autonomy-keepalive.sh`) still lets the turn end but shows the user one
+  line per turn end that the agent may stop anytime and how to end the pause
+  (`/credo:session-autonomous` or `credo-autonomy-on.sh --session <id>`). Fail open.
+- Every later owner message during such a pause nudges the agent to re-arm autonomy itself
+  once nothing needs alignment. The `paused` file records the cause (`user-message` vs. a
+  deliberate `credo-autonomy-off.sh`), so a finished run never shows the hint.
+- Tests: `test-credo-autonomy-paused-hint.sh`; pasted reminder, self-restart, queued `.` and
+  pause-cause cases in `test-credo-autonomy-clear.sh`.
+- New-file guard for shared temp dirs (#212): `credo-ledger.py pre` denies a Bash command whose
+  literal write target (`>`, `>>`, `tee`, `cp`/`mv`/`install ... <target>`, `dd of=`) would be
+  a NEW file directly in `/tmp` or `/var/tmp`. The reason names the literal session TMPDIR and
+  the own-rm line. Existing files, `/dev/*`, deeper paths (session TMPDIR, scratchpad), non-temp
+  paths and commands that call `mktemp` pass; it fails open and is off with
+  `CREDO_TMP_GUARD=0` or the local config key `cleanup.tmp_guard: false`.
+- `credo_write_targets.py`: the literal write targets of a Bash command, parsed with the bash
+  lexer of the inline guard (which now also records redirect targets). Only absolute literal
+  paths count; variables, globs, `~` and relative paths never do.
+
+##### Changed
+
+- The Agent/Task spawn check (`credo-agent-spawn-check.sh`, decision in the new `scripts/credo-preset-guard.py`) now enforces the active preset as a minimum instead of only warning: a spawn without `model` or `effort`, or with a model/effort pair below every rung of the roles that fit it (Explore/Plan -> explore, others -> build/review/hard), is denied with the minimum pairs and `credo-preset.sh stage <role> <attempt>`
+  Equal pairs pass; stronger pairs (model haiku < sonnet < opus < fable, effort low < ... < max) pass with a visible `stronger than preset` line; a fork passes only when the parent's model is at least a rung model. No `preset:` configured means no check; internal errors fail open with a logged warning
+- The subagent DELEGATION rule now says helpers get model and effort per the active preset (absolute `credo-preset.sh stage <role> <attempt>`), never below it, with a role tag; stronger only on purpose (was "at least as capable as yours")
+- The SessionStart per-spawn rule asks for the role tag in the Agent description
+
+##### Fixed
+
+- Autonomy is paused only by a real owner message. The hourly `[credo-reminder]` paused an
+  autonomous run on every delivery because Claude Code shows the typed burst as a
+  `<pasted_content ...>` paste with leading blank lines, which the prefix check missed; the
+  `[credo-self-restart]` resume prompt paused it too. `credo-autonomy-clear.sh` now unwraps
+  a prompt that is exactly one paste block (nothing but whitespace around it) and matches all
+  credo prompts on its first non-empty line; own text after a paste or two pastes still
+  pause, for `[remote chat ...]` too. A self-reload or self-compact `.` stays exempt when a
+  queued notification consumed the wake file first (single-use stamp, valid 2 min for the
+  next prompt only).
+- `own-rm` (and the done-gate purge) now also remove a single file in a temp root that a Bash
+  command of the session provably wrote (#212): a literal write target of the command that the
+  pre hook saw missing (ledger flag `write_target`; `mv` targets never count), born during the
+  call while no other credo session had a tool call open, dev+inode unchanged, and a transcript
+  of the session (main agent or a subagent) holds a successful Bash call naming exactly that path
+  as a write target; the 2-minute and open-file checks apply. Directories and everything else
+  the Bash scan found stay report-only.
+- The bash lexer of the inline guard no longer reads `<` / `>` inside `[[ ... ]]` (a string
+  comparison) as a redirect, so `[[ a > /tmp/x ]]` is not denied by the new-file guard; this also
+  holds after `if`/`elif`/`while`/`until`/`!`, while `]]>/tmp/x` stays a redirect.
+- The ambiguity check reads all windows of other sessions that closed during the call (not only
+  the last 64 KB of `windows.log`), and pruning keeps windows a still-running long call needs.
+
 ### v0.89
 
 #### v0.89.4
