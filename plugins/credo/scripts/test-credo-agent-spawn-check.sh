@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Tests for hooks/credo-agent-spawn-check.sh: a PreToolUse check on Agent and Task calls.
-# It adds a non-blocking warning when the call has no model or effort, or a model/effort
-# pair that matches no stage of the active preset, names credo-preset.sh stage and the
-# active ladder, skips Explore and Plan when the preset has no explore model, and stays
-# silent otherwise. It never denies a call.
+# Tests for hooks/credo-agent-spawn-check.sh + scripts/credo-preset-guard.py: the PreToolUse
+# guard on Agent and Task calls. It denies a spawn whose model/effort is no rung of the
+# ladders that fit its kind (Explore/Plan -> explore; others -> build/review/hard), denies a
+# missing model or effort, allows a fork only when the parent's model is a rung model, honours
+# "preset exception:" lines from .credo/RULES.md and valid owner handoff rules with an until
+# date, is silent without a configured preset and fails open on internal errors.
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,6 +20,15 @@ export CREDO_GLOBAL="$TMP/global/config"
 export CREDO_PROFILE=""
 export CREDO_PROJECT="$TMP/project/.credo/config"
 export CREDO_AGENT_SPAWN_CHECK=1
+export CREDO_PRESET_GUARD_TODAY=2030-06-15
+export CREDO_PRESET_GUARD_LOG="$TMP/guard.log"
+mkdir -p "$TMP/project/.credo"
+printf 'preset: balanced\n' > "$CREDO_PROJECT"
+
+# a repo without .credo files for the plain cases
+REPO="$TMP/repo"
+mkdir -p "$REPO"
+git -C "$REPO" init -q
 
 check() { # name want got
     if [ "$2" = "$3" ]; then
@@ -36,134 +46,195 @@ has() { # name needle haystack
     esac
 }
 
-# call <tool name> <tool_input JSON>: the PreToolUse hook input
+# call <tool name> <tool_input JSON> [cwd] [transcript] [agent_id]: the PreToolUse hook input
 call() {
-    jq -n --arg t "$1" --argjson i "$2" \
-        '{session_id: "11111111-2222-3333-4444-555555555555", hook_event_name: "PreToolUse", tool_name: $t, tool_input: $i}'
+    jq -n --arg t "$1" --argjson i "$2" --arg c "${3:-$REPO}" --arg tp "${4:-}" --arg a "${5:-}" \
+        '{session_id: "11111111-2222-3333-4444-555555555555", hook_event_name: "PreToolUse",
+          cwd: $c, tool_name: $t, tool_input: $i}
+         + (if $tp != "" then {transcript_path: $tp} else {} end)
+         + (if $a != "" then {agent_id: $a} else {} end)'
 }
 
-# ctx_of <hook path> <hook input>: the injected additionalContext ("" when silent)
-ctx_of() {
-    printf '%s' "$2" | bash "$1" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null
-}
+# run_hook <hook input>: raw hook stdout
+run_hook() { printf '%s' "$1" | bash "$HOOK" 2>/dev/null; }
+decision() { printf '%s' "$1" | jq -r '.hookSpecificOutput.permissionDecision // "allow"' 2>/dev/null; }
+reason() { printf '%s' "$1" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""' 2>/dev/null; }
+ctx() { printf '%s' "$1" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null; }
 
 LADDER_BAL='explore: 1+ haiku/low; build: 1+ haiku/xhigh; review: 1+ haiku/xhigh; hard: 1-2 haiku/xhigh, 3-7 opus/medium, attempt 8 back-to-human'
 
-# --- real built-in balanced preset -------------------------------------------------
-ok_ctx="$(ctx_of "$HOOK" "$(call Agent '{"subagent_type":"general-purpose","model":"haiku","effort":"xhigh"}')")"
-check "valid build pair: silent" "" "$ok_ctx"
-ok_hard="$(ctx_of "$HOOK" "$(call Agent '{"subagent_type":"general-purpose","model":"opus","effort":"medium"}')")"
-check "valid hard attempt-3 pair (opus medium): silent" "" "$ok_hard"
+# --- allowed --------------------------------------------------------------------------
+out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","model":"haiku","effort":"xhigh"}')")"
+check "build rung haiku/xhigh: allowed" allow "$(decision "$out")"
+has "allowed: short advisory" "[credo-preset] ok: haiku/xhigh is a rung of the build/review/hard roles (preset balanced)" "$(ctx "$out")"
+out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","model":"opus","effort":"medium"}')")"
+check "hard attempt-3 rung opus/medium: allowed" allow "$(decision "$out")"
+out="$(run_hook "$(call Agent '{"model":"claude-opus-5-5","effort":"medium"}')")"
+check "full model id maps to the alias: allowed" allow "$(decision "$out")"
 
-noeff="$(ctx_of "$HOOK" "$(call Agent '{"subagent_type":"general-purpose","model":"haiku"}')")"
-has "no effort: warning" "[credo-preset] Check this spawn against the active preset (balanced): no effort." "$noeff"
-has "no effort: names the stage helper" "credo-preset.sh stage <role> <attempt>" "$noeff"
-has "no effort: active ladder with attempt ranges" "Active ladder: $LADDER_BAL." "$noeff"
+# --- wrong model / effort ----------------------------------------------------------------
+out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","model":"opus","effort":"xhigh"}')")"
+check "wrong pair opus/xhigh: denied" deny "$(decision "$out")"
+r="$(reason "$out")"
+has "deny names the mismatch" "opus/xhigh is no rung of the build/review/hard roles" "$r"
+has "deny lists the allowed pairs" "Allowed for the build/review/hard roles: haiku/xhigh, opus/medium." "$r"
+has "deny names the lookup command" "credo-preset.sh stage <role> <attempt>" "$r"
+has "deny shows the ladder" "Active ladder: $LADDER_BAL." "$r"
+has "deny names the exception format" "preset exception: <all|role,...> -> <model>/<effort>" "$r"
+out="$(run_hook "$(call Agent '{"model":"sonnet","effort":"xhigh"}')")"
+check "wrong model sonnet: denied" deny "$(decision "$out")"
+out="$(run_hook "$(call Agent '{"model":"haiku","effort":"low"}')")"
+check "explore-only pair on a build spawn: denied" deny "$(decision "$out")"
 
-nomodel="$(ctx_of "$HOOK" "$(call Agent '{"subagent_type":"general-purpose","effort":"xhigh"}')")"
-has "no model: warning" "(balanced): no model." "$nomodel"
+out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","model":"haiku"}')")"
+check "missing effort: denied" deny "$(decision "$out")"
+has "missing effort: named" "(preset balanced): no effort." "$(reason "$out")"
+out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","effort":"xhigh"}')")"
+check "missing model: denied" deny "$(decision "$out")"
+has "missing model: named" "no model (it would inherit the parent's model)" "$(reason "$out")"
+out="$(run_hook "$(call Task '{"subagent_type":"general-purpose"}')")"
+check "Task tool name is checked too" deny "$(decision "$out")"
+has "neither: both named" "no model (it would inherit the parent's model); no effort." "$(reason "$out")"
 
-neither="$(ctx_of "$HOOK" "$(call Agent '{"prompt":"x"}')")"
-has "no model and no effort: both named" "(balanced): no model; no effort." "$neither"
+# --- Explore / Plan: explore role only ------------------------------------------------
+out="$(run_hook "$(call Agent '{"subagent_type":"Explore","model":"haiku","effort":"low"}')")"
+check "Explore on the explore rung: allowed" allow "$(decision "$out")"
+has "Explore advisory names the explore role" "explore role (Explore)" "$(ctx "$out")"
+out="$(run_hook "$(call Agent '{"subagent_type":"Explore","model":"haiku","effort":"xhigh"}')")"
+check "Explore on a build rung: denied" deny "$(decision "$out")"
+has "Explore deny lists only explore pairs" "Allowed for the explore role (Explore): haiku/low." "$(reason "$out")"
+out="$(run_hook "$(call Agent '{"subagent_type":"Plan","model":"opus","effort":"medium"}')")"
+check "Plan on a hard rung: denied" deny "$(decision "$out")"
+out="$(run_hook "$(call Agent '{"subagent_type":"Explore"}')")"
+check "Explore without model/effort: denied" deny "$(decision "$out")"
 
-off_pair="$(ctx_of "$HOOK" "$(call Agent '{"model":"opus","effort":"xhigh"}')")"
-has "pair outside the ladder: warning" "opus/xhigh matches no stage of the preset." "$off_pair"
+# --- fork: parent model ---------------------------------------------------------------
+TR="$TMP/sess.jsonl"
+printf '%s\n' '{"type":"user","message":{"content":"x"}}' \
+    '{"type":"assistant","message":{"model":"claude-opus-5-5","content":[]}}' \
+    '{"type":"user","message":{"content":"y","model":"claude-haiku-5-5"}}' > "$TR"
+out="$(run_hook "$(call Agent '{"subagent_type":"fork","prompt":"x"}' "$REPO" "$TR")")"
+check "fork with an opus parent (rung model): allowed" allow "$(decision "$out")"
+has "fork advisory: effort not checked" "fork ok: parent model opus" "$(ctx "$out")"
+TR2="$TMP/sess2.jsonl"
+printf '%s\n' '{"type":"assistant","message":{"model":"claude-sonnet-5-5","content":[]}}' > "$TR2"
+out="$(run_hook "$(call Agent '{"subagent_type":"fork","model":"haiku","effort":"xhigh"}' "$REPO" "$TR2")")"
+check "fork with a sonnet parent: denied (call model ignored)" deny "$(decision "$out")"
+has "fork deny suggests a regular spawn" "Spawn a regular subagent" "$(reason "$out")"
+out="$(run_hook "$(call Agent '{"subagent_type":"fork"}')")"
+check "fork without a transcript: denied" deny "$(decision "$out")"
+has "fork deny: parent unknown" "model (unknown)" "$(reason "$out")"
+mkdir -p "$TMP/sess2/subagents"
+printf '%s\n' '{"type":"assistant","message":{"model":"claude-haiku-5-5","content":[]}}' \
+    > "$TMP/sess2/subagents/agent-abc123.jsonl"
+out="$(run_hook "$(call Agent '{"subagent_type":"fork"}' "$REPO" "$TR2" abc123)")"
+check "fork inside a subagent reads the subagent transcript (haiku): allowed" allow "$(decision "$out")"
 
-medium_haiku="$(ctx_of "$HOOK" "$(call Agent '{"model":"haiku","effort":"medium"}')")"
-has "haiku medium is not on the balanced ladder" "haiku/medium matches no stage of the preset." "$medium_haiku"
+# --- RULES.md override ----------------------------------------------------------------
+RR="$TMP/rulesrepo"
+mkdir -p "$RR/.credo"
+git -C "$RR" init -q
+cat > "$RR/.credo/RULES.md" <<'MD'
+# rules
 
-full_id="$(ctx_of "$HOOK" "$(call Agent '{"model":"claude-opus-5-5","effort":"medium"}')")"
-check "full model id maps to the alias: silent" "" "$full_id"
+```
+preset exception: all -> sonnet/high
+```
 
-task_name="$(ctx_of "$HOOK" "$(call Task '{"subagent_type":"general-purpose"}')")"
-has "Task tool name is checked too" "no model; no effort." "$task_name"
+- `preset exception: build, review -> opus/max` | owner wants max for this repo
+preset exception: explore -> opus/low
+preset exception: nonsense -> opus/high
+MD
+out="$(run_hook "$(call Agent '{"model":"opus","effort":"max"}' "$RR")")"
+check "RULES.md override opus/max for build: allowed" allow "$(decision "$out")"
+has "override advisory names the source" "ok by preset exception (RULES.md): opus/max" "$(ctx "$out")"
+out="$(run_hook "$(call Agent '{"model":"opus","effort":"low"}' "$RR")")"
+check "explore-scoped override does not widen build: denied" deny "$(decision "$out")"
+has "deny lists the granted pair too" "opus/max" "$(reason "$out")"
+out="$(run_hook "$(call Agent '{"subagent_type":"Explore","model":"opus","effort":"low"}' "$RR")")"
+check "explore-scoped override for Explore: allowed" allow "$(decision "$out")"
+out="$(run_hook "$(call Agent '{"model":"sonnet","effort":"high"}' "$RR")")"
+check "override inside a code fence is ignored: denied" deny "$(decision "$out")"
+out="$(run_hook "$(call Agent '{"model":"opus","effort":"high"}' "$RR")")"
+check "override with an unknown scope is ignored: denied" deny "$(decision "$out")"
 
-bash_call="$(ctx_of "$HOOK" "$(call Bash '{"command":"ls"}')")"
-check "Bash call is not checked" "" "$bash_call"
+# linked worktree: .credo lives in the main checkout
+git -C "$RR" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m init
+git -C "$RR" worktree add -q "$TMP/rr-wt" -b wt 2>/dev/null
+out="$(run_hook "$(call Agent '{"model":"opus","effort":"max"}' "$TMP/rr-wt")")"
+check "worktree cwd reads the main checkout RULES.md: allowed" allow "$(decision "$out")"
 
-explore_bare="$(ctx_of "$HOOK" "$(call Agent '{"subagent_type":"Explore"}')")"
-has "Explore without model: checked (balanced explore has a model)" "no model; no effort." "$explore_bare"
-explore_ok="$(ctx_of "$HOOK" "$(call Agent '{"subagent_type":"Explore","model":"haiku","effort":"low"}')")"
-check "Explore on the explore stage pair: silent" "" "$explore_ok"
+# --- handoff temporary rule -----------------------------------------------------------
+HR="$TMP/handoffrepo"
+mkdir -p "$HR/.credo/process/handoffs"
+git -C "$HR" init -q
+H="$HR/.credo/process/handoffs/HANDOFF.md"
+cat > "$H" <<'MD'
+# Handoff
 
-out="$(printf '%s' "$(call Agent '{"model":"haiku"}')" | bash "$HOOK" 2>/dev/null)"
-check "output event name is PreToolUse" PreToolUse \
-    "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.hookEventName' 2>/dev/null)"
-check "output is suppressed from the chat" true \
-    "$(printf '%s' "$out" | jq -r '.suppressOutput' 2>/dev/null)"
-check "output never denies the call" "" \
-    "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // ""' 2>/dev/null)"
+## Rules (temporary)
 
-printf '%s' "$(call Agent '{"model":"haiku"}')" | bash "$HOOK" >/dev/null 2>&1
-check "hook exits 0 on a warning" 0 "$?"
+- preset exception: build -> opus/xhigh | source: owner "opus xhigh for the refactor" (2030-06-01) | until: 2030-06-20
+- preset exception: build -> opus/max | source: owner "max until done" (2030-06-01) | until: 2030-06-10
+- preset exception: build -> sonnet/medium | source: agent decision | until: 2030-06-20
+- preset exception: build -> sonnet/high | source: owner "sonnet high" (2030-06-01) | until: the refactor is merged
+- preset exception: build -> haiku/max | source: owner "haiku max" (2030-06-01)
 
-# --- disable switch, bad input: silent ----------------------------------------------
-off_ctx="$(CREDO_AGENT_SPAWN_CHECK=0 ctx_of "$HOOK" "$(call Agent '{"model":"haiku"}')")"
-check "CREDO_AGENT_SPAWN_CHECK=0: silent" "" "$off_ctx"
-junk_ctx="$(ctx_of "$HOOK" 'not json at all')"
-check "non-JSON input: silent" "" "$junk_ctx"
+## Notes
+
+- preset exception: build -> sonnet/low | source: owner "x" (2030-06-01) | until: 2030-06-20
+MD
+out="$(run_hook "$(call Agent '{"model":"opus","effort":"xhigh"}' "$HR")")"
+check "valid owner handoff exception: allowed" allow "$(decision "$out")"
+has "handoff advisory names the until" "ok by preset exception (handoff until 2030-06-20)" "$(ctx "$out")"
+out="$(run_hook "$(call Agent '{"model":"opus","effort":"max"}' "$HR")")"
+check "expired handoff exception: denied" deny "$(decision "$out")"
+out="$(run_hook "$(call Agent '{"model":"sonnet","effort":"medium"}' "$HR")")"
+check "agent-decision handoff exception: denied" deny "$(decision "$out")"
+out="$(run_hook "$(call Agent '{"model":"sonnet","effort":"high"}' "$HR")")"
+check "handoff exception without an until date: denied" deny "$(decision "$out")"
+out="$(run_hook "$(call Agent '{"model":"haiku","effort":"max"}' "$HR")")"
+check "handoff exception without until: denied" deny "$(decision "$out")"
+out="$(run_hook "$(call Agent '{"model":"sonnet","effort":"low"}' "$HR")")"
+check "exception outside Rules (temporary): denied" deny "$(decision "$out")"
+out="$(CREDO_PRESET_GUARD_TODAY=2030-06-21 run_hook "$(call Agent '{"model":"opus","effort":"xhigh"}' "$HR")")"
+check "handoff exception after its until date: denied" deny "$(decision "$out")"
+
+# --- other preset ---------------------------------------------------------------------
+mkdir -p "$TMP/q/.credo"
+printf 'preset: quality\n' > "$TMP/q/.credo/config"
+out="$(CREDO_PROJECT="$TMP/q/.credo/config" run_hook "$(call Agent '{"model":"haiku","effort":"xhigh"}')")"
+check "quality preset: haiku/xhigh is no build rung: denied" deny "$(decision "$out")"
+has "quality preset named" "(preset quality)" "$(reason "$out")"
+
+# --- no check -------------------------------------------------------------------------
+out="$(CREDO_PROJECT="$TMP/none/.credo/config" run_hook "$(call Agent '{"model":"sonnet"}')")"
+check "no preset configured: silent" "" "$out"
+out="$(run_hook "$(call Bash '{"command":"ls"}')")"
+check "Bash call is not checked" "" "$out"
+out="$(CREDO_AGENT_SPAWN_CHECK=0 run_hook "$(call Agent '{"model":"sonnet"}')")"
+check "CREDO_AGENT_SPAWN_CHECK=0: silent" "" "$out"
+check "non-JSON input: silent" "" "$(run_hook 'not json at all')"
 printf '' | bash "$HOOK" >/dev/null 2>&1
 check "empty input: exit 0" 0 "$?"
+printf '%s' "$(call Agent '{"model":"sonnet"}')" | bash "$HOOK" >/dev/null 2>&1
+check "hook exits 0 on a deny" 0 "$?"
 
-# --- project preset quality (explore haiku xhigh, build and hard opus medium) --------
-Q_CTX="$(
-    export CREDO_PROJECT="$TMP/quality/.credo/config"
-    mkdir -p "$TMP/quality/.credo"
-    printf 'preset: quality\n' > "$CREDO_PROJECT"
-    ctx_of "$HOOK" "$(call Agent '{"subagent_type":"general-purpose","model":"haiku","effort":"low"}')"
-)"
-has "quality preset: named in the warning" "(quality): haiku/low matches no stage of the preset." "$Q_CTX"
-has "quality preset: its build ladder" "build: 1+ opus/medium" "$Q_CTX"
-Q_OK="$(
-    export CREDO_PROJECT="$TMP/quality/.credo/config"
-    ctx_of "$HOOK" "$(call Agent '{"subagent_type":"general-purpose","model":"opus","effort":"medium"}')"
-)"
-check "quality preset: opus medium is on its ladder: silent" "" "$Q_OK"
-
-# --- stub plugin: parser edge cases and the Explore skip ---------------------------
+# --- internal error: fail open with a logged warning ----------------------------------
 STUB="$TMP/stubplugin"
 mkdir -p "$STUB/hooks" "$STUB/scripts"
-cp "$HOOK" "$STUB/hooks/"
-printf '#!/bin/bash\ncat "$STUB_SHOW"\n' > "$STUB/scripts/credo-preset.sh"
-STUB_HOOK="$STUB/hooks/credo-agent-spawn-check.sh"
-
-# no explore stage at all: Explore and Plan are skipped, a general-purpose call is still checked
-cat > "$TMP/show-noexplore.txt" <<'SHOW'
-preset: stub (custom)
-universal-prompt: (none)
-mainagent: claude-opus-5-5 / medium (recommendation only)
-explore:
-build:
-  1. claude-haiku-5-5 / xhigh, attempts until-done
-review:
-  1. claude-haiku-5-5 / xhigh, attempts until-done
-hard:
-  1. claude-haiku-5-5 / xhigh, attempts 1
-  2. back-to-human
-SHOW
-export STUB_SHOW="$TMP/show-noexplore.txt"
-skip_explore="$(ctx_of "$STUB_HOOK" "$(call Agent '{"subagent_type":"Explore"}')")"
-check "no explore model: Explore skipped" "" "$skip_explore"
-skip_plan="$(ctx_of "$STUB_HOOK" "$(call Agent '{"subagent_type":"Plan"}')")"
-check "no explore model: Plan skipped" "" "$skip_plan"
-stub_gp="$(ctx_of "$STUB_HOOK" "$(call Agent '{"subagent_type":"general-purpose"}')")"
-has "no explore model: general-purpose still checked" "no model; no effort." "$stub_gp"
-has "single attempt segment: 1 haiku/xhigh" "hard: 1 haiku/xhigh, attempt 2 back-to-human" "$stub_gp"
-has "until-done segment: build 1+" "build: 1+ haiku/xhigh" "$stub_gp"
-has "stub preset name is shown" "(stub): no model" "$stub_gp"
-
-# unreadable preset output: silent
-printf 'garbage line\n' > "$TMP/show-garbage.txt"
-export STUB_SHOW="$TMP/show-garbage.txt"
-garbage_ctx="$(ctx_of "$STUB_HOOK" "$(call Agent '{"model":"haiku"}')")"
-check "unparseable preset output: silent" "" "$garbage_ctx"
-
-# no preset helper at all (a plugin copy with only the hook): silent
+cp "$HOOK" "$HERE/../hooks/credo-python-lib.sh" "$STUB/hooks/"
+cp "$HERE/credo-preset-guard.py" "$HERE/credo-config.sh" "$HERE/credo-handoff-rules.py" "$STUB/scripts/"
+printf '#!/bin/bash\necho garbage\n' > "$STUB/scripts/credo-preset.sh"
+rm -f "$CREDO_PRESET_GUARD_LOG"
+out="$(printf '%s' "$(call Agent '{"model":"sonnet"}')" | bash "$STUB/hooks/credo-agent-spawn-check.sh" 2>/dev/null)"
+check "unparseable preset: fail open (silent)" "" "$out"
+has "fail open writes a warning to the log" "spawn allowed unchecked" "$(cat "$CREDO_PRESET_GUARD_LOG" 2>/dev/null)"
 BARE="$TMP/bareplugin"
 mkdir -p "$BARE/hooks"
 cp "$HOOK" "$BARE/hooks/"
-nohelper_ctx="$(ctx_of "$BARE/hooks/credo-agent-spawn-check.sh" "$(call Agent '{"model":"haiku"}')")"
-check "no preset helper: silent" "" "$nohelper_ctx"
+out="$(printf '%s' "$(call Agent '{"model":"sonnet"}')" | bash "$BARE/hooks/credo-agent-spawn-check.sh" 2>/dev/null)"
+check "no guard script: silent" "" "$out"
 
 echo "passed: $pass failed: $fail"
 [ "$fail" -eq 0 ]
