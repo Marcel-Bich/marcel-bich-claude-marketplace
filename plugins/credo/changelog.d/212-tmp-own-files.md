@@ -24,4 +24,7 @@ bump: patch
   as a write target; the 2-minute and open-file checks apply. Directories and everything else
   the Bash scan found stay report-only.
 - The bash lexer of the inline guard no longer reads `<` / `>` inside `[[ ... ]]` (a string
-  comparison) as a redirect, so `[[ a > /tmp/x ]]` is not denied by the new-file guard.
+  comparison) as a redirect, so `[[ a > /tmp/x ]]` is not denied by the new-file guard; this also
+  holds after `if`/`elif`/`while`/`until`/`!`, while `]]>/tmp/x` stays a redirect.
+- The ambiguity check reads all windows of other sessions that closed during the call (not only
+  the last 64 KB of `windows.log`), and pruning keeps windows a still-running long call needs.

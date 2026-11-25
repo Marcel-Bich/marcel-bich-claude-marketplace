@@ -67,6 +67,7 @@ except Exception:  # noqa: BLE001 - a hook never fails on its own environment
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 MARK_STALE_S = 6 * 3600
 WINDOW_KEEP_S = 3600
+WINDOW_ORDER_S = 60  # windows.log is appended in close order only roughly (t1 is taken before the lock)
 
 
 def deny(reason):
@@ -341,15 +342,15 @@ def take_mark(sid, tuid):
         return None, None
 
 
-def other_windows(sid, t_now):
-    """[(sid, t0, t1)] of other sessions' open marks and recently closed windows."""
+def open_marks(t_now, skip_sid=None):
+    """[(sid, t0)] of the open (not stale) tool-call marks of all sessions except skip_sid."""
     out = []
     base = os.path.join(L.state_dir(), "marks")
     try:
-        others = [n for n in os.listdir(base) if n != sid]
+        names = [n for n in os.listdir(base) if n != skip_sid]
     except OSError:
-        others = []
-    for o in others:
+        names = []
+    for o in names:
         try:
             for n in os.listdir(os.path.join(base, o)):
                 try:
@@ -357,21 +358,47 @@ def other_windows(sid, t_now):
                 except ValueError:
                     continue
                 if t_now - t0 < MARK_STALE_S:
-                    out.append((o, t0, t_now + 1))
+                    out.append((o, t0))
         except OSError:
             continue
-    wl = os.path.join(L.state_dir(), "windows.log")
+    return out
+
+
+def read_windows(wl, since):
+    """The lines of windows.log, read backwards in chunks until a window that closed before
+    `since` (minus WINDOW_ORDER_S: lines are appended in close order only roughly) or the file
+    start is reached."""
     try:
         with open(wl, "rb") as fh:
             fh.seek(0, 2)
-            size = fh.tell()
-            fh.seek(max(0, size - 65536))
-            lines = fh.read().decode("utf-8", "replace").splitlines()
-        if size > 65536:
-            lines = lines[1:]  # the first line may be cut
+            pos = fh.tell()
+            buf = b""
+            while pos > 0:
+                step = min(65536, pos)
+                pos -= step
+                fh.seek(pos)
+                buf = fh.read(step) + buf
+                nl = buf.find(b"\n")
+                if pos == 0 or nl < 0:
+                    continue
+                first = buf[nl + 1:].split(b"\n", 1)[0].split()
+                try:
+                    if len(first) == 3 and float(first[2]) < since - WINDOW_ORDER_S:
+                        break
+                except ValueError:
+                    pass
     except OSError:
-        lines = []
-    for line in lines:
+        return []
+    lines = buf.decode("utf-8", "replace").splitlines()
+    return lines[1:] if pos > 0 else lines  # the first line of a partial read may be cut
+
+
+def other_windows(sid, t_now, t0=None):
+    """[(sid, t0, t1)] of other sessions' open marks and the closed windows that may overlap
+    our call (closed at or after its start t0)."""
+    out = [(o, m, t_now + 1) for o, m in open_marks(t_now, sid)]
+    since = t_now - WINDOW_KEEP_S if t0 is None else t0 - L.SLACK
+    for line in read_windows(os.path.join(L.state_dir(), "windows.log"), since):
         parts = line.split()
         if len(parts) == 3 and parts[0] != sid:
             try:
@@ -386,9 +413,13 @@ def close_window(sid, t0, t1):
     try:
         with L.Locked(wl):
             if os.path.exists(wl) and os.path.getsize(wl) > 262144:
+                # prune old windows, but never one a still-open call (any session) may need:
+                # its post reads every window closed after its own t0
+                cut = min([t1 - WINDOW_KEEP_S] + [m - L.SLACK - WINDOW_ORDER_S
+                                                   for _, m in open_marks(t1)])
                 with open(wl, encoding="utf-8") as fh:
                     keep = [ln for ln in fh.read().splitlines()
-                            if len(ln.split()) == 3 and float(ln.split()[2]) > t1 - WINDOW_KEEP_S]
+                            if len(ln.split()) == 3 and float(ln.split()[2]) > cut]
                 with open(wl, "w", encoding="utf-8") as fh:
                     fh.write("".join(k + "\n" for k in keep))
             with open(wl, "a", encoding="utf-8") as fh:
@@ -600,7 +631,7 @@ def post(data):
     if tool != "Bash":
         return
     cmd = (data.get("tool_input") or {}).get("command") or ""
-    windows = other_windows(sid, t1)
+    windows = other_windows(sid, t1, t0)
     recs = []
     absent = set((info or {}).get("absent") or [])
     for root in temp_scan_roots(cwd):

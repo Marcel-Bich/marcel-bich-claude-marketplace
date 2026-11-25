@@ -85,6 +85,17 @@ class Simple(object):
         self.piped = False
 
 
+COND_PREFIX = ("if", "elif", "while", "until", "then", "else", "do", "!", "{", "time")
+
+
+def in_cond(words):
+    """True while the words so far open a [[ ... ]] at command position (after keywords or !)."""
+    k = 0
+    while k < len(words) and words[k] in COND_PREFIX:
+        k += 1
+    return k < len(words) and words[k] == "[[" and "]]" not in words[k + 1:]
+
+
 class Parser(object):
     """A small bash lexer: quotes, escapes, comments, $(...), backticks, heredocs."""
 
@@ -183,8 +194,8 @@ class Parser(object):
                 finish_word()
                 i += 1
                 continue
-            if c in "<>" and expect_redirect is None and cur.words and cur.words[0] == "[[" \
-                    and "]]" not in cur.words[1:] and not self.s.startswith(("<(", ">("), i):
+            if c in "<>" and expect_redirect is None and word != "]]" and in_cond(cur.words) \
+                    and not self.s.startswith(("<(", ">("), i):
                 # inside [[ ... ]] a lone < or > is a string comparison, not a redirect
                 finish_word()
                 cur.words.append(c)

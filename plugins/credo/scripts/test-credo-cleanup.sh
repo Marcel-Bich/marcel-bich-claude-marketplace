@@ -454,6 +454,38 @@ open(sys.argv[2], "a").write(json.dumps({"event": "record", "path": p, "dev": st
 tx_bash "echo data > $R/bt-amb-forged.txt" ok
 o="$(helper own-rm "$R/bt-amb-forged.txt")"
 contains "a write_target line marked ambiguous is report-only" "refused $R/bt-amb-forged.txt: report only" "$o"
+# re-check: a window of another session behind more than 64 KB of later windows still counts
+WL="$TMP/state/windows.log"
+N=$((N + 1)); cj="$(cmdjson "echo deep >> $R/bt-deep.log")"
+hook pre Bash "$cj"; sleep 0.05; echo deep >> "$R/bt-deep.log"; sleep 0.05
+python3 -c '
+import sys, time
+t = time.time()
+with open(sys.argv[1], "a") as fh:
+    fh.write("eeeeeeee-0000-4000-8000-00000000000b %.6f %.6f\n" % (t - 5, t))
+    for _ in range(2000):
+        fh.write("eeeeeeee-0000-4000-8000-00000000000c %.6f %.6f\n" % (t + 1, t + 1))
+' "$WL"
+hook post Bash "$cj"; tx_bash "echo deep >> $R/bt-deep.log" ok
+contains "a window far back in windows.log still makes the target ambiguous" "00000000000b" \
+    "$(grep "\"$R/bt-deep.log\"" "$LEDGER_FILE")"
+check "that target is not flagged write_target" 0 "$(grep "\"$R/bt-deep.log\"" "$LEDGER_FILE" | grep -c write_target)"
+# re-check: pruning keeps every window a still-open call (here one running for 2 h) may need
+SEM="$TMP/state/marks/eeeeeeee-0000-4000-8000-00000000000e"
+mkdir -p "$SEM"
+python3 -c '
+import sys, time
+t = time.time()
+open(sys.argv[2] + "/%.6f_tuE" % (t - 7200), "w").write("{}")
+with open(sys.argv[1], "a") as fh:
+    for _ in range(4000):
+        fh.write("eeeeeeee-0000-4000-8000-00000000000f %.6f %.6f\n" % (t - 20000, t - 20000))
+    fh.write("eeeeeeee-0000-4000-8000-00000000000d %.6f %.6f\n" % (t - 6000, t - 5000))
+' "$WL" "$SEM"
+bash_call "true"
+check "prune keeps a window closed during a still-open long call" 1 "$(grep -c 00000000000d "$WL")"
+check "prune drops windows older than every open call" 0 "$(grep -c 00000000000f "$WL")"
+rm -f "$SEM"/*_tuE
 # audit M2: an mv destination is never own-rm evidence (a cross-filesystem mv copies, then
 # deletes the source: the target is a new inode holding the only copy)
 echo only-copy > "$FH/userdata/mvsrc.txt"
@@ -481,6 +513,16 @@ contains "mv into /tmp still denied (guard keeps mv)" "deny" "$(gpre "mv $FH/a $
 check "[[ a > /tmp/x ]] is a string comparison" "" "$(gpre "[[ a > $G/cmp ]] && echo y")"
 check "[[ a < /tmp/x ]] is a string comparison" "" "$(gpre "[[ b < $G/cmp ]]")"
 contains "a redirect after ]] still counts" "deny" "$(gpre "[[ a > b ]] > $G/after-cond")"
+contains "]]> without a space is a redirect" "deny" "$(gpre "[[ -n a ]]>$G/after-nospace")"
+contains "]]>| without a space is a redirect" "deny" "$(gpre "[[ -n a ]]>|$G/after-clobber")"
+check "if [[ a > /tmp/x ]] is a string comparison" "" "$(gpre "if [[ a > $G/cmp ]]; then echo y; fi")"
+check "! [[ a > /tmp/x ]] is a string comparison" "" "$(gpre "! [[ a > $G/cmp ]]")"
+check "while [[ a < /tmp/x ]] is a string comparison" "" "$(gpre "while [[ a < $G/cmp ]]; do :; done")"
+check "until [[ a > /tmp/x ]] is a string comparison" "" "$(gpre "until [[ a > $G/cmp ]]; do :; done")"
+check "elif [[ a > /tmp/x ]] is a string comparison" "" "$(gpre "if true; then :; elif [[ a > $G/cmp ]]; then :; fi")"
+check "&& [[ a > /tmp/x ]] is a string comparison" "" "$(gpre "true && [[ a > $G/cmp ]]")"
+contains "a redirect in the if body still counts" "deny" "$(gpre "if [[ a > b ]]; then echo x > $G/in-body; fi")"
+contains "[[ as an argument does not open a condition" "deny" "$(gpre "echo [[ > $G/echoed")"
 check "existing file allowed" "" "$(gpre "echo x > $G/exists")"
 check "2>/dev/null allowed" "" "$(gpre "ls $G 2>/dev/null")"
 check "tee -a existing log allowed" "" "$(gpre "echo a | tee -a $G/existing.log")"
