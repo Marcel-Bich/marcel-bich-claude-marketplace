@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # credo-agent-spawn-check.sh - credo plugin (PreToolUse hook on Agent and Task).
 #
-# Purpose: enforce the active model preset on every spawn. A spawn whose model/effort is
-# no rung of the ladders that fit its kind (Explore/Plan -> explore role; any other type
-# -> build, review and hard roles) is DENIED with the allowed pairs and the lookup command
-# credo-preset.sh stage <role> <attempt>. Missing model or effort is a mismatch. A fork
-# passes only when the parent's model is a build/review/hard rung model. Exceptions only
-# via a "preset exception:" line in .credo/RULES.md or a valid owner rule with an until
-# date in the handoff "## Rules (temporary)". No preset configured -> no check.
+# Purpose: enforce the active model preset as a minimum on every spawn. A spawn whose
+# model/effort is below every rung of the ladders that fit its kind (Explore/Plan ->
+# explore role; any other type -> build, review and hard roles) is DENIED with the minimum
+# pairs and the lookup command credo-preset.sh stage <role> <attempt>. Missing model or
+# effort is a mismatch. An equal pair passes; a stronger pair passes with a visible
+# "stronger than preset" line. A fork passes only when the parent's model is >= a fitting
+# rung model. A weaker pair only via a "preset exception:" line in .credo/RULES.md or a
+# valid owner rule with an until date in the handoff "## Rules (temporary)". No preset
+# configured -> no check.
 #
 # The decision lives in scripts/credo-preset-guard.py (see its docstring for the format).
 # Internal errors fail open with a logged warning. Owner kill switch:

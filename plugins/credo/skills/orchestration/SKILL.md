@@ -538,9 +538,17 @@ Per spawn:
    prompt.
 3. `action: back-to-human` means the chain is used up: do not spawn; hand the item back (below).
 
-The credo `PreToolUse` hook on Agent and Task calls (`hooks/credo-agent-spawn-check.sh`) checks
-each spawn: a call without `model` or `effort`, or with a pair that matches no stage of the
-active preset, gets a warning with the active ladder per role. It warns and never blocks.
+The credo `PreToolUse` hook on Agent and Task calls (`hooks/credo-agent-spawn-check.sh`)
+enforces the preset as a minimum. It DENIES a call without `model` or `effort`, or with a pair
+below every rung of the roles that fit the spawn (Explore/Plan -> explore; others ->
+build/review/hard); the reason lists the minimum pairs. An equal or stronger pair passes
+(model haiku < sonnet < opus < fable, effort low < medium < high < xhigh < max); a stronger
+one adds a visible line `stronger than preset: <model>/<effort> vs <rung>` - report it to the
+owner. A `fork` passes only when your own model is at least a fitting rung model; otherwise
+spawn a regular subagent with model and effort. A weaker pair needs a `preset exception:`
+line in `.credo/RULES.md` or a valid owner rule with an until date in the handoff
+`## Rules (temporary)` (format in the credo guide, "Model presets"). On a deny, run the stage
+helper and retry with its alias and effort; never work around the hook.
 
 A failed attempt is a red gate: tests red, the done-gate red, an audit FAIL, or the subagent
 reports itself stuck. The next attempt gets the findings (file:line, failing test, audit

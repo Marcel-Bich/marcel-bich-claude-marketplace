@@ -6,19 +6,27 @@ input on stdin. Prints a hook decision JSON (or nothing) and always exits 0.
 
 Rules:
 - No preset configured (no `preset:` key in any config layer) -> no check.
-- The hook cannot know the role or the attempt of a spawn, so a spawn passes when its
-  (model, effort) equals ANY rung of the ladders that fit its kind:
+- Deny only BELOW the preset (owner decision Q425). The hook cannot know the role or the
+  attempt of a spawn, so a spawn passes when its (model, effort) is equal to or stronger
+  than ANY rung of the ladders that fit its kind:
     subagent_type Explore or Plan -> the explore role only;
     any other type                -> the build, review and hard roles.
+  Stronger = model rank haiku < sonnet < opus < fable and effort rank
+  low < medium < high < xhigh < max, both >= the rung. An exact rung match gets a short
+  "ok" context line; a stronger spawn passes with a visible line
+  "stronger than preset: <model>/<effort> vs <rung>" (context + systemMessage) for the
+  main agent to report.
 - Missing model is a mismatch (the spawn would inherit the parent's model); missing effort
-  is a mismatch (every rung defines one). A mismatch is denied with the allowed pairs and
-  the lookup command `credo-preset.sh stage <role> <attempt>`.
+  is a mismatch (every rung defines one); an unknown model or effort cannot be ranked and
+  is a mismatch. A mismatch or a weaker pair is denied with the minimum pairs and the lookup
+  command `credo-preset.sh stage <role> <attempt>`.
 - subagent_type "fork" inherits the parent's model and effort (a model on the call is
   ignored). It passes only when the parent's model (last assistant model in the parent
-  transcript) is the model of a build/review/hard rung; the inherited effort cannot be read
-  and is not checked. Otherwise it is denied with the hint to spawn a regular subagent
-  with model and effort.
-- Exceptions widen the allowed pairs, one per line, in this format:
+  transcript) is >= the model of a fitting rung; the inherited effort cannot be read and is
+  not checked. Otherwise it is denied with the hint to spawn a regular subagent with model
+  and effort.
+- Exceptions add pairs that count like rungs (so they may allow a weaker pair), one per
+  line, in this format:
       preset exception: <scope> -> <model>/<effort>[, <model>/<effort> ...]
   scope: all, or one or more roles (explore, build, review, hard) separated by commas.
   a) .credo/RULES.md: such a line anywhere outside code fences (bullet optional, text
@@ -50,7 +58,8 @@ HANDOFF_RULES_PY = os.path.join(HERE, "credo-handoff-rules.py")
 ROLES = ("explore", "build", "review", "hard")
 EXPLORE_TYPES = ("Explore", "Plan")
 BUILD_ROLES = ("build", "review", "hard")
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")  # ascending strength
+MODEL_RANK = {"haiku": 1, "sonnet": 2, "opus": 3, "fable": 4}  # ascending strength
 LOOKUP = "credo-preset.sh stage <role> <attempt>"
 EXC_RE = re.compile(r"^\s*(?:[-*+]\s+)?`?preset\s+exception\s*:\s*(.+?)`?\s*$", re.I)
 PAIR_RE = re.compile(r"^([A-Za-z0-9._-]+)\s*/\s*([a-z]+)$")
@@ -295,18 +304,31 @@ def parent_model(data):
     return ""
 
 
-def emit(decision, text):
+def emit(decision, text, visible=False):
     out = {"hookEventName": "PreToolUse"}
     if decision == "deny":
         out["permissionDecision"] = "deny"
         out["permissionDecisionReason"] = text
     else:
         out["additionalContext"] = text
-    print(json.dumps({"hookSpecificOutput": out, "suppressOutput": True}))
+    res = {"hookSpecificOutput": out, "suppressOutput": True}
+    if visible:
+        res["systemMessage"] = text
+    print(json.dumps(res))
 
 
 def fmt_pairs(pairs):
     return ", ".join("%s/%s" % p for p in sorted(pairs))
+
+
+def at_least(pair, rung):
+    """True when pair (alias, effort) is equal to or stronger than rung in model AND effort."""
+    if pair[0] not in MODEL_RANK or rung[0] not in MODEL_RANK:
+        return False
+    if pair[1] not in EFFORTS or rung[1] not in EFFORTS:
+        return False
+    return (MODEL_RANK[pair[0]] >= MODEL_RANK[rung[0]]
+            and EFFORTS.index(pair[1]) >= EFFORTS.index(rung[1]))
 
 
 def decide(data, today):
@@ -332,23 +354,24 @@ def decide(data, today):
     every = allowed | set(granted)
     pname = ladder["name"]
     ladder_line = ladder_text(ladder, ROLES)
-    tail = ("Allowed for the %s: %s. Pick the rung of this role and attempt with %s and pass "
-            "its alias as model and its effort as effort. Active ladder: %s. Exceptions only via "
-            "a valid owner rule with until in the handoff \"## Rules (temporary)\" or a line in "
-            ".credo/RULES.md (format: preset exception: <all|role,...> -> <model>/<effort>)."
+    tail = ("Minimum for the %s: one of %s (an equal or stronger model and effort passes). "
+            "Pick the rung of this role and attempt with %s and pass its alias as model and its "
+            "effort as effort. Active ladder: %s. A weaker pair only via a valid owner rule with "
+            "an until date in the handoff \"## Rules (temporary)\" or a line in .credo/RULES.md "
+            "(format: preset exception: <all|role,...> -> <model>/<effort>)."
             % (kind, fmt_pairs(every), LOOKUP, ladder_line))
 
     if sub == "fork":
         parent = alias_of(parent_model(data))
-        models = {a for a, _e in every}
-        if parent and parent in models:
-            emit("allow", "[credo-preset] fork ok: parent model %s is on the %s ladder; the "
-                 "inherited effort is not checked." % (parent, pname))
+        if parent in MODEL_RANK and any(MODEL_RANK[parent] >= MODEL_RANK.get(a, 99)
+                                        for a, _e in every):
+            emit("allow", "[credo-preset] fork ok: parent model %s is >= a rung model of the %s "
+                 "ladder; the inherited effort is not checked." % (parent, pname))
             return
         emit("deny", "[credo-preset] Spawn denied (preset %s): a fork inherits the parent's "
-             "model (%s), which is no build/review/hard rung model. Spawn a regular subagent "
+             "model (%s), which is below every rung model of the %s. Spawn a regular subagent "
              "(e.g. general-purpose) with model and effort instead. %s"
-             % (pname, parent or "unknown", tail))
+             % (pname, parent or "unknown", kind, tail))
         return
 
     model = str(ti.get("model") or "").strip()
@@ -356,11 +379,17 @@ def decide(data, today):
     reasons = []
     if not model:
         reasons.append("no model (it would inherit the parent's model)")
+    elif alias_of(model) not in MODEL_RANK:
+        reasons.append("unknown model %s" % model)
     if not effort:
         reasons.append("no effort")
+    elif effort not in EFFORTS:
+        reasons.append("unknown effort %s" % effort)
     pair = (alias_of(model), effort)
-    if model and effort and pair not in every:
-        reasons.append("%s/%s is no rung of the %s" % (pair[0], pair[1], kind))
+    covered = [] if reasons else sorted(p for p in every if at_least(pair, p))
+    if not reasons and not covered:
+        reasons.append("%s/%s is below every rung of the %s (weaker model or lower effort)"
+                       % (pair[0], pair[1], kind))
     if reasons:
         emit("deny", "[credo-preset] Spawn denied (preset %s): %s. %s"
              % (pname, "; ".join(reasons), tail))
@@ -368,9 +397,13 @@ def decide(data, today):
     if pair in allowed:
         emit("allow", "[credo-preset] ok: %s/%s is a rung of the %s (preset %s); make sure it "
              "is the rung of this role and attempt." % (pair[0], pair[1], kind, pname))
-    else:
+    elif pair in granted:
         emit("allow", "[credo-preset] ok by preset exception (%s): %s/%s for the %s (preset %s)."
              % (granted[pair], pair[0], pair[1], kind, pname))
+    else:
+        line = ("[credo-preset] stronger than preset: %s/%s vs %s (%s, preset %s) - report it."
+                % (pair[0], pair[1], " or ".join("%s/%s" % p for p in covered), kind, pname))
+        emit("allow", line, visible=True)
 
 
 def main():
