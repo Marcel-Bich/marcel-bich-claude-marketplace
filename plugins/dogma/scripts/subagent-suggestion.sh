@@ -35,6 +35,14 @@ fi
 # Read JSON input from stdin
 INPUT=$(cat 2>/dev/null || true)
 
+# Repeat subagent notification (#215, lib-notify.sh): no dogma inject at all.
+# shellcheck source=lib-notify.sh
+if command -v jq >/dev/null 2>&1 && source "$(dirname "${BASH_SOURCE[0]}")/lib-notify.sh" 2>/dev/null \
+    && dogma_notify_repeat "$(printf '%s' "$INPUT" | jq -r '.prompt // ""' 2>/dev/null)" \
+        "$(printf '%s' "$INPUT" | jq -r '.session_id // ""' 2>/dev/null)"; then
+    exit 0
+fi
+
 # Find CLAUDE.subagents.md
 SUBAGENTS_FILE=""
 if [ -f "CLAUDE/CLAUDE.subagents.md" ]; then
