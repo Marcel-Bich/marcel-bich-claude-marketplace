@@ -98,7 +98,7 @@ and removes it.
 Carve-out - own leftovers through the cleanup helper (#174): without asking, in every mode,
 an agent may delete ONLY through `python3 <credo>/scripts/credo-cleanup.py own-rm <literal
 path>...` (the SessionStart line names the full helper path; never `rm -rf` outside the cwd for
-this), and the helper deletes only in three places:
+this), and the helper deletes only in these places:
 
 - inside the session TMPDIR (`/tmp/credo-tmp-<uid>/<session id>/`, a private 0700 dir) and the
   Claude Code scratchpad of the session (path derived from the session id, never from an
@@ -117,6 +117,12 @@ this), and the helper deletes only in three places:
   (`Public\Desktop`, `Public\Documents` included) goes only by an explicit `own-rm <path>`: the
   done-gate purge lists it and never removes it, since results for the owner may live there;
   `%TEMP%` and `C:\tmp` files the purge may take;
+- a single FILE a Bash command of this session provably wrote in a temp dir (`/tmp`, `/var/tmp`,
+  `/dev/shm`, #212): the path is literally a write target of the command (`>`, `>>`, `tee [-a]`,
+  `cp`/`mv`/`install ... <target>`, `dd of=`; an absolute literal path, never through a variable,
+  glob or `~`), the pre hook saw no file there, it was born during the call, dev+inode are
+  unchanged, and the session's transcript (main agent or a subagent) holds that successful Bash
+  call; the usual 2-minute and open-file checks apply. Directories stay report-only;
 - known build-output directories (`node_modules`, `dist`, `build`, `out`, `coverage`, `.next`,
   `.nuxt`, `.turbo`, `.cache`, `target`, `__pycache__`, `.pytest_cache`, `.mypy_cache`,
   `playwright-report`, `test-results`, `.venv`) ignored by a tracked `.gitignore` (no negation
@@ -128,11 +134,19 @@ this), and the helper deletes only in three places:
 The session id must belong to the caller's process tree (a live session descriptor names it
 with an ancestor pid); otherwise, and for another live session's id, everything is report-only.
 
+New throwaway files belong in the session TMPDIR (`$TMPDIR`) or the scratchpad, never directly in
+`/tmp` or `/var/tmp`: a PreToolUse(Bash) guard (#212) denies a command whose literal write target
+would be a NEW file directly in one of those dirs and names the literal session TMPDIR and the
+own-rm line. Existing files, `/dev/*`, deeper paths, the session dirs and commands that call
+`mktemp` pass; it fails open and is off with `CREDO_TMP_GUARD=0` or the local config key
+`cleanup.tmp_guard: false`.
+
 Everything else is report-only, also for an explicit own-rm: what the birth-time scan of a Bash
-call found (the owner or another program may have created it during the call), entries in the
+call found without being a literal write target of it (the owner or another program may have
+created it during the call), entries in the
 home or a worktrees dir, and results on the keep list (`keep <path> <name> --reason "<owner
 quote>"` moves a result to `~/.local/share/credo/keep/<project>/<name>/`; only the owner removes
-a kept result, by hand). Even inside the three places the helper refuses `/`, the home and its
+a kept result, by hand). Even inside these places the helper refuses `/`, the home and its
 parents, `~/.claude*/**` and `$CLAUDE_CONFIG_DIR`, mount points (bind mounts included), linked
 worktrees, repositories outside the temp roots, git-tracked files, `cleanup.keep_paths` of the
 LOCAL config, any tree with content born before the entry or with a modification time older than

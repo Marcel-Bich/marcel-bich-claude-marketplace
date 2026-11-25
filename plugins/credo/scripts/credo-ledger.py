@@ -22,7 +22,16 @@ Modes (hook input JSON on stdin):
 Evidence of an entry: "write" (Write/Edit tool), "command" (the Bash command text names the
 path or its name), "window" (only born during the call). An entry born while another session
 had a tool call running is marked "ambiguous" with those session ids; the helper refuses an
-ambiguous window-only entry.
+ambiguous window-only entry. A "command" entry in a temp root that is a regular file, a literal
+write target of the command (> / >> / tee / cp|mv|install ... DEST / dd of=, see
+credo_write_targets.py) and missing when pre ran is flagged "write_target" (#212): own-rm accepts
+it once the session transcript confirms the successful Bash call.
+
+New-file guard (#212, pre, Bash): a command that would create a NEW file directly in /tmp or
+/var/tmp (literal target, parent exactly that dir, not existing yet) is denied with the literal
+session TMPDIR and the own-rm line; existing files, /dev/*, deeper paths (session TMPDIR,
+scratchpad) and commands that call mktemp pass. Off with CREDO_TMP_GUARD=0 or the local config key
+cleanup.tmp_guard: false (also off with the whole ledger); fail open.
 
 Never blocks: every error exits 0 without output (the deny cases are intentional). Off with
 CREDO_LEDGER=0 or the local config key cleanup.enabled: false. A library that cannot load: exits
@@ -51,6 +60,7 @@ try:
     HERE = os.path.dirname(os.path.abspath(__file__))
     sys.path.insert(0, HERE)
     import credo_cleanup_lib as L
+    import credo_write_targets as W
 except Exception:  # noqa: BLE001 - a hook never fails on its own environment
     sys.exit(0)
 
@@ -189,6 +199,61 @@ def guard(data):
     return None
 
 
+def shared_tmp_dirs():
+    return [os.path.realpath(d) for d in L.ov("shared_tmp", ["/tmp", "/var/tmp"])]
+
+
+def new_tmp_files(cmd):
+    """The literal write targets of cmd that would be NEW files directly in a shared temp dir
+    (/tmp, /var/tmp): parent is exactly that dir and the path does not exist yet. /dev/*, deeper
+    paths (the session TMPDIR, the scratchpad, any existing subdir) and commands that call mktemp
+    (its output is unknown before the call) never count."""
+    if W.uses_mktemp(cmd):
+        return []
+    shared = shared_tmp_dirs()
+    out = []
+    for p in W.write_targets(cmd):
+        if p == "/dev" or p.startswith("/dev/"):
+            continue
+        parent = os.path.dirname(p)
+        if parent not in shared and os.path.realpath(parent) not in shared:
+            continue
+        if os.path.lexists(p):
+            continue
+        out.append(p)
+    return out
+
+
+def tmp_guard(data):
+    """#212: deny a Bash command that creates a new file directly in /tmp or /var/tmp; the
+    reason names the literal session TMPDIR and own-rm. Fail open everywhere: no session dir to
+    point at, unreadable config, off switch (env CREDO_TMP_GUARD=0, local config cleanup.tmp_guard:
+    false), native Windows."""
+    if L.NT or os.environ.get("CREDO_TMP_GUARD") == "0" or data.get("tool_name") != "Bash":
+        return None
+    cmd = (data.get("tool_input") or {}).get("command")
+    if not isinstance(cmd, str) or not cmd:
+        return None
+    bad = new_tmp_files(cmd)
+    if not bad:
+        return None
+    roots = L.session_bound_roots(data.get("session_id") or "")
+    if not roots:
+        return None
+    cfg = L.local_config(timeout=3)
+    if cfg is None or cfg.get("tmp_guard") is False:
+        return None
+    dest = roots[0]
+    helper = os.path.join(HERE, "credo-cleanup.py")
+    return ("this command creates new file(s) directly in a shared temp dir (%s), where they mix "
+            "with other sessions' and the owner's files. Write them "
+            "into this session's TMPDIR instead: %s (exported as $TMPDIR), e.g. %s. Delete them when "
+            "no longer needed with: python3 %s own-rm <literal path>. Existing files, /dev/*, "
+            "mktemp paths and the session dirs are not affected. Off switch: cleanup.tmp_guard: "
+            "false in the local credo config, or CREDO_TMP_GUARD=0"
+            % (", ".join(bad[:5]), dest, os.path.join(dest, os.path.basename(bad[0])), helper))
+
+
 # --------------------------------------------------------------------------- marks
 
 
@@ -210,7 +275,7 @@ def top_missing(path):
 
 
 def pre(data):
-    reason = guard(data)
+    reason = guard(data) or tmp_guard(data)
     if reason:
         deny(reason)
         return
@@ -234,6 +299,11 @@ def pre(data):
         st = L.session_tmp(sid)
         if os.path.isdir(L.tmp_base()) and not os.path.isdir(st):
             os.makedirs(st, mode=0o700, exist_ok=True)  # TMPDIR of this session vanished: recreate
+        # #212: the literal write targets that do not exist before the call (own-rm evidence)
+        absent = [p for p in W.write_targets((data.get("tool_input") or {}).get("command"))
+                  if not os.path.lexists(p)]
+        if absent:
+            info["absent"] = absent[:64]
     d = marks_dir(sid)
     L.ensure_dir(d)
     with open(os.path.join(d, "%.6f_%s" % (time.time(), tuid)), "w", encoding="utf-8") as fh:
@@ -469,12 +539,17 @@ def ambiguous_for(btime, windows):
     return sorted({s for s, a, b in windows if a <= btime <= b})
 
 
-def build_records(found, sid, tool, cmd, kind, agent_id, windows, cwd=""):
+def build_records(found, sid, tool, cmd, kind, agent_id, windows, cwd="", absent=()):
     recs = []
     for path, st, bt in found:
-        ev = evidence_for(path, cmd, cwd)
+        ev = "command" if path in absent else evidence_for(path, cmd, cwd)  # absent: dd of=PATH too
         amb = ambiguous_for(bt, windows) if ev == "window" else []
-        recs.append(L.make_record(path, st, tool, ev, kind, agent_id, amb, bt))
+        rec = L.make_record(path, st, tool, ev, kind, agent_id, amb, bt)
+        if ev == "command" and kind == "temp" and path in absent and stat.S_ISREG(st.st_mode):
+            # #212: a literal write target of the command (> / tee / cp ... / dd of=) that pre
+            # saw missing and that was born during the call
+            rec["write_target"] = True
+        recs.append(rec)
     return recs
 
 
@@ -524,8 +599,10 @@ def post(data):
     cmd = (data.get("tool_input") or {}).get("command") or ""
     windows = other_windows(sid, t1)
     recs = []
+    absent = set((info or {}).get("absent") or [])
     for root in temp_scan_roots(cwd):
-        recs += build_records(scan_root(root, t0, t1), sid, tool, cmd, "temp", agent_id, windows, cwd)
+        recs += build_records(scan_root(root, t0, t1), sid, tool, cmd, "temp", agent_id, windows, cwd,
+                              absent)
     L.append_ledger(sid, recs)
     home_root = L.ov("home_root", L.home())
     if home_root == "none" or not home_root:
@@ -629,7 +706,8 @@ def session_start(data):
         sys.stdout.write(
             "[credo-cleanup] Own temp dir of this session: %s%s. Put throwaway output there. Delete "
             "own leftovers without a prompt only through: %s %s own-rm <path>... (only inside "
-            "this TMPDIR or the session scratchpad, single files the Write tool created in a temp dir, or "
+            "this TMPDIR or the session scratchpad, single files the Write tool or a Bash command (literal "
+            "> / tee / cp target, missing before) of this session created in a temp dir, or "
             "build-output dirs such as node_modules of a worktree this session created; everything else "
             "is report-only; never rm -rf "
             "outside the cwd). What the session left: %s %s report%s\n"

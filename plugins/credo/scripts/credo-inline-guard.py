@@ -81,6 +81,7 @@ class Simple(object):
         self.words = []
         self.heredocs = []
         self.herestrings = []
+        self.redirects = []     # (operator, target word) of file redirects, e.g. (">>", "/tmp/x")
         self.piped = False
 
 
@@ -98,6 +99,7 @@ class Parser(object):
         cur = Simple()
         word = None             # None: no word started; else the collected text
         expect_redirect = None  # "target", "heredoc" or "herestring": the next word is not an argument
+        redir_op = [""]         # the operator of the pending "target" redirect
         i = pos
 
         def finish_word():
@@ -109,7 +111,7 @@ class Parser(object):
             elif expect_redirect == "herestring":
                 cur.herestrings.append(word)
             elif expect_redirect == "target":
-                pass
+                cur.redirects.append((redir_op[0], word))
             else:
                 cur.words.append(word)
             expect_redirect = None
@@ -196,17 +198,21 @@ class Parser(object):
                     i = self.parse(i + 2, ")")
                 else:
                     expect_redirect = "target"
+                    start = i
                     i += 1
                     while i < self.n and self.s[i] in ">&|":
                         i += 1
+                    redir_op[0] = self.s[start:i]
                 continue
             if c in ";&|()":
                 if c == "&" and self.s[i + 1:i + 2] == ">":
                     finish_word()
                     expect_redirect = "target"
+                    start = i
                     i += 2
                     while i < self.n and self.s[i] in ">":
                         i += 1
+                    redir_op[0] = self.s[start:i]
                     continue
                 two = self.s[i:i + 2]
                 op = two if two in ("&&", "||", "|&", ";;") else c
