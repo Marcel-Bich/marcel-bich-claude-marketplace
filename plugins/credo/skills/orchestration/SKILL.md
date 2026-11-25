@@ -536,19 +536,28 @@ Per spawn:
 2. Pass `alias` as the Agent tool's `model`, `effort` as its `effort`, and append the printed
    `prompt` block (universal-prompt plus the stage's subagent-prompt) verbatim to the Agent
    prompt.
-3. Tag the role in the Agent `description` (or the prompt): `[credo-role: <role>]`, e.g.
-   `description: "find the config loader [credo-role: explore]"` with
+3. Tag role and attempt in the Agent `description` (or the prompt):
+   `[credo-role: <role>#<attempt>]`, the same attempt you passed to `stage`, e.g.
+   `description: "find the config loader [credo-role: explore#1]"` with
    `subagent_type: general-purpose, model: haiku, effort: low`, or
-   `description: "build #42 slice 1 [credo-role: build]"`. The spawn guard then checks only
-   that role's ladder.
+   `description: "review #42 [credo-role: review#3]"` for the third review try. The spawn
+   guard then checks exactly the rung of that attempt. The attempt may be left out only for a
+   role with a single rung (`[credo-role: build]`).
 4. `action: back-to-human` means the chain is used up: do not spawn; hand the item back (below).
 
 The credo `PreToolUse` hook on Agent and Task calls (`hooks/credo-agent-spawn-check.sh`)
-enforces the preset as a minimum. It DENIES a call without `model` or `effort`, or with a pair
-below every rung of the roles that fit the spawn; the reason lists the minimum pairs and how to
-declare the role. Roles that fit: the `[credo-role: ...]` tag if present; else read-only types
-(Explore, Plan, web-fetch, claude-code-guide, `*:cavecrew-investigator`) -> explore; else
-build/review/hard. Model and effort must both reach the rung (a stronger model does not make
+enforces the preset as a minimum. With a `[credo-role: <role>#<attempt>]` tag it checks exactly
+the rung of that attempt (a pair that only matches an earlier rung is denied); a tag without
+attempt on a role with more than one rung is denied with the attempt -> rung map and an example
+tag; an untagged read-only type (Explore, Plan, web-fetch, claude-code-guide,
+`*:cavecrew-investigator`) counts as explore attempt 1; any other untagged spawn passes on any
+build/review/hard rung (tag it so the exact rung is checked). A call without `model` or
+`effort` is denied too. Every message names role, attempt, expected rung and the chosen pair,
+and a deny gives the exact fix (e.g. `pass model: opus, effort: medium, tag
+[credo-role: review#3]`). An attempt past the last rung (back-to-human) is denied: the owner
+decides; only an owner rule lets it continue (`preset continue: <role>` on the last rung, or a
+`preset exception:` pair for that role), with a visible "continuing per owner rule" line to
+report. Model and effort must both reach the rung (a stronger model does not make
 up for a lower effort). An equal or stronger pair passes
 (model haiku < sonnet < opus < fable, effort low < medium < high < xhigh < max); a stronger
 one adds a visible line `stronger than preset: <model>/<effort> vs <rung>` - report it to the

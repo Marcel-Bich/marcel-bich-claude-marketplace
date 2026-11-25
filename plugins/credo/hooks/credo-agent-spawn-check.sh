@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # credo-agent-spawn-check.sh - credo plugin (PreToolUse hook on Agent and Task).
 #
-# Purpose: enforce the active model preset as a minimum on every spawn. A spawn whose
-# model/effort is below every rung of the ladders that fit its kind (Explore/Plan ->
-# explore role; any other type -> build, review and hard roles) is DENIED with the minimum
-# pairs and the lookup command credo-preset.sh stage <role> <attempt>. Missing model or
+# Purpose: enforce the active model preset as a minimum on every spawn. A tag
+# [credo-role: <role>#<attempt>] selects exactly the rung of that attempt; a multi-rung
+# role without attempt and a back-to-human attempt without an owner rule (preset continue
+# or preset exception) are denied. Untagged: Explore/Plan -> explore attempt 1; any other
+# type -> any rung of build, review and hard. A spawn below its rung is DENIED with role,
+# attempt, expected rung, chosen pair and the exact fix. Missing model or
 # effort is a mismatch. An equal pair passes; a stronger pair passes with a visible
 # "stronger than preset" line. A fork passes only when the parent's model is >= a fitting
 # rung model. A weaker pair only via a "preset exception:" line in .credo/RULES.md or a

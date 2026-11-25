@@ -93,7 +93,7 @@ has "NO-BLOCK: PowerShell script from WSL" "powershell.exe -File \"\$(wslpath -w
 has "NO-BLOCK: own-rm with the literal helper path" "delete it with python3 $(cd "$HERE" && pwd)/credo-cleanup.py own-rm <literal path>" "$gp_ctx"
 has "NO-BLOCK: own-rm also for subagent files" "also when a subagent wrote them" "$gp_ctx"
 has "DELEGATION: preset per spawn with the literal helper path" "pass model and effort per the active preset (bash $(cd "$HERE" && pwd)/credo-preset.sh stage <role> <attempt>), never below it" "$gp_ctx"
-has "DELEGATION: role tag" "[credo-role: explore|build|review|hard]" "$gp_ctx"
+has "DELEGATION: role and attempt tag" "[credo-role: <role>#<attempt>], roles explore|build|review|hard; attempt 1 for the first try of that role on the item, plus one per failed try" "$gp_ctx"
 has "DELEGATION: stronger only on purpose" "stronger only on purpose" "$gp_ctx"
 case "$gp_ctx" in
     *"at least as capable as yours"*) fail=$((fail + 1)); echo "FAIL: DELEGATION: old capability wording still present" ;;
