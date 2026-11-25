@@ -134,7 +134,7 @@ time and answer per step:
 Example:
 
 ```
-### 🧪 T1) #37 Auto-Grant + Auto-Submit
+### 🧪 T1 · #37 Auto-Grant + Auto-Submit
 1. Hard-reload localhost:5173 (Ctrl+Shift+R), Network tab, filter api.
 -> Answer: on load, without a click, does a POST /api/games appear? Status? With token+seed?
 2. Win the board (just play).
@@ -156,23 +156,42 @@ Every manual test block, every question to the user and every product-visible de
 - **Three separate counters per project.** Tests use `T1, T2, T3 ...`, questions `Q1, Q2, Q3 ...`, vetos `V1, V2, V3 ...`. Each counter is monotonic: a number is never reused, never reset, and there is no wrap-around. The numbers carry on across replies and across compacts. When unsure whether a number is free, skip it rather than repeat one: one number too many is fine, a repeated number is not.
 - **No Q code for a decided point.** Before issuing a new Q code, check the requirements log and the item History for a prior owner decision on the same point (credo `items`, "Never re-ask a decided point"); a decided point gets no Q code, and an open one that turns out decided is closed.
 - **Steps are numbered inside a test** (1. 2. 3.). A step is addressed with a dot: "T3.2 vf" = step 2 of test T3 checked and passing. The dot is required, because "T32" would read as test 32.
-- **Visible headings.** Each test block, question and veto starts with its own markdown `###` heading line, never inline text:
-  - The emoji is mandatory wherever a code asks something of the user (heading, Ask question text, inline mention): always "🧪 T5", "❓ Q4", "✋ V2", never a bare "T5" or "**T5, test ...**", so the user can match each block to its footer entry at a glance.
-  - test: `### 🧪 T3) <topic>`
-  - question: `### ❓ Q4) <topic>` (a question asked through the Ask tool carries the same `❓ Q4)` prefix in its question text)
-  - veto: `### ✋✋ V2) Veto possible: <what was decided or done> ✋✋` (in a German conversation the marker word is `Veto möglich`). Use it only when an agent decides or does something on its own that the owner notices in the product (behaviour, visible text, money or cost, taste, data) and may want to overrule, typically in autonomous runs, instead of a plain "veto possible" sentence. Internal process, measurement, test-set or tooling decisions get no veto code: they go only into the requirements log and the item History. Each veto states the consequences for the user when they are not obvious.
+- **Block format (canonical; other credo texts point here).** Each test, question and veto is its own block, so the owner always sees which text belongs to which code:
+  - A line `---` stands before the first block and between two blocks, with a blank line above and below it (without the blank line above, markdown reads the line before it as a heading).
+  - Every block starts with its heading line `### <emoji> <code> · <topic>`, never inline text: test `### 🧪 T3 · <topic>`, question `### ❓ Q4 · <topic>`, veto `### ✋✋ V2 · Veto possible: <what was decided or done> ✋✋` (in a German conversation the marker word is `Veto möglich`).
+  - Below the heading: the context and options that belong to this code, then the question or the numbered test steps. Free text never stands between two blocks; the context of a question goes inside the block of that question.
+  - The recommendation always stands on its own line with its label in the reply language: `**Recommendation:** ...` (German `**Empfehlung:** ...`).
+  - The emoji is mandatory wherever a code asks something of the user (heading, Ask question text, inline mention): always "🧪 T5", "❓ Q4", "✋ V2", never a bare "T5" or "**T5, test ...**", so the user can match each block to its footer entry at a glance. A question asked through the Ask tool carries the same `❓ Q4 ·` prefix in its question text.
+  - credo's hooks still read the older heading form `### ❓ Q4) <topic>`; write new headings in the form above.
+
+  ```
+  ---
+
+  ### ❓ Q4 · Scope
+
+  Context and options of this question.
+  Which scope should the change have?
+  **Recommendation:** option 2, because ...
+
+  ---
+
+  ### 🧪 T3 · Login form
+  1. Open the login page.
+  -> Answer: does the form render?
+  ```
+- **Veto use.** A veto block is only for when an agent decides or does something on its own that the owner notices in the product (behaviour, visible text, money or cost, taste, data) and may want to overrule, typically in autonomous runs, instead of a plain "veto possible" sentence. Internal process, measurement, test-set or tooling decisions get no veto code: they go only into the requirements log and the item History. Each veto states the consequences for the user when they are not obvious.
 - **Answers.** `T3 vf` (test passed), `T3.2 vf` (step 2 passed), `Q4: <answer>` (question answered), `V12 <objection>` (veto objected to: the agent acts on the objection, and the veto is closed), `V12 ok` (veto accepted, closed).
 - **Vetos stay open.** A veto has no deadline. It can be raised or resolved at any time, also long after the fact. It stays open, in every footer, until one of these happens: the user resolves it by its code; the user resolves all open vetos at once ("drop all vetos", "alle vetos weg"); or the context shows that the user already accepted that point elsewhere; or the agent closes it itself, without the owner's word, when its item is done or verified and nothing of the decision is still open, or when later work superseded it. The agent notes each such closure in the handoff, and the periodic reminder checks every open veto against its item status. A closed veto leaves the footer and the band.
 - **Shortened repeats keep the command.** A question or test that is repeated in a shorter form
   while it is still open keeps the full copyable command whenever one of its options is an owner
   action (the #131 rule): the owner runs that command, so a short form never replaces it. The
   numbered steps and the expected result come back with it.
-- **Open-codes footer.** End every reply that has open tests, questions or vetos with one line listing ALL still-open codes in bold, in the language-neutral emoji form (the same in every conversation language, no translated labels): `` **🧪: T3** · **❓: Q4, `#177`** · **✋: V2, V5** ``. Repeat the still-open codes in every reply: the band reads only the footer of the last reply. Omit a part with no open codes, and omit the footer when nothing is open. The footer is a comma list of codes, never prose. An open question about an item still gets its own code (`` ### ❓ Q4) `#177` <topic> ``), and item refs may stand next to codes (`` **❓: Q4, `#177`** ``, item refs in backticks like every `#N` in a reply). credo's band reads this line; it still accepts the older English and German word labels for tests and questions (vetos have no word label).
+- **Open-codes footer.** End every reply that has open tests, questions or vetos with one line listing ALL still-open codes in bold, in the language-neutral emoji form (the same in every conversation language, no translated labels): `` **🧪: T3** · **❓: Q4, `#177`** · **✋: V2, V5** ``. Repeat the still-open codes in every reply: the band reads only the footer of the last reply. Omit a part with no open codes, and omit the footer when nothing is open. The footer is a comma list of codes, never prose. An open question about an item still gets its own code (`` ### ❓ Q4 · `#177` <topic> ``), and item refs may stand next to codes (`` **❓: Q4, `#177`** ``, item refs in backticks like every `#N` in a reply). credo's band reads this line; it still accepts the older English and German word labels for tests and questions (vetos have no word label).
 - **Legacy codes.** Open codes from before this convention (single letters such as `B` or `DX`) stay as they are until closed and may still appear in footers. All new codes use T, Q or V.
 - **One shared counter per project.** Get every new T/Q/V number from credo-code-next.sh <type>; never count yourself; the handoff's next free number is informational only. Run `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-code-next.sh" Q` (one number per output line; a count as second argument, `Q 3` for three numbers). All sessions of one project share the counters, so two sessions never issue the same code.
 - **Survives a compact.** The next free number per type and all open codes are part of the handoff state (the credo `compact-plus` skill records them in HANDOFF.md), so the numbering continues after a `/compact` instead of restarting at 1.
 - **Separate from other numbering.** Typed codes are neither item numbers (`#N`) nor harness task numbers (`§cct_N`); never mix them.
-- **Remote mirror markers (optional sink, `remote.mirror_command`).** Only two markers in a reply reach the owner's remote sink, and only when the owner has set that sink: a test block whose heading carries `[blocking]` (`### 🧪 T4) <topic> [blocking]`, for a test that must pass before the work can go on) and a blocker line `Blocker: <what only the owner can solve>` (or `**Blocker:** ...`). `Blocker: none` is not a blocker. The lines below the blocker line, up to the next heading, go to the sink as its context, so write the question and what you need from the owner in that block. An ordinary test without the marker is never mirrored, and the marker is for real owner blockers only, not for status. A question heading (`### ❓ Q4) ...`) is mirrored by the hook as well; the rest of this section is unchanged.
+- **Remote mirror markers (optional sink, `remote.mirror_command`).** Only two markers in a reply reach the owner's remote sink, and only when the owner has set that sink: a test block whose heading carries `[blocking]` (`### 🧪 T4 · <topic> [blocking]`, for a test that must pass before the work can go on) and a blocker line `Blocker: <what only the owner can solve>` (or `**Blocker:** ...`). `Blocker: none` is not a blocker. The lines below the blocker line, up to the next heading, go to the sink as its context, so write the question and what you need from the owner in that block. An ordinary test without the marker is never mirrored, and the marker is for real owner blockers only, not for status. A question heading (`### ❓ Q4 · ...`) is mirrored by the hook as well; the rest of this section is unchanged.
 
 ## Bringing up a down surface (local only, autonomous-capable)
 

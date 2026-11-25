@@ -150,7 +150,7 @@ truncates - but the decision itself still comes back through Ask where practical
 raising any Ask, apply "Never re-ask a decided point" (credo `items`). A point the owner
 already decided in the requirements log or the item History is quoted, not asked again.
 
-Text before an Ask call stays visible only as the FIRST text of a turn: with the current models, text that follows a tool call in the same turn reaches the owner only as a one-line summary ("· summary"), and nothing can bring the original back. So (1) when the explanation needs no tool call first, write it as the first text of the turn, before any tool call; then get the code with credo-code-next.sh Q (its number goes into the Ask question text as "❓ Qn"), then make one separate Bash call whose ENTIRE command is `echo ok` (never appended to another command; kept in case the summary behaviour goes away again), then call the Ask tool. (2) When a tool call is needed first (check a file, run a command), do it, then END the turn with the explanation and the question "### ❓ Qn) <topic>" as text, and the owner answers "Qn: ..." in chat - no Ask call in that turn. A hook denies an Ask call after any other tool call in the same turn (only credo-code-next.sh and `echo ok` may come before it).
+Text before an Ask call stays visible only as the FIRST text of a turn: with the current models, text that follows a tool call in the same turn reaches the owner only as a one-line summary ("· summary"), and nothing can bring the original back. So (1) when the explanation needs no tool call first, write it as the first text of the turn, before any tool call; then get the code with credo-code-next.sh Q (its number goes into the Ask question text as "❓ Qn"), then make one separate Bash call whose ENTIRE command is `echo ok` (never appended to another command; kept in case the summary behaviour goes away again), then call the Ask tool. (2) When a tool call is needed first (check a file, run a command), do it, then END the turn with the explanation and the question "### ❓ Qn · <topic>" as text in the block format of the credo verify skill, and the owner answers "Qn: ..." in chat - no Ask call in that turn. A hook denies an Ask call after any other tool call in the same turn (only credo-code-next.sh and `echo ok` may come before it).
 
 Opt-in setting `dont_ask_twice` (default false, `credo-config.sh get dont_ask_twice`). When
 it is true, before any question search the requirement logs, the items, the handoff and
@@ -166,8 +166,10 @@ flowing-text dump of questions; that floods the user and makes it impossible to 
 each point. Prefer many small, focused Ask rounds over one large one.
 
 Every question to the user carries a code from the question counter (Q1, Q2 ...), with a
-visible `### ❓ Q<n>) <topic>` heading (and the same `❓ Q<n>)` prefix inside an Ask-tool
-question), plus the open-codes footer at the end of the reply.
+visible `### ❓ Q<n> · <topic>` heading (and the same `❓ Q<n> ·` prefix inside an Ask-tool
+question), plus the open-codes footer at the end of the reply. Each question, test and veto
+is its own block: `---` before and between blocks, the block starts with its heading, its
+context stays inside the block, and the recommendation stands on its own labelled line.
 The full convention lives in the credo `verify` skill ("Typed codes: tests, questions, vetos").
 
 Within a single Ask round, asking several questions at once (the Ask tool's
@@ -189,7 +191,7 @@ re-test that lets an item move to `3_verified/`, and especially when a task / bu
 in active or passive mode needs the user to check something - hand it over as a NUMBERED,
 step-by-step list, never a vague "please test this". One concrete action per number, each
 followed by an own `-> Answer:` line saying exactly what to observe or report, 1-2 items
-per round, under a visible `### 🧪 T<n>) <topic>` heading with a test code from the test
+per round, under a visible `### 🧪 T<n> · <topic>` heading with a test code from the test
 counter (T1, T2 ...). The full format, the code convention and an example live in the credo
 `verify` skill ("Handing a manual test to the user", "Typed codes: tests, questions, vetos").
 

@@ -774,6 +774,45 @@ reply="$(printf 'Use TOKEN=abc123 here.\n### %s Q2) Ok?\nbody' "$Q")"
 run "context: secret masked" stop "$(stop_payload "$reply" "")"
 check "context: raw secret never sent" 0 "$(grep -c 'abc123' "$OUTF")"
 
+# --- block format: "### <emoji> Q12 <middle dot> topic" and --- separators (credo item #213) ---
+echo "== block format"
+D=$'\xc2\xb7' # U+00B7 middle dot
+V=$'\xe2\x9c\x8b' # U+270B raised hand
+
+new_case
+reply="$(printf 'Intro\n\n---\n\n### %s Q12 %s Scope\n\nContext of the question.\nWhich scope?\n**Recommendation:** option 2\n\n---\n\n### %s T13 %s Login check [blocking]\n1. open it\n\n---\n\n### %s%s V4 %s Veto possible: renamed %s%s\nDone.' \
+    "$Q" "$D" "$T" "$D" "$V" "$V" "$D" "$V" "$V")"
+run "block: new heading shape" stop "$(stop_payload "$reply" "")"
+check "block: question and blocking test sent" 2 "$(count)"
+check "block: question code" Q12 "$(codeq question_codes 0 '.code')"
+check "block: question topic without the dot" "Scope" "$(codeq question_codes 0 '.heading')"
+check "block: question text without the separator" \
+    "$(printf 'Context of the question.\nWhich scope?\n**Recommendation:** option 2')" "$(codeq question_codes 0 '.text')"
+check "block: question context without the separator" "Intro" "$(codeq question_codes 0 '.context')"
+check "block: test code" T13 "$(codeq test_blocking 0 '.code')"
+check "block: test topic" "Login check [blocking]" "$(codeq test_blocking 0 '.heading')"
+check "block: test text ends before the veto block" "1. open it" "$(codeq test_blocking 0 '.text')"
+check "block: test context is empty (only separators between)" false "$(codeq test_blocking 0 'has("context")')"
+
+new_case
+reply="$(printf '### %s Q14 %s Old and new\nbody\n\n---\n\n### %s Q15) Older form\nbody two' "$Q" "$D" "$Q")"
+run "block: old and new form in one reply" stop "$(stop_payload "$reply" "")"
+check "block: both forms sent" 2 "$(count)"
+check "block: new form code" Q14 "$(codeq question_codes 0 '.code')"
+check "block: old form code" Q15 "$(codeq question_codes 1 '.code')"
+check "block: old form topic" "Older form" "$(codeq question_codes 1 '.heading')"
+
+new_case
+reply="$(printf '### %s Q16%sno space\nbody' "$Q" "$D")"
+run "block: dot without a space is no heading" stop "$(stop_payload "$reply" "")"
+check "block: nothing sent" 0 "$(count)"
+
+new_case
+run "block: ask with the new prefix" ask "$(ask_payload toolu_D1 "$Q Q17 $D Which rank?")"
+check "block: ask sent" 1 "$(count)"
+run "block: reply heading with the same code" stop "$(stop_payload "$(printf '### %s Q17 %s Which rank?\nA or B?' "$Q" "$D")" "")"
+check "block: code already sent by the ask is not sent again" 1 "$(count)"
+
 # --- command replies: the answer to a raw slash command (credo item #166) ---------
 echo "== command replies"
 tr_meta() { jq -cn --arg u "$1" --arg t "$2" '{type: "user", uuid: $u, isMeta: true, timestamp: "2000-01-01T00:00:01Z", message: {role: "user", content: [{type: "text", text: $t}]}}' >> "$TR"; }

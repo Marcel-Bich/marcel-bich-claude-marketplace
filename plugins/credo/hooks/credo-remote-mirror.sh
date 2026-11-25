@@ -7,9 +7,10 @@
 #   ask         PreToolUse AskUserQuestion: the Ask-box questions and their options
 #   permission  PermissionRequest: a permission dialog (tool name and a summary, cut at 2000
 #               characters; cut ones carry cut; every one carries sha256 of the full unmasked command, masked when the masking changed it)
-#   stop        Stop: question codes (heading "### Q-emoji Qn) topic", also a legacy single
+#   stop        Stop: question codes (heading "### Q-emoji Qn <middle dot> topic" or the older
+#               "### Q-emoji Qn) topic", also a legacy single
 #               letter "### Q-emoji B) topic", deduplicated with its topic), test blocks
-#               marked "[blocking]" (heading "### T-emoji Tn) topic [blocking]"), lines
+#               marked "[blocking]" (heading "### T-emoji Tn <middle dot> topic [blocking]", older form "Tn)"), lines
 #               "Blocker: <text>", and the reply to a message that started with
 #               "[remote chat <id>]". A question or blocking test event carries its block
 #               below the heading as "text" (at most 4000 characters, cut when shorter)
@@ -223,7 +224,7 @@ ask_lines() {
                                                    description: (.description // "")}
                                                   + (if (.preview // "") != ""
                                                      then {preview: .preview} else {} end)]}]})},
-          ([$all | match("\u2753 (Q[0-9]+)\\)"; "g") | .captures[0].string] | unique[]
+          ([$all | match("\u2753 (Q[0-9]+)(\\)|[ \t]+\u00b7)"; "g") | .captures[0].string] | unique[]
            | {key: ., window: 0, event: null})
     ' 2>/dev/null
 }
@@ -319,6 +320,11 @@ stop_lines() {
         def noneish: ascii_downcase as $d
                      | ["", "none", "no", "keine", "nein", "-", "n/a"] | map(. == $d) | any;
         def codeh: test("^#{2,4} (\u2753|\ud83e\uddea|\u270b)");
+        # a code heading ends its code with ")" (older form) or " <middle dot>" (block format)
+        def codeend: "(\\)|[ \t]+\u00b7)";
+        # norules: drop the separator lines (---, ***, ___) that frame a block in the reply
+        def norules: sub("^(\\s*(-{3,}|\\*{3,}|_{3,})[ \t]*(\n|\\z))+"; "")
+                     | sub("(\n[ \t]*(-{3,}|\\*{3,}|_{3,})[ \t]*)+\\z"; "") | trimws;
         def mdlvl: (capture("^(?<h>#{1,6})[ \t]") | .h | length) // 0;
         def isblk: test("^(> )?(\\*\\*)?Blocker(\\*\\*)?:");
         def ev($type; $cd; $topic; $b):
@@ -343,7 +349,7 @@ stop_lines() {
               | .[0] // $n;
           def block($i; $L; $blk; $head):
               bend($i; $L; $blk) as $e
-              | ([$head] + $ls[($i + 1):$e] | join("\n") | trimws) as $full
+              | ([$head] + $ls[($i + 1):$e] | join("\n") | trimws | norules) as $full
               | {text: ($full | capped(4000)), cut: ($full | length > 4000)};
           # context of a code heading at $i: the reply text above it, from the start of the reply
           # or from the end of the block of the previous code heading (fenced-aware), capped
@@ -351,19 +357,19 @@ stop_lines() {
               ([range(0; $i) | select(($fenced[.] | not) and ($ls[.] | codeh))] | last) as $p
               | (if $p == null then 0
                  else bend($p; ($ls[$p] | mdlvl); false) | if . > $i then $i else . end end) as $s
-              | ($ls[$s:$i] | join("\n") | trimws) as $full
+              | ($ls[$s:$i] | join("\n") | trimws | norules) as $full
               | {context: ($full | tailcapped(4000)), context_cut: ($full | length > 4000)};
         ([ range(0; $n) as $i
            | $ls[$i]
-           | select(test("^#{2,4} \u2753 (Q[0-9]+|[A-Z])\\)")) | select($fenced[$i] | not)
-           | capture("^(?<h>#{2,4}) \u2753 (?<code>Q[0-9]+|[A-Z])\\)[ \t]*(?<topic>.*)$")
+           | select(test("^#{2,4} \u2753 (Q[0-9]+|[A-Z])" + codeend)) | select($fenced[$i] | not)
+           | capture("^(?<h>#{2,4}) \u2753 (?<code>Q[0-9]+|[A-Z])" + codeend + "[ \t]*(?<topic>.*)$")
            | (block($i; (.h | length); false; "") + context($i)) as $b
            | {key: (if (.code | length) == 1 then "legacy-q:" + .code + ":" + (.topic | @base64) else .code end),
               window: 0, event: ($base + ev("question_codes"; .code; .topic; $b))} ]
           + [ range(0; $n) as $i
               | $ls[$i]
-              | select(test("^#{2,4} \ud83e\uddea (T[0-9]+|[A-Z])\\)")) | select($fenced[$i] | not)
-              | capture("^(?<h>#{2,4}) \ud83e\uddea (?<code>T[0-9]+|[A-Z])\\)[ \t]*(?<topic>.*)$")
+              | select(test("^#{2,4} \ud83e\uddea (T[0-9]+|[A-Z])" + codeend)) | select($fenced[$i] | not)
+              | capture("^(?<h>#{2,4}) \ud83e\uddea (?<code>T[0-9]+|[A-Z])" + codeend + "[ \t]*(?<topic>.*)$")
               | select(.topic | test("\\[blocking\\]"))
               | (block($i; (.h | length); false; "") + context($i)) as $b
               | {key: (if (.code | length) == 1 then "legacy-t:" + .code + ":" + (.topic | @base64) else .code end),
