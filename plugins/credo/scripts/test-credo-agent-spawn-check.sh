@@ -5,8 +5,10 @@
 # denied, as is a missing model or effort; an equal pair passes, a stronger pair passes with a
 # visible "stronger than preset" line. A fork passes only when the parent's model is >= a rung
 # model. "preset exception:" lines from .credo/RULES.md and valid owner handoff rules with an
-# until date may allow a weaker pair. Silent without a configured preset; fails open on
-# internal errors.
+# until date may allow a weaker pair. A [credo-role: <role>#<attempt>] tag checks exactly the
+# rung of that attempt; a multi-rung role without attempt is denied; a back-to-human attempt
+# is denied unless a "preset continue:" line or an exception covers the role. Silent without
+# a configured preset; fails open on internal errors.
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -71,7 +73,7 @@ LADDER_BAL='explore: 1+ haiku/low; build: 1+ haiku/xhigh; review: 1+ haiku/xhigh
 # --- equal to a rung ------------------------------------------------------------------
 out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","model":"haiku","effort":"xhigh"}')")"
 check "build rung haiku/xhigh: allowed" allow "$(decision "$out")"
-has "equal: short advisory" "[credo-preset] ok: haiku/xhigh is a rung of the build/review/hard roles (preset balanced)" "$(ctx "$out")"
+has "equal: short advisory" "[credo-preset] ok: haiku/xhigh is a rung of the build/review/hard roles (untagged) (preset balanced); the role is unknown, so tag [credo-role: <role>#<attempt>]" "$(ctx "$out")"
 check "equal: no visible line" "" "$(sysmsg "$out")"
 out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","model":"opus","effort":"medium"}')")"
 check "hard attempt-3 rung opus/medium: allowed" allow "$(decision "$out")"
@@ -94,9 +96,9 @@ out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","model":"sonne
 check "weaker sonnet/medium: denied" deny "$(decision "$out")"
 r="$(reason "$out")"
 has "deny names the weakness" "sonnet/medium is below every rung of the build/review/hard roles" "$r"
-has "deny lists the minimum pairs" "Minimum for the build/review/hard roles: one of haiku/xhigh, opus/medium" "$r"
+has "deny lists the minimum pairs" "Minimum for the build/review/hard roles (untagged): one of haiku/xhigh, opus/medium" "$r"
 has "deny names the lookup command with its absolute path" "bash $HERE/credo-preset.sh stage <role> <attempt>" "$r"
-has "deny says how to declare the role" "Declare the role with [credo-role: explore|build|review|hard]" "$r"
+has "deny says how to declare the role" "Declare role and attempt with [credo-role: <role>#<attempt>]" "$r"
 out="$(run_hook "$(call Agent '{"model":"opus","effort":"low"}')")"
 check "stronger model but lower effort: denied" deny "$(decision "$out")"
 has "mixed: both must reach the rung" "model and effort must both reach the rung" "$(reason "$out")"
@@ -116,7 +118,7 @@ has "unknown model named" "unknown model gpt-x" "$(reason "$out")"
 
 out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","model":"opus"}')")"
 check "missing effort: denied" deny "$(decision "$out")"
-has "missing effort: named" "(preset balanced): no effort." "$(reason "$out")"
+has "missing effort: named" "(preset balanced): Untagged general-purpose spawn, role unknown; no effort." "$(reason "$out")"
 out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","effort":"max"}')")"
 check "missing model: denied" deny "$(decision "$out")"
 has "missing model: named" "no model given - the agent definition's or the parent's model cannot be checked; pass model and effort explicitly" "$(reason "$out")"
@@ -137,23 +139,68 @@ has "old-style full id maps to sonnet" "stronger than preset: sonnet/max" "$(ctx
 # --- role tag and read-only types -----------------------------------------------------
 out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","description":"find X [credo-role: explore]","model":"haiku","effort":"low"}')")"
 check "general-purpose tagged explore at the explore rung: allowed" allow "$(decision "$out")"
-has "tag named in the advisory" "explore role (tagged)" "$(ctx "$out")"
+has "tag named in the advisory" "ok: role explore, attempt not given (single rung), expected rung haiku/low, chosen haiku/low (preset balanced)." "$(ctx "$out")"
 out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","prompt":"x\n[credo-role: review]\ny","model":"haiku","effort":"xhigh"}')")"
 check "role tag in the prompt: allowed" allow "$(decision "$out")"
 out="$(run_hook "$(call Agent '{"subagent_type":"Explore","description":"[credo-role: build]","model":"haiku","effort":"low"}')")"
 check "Explore tagged build checks the build ladder: denied" deny "$(decision "$out")"
-has "tagged deny names the role" "Minimum for the build role (tagged): one of haiku/xhigh (" "$(reason "$out")"
-out="$(run_hook "$(call Agent '{"subagent_type":"general-purpose","description":"[credo-role: hard]","model":"opus","effort":"medium"}')")"
-check "tag hard: opus/medium allowed" allow "$(decision "$out")"
+has "tagged deny names the role" "Minimum for the build role (tagged): one of haiku/xhigh. Look up" "$(reason "$out")"
 for t in web-fetch claude-code-guide caveman:cavecrew-investigator; do
     out="$(run_hook "$(call Agent "{\"subagent_type\":\"$t\",\"model\":\"haiku\",\"effort\":\"low\"}")")"
     check "read-only type $t maps to explore: allowed" allow "$(decision "$out")"
 done
 
+# --- attempt in the role tag (balanced hard: 1-2 haiku/xhigh, 3-7 opus/medium, 8 back-to-human)
+hard() { # <attempt suffix> <model> <effort> [cwd]
+    run_hook "$(call Agent "{\"subagent_type\":\"general-purpose\",\"description\":\"fix it [credo-role: hard$1]\",\"model\":\"$2\",\"effort\":\"$3\"}" "${4:-$REPO}")"
+}
+out="$(hard '#3' opus medium)"
+check "hard#3 on its rung opus/medium: allowed" allow "$(decision "$out")"
+has "ok names role, attempt, expected rung, chosen pair" "[credo-preset] ok: role hard, attempt 3, expected rung opus/medium, chosen opus/medium (preset balanced)." "$(ctx "$out")"
+out="$(hard '#1' haiku xhigh)"
+check "hard#1 on its rung haiku/xhigh: allowed" allow "$(decision "$out")"
+out="$(hard '#3' haiku xhigh)"
+check "hard#3 with the attempt-1 rung: denied" deny "$(decision "$out")"
+r="$(reason "$out")"
+has "weaker deny names role, attempt, rung, chosen" "Role hard, attempt 3 expects opus/medium; chosen haiku/xhigh is weaker than the expected rung opus/medium" "$r"
+has "weaker deny gives the exact fix" "Fix: pass model: opus, effort: medium, tag [credo-role: hard#3]" "$r"
+has "weaker deny says how the attempt grows" "grows by one per failed try" "$r"
+out="$(hard '#3' opus max)"
+check "hard#3 stronger opus/max: allowed" allow "$(decision "$out")"
+has "stronger line vs the attempt rung" "stronger than preset: opus/max vs opus/medium (hard role, attempt 3 (tagged), preset balanced)" "$(sysmsg "$out")"
+out="$(hard '' opus medium)"
+check "multi-rung role without attempt: denied" deny "$(decision "$out")"
+r="$(reason "$out")"
+has "missing attempt: names the tag form" "role hard has more than one rung, so the role tag needs the attempt: [credo-role: hard#<attempt>]" "$r"
+has "missing attempt: attempt -> rung map" "Attempt -> rung: hard: 1-2 haiku/xhigh, 3-7 opus/medium, attempt 8 back-to-human." "$r"
+has "missing attempt: example tag" "Example: first try of hard: pass model: haiku, effort: xhigh, tag [credo-role: hard#1]." "$r"
+out="$(run_hook "$(call Agent '{"description":"[credo-role: build#5]","model":"haiku","effort":"xhigh"}')")"
+check "until-done rung serves any attempt: allowed" allow "$(decision "$out")"
+out="$(run_hook "$(call Agent '{"prompt":"go\n[credo-role: review #2]","model":"haiku","effort":"xhigh"}')")"
+check "attempt tag with a space in the prompt: allowed" allow "$(decision "$out")"
+has "spaced tag parsed" "role review, attempt 2" "$(ctx "$out")"
+for a in '#x' '#0' '#'; do
+    out="$(hard "$a" opus medium)"
+    check "invalid attempt '$a': denied" deny "$(decision "$out")"
+    has "invalid attempt '$a': named" "is not a positive whole number" "$(reason "$out")"
+done
+out="$(hard '#8' opus max)"
+check "back-to-human attempt without an owner rule: denied" deny "$(decision "$out")"
+r="$(reason "$out")"
+has "back-to-human: owner decides now" "role hard, attempt 8 is back-to-human - the ladder of this role is used up and the owner decides now" "$r"
+has "back-to-human: names the continue form" "preset continue: <all|role,...>" "$r"
+has "back-to-human: names the exception form" "preset exception: <all|role,...> -> <model>/<effort>" "$r"
+case "$r" in
+    *"Fix: pass model"*) fail=$((fail + 1)); echo "FAIL: back-to-human deny proposes no model" ;;
+    *) pass=$((pass + 1)) ;;
+esac
+out="$(hard '#9' opus max)"
+check "attempt past back-to-human: denied" deny "$(decision "$out")"
+
 # --- Explore / Plan: explore role only ------------------------------------------------
 out="$(run_hook "$(call Agent '{"subagent_type":"Explore","model":"haiku","effort":"low"}')")"
 check "Explore on the explore rung: allowed" allow "$(decision "$out")"
-has "Explore advisory names the explore role" "explore role (Explore)" "$(ctx "$out")"
+has "Explore advisory: untagged read-only = explore attempt 1" "ok: role explore, attempt 1, expected rung haiku/low, chosen haiku/low" "$(ctx "$out")"
 out="$(run_hook "$(call Agent '{"subagent_type":"Plan","model":"opus","effort":"medium"}')")"
 check "Plan stronger than explore: allowed" allow "$(decision "$out")"
 has "Plan stronger line" "stronger than preset: opus/medium vs haiku/low" "$(ctx "$out")"
@@ -161,7 +208,7 @@ out="$(run_hook "$(call Agent '{"subagent_type":"Explore"}')")"
 check "Explore without model/effort: denied" deny "$(decision "$out")"
 out="$(CREDO_PROJECT="$QUALITY" run_hook "$(call Agent '{"subagent_type":"Explore","model":"haiku","effort":"low"}')")"
 check "quality: Explore below haiku/xhigh: denied" deny "$(decision "$out")"
-has "Explore deny lists only explore pairs" "Minimum for the explore role (Explore): one of haiku/xhigh" "$(reason "$out")"
+has "Explore deny lists only explore pairs" "Minimum for the explore role, attempt 1 (Explore, untagged): one of haiku/xhigh." "$(reason "$out")"
 
 # --- fork: parent model ---------------------------------------------------------------
 TR="$TMP/sess.jsonl"
@@ -257,6 +304,69 @@ out="$(run_hook "$(call Agent '{"model":"haiku","effort":"low"}' "$HR")")"
 check "exception outside Rules (temporary): denied" deny "$(decision "$out")"
 out="$(CREDO_PRESET_GUARD_TODAY=2030-06-21 run_hook "$(call Agent '{"model":"haiku","effort":"high"}' "$HR")")"
 check "handoff exception after its until date: denied" deny "$(decision "$out")"
+
+# --- exceptions with a tagged attempt, owner rules at back-to-human -------------------
+out="$(run_hook "$(call Agent '{"description":"[credo-role: review#2]","model":"haiku","effort":"high"}' "$RR")")"
+check "tagged attempt: RULES.md exception still counts: allowed" allow "$(decision "$out")"
+has "exception line names the expected rung" "ok by preset exception (RULES.md): haiku/high for the review role, attempt 2 (tagged) (preset balanced), expected rung without it: haiku/xhigh." "$(ctx "$out")"
+out="$(hard '#8' opus max "$RR")"
+check "back-to-human: exception for other roles does not allow hard: denied" deny "$(decision "$out")"
+
+CR="$TMP/continuerepo"
+mkdir -p "$CR/.credo"
+git -C "$CR" init -q
+cat > "$CR/.credo/RULES.md" <<'MD'
+- preset continue: hard | owner allows more tries here
+- `preset continue: review` (an example in backticks)
+
+```
+preset continue: build
+```
+MD
+out="$(hard '#8' opus medium "$CR")"
+check "preset continue: last rung at back-to-human: allowed" allow "$(decision "$out")"
+has "continue: visible owner-rule note" "[credo-preset] attempt 8 is back-to-human in preset balanced, continuing per owner rule RULES.md" "$(sysmsg "$out")"
+has "continue: expects the last rung" "expected rung opus/medium, chosen opus/medium" "$(ctx "$out")"
+out="$(hard '#8' haiku xhigh "$CR")"
+check "preset continue: below the last rung: denied" deny "$(decision "$out")"
+has "continue deny: last rung named" "Role hard, attempt 8 expects opus/medium (attempt is back-to-human, continuing on the last rung)" "$(reason "$out")"
+printf '%s\n' 'preset exception: hard -> sonnet/high' > "$CR/.credo/RULES.md"
+out="$(hard '#8' sonnet high "$CR")"
+check "exception for the role at back-to-human: allowed" allow "$(decision "$out")"
+has "exception at back-to-human: visible note" "attempt 8 is back-to-human in preset balanced, continuing per owner rule RULES.md" "$(sysmsg "$out")"
+out="$(hard '#8' haiku low "$CR")"
+check "exception at back-to-human: below the pair: denied" deny "$(decision "$out")"
+has "exception-only deny: fix names the pairs" "Fix: pass one of the exception pairs sonnet/high and keep the tag [credo-role: hard#8]" "$(reason "$out")"
+printf '%s\n' '`preset continue: hard`' > "$CR/.credo/RULES.md"
+out="$(hard '#8' opus medium "$CR")"
+check "continue in inline backticks is ignored: denied" deny "$(decision "$out")"
+printf '%s\n' '- preset continue: review' > "$CR/.credo/RULES.md"
+out="$(hard '#8' opus medium "$CR")"
+check "continue scoped to another role: denied" deny "$(decision "$out")"
+printf '%s\n' '- preset continue: all' > "$CR/.credo/RULES.md"
+out="$(hard '#8' opus medium "$CR")"
+check "continue for all roles: allowed" allow "$(decision "$out")"
+
+CH="$TMP/continuehandoff"
+mkdir -p "$CH/.credo/process/handoffs"
+git -C "$CH" init -q
+cat > "$CH/.credo/process/handoffs/HANDOFF.md" <<'MD'
+# Handoff
+
+## Rules (temporary)
+
+- preset continue: hard | source: owner "keep going on hard" (2030-06-01) | until: 2030-06-20
+- preset continue: review | source: agent decision | until: 2030-06-20
+MD
+out="$(hard '#8' opus medium "$CH")"
+check "handoff owner continue rule with until: allowed" allow "$(decision "$out")"
+has "handoff continue: source named" "continuing per owner rule handoff until 2030-06-20" "$(sysmsg "$out")"
+out="$(CREDO_PRESET_GUARD_TODAY=2030-06-21 hard '#8' opus medium "$CH")"
+check "handoff continue rule after its until: denied" deny "$(decision "$out")"
+printf '%s\n' '# Handoff' '' '## Rules (temporary)' '' \
+    '- preset continue: hard | source: agent decision | until: 2030-06-20' > "$CH/.credo/process/handoffs/HANDOFF.md"
+out="$(hard '#8' opus medium "$CH")"
+check "agent-decision continue rule: denied" deny "$(decision "$out")"
 
 # --- other preset ---------------------------------------------------------------------
 out="$(CREDO_PROJECT="$QUALITY" run_hook "$(call Agent '{"model":"haiku","effort":"xhigh"}')")"
