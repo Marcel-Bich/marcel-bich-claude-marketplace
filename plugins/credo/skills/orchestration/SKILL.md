@@ -152,8 +152,15 @@ the security block):
 - Builders run the fast check (dogma `relevant` stage, else the changed tests), not the
   full suite. An audit of a branch touching shared core files runs the whole core test
   folder.
-- No background shells. The agent runs no command with `run_in_background`. This holds for
-  every subagent brief, not only builders and auditors ("Monitoring without context
+- Background work is allowed, but never outlives the report. A subagent may run background
+  jobs (`run_in_background` Bash, Monitor, background agents) to work in parallel; before its
+  final report it stops every background task it started that is still running (TaskStop /
+  kill) and never finishes with own background work alive - each one that ends later wakes
+  the finished agent again and floods the main agent with notifications. Waiting on a queue
+  or lock: a bounded foreground wait (with a timeout) or report "blocked on X", never an
+  endless poll loop. The SubagentStop hook (`credo-subagent-bg-guard.py`) lists own
+  background tasks still running and refuses the finish, at most twice per agent. This holds
+  for every subagent brief, not only builders and auditors ("Monitoring without context
   flooding" below).
 - No-block commands, in every subagent brief (huge commands are error-prone, often stopped
   by hooks or review prompts and stall an unattended run; the goal is to steer, not to block
@@ -385,9 +392,11 @@ Builders never unlock, and never touch a lock they did not set.
 - Stall limits are checked on every wake. A running agent over 30 min or 60 tool calls is
   checked against its brief (is it still on its task and making progress?); an agent that
   has taken no step for 15 min is stopped (TaskStop) and the stop is reported.
-- Subagent briefs forbid background shells (no `run_in_background`, "Brief rules for
-  builders and auditors"). The main agent may use background shells, but keeps track of
-  each one it starts and stops it when it is done.
+- Subagent briefs allow background work but require it stopped before the report
+  (`run_in_background` only with a stop before finishing, "Brief rules for builders and
+  auditors"). The main agent may use background shells too, keeps track of each one it
+  starts and stops it when it is done. A repeat notification of an already finished
+  subagent gets only a slim inject (time and one mode line, `credo-notify-lib.sh`).
 - A subagent's report is NEVER grounds to claim or move an item status. Consuming only
   the final result keeps context lean, but it does not transfer the subagent's judgment
   to the main agent. Before the main agent asserts a status or moves an item, it must

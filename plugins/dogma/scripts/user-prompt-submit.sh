@@ -37,8 +37,21 @@ if [ "$ENABLED" != "true" ]; then
     exit 0
 fi
 
+# Read JSON input from stdin (required by hook interface)
+INPUT=$(cat 2>/dev/null || true)
+
+# Repeat subagent notification (#215, lib-notify.sh): no dogma inject at all, not even
+# the output convention.
+# shellcheck source=lib-notify.sh
+if command -v jq >/dev/null 2>&1 && source "$(dirname "${BASH_SOURCE[0]}")/lib-notify.sh" 2>/dev/null \
+    && dogma_notify_repeat "$(printf '%s' "$INPUT" | jq -r '.prompt // ""' 2>/dev/null)" \
+        "$(printf '%s' "$INPUT" | jq -r '.session_id // ""' 2>/dev/null)"; then
+    exit 0
+fi
+
 # ============================================
-# Output convention (UNGATED - fires for every dogma user, every turn)
+# Output convention (UNGATED - fires for every dogma user, every turn except a repeat
+# subagent notification, see above)
 # Governed only by the enable / prompt-reminder toggles above, NOT by
 # project-local CLAUDE files. Must sit BEFORE the CLAUDE-dir early-exit.
 # ============================================
@@ -50,9 +63,6 @@ echo "renders as inline code (for example: \`#139\`, \`#my-tag\`)."
 echo "Scope: TERMINAL OUTPUT ONLY. This never changes file content - write files exactly as"
 echo "before, with no added backticks. This convention applies only to your chat replies."
 echo "</dogma-output-convention>"
-
-# Read JSON input from stdin (required by hook interface)
-INPUT=$(cat 2>/dev/null || true)
 
 # Find CLAUDE directory
 CLAUDE_DIR=""

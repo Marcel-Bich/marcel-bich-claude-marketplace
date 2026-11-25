@@ -40,6 +40,17 @@ if [ "$ENABLED" != "true" ]; then
     exit 0
 fi
 
+# Read JSON input from stdin (session id for lib-credo.sh and lib-notify.sh)
+INPUT=$(cat 2>/dev/null || true)
+
+# Repeat subagent notification (#215, lib-notify.sh): no dogma inject at all.
+# shellcheck source=lib-notify.sh
+if command -v jq >/dev/null 2>&1 && source "$(dirname "${BASH_SOURCE[0]}")/lib-notify.sh" 2>/dev/null \
+    && dogma_notify_repeat "$(printf '%s' "$INPUT" | jq -r '.prompt // ""' 2>/dev/null)" \
+        "$(printf '%s' "$INPUT" | jq -r '.session_id // ""' 2>/dev/null)"; then
+    exit 0
+fi
+
 # ============================================
 # Scan for open checklist items
 # ============================================
@@ -98,7 +109,6 @@ fi
 if [ "$TOTAL_OPEN" -gt 0 ] 2>/dev/null; then
     # credo active for this session (lib-credo.sh): credo's dd / done gate confirms.
     CREDO_ACTIVE="false"
-    INPUT=$(cat 2>/dev/null || true)
     # shellcheck source=lib-credo.sh
     if source "$(dirname "${BASH_SOURCE[0]}")/lib-credo.sh" 2>/dev/null && dogma_credo_active "$INPUT"; then
         CREDO_ACTIVE="true"

@@ -56,7 +56,13 @@ has "general-purpose: literal path instead" "$LITERAL_PATH" "$gp_ctx"
 has "general-purpose: new scratch dir instead" "$NEW_DIR" "$gp_ctx"
 has "general-purpose: unattended prompt risk named" "$PROMPT_RISK" "$gp_ctx"
 has "general-purpose: security rule still present" "SECURITY (inherited, non-negotiable)" "$gp_ctx"
-has "general-purpose: background shells forbidden" "run_in_background" "$gp_ctx"
+has "general-purpose: background work rule names run_in_background" "run_in_background" "$gp_ctx"
+has "general-purpose: background jobs allowed" "background jobs are allowed" "$gp_ctx"
+has "general-purpose: stop own background tasks before the report" "Before your final report stop every background task you started that is still running (TaskStop / kill)" "$gp_ctx"
+has "general-purpose: never finish with background work alive" "never finish with own background work alive" "$gp_ctx"
+has "general-purpose: bounded wait or blocked report" "a bounded foreground wait (with a timeout) or report \"blocked on X\"" "$gp_ctx"
+case "$gp_ctx" in *"BACKGROUND SHELLS: forbidden"*) old_bg=yes ;; *) old_bg=no ;; esac
+check "general-purpose: old background-shell ban gone" no "$old_bg"
 
 # --- decisions: uncritical questions are decided per SOTA, needs_decision only owner-only
 has "DECISIONS: uncritical questions decided by the subagent" "decide uncritical questions yourself" "$gp_ctx"
