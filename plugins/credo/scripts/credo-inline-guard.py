@@ -81,7 +81,19 @@ class Simple(object):
         self.words = []
         self.heredocs = []
         self.herestrings = []
+        self.redirects = []     # (operator, target word) of file redirects, e.g. (">>", "/tmp/x")
         self.piped = False
+
+
+COND_PREFIX = ("if", "elif", "while", "until", "then", "else", "do", "!", "{", "time")
+
+
+def in_cond(words):
+    """True while the words so far open a [[ ... ]] at command position (after keywords or !)."""
+    k = 0
+    while k < len(words) and words[k] in COND_PREFIX:
+        k += 1
+    return k < len(words) and words[k] == "[[" and "]]" not in words[k + 1:]
 
 
 class Parser(object):
@@ -98,6 +110,7 @@ class Parser(object):
         cur = Simple()
         word = None             # None: no word started; else the collected text
         expect_redirect = None  # "target", "heredoc" or "herestring": the next word is not an argument
+        redir_op = [""]         # the operator of the pending "target" redirect
         i = pos
 
         def finish_word():
@@ -109,7 +122,7 @@ class Parser(object):
             elif expect_redirect == "herestring":
                 cur.herestrings.append(word)
             elif expect_redirect == "target":
-                pass
+                cur.redirects.append((redir_op[0], word))
             else:
                 cur.words.append(word)
             expect_redirect = None
@@ -181,6 +194,13 @@ class Parser(object):
                 finish_word()
                 i += 1
                 continue
+            if c in "<>" and expect_redirect is None and word != "]]" and in_cond(cur.words) \
+                    and not self.s.startswith(("<(", ">("), i):
+                # inside [[ ... ]] a lone < or > is a string comparison, not a redirect
+                finish_word()
+                cur.words.append(c)
+                i += 1
+                continue
             if c in "<>":
                 if word is not None and word.isdigit() and expect_redirect is None:
                     word = None  # fd number of the redirect
@@ -196,17 +216,21 @@ class Parser(object):
                     i = self.parse(i + 2, ")")
                 else:
                     expect_redirect = "target"
+                    start = i
                     i += 1
                     while i < self.n and self.s[i] in ">&|":
                         i += 1
+                    redir_op[0] = self.s[start:i]
                 continue
             if c in ";&|()":
                 if c == "&" and self.s[i + 1:i + 2] == ">":
                     finish_word()
                     expect_redirect = "target"
+                    start = i
                     i += 2
                     while i < self.n and self.s[i] in ">":
                         i += 1
+                    redir_op[0] = self.s[start:i]
                     continue
                 two = self.s[i:i + 2]
                 op = two if two in ("&&", "||", "|&", ";;") else c

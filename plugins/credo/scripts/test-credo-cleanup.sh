@@ -82,7 +82,8 @@ import json, sys
 json.dump({"home": "$FH", "state": "$TMP/state", "keep_root": "$TMP/keep", "tmp_base": "$CTMP",
            "scratch_base": "$TMP/scratch", "profiles": ["$PROF"], "roots": ["$R"],
            "home_root": "$FH", "sync": True, "no_maintenance": True,
-           "explicit_idle_s": 0, "idle_minutes": 0, "mountinfo": "$TMP/no-mountinfo"},
+           "explicit_idle_s": 0, "idle_minutes": 0, "mountinfo": "$TMP/no-mountinfo",
+           "shared_tmp": ["$TMP/sharedtmp"]},
           open(sys.argv[1], "w"))
 EOF
 : > "$TMP/no-mountinfo"
@@ -325,6 +326,226 @@ rm -f "$PROF/sessions/$OTHER.json"
 mkdir -p "$CTMP/$SC"; chmod 700 "$CTMP/$SC"; mkdir "$CTMP/$SC/x"
 o="$(CLAUDE_CODE_SESSION_ID="$SC" helper own-rm "$CTMP/$SC/x")"
 contains "unbound session id is report-only" "cannot be bound to the calling process tree" "$o"
+
+# --- 3d. files a Bash command of this session provably wrote (#212) ----------------------------
+tx_bash() { # <command> <ok|error> [transcript] : one Bash tool_use plus its tool_result
+    TXN=$((TXN + 1))
+    python3 -c '
+import json, sys
+cmd, how, n = sys.argv[1:4]
+use = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_b" + n, "name": "Bash",
+       "input": {"command": cmd}}]}}
+res = {"type": "tool_result", "tool_use_id": "toolu_b" + n, "content": "ok"}
+top = {"type": "user", "message": {"content": [res]}, "toolUseResult": {"stdout": "", "stderr": ""}}
+if how == "error":
+    res["is_error"] = True
+    top["toolUseResult"] = "Error: Exit code 1"
+print(json.dumps(use, separators=(",", ":")))
+print(json.dumps(top, separators=(",", ":")))
+' "$1" "$2" "$TXN" >> "${3:-$TX}"
+}
+bash_call() { # <command> [ok|error|none] : hooks around the command, plus the transcript entry
+    run_call "$1"
+    [ "${2:-ok}" = none ] || tx_bash "$1" "${2:-ok}"
+}
+bash_call "echo x > $R/bt-redir.txt"
+contains "a redirect target born in the call is flagged write_target" '"write_target": true' \
+    "$(grep "\"$R/bt-redir.txt\"" "$LEDGER_FILE")"
+o="$(helper own-rm "$R/bt-redir.txt")"
+contains "Bash redirect target (transcript-confirmed) removed" "removed $R/bt-redir.txt" "$o"
+bash_call "echo a | tee -a $R/bt-tee.log >/dev/null"
+bash_call "cp $FH/userdata/thesis.txt $R/bt-cp.txt"
+bash_call "dd if=/dev/zero of=$R/bt-dd.img bs=1 count=4 2>/dev/null"
+o="$(helper own-rm "$R/bt-tee.log" "$R/bt-cp.txt" "$R/bt-dd.img")"
+contains "tee -a target removed" "removed $R/bt-tee.log" "$o"
+contains "cp destination removed" "removed $R/bt-cp.txt" "$o"
+contains "dd of= target removed" "removed $R/bt-dd.img" "$o"
+check "the cp source is untouched" yes "$(exists "$FH/userdata/thesis.txt")"
+bash_call "echo x > $R/bt-notx.txt" none
+o="$(helper own-rm "$R/bt-notx.txt")"
+contains "no transcript call: report only" "no successful Bash call naming exactly this file" "$o"
+tx_bash "echo x > $R/bt-notx.txt" error
+o="$(helper own-rm "$R/bt-notx.txt")"
+contains "a failed Bash call is no evidence" "no successful Bash call naming exactly this file" "$o"
+tx_bash "cat $R/bt-notx.txt" ok
+tx_bash "echo x > $R/bt-notx.txt.bak" ok
+o="$(helper own-rm "$R/bt-notx.txt")"
+contains "a read or a prefix name is no evidence" "no successful Bash call naming exactly this file" "$o"
+tx_bash "echo x > $R/bt-notx.txt" ok
+o="$(helper own-rm "$R/bt-notx.txt")"
+contains "the confirming transcript call makes it own" "removed $R/bt-notx.txt" "$o"
+# the subagent's transcript confirms it just as well
+run_call "echo s > $R/bt-sub.txt"
+mkdir -p "$PROF/projects/-fix/$SA/subagents"
+tx_bash "echo s > $R/bt-sub.txt" ok "$PROF/projects/-fix/$SA/subagents/agent-sub212.jsonl"
+o="$(helper own-rm "$R/bt-sub.txt")"
+contains "subagent Bash target removed (subagent transcript confirms)" "removed $R/bt-sub.txt" "$o"
+# existed before the call: overwritten, not born in it
+echo owner > "$R/bt-pre.txt"
+sleep 0.05
+bash_call "echo x > $R/bt-pre.txt"
+o="$(helper own-rm "$R/bt-pre.txt")"
+contains "an overwritten pre-existing file is refused" "refused $R/bt-pre.txt: not created by this session" "$o"
+# named but not as a write target (touch), through a variable, or a directory: report only
+bash_call "touch $R/bt-touch.txt"
+o="$(helper own-rm "$R/bt-touch.txt")"
+contains "touch is no write target: report only" "refused $R/bt-touch.txt: report only: not a file the Write/Edit tool" "$o"
+bash_call "f=$R/bt-var.txt; echo x > \$f"
+o="$(helper own-rm "$R/bt-var.txt")"
+contains "a target through a variable: report only" "refused $R/bt-var.txt: report only" "$o"
+bash_call "mkdir $R/bt-dir && echo x > $R/bt-dir/f"
+o="$(helper own-rm "$R/bt-dir")"
+contains "a directory stays report-only" "refused $R/bt-dir" "$o"
+# a forged write_target line still needs the Bash call in the transcript
+echo data > "$R/bt-forged.txt"
+python3 -I -c '
+import json, os, sys
+sys.path.insert(0, sys.argv[3]); import credo_cleanup_lib as L
+p = sys.argv[1]; st = os.lstat(p)
+open(sys.argv[2], "a").write(json.dumps({"event": "record", "path": p, "dev": st.st_dev, "ino": st.st_ino,
+    "type": "file", "btime": L.birth_time(p), "tool": "Bash", "evidence": "command", "write_target": True,
+    "root_kind": "temp"}) + "\n")
+' "$R/bt-forged.txt" "$LEDGER_FILE" "$SCRIPT_DIR"
+o="$(helper own-rm "$R/bt-forged.txt")"
+contains "forged write_target line alone deletes nothing" "no successful Bash call naming exactly this file" "$o"
+check "forged-line target kept" yes "$(exists "$R/bt-forged.txt")"
+# replaced after the call (other inode), and the 2-minute rule
+bash_call "echo x > $R/bt-swap.txt"
+rm "$R/bt-swap.txt"; echo new > "$R/bt-swap.txt"
+o="$(helper own-rm "$R/bt-swap.txt")"
+contains "a replaced Bash target is refused" "replaced since it was recorded" "$o"
+bash_call "echo x > $R/bt-fresh.txt"
+o="$(CREDO_TEST_OV_EXTRA='{"explicit_idle_s": 120}' helper own-rm "$R/bt-fresh.txt")"
+contains "a Bash target changed within 2 minutes is report-only" "changed in the last 120s" "$o"
+# held open by a process
+bash_call "echo x > $R/bt-open.txt"
+( exec python3 -c 'import sys, time; f = open(sys.argv[1]); time.sleep(30)' "$R/bt-open.txt" ) &
+HOLDB=$!
+sleep 0.5
+o="$(helper own-rm "$R/bt-open.txt")"
+kill "$HOLDB" 2>/dev/null; wait "$HOLDB" 2>/dev/null
+contains "a Bash target held open is refused" "in use by process" "$o"
+# in the home: never (only temp roots)
+N=$((N + 1)); cj="$(cmdjson "echo h > $FH/bt-home.txt")"
+hook pre Bash "$cj"; echo h > "$FH/bt-home.txt"; hook post Bash "$cj"; tx_bash "echo h > $FH/bt-home.txt" ok
+o="$(helper own-rm "$FH/bt-home.txt")"
+contains "a Bash target in the home is report-only" "refused $FH/bt-home.txt" "$o"
+# audit M1: another credo session has a call open and creates the target during our call
+SBM="$TMP/state/marks/eeeeeeee-0000-4000-8000-000000000005"
+mkdir -p "$SBM"
+python3 -c 'import sys, time; open(sys.argv[1] + "/%.6f_tuB" % time.time(), "w").write("{}")' "$SBM"
+bash_call "echo mine >> $R/bt-shared.log"
+contains "a write target born while another session had a call open is ambiguous" '"ambiguous"' \
+    "$(grep "\"$R/bt-shared.log\"" "$LEDGER_FILE")"
+check "ambiguous write target is not flagged" 0 "$(grep "\"$R/bt-shared.log\"" "$LEDGER_FILE" | grep -c write_target)"
+o="$(helper own-rm "$R/bt-shared.log")"
+contains "ambiguous write target is report-only" "refused $R/bt-shared.log: report only" "$o"
+check "ambiguous write target kept" yes "$(exists "$R/bt-shared.log")"
+rm -f "$SBM"/*_tuB
+echo data > "$R/bt-amb-forged.txt"
+python3 -I -c '
+import json, os, sys
+sys.path.insert(0, sys.argv[3]); import credo_cleanup_lib as L
+p = sys.argv[1]; st = os.lstat(p)
+open(sys.argv[2], "a").write(json.dumps({"event": "record", "path": p, "dev": st.st_dev, "ino": st.st_ino,
+    "type": "file", "btime": L.birth_time(p), "tool": "Bash", "evidence": "command", "write_target": True,
+    "root_kind": "temp", "ambiguous": ["eeeeeeee-0000-4000-8000-000000000005"]}) + "\n")
+' "$R/bt-amb-forged.txt" "$LEDGER_FILE" "$SCRIPT_DIR"
+tx_bash "echo data > $R/bt-amb-forged.txt" ok
+o="$(helper own-rm "$R/bt-amb-forged.txt")"
+contains "a write_target line marked ambiguous is report-only" "refused $R/bt-amb-forged.txt: report only" "$o"
+# re-check: a window of another session behind more than 64 KB of later windows still counts
+WL="$TMP/state/windows.log"
+N=$((N + 1)); cj="$(cmdjson "echo deep >> $R/bt-deep.log")"
+hook pre Bash "$cj"; sleep 0.05; echo deep >> "$R/bt-deep.log"; sleep 0.05
+python3 -c '
+import sys, time
+t = time.time()
+with open(sys.argv[1], "a") as fh:
+    fh.write("eeeeeeee-0000-4000-8000-00000000000b %.6f %.6f\n" % (t - 5, t))
+    for _ in range(2000):
+        fh.write("eeeeeeee-0000-4000-8000-00000000000c %.6f %.6f\n" % (t + 1, t + 1))
+' "$WL"
+hook post Bash "$cj"; tx_bash "echo deep >> $R/bt-deep.log" ok
+contains "a window far back in windows.log still makes the target ambiguous" "00000000000b" \
+    "$(grep "\"$R/bt-deep.log\"" "$LEDGER_FILE")"
+check "that target is not flagged write_target" 0 "$(grep "\"$R/bt-deep.log\"" "$LEDGER_FILE" | grep -c write_target)"
+# re-check: pruning keeps every window a still-open call (here one running for 2 h) may need
+SEM="$TMP/state/marks/eeeeeeee-0000-4000-8000-00000000000e"
+mkdir -p "$SEM"
+python3 -c '
+import sys, time
+t = time.time()
+open(sys.argv[2] + "/%.6f_tuE" % (t - 7200), "w").write("{}")
+with open(sys.argv[1], "a") as fh:
+    for _ in range(4000):
+        fh.write("eeeeeeee-0000-4000-8000-00000000000f %.6f %.6f\n" % (t - 20000, t - 20000))
+    fh.write("eeeeeeee-0000-4000-8000-00000000000d %.6f %.6f\n" % (t - 6000, t - 5000))
+' "$WL" "$SEM"
+bash_call "true"
+check "prune keeps a window closed during a still-open long call" 1 "$(grep -c 00000000000d "$WL")"
+check "prune drops windows older than every open call" 0 "$(grep -c 00000000000f "$WL")"
+rm -f "$SEM"/*_tuE
+# audit M2: an mv destination is never own-rm evidence (a cross-filesystem mv copies, then
+# deletes the source: the target is a new inode holding the only copy)
+echo only-copy > "$FH/userdata/mvsrc.txt"
+N=$((N + 1)); cj="$(cmdjson "mv $FH/userdata/mvsrc.txt $R/bt-mv.txt")"
+hook pre Bash "$cj"; cp "$FH/userdata/mvsrc.txt" "$R/bt-mv.txt"; rm "$FH/userdata/mvsrc.txt"
+hook post Bash "$cj"; tx_bash "mv $FH/userdata/mvsrc.txt $R/bt-mv.txt" ok
+check "mv destination is not flagged write_target" 0 "$(grep "\"$R/bt-mv.txt\"" "$LEDGER_FILE" | grep -c write_target)"
+o="$(helper own-rm "$R/bt-mv.txt")"
+contains "mv destination is report-only" "refused $R/bt-mv.txt: report only" "$o"
+check "moved file kept" yes "$(exists "$R/bt-mv.txt")"
+
+# --- 3e. guard: no new files directly in a shared temp dir (#212) --------------------------------
+G="$TMP/sharedtmp"
+mkdir -p "$G/sub"; echo e > "$G/exists"; echo l > "$G/existing.log"
+gpre() { hook pre Bash "$(cmdjson "$1")"; }
+o="$(gpre "echo x > $G/new.txt")"
+contains "new file directly in /tmp denied" '"permissionDecision": "deny"' "$o"
+contains "reason names the literal session TMPDIR" "$ST" "$o"
+contains "reason names own-rm" "own-rm <literal path>" "$o"
+contains "cp into /tmp denied" "deny" "$(gpre "cp $FH/userdata/thesis.txt $G/newcp")"
+contains "tee into /tmp denied" "deny" "$(gpre "echo a | tee $G/newtee")"
+contains "dd of= into /tmp denied" "deny" "$(gpre "dd if=/dev/zero of=$G/newdd count=1")"
+contains "a later command in a chain denied" "deny" "$(gpre "cd /x && ls >> $G/new.log")"
+contains "mv into /tmp still denied (guard keeps mv)" "deny" "$(gpre "mv $FH/a $G/newmv")"
+check "[[ a > /tmp/x ]] is a string comparison" "" "$(gpre "[[ a > $G/cmp ]] && echo y")"
+check "[[ a < /tmp/x ]] is a string comparison" "" "$(gpre "[[ b < $G/cmp ]]")"
+contains "a redirect after ]] still counts" "deny" "$(gpre "[[ a > b ]] > $G/after-cond")"
+contains "]]> without a space is a redirect" "deny" "$(gpre "[[ -n a ]]>$G/after-nospace")"
+contains "]]>| without a space is a redirect" "deny" "$(gpre "[[ -n a ]]>|$G/after-clobber")"
+check "if [[ a > /tmp/x ]] is a string comparison" "" "$(gpre "if [[ a > $G/cmp ]]; then echo y; fi")"
+check "! [[ a > /tmp/x ]] is a string comparison" "" "$(gpre "! [[ a > $G/cmp ]]")"
+check "while [[ a < /tmp/x ]] is a string comparison" "" "$(gpre "while [[ a < $G/cmp ]]; do :; done")"
+check "until [[ a > /tmp/x ]] is a string comparison" "" "$(gpre "until [[ a > $G/cmp ]]; do :; done")"
+check "elif [[ a > /tmp/x ]] is a string comparison" "" "$(gpre "if true; then :; elif [[ a > $G/cmp ]]; then :; fi")"
+check "&& [[ a > /tmp/x ]] is a string comparison" "" "$(gpre "true && [[ a > $G/cmp ]]")"
+contains "a redirect in the if body still counts" "deny" "$(gpre "if [[ a > b ]]; then echo x > $G/in-body; fi")"
+contains "[[ as an argument does not open a condition" "deny" "$(gpre "echo [[ > $G/echoed")"
+check "existing file allowed" "" "$(gpre "echo x > $G/exists")"
+check "2>/dev/null allowed" "" "$(gpre "ls $G 2>/dev/null")"
+check "tee -a existing log allowed" "" "$(gpre "echo a | tee -a $G/existing.log")"
+check "a read allowed" "" "$(gpre "cat $G/a")"
+check "input redirect allowed" "" "$(gpre "sort < $G/new-in")"
+check "session TMPDIR allowed" "" "$(gpre "echo x > $ST/fresh.txt")"
+check "scratchpad allowed" "" "$(gpre "echo x > $PAD/fresh.txt")"
+check "deeper existing subdir allowed" "" "$(gpre "echo x > $G/sub/fresh.txt")"
+check "non-temp path allowed" "" "$(gpre "echo x > $FH/fresh.txt")"
+check "mktemp commands allowed" "" "$(gpre "f=\$(mktemp $G/x.XXXX) && echo x > $G/also-new")"
+check "variable target allowed" "" "$(gpre "echo x > \$TMPDIR/x")"
+check "glob target allowed" "" "$(gpre "echo x > $G/*.txt")"
+check "quoted > is no redirect" "" "$(gpre "echo '> $G/q.txt'")"
+check "heredoc body is no command" "" "$(gpre "$(printf 'cat > %s/h.txt <<EOF\necho > %s/n.txt\nEOF' "$ST" "$G")")"
+check "fd copy allowed" "" "$(gpre "echo x >&2")"
+check "env off switch" "" "$(CREDO_TMP_GUARD=0 gpre "echo x > $G/new.txt")"
+printf 'cleanup:\n  tmp_guard: false\n  keep_paths:\n    - %s\n' "$ST/keepme" > "$CREDO_GLOBAL"
+check "config off switch" "" "$(gpre "echo x > $G/new.txt")"
+printf 'cleanup:\n  keep_paths:\n    - %s\n' "$ST/keepme" > "$CREDO_GLOBAL"
+check "unparsable command allowed (fail open)" "" "$(gpre "echo 'x > $G/new.txt")"
+o="$(printf '{"session_id":"%s","tool_name":"Bash","tool_use_id":"tuG","cwd":"%s","tool_input":{"command":"echo x > %s/new.txt"}}' \
+    "dddddddd-0000-4000-8000-000000000004" "$R" "$G" | python3 -I "$SHIM" "$OVJ" "$LEDGER" pre)"
+check "no session dir to point at: fail open" "" "$o"
 
 # --- 3c. Windows-side temp files on WSL (#208) -------------------------------------------------
 # A fixture drvfs root inside the fixture home (never a temp root by itself) stands in for /mnt.

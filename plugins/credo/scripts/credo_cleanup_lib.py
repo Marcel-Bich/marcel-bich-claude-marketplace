@@ -1212,15 +1212,28 @@ def transcript_files(sid):
     return files
 
 
+def _bash_targets(command):
+    """Literal write targets of a Bash command that count as own-rm evidence (credo_write_targets,
+    no mv destinations); none when it cannot load."""
+    try:
+        import credo_write_targets
+        return credo_write_targets.evidence_targets(command)
+    except Exception:  # noqa: BLE001 - no parser: no command evidence
+        return []
+
+
 def _written_paths(f):
-    """Paths of successful Write/Edit/MultiEdit/NotebookEdit tool calls in one transcript: a
-    tool_use of such a name, plus its tool_result that is no error (is_error not true and no
-    error text as toolUseResult). Read calls, rejected and failed writes do not count."""
+    """{"write": paths, "bash": paths} of successful calls in one transcript. "write": the file
+    of a Write/Edit/MultiEdit/NotebookEdit call; "bash" (#212): the literal write targets of a
+    Bash command (> / >> / tee / cp|install ... DEST / dd of=; never mv). A call counts with its
+    tool_result that is no error (is_error not true and no error text as toolUseResult). Read
+    calls, rejected and failed calls do not count."""
     uses, ok = {}, set()
+    found = {"write": set(), "bash": set()}
     try:
         fh = open(f, encoding="utf-8", errors="replace")
     except OSError:
-        return set()
+        return found
     with fh:
         for line in fh:
             if '"tool_use' not in line and '"tool_result' not in line:
@@ -1239,22 +1252,29 @@ def _written_paths(f):
                     inp = c.get("input") or {}
                     fp = inp.get("file_path") or inp.get("notebook_path")
                     if isinstance(fp, str) and os.path.isabs(fp) and c.get("id"):
-                        uses[c["id"]] = os.path.normpath(fp)
+                        uses[c["id"]] = ("write", [os.path.normpath(fp)])
+                elif c.get("type") == "tool_use" and c.get("name") == "Bash" and c.get("id"):
+                    targets = _bash_targets((c.get("input") or {}).get("command"))
+                    if targets:
+                        uses[c["id"]] = ("bash", targets)
                 elif c.get("type") == "tool_result" and c.get("tool_use_id"):
                     if c.get("is_error") is True or isinstance(d.get("toolUseResult"), str):
                         continue
                     ok.add(c["tool_use_id"])
-    return {p for i, p in uses.items() if i in ok}
+    for i, (kind, paths) in uses.items():
+        if i in ok:
+            found[kind].update(paths)
+    return found
 
 
-def transcript_wrote(sid, path):
-    """True when a transcript of this session (main agent or subagent) holds a successful
-    Write/Edit call for exactly this file path (no prefix match: a write to X/f says nothing
-    about X)."""
+def transcript_wrote(sid, path, kind="write"):
+    """True when a transcript of this session (main agent or subagent) holds a successful call
+    that wrote exactly this file path (no prefix match: a write to X/f says nothing about X).
+    kind "write": a Write/Edit call; kind "bash": a Bash command naming it as a write target."""
     for f in transcript_files(sid):
         if f not in _TRANSCRIPTS:
             _TRANSCRIPTS[f] = _written_paths(f)
-        paths = _TRANSCRIPTS[f]
+        paths = _TRANSCRIPTS[f][kind]
         if NT:
             if any(same_path(q, path) or same_path(real_target(q) or q, path) for q in paths):
                 return True
@@ -1265,19 +1285,30 @@ def transcript_wrote(sid, path):
 
 
 def not_deletable_entry(p, e, sid=None):
-    """Report-only reason for a ledger entry that may never be deleted without a prompt: only an
-    entry the Write/Edit tool created, inside a temp root (not in the home, not in a worktrees
-    dir) is deletable. What the birth-time scan of a Bash call found may have been created by the
-    owner or another program during the call, so it is only reported."""
-    if e.get("evidence") != "write":
-        return ("report only: not a file the Write/Edit tool created (%s evidence); another "
+    """Report-only reason for a ledger entry that may never be deleted without a prompt. Deletable
+    are, inside a temp root (not in the home, not in a worktrees dir): a file the Write/Edit tool
+    created, and (#212) a file a Bash command of this session provably wrote - the scan found it
+    born during the call, it is a literal write target of that command that pre saw missing
+    ("write_target"), no other credo session had a tool call open at its birth (not
+    "ambiguous"), and a transcript of this session holds a successful Bash call naming exactly
+    this path as a write target. Anything else the birth-time scan of a Bash call found may have
+    been created by the owner or another program during the call, so it is only reported."""
+    bash_target = (e.get("evidence") == "command" and e.get("write_target") is True
+                   and e.get("tool") == "Bash" and e.get("root_kind") == "temp"
+                   and e.get("btime") is not None and not e.get("ambiguous"))
+    if e.get("evidence") != "write" and not bash_target:
+        return ("report only: not a file the Write/Edit tool created nor a literal write target "
+                "of a Bash command that was missing before the call (%s evidence); another "
                 "process may have created it - the owner decides" % e.get("evidence"))
     if e.get("type") != "file":
         return "report only: a directory created as a side effect of a Write"
     if not in_temp_root(p) and not win_temp_root_of(p):
         return ("report only: outside the temp roots (home, worktrees dir or elsewhere; on the "
                 "Windows side only %TEMP%, C:\\Users\\Public and C:\\tmp)")
-    if sid is not None and not transcript_wrote(sid, p):
+    if sid is not None and bash_target and not transcript_wrote(sid, p, "bash"):
+        return ("report only: no successful Bash call naming exactly this file as a write target "
+                "in this session's transcript")
+    if sid is not None and not bash_target and not transcript_wrote(sid, p):
         return "report only: no successful Write/Edit call for exactly this file in this session's transcript"
     return None
 
@@ -1296,8 +1327,9 @@ def owned_entry(p, st, entries, sid):
     if e.get("dev") != st.st_dev or e.get("ino") != st.st_ino or not same_birth(e, p):
         return False, e, "replaced since it was recorded (dev/inode/birth differ)", None
     if not stat.S_ISREG(st.st_mode):
-        return False, e, ("report only: only a single file the Write/Edit tool created is deletable "
-                          "outside the session TMPDIR and scratchpad"), None
+        return False, e, ("report only: outside the session TMPDIR and scratchpad only a single "
+                          "regular file is deletable (Write/Edit-created or a proven Bash write "
+                          "target)"), None
     why = not_deletable_entry(p, e, sid)
     if why:
         return False, e, why, None
