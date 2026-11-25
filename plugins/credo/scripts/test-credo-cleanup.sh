@@ -578,7 +578,8 @@ contains "drvfs Write without birth time recorded" '"btime": null' "$(grep "\"$D
 o="$(helper own-rm "$DRV/c/tmp/nobt.md")"
 contains "drvfs Write-created file without birth time removed" "removed $DRV/c/tmp/nobt.md" "$o"
 write_call "$DRV/c/tmp/nobt-swap.md"
-rm "$DRV/c/tmp/nobt-swap.md"; echo new > "$DRV/c/tmp/nobt-swap.md"
+# Create the replacement before the original goes, so the inode number cannot be reused.
+echo new > "$DRV/c/tmp/nobt-swap.md.new"; mv "$DRV/c/tmp/nobt-swap.md.new" "$DRV/c/tmp/nobt-swap.md"
 o="$(helper own-rm "$DRV/c/tmp/nobt-swap.md")"
 contains "drvfs file replaced after the Write refused" "replaced since it was recorded" "$o"
 write_call "$DRV/c/Users/alice/Desktop/nobt.md"
