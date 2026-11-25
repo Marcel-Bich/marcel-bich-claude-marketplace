@@ -46,6 +46,7 @@ for f in "$CLI" "$MODULE" "$HOOK" "$HOOKS_JSON"; do
 done
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/cpsr.XXXXXX")" || { echo "FAIL: mktemp"; exit 1; }
+trap 'rm -rf -- "$TMP"' EXIT
 HOME_DIR="$TMP/home"
 CFG="$HOME_DIR/.claude"
 BIN="$TMP/bin"
@@ -455,5 +456,4 @@ expect "e2e: after the session ends its entry is stale" "stale" \
     "$(cli resolve "$SID_C" --json 2>/dev/null | jq -r .status)"
 
 echo "passed: $PASS, failed: $FAIL"
-echo "temp dir (remove by this literal path): $TMP"
 [ "$FAIL" -eq 0 ]
