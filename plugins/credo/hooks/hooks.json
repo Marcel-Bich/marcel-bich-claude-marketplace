@@ -125,6 +125,11 @@
           },
           {
             "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-linger-hint.sh\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/credo-unblock-sweep.sh\"",
             "timeout": 10
           },

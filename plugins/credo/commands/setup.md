@@ -1145,6 +1145,40 @@ Install the elevated sender helper so WSL sessions can message Windows sessions 
 - "No" -> nothing is changed. Mention that `/credo:peer-lan win-bridge install-elevated`
   installs it later and `elevsend-uninstall` removes it.
 
+## Step 12d: Keep the LAN Relay and Bridge Running After Logout (linger, optional)
+
+Only relevant on Linux (also WSL with systemd) when the LAN relay or the WSL bridge run as
+systemd user services. Never run this step in autonomous mode. The agent never runs
+`loginctl enable-linger` itself: it changes system state, so only the owner runs it.
+
+Check (read only; prints nothing when it does not apply - no loginctl, no systemd, no
+credo unit running, or any error):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/credo-peer-lan.py" linger
+```
+
+- No output, or `linger: yes ...` -> say nothing more.
+- `linger: no for <user> ...` -> explain in 2 lines: the relay/bridge are systemd user
+  services and stop at the user's last logout; with linger they keep running. Show the
+  printed risk note (services keep running after logout, the relay stays reachable on its
+  port while nobody is logged in, so the shared token and the allow-list matter more; when
+  it says no shared token is set, mention `/credo:peer-lan` Token). Then ask via
+  AskUserQuestion:
+
+```
+Keep the credo relay/bridge running after you log out (enable linger)?
+
+- No, keep the default - the relay stops at logout and starts with the next session
+- Yes - I run the printed `loginctl enable-linger <user>` myself in my terminal
+```
+
+- "Yes" -> give the exact command from the output and ask the user to run it in their own
+  terminal (on some systems it needs sudo / polkit); afterwards `credo-peer-lan.py linger`
+  prints `linger: yes`. Undo: `loginctl disable-linger <user>`.
+- "No" -> nothing is changed. The one-time SessionStart hint (`credo-linger-hint.sh`) does
+  not repeat it in this profile once it was shown.
+
 ## Setup Complete
 
 Before the message below: if Step 2c was skipped because `project.state` was `ready` and

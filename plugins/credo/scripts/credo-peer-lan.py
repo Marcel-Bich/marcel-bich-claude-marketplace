@@ -129,6 +129,7 @@ try:
 except ImportError:  # metadata is optional; the relay works without it
     peer_meta = None
 import credo_detach as detach
+import credo_linger as linger
 import credo_lock
 import credo_platform
 import credo_profiles as profiles
@@ -8761,6 +8762,15 @@ def main(argv=None):
     p_profiles.add_argument("names", nargs="*", help="profile dir names, e.g. .claude-work")
     p_profiles.set_defaults(func=run_profiles)
 
+    p_linger = sub.add_parser(
+        "linger",
+        help="show systemd linger for the relay/bridge user services and the enable-linger "
+        "proposal (never enables it)",
+    )
+    p_linger.add_argument("--session-hint", action="store_true",
+                          help="internal: the one-time SessionStart hint (stamp per profile)")
+    p_linger.set_defaults(func=run_linger)
+
     p_holder = sub.add_parser("holder", help="internal: per-remote-session holder")
     p_holder.add_argument("--proxy", required=True)
     p_holder.add_argument("--target-session", required=True)
@@ -8778,7 +8788,50 @@ def main(argv=None):
     rc = args.func(args)
     if getattr(args, "cmd", None) in ("check", "start", "status"):
         print_elevsend_offer()
+    if getattr(args, "cmd", None) in ("check", "status"):
+        print_linger_lines()
     return rc
+
+
+def _linger_context():
+    """(listen port, token set?) of the machine config for the linger note; the token
+    value is never read out, only whether one is configured."""
+    try:
+        cfg = load_config() or {}
+        return cfg.get("listen_port", DEFAULT_PORT), bool(cfg.get("token"))
+    except Exception:
+        return None, None
+
+
+def print_linger_lines():
+    """Linger state plus the enable-linger proposal and its risk note, only when the relay
+    or the bridge run as systemd user services (credo_linger.py, item #209). Never runs
+    loginctl enable-linger; silent on any error."""
+    try:
+        port, token_set = _linger_context()
+        lines = linger.status_lines(port, token_set)
+    except Exception:
+        lines = []
+    if lines:
+        print("")
+        for ln in lines:
+            print(ln)
+
+
+def run_linger(args):
+    """`linger`: print the linger lines (status/check show the same). `linger
+    --session-hint`: the one-time SessionStart hint (stamp per profile). Exit 0 always."""
+    if getattr(args, "session_hint", False):
+        try:
+            port, token_set = _linger_context()
+            text = linger.session_hint(port, token_set)
+        except Exception:
+            text = ""
+        if text:
+            print(text)
+        return 0
+    print_linger_lines()
+    return 0
 
 
 def print_elevsend_offer():
