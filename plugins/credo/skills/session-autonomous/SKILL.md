@@ -319,6 +319,22 @@ the hook forces AT MOST ONE continuation per stop attempt (via the `stop_hook_ac
 and lets the stop through once a future wake is marked, so it can NOT spin forever. Outside
 autonomous mode (no flag set) the hook is completely inert - a plain no-op stop.
 
+Only a real owner message pauses: credo's own typed prompts never do - the `[credo-reminder]`
+(also when Claude Code shows it as a `<pasted_content ...>` paste), the `[credo-self-restart]`
+resume prompt, the `.` of `/credo:self-reload` / `/credo:self-compact` (also when a queued
+notification consumed the wake file first, within 2 min), `[remote chat ...]`, peer messages,
+task notifications and harness notices. The `paused` file records the cause: `user-message`
+for a pause by an owner message, empty for a deliberate `credo-autonomy-off.sh`.
+
+**While an owner message keeps the run paused** (mode still autonomous), the Stop hook never
+blocks: pause means the agent may wait for the owner. But when GO items are open it shows the
+user one short line per turn end (a `systemMessage`): autonomy is paused, the agent may stop
+at any turn end, end the pause with `/credo:session-autonomous` (or ask the agent to re-arm
+with `credo-autonomy-on.sh --session <id>`). Every later owner message during such a pause
+also gets the re-arm nudge: once that message is handled and no decision, alignment or
+steering is open, re-arm autonomy yourself and continue the GO items instead of idling;
+when unsure, stay attended. A deliberate off never shows the hint.
+
 - ScheduleWakeup is the PRIMARY self-wake mechanism. Its single delay is clamped to
   [60, 3600] seconds, so for a longer pause CHAIN several wake-ups rather than one long one.
 - Record each planned wake with `credo-autonomy-wake-mark.sh` (same delaySeconds as the

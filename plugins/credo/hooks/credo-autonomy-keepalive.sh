@@ -52,7 +52,33 @@ WAKE="$STATE_DIR/wake-scheduled"
 # Hard opt-out: if autonomy was deliberately paused (credo-autonomy-off sets
 # this), never trigger, even if a stale active flag lingers. Only
 # credo-autonomy-on lifts the opt-out.
-[ -f "$STATE_DIR/paused" ] && exit 0
+#
+# Paused hint (#211, owner choice "c - mit hinweis an den user"): the stop is never
+# blocked while paused, but when an owner message paused the run (paused file reads
+# "user-message", see credo-autonomy-clear.sh), the session mode is still autonomous and
+# GO items are open, the user gets one short systemMessage per turn end: autonomy is
+# paused, the agent may stop at any turn end, and how to end the pause. Fail open:
+# any missing piece (no jq, no project, no GO item) -> silent normal stop.
+paused_hint() {
+    command -v jq >/dev/null 2>&1 || return 0
+    [ "$(tr -d '[:space:]' < "$STATE_DIR/paused" 2>/dev/null)" = "user-message" ] || return 0
+    local modes mode cwd counts go
+    modes="${CREDO_SESSION_MODES_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-modes}"
+    mode="$(tr -d '[:space:]' < "$modes/$session_id" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+    [ "$mode" = "autonomous" ] || return 0
+    cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)"
+    [ -n "$cwd" ] && [ -d "$cwd" ] || cwd="$PWD"
+    counts="$(cd "$cwd" 2>/dev/null && CREDO_SESSION_ID="$session_id" CREDO_SKIP_ENSURE=1 \
+        timeout 5 bash "$SCRIPT_DIR/../scripts/credo-item-counts.sh" 2>/dev/null)" || return 0
+    go="$(printf '%s\n' "$counts" | sed -n 's/^go=\([0-9][0-9]*\)$/\1/p')"
+    [ -n "$go" ] && [ "$go" -gt 0 ] 2>/dev/null || return 0
+    jq -n --arg m "[credo] Autonomy is PAUSED (an owner message paused it) with $go GO item(s) open: the agent may stop at any turn end. To continue fully autonomous, end the pause with /credo:session-autonomous or tell the agent to re-arm ($SCRIPT_DIR/credo-autonomy-on.sh --session $session_id)." \
+        '{systemMessage: $m}' 2>/dev/null || true
+}
+if [ -f "$STATE_DIR/paused" ]; then
+    paused_hint
+    exit 0
+fi
 
 # Not in autonomy mode -> nothing to do (normal stop).
 [ -f "$FLAG" ] || exit 0
