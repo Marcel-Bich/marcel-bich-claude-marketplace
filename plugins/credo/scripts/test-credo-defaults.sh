@@ -125,7 +125,8 @@ has "orchestration: resource check before every start" "$ORCH" "max_busy_percent
 has "orchestration: 30 min stall check" "$ORCH" "30 min"
 has "orchestration: 60 tool calls stall check" "$ORCH" "60 tool calls"
 has "orchestration: 15 min stop rule" "$ORCH" "15 min"
-has "orchestration: subagent briefs forbid background shells" "$ORCH" "run_in_background"
+has "orchestration: subagent briefs name run_in_background" "$ORCH" "run_in_background"
+has "orchestration: background work stopped before the report" "$ORCH" "never finishes with own background work alive"
 
 # --- 5. communication (ask rules, dont_ask_twice, veto codes) ---
 hasany "dont_ask_twice documented in the ask skills" "dont_ask_twice" "$ACTIVE" "$PASSIVE"

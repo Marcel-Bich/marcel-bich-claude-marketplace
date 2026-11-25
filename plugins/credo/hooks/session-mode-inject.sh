@@ -36,6 +36,18 @@ case "$session_id" in
     *[!A-Za-z0-9._-]*) exit 0 ;;
 esac
 
+# --- repeat subagent notification (#215) ---
+# A prompt that only re-notifies an already finished subagent (credo-notify-lib.sh) gets
+# ONE short mode line instead of the full bundle (no Ask rules, no bootstrap hint, no
+# suspend directive). Without a mode it stays silent.
+slim=false
+NOTIFY_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/credo-notify-lib.sh"
+if [[ -f "$NOTIFY_LIB" ]]; then
+    prompt=$(printf '%s' "$INPUT" | jq -r '.prompt // ""' 2>/dev/null) || prompt=""
+    # shellcheck source=credo-notify-lib.sh
+    . "$NOTIFY_LIB" 2>/dev/null && credo_notify_repeat "$prompt" "$session_id" && slim=true
+fi
+
 # --- locate the per-session state file ---
 # ASK_RULES: the Ask-tool rules, re-injected on every prompt in every mode that may ask
 # (none, active, passive) - the SessionStart legend can be cut away when the session-start
@@ -52,6 +64,7 @@ state_file="$STATE_DIR/$session_id"
 # non-autonomous collaboration. Gated by its own toggle (default on); when off,
 # preserve the old silent behavior.
 if [[ ! -f "$state_file" ]]; then
+    [[ "$slim" == true ]] && exit 0
     [[ "${CREDO_AUTONOMY_BOOTSTRAP:-true}" == "true" ]] || exit 0
     # Persistent per-directory opt-out: if this directory (git toplevel else PWD)
     # was declined, stay silent - do NOT inject the [credo] bootstrap line. Only
@@ -77,6 +90,23 @@ if [[ ! -f "$state_file" ]]; then
 fi
 
 mode=$(tr -d '[:space:]' < "$state_file" 2>/dev/null | tr '[:upper:]' '[:lower:]') || mode=""
+
+if [[ "$slim" == true ]]; then
+    case "$mode" in
+        autonomous)
+            if [[ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/autonomy/${session_id}/paused" ]]; then
+                short="[credo-mode] autonomous, keep-alive PAUSED - never use the Ask tool, no ScheduleWakeup while paused."
+            else
+                short="[credo-mode] autonomous - never use the Ask tool, keep-alive on (schedule your own wake)."
+            fi
+            ;;
+        active | passive) short="[credo-mode] ${mode} - questions only via the Ask tool." ;;
+        *) exit 0 ;;
+    esac
+    jq -n --arg ctx "$short (slim inject: repeat subagent notification)" \
+        '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $ctx}, suppressOutput: true}' 2>/dev/null
+    exit 0
+fi
 
 case "$mode" in
     active)

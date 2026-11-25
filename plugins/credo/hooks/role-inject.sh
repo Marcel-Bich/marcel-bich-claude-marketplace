@@ -36,6 +36,14 @@ case "$session_id" in
     *[!A-Za-z0-9._-]*) exit 0 ;;
 esac
 
+# --- repeat subagent notification (#215): silent (credo-notify-lib.sh) ---
+NOTIFY_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/credo-notify-lib.sh"
+# shellcheck source=credo-notify-lib.sh
+if [[ -f "$NOTIFY_LIB" ]] && . "$NOTIFY_LIB" 2>/dev/null \
+    && credo_notify_repeat "$(printf '%s' "$INPUT" | jq -r '.prompt // ""' 2>/dev/null)" "$session_id"; then
+    exit 0
+fi
+
 # --- locate the per-session state file ---
 STATE_DIR="${CREDO_SESSION_ROLES_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/credo/session-roles}"
 state_file="$STATE_DIR/$session_id"
