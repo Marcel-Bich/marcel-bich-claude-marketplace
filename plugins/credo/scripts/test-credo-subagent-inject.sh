@@ -145,6 +145,15 @@ has "WORKTREE: .credo changes go to the main checkout path" "write every .credo/
 has "WORKTREE: first path of git worktree list" "the first path of git worktree list" "$gp_ctx"
 has "WORKTREE: never into the worktree copy" "never into the worktree copy" "$gp_ctx"
 
+# --- tests: builders never run the full suite (#218) --------------------------------------
+has "TESTS: never the full suite" "TESTS (build/review): never run the project's full suite or full check" "$gp_ctx"
+has "TESTS: touched modules plus fast check" "Run the tests of the modules you touched plus the project's fast check" "$gp_ctx"
+has "TESTS: main agent runs one full check per batch" "the main agent runs one full check per merged batch" "$gp_ctx"
+case "$(ctx_of Explore)" in
+    *"TESTS (build/review)"*) check "Explore: light block has no TESTS line" no yes ;;
+    *) check "Explore: light block has no TESTS line" no no ;;
+esac
+
 # --- claims: blocker and owner-decision claims are proposals ------------------------
 has "CLAIMS: blocker claims are proposals" "your blocker and owner-decision claims are proposals" "$gp_ctx"
 has "CLAIMS: the main agent verifies the cited source" "the main agent verifies them (reads the cited source)" "$gp_ctx"
