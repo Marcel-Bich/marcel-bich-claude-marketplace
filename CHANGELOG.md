@@ -2,148 +2,18 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 
 # 2026-11
 
-## dogma
-
-### v1
-
-#### v1.50
-
-##### v1.50.0
-
-###### Changed
-
-- A prompt that only re-notifies an already finished subagent (only harness
-  `<task-notification>` blocks that all report a subagent, every task id already notified
-  earlier in the session) gets no dogma `UserPromptSubmit` inject at all (subagent
-  suggestion, prompt reminder incl. the output convention, skill reminder, checklist
-  tracking). The first notification of a task id, Monitor events, shell completions, owner
-  prompts and peer messages keep every inject. New detector `scripts/lib-notify.sh` with its
-  own per-session state in `dogma/notify-seen/`, no credo dependency (#215).
-
-#### v1.49
-
-##### v1.49.1
-
-###### Changed
-
-- The "Windows delete or format command blocked" deny names the allowed route for own temp
-  files: keep them in the session TMPDIR with the `wslpath -w` path for Windows tools, or remove a
-  Write-created one with credo's `credo-cleanup.py own-rm /mnt/<drive>/<path>`; the block itself
-  is unchanged
-
-###### Fixed
-
-- Bash network redirections to `/dev/tcp/<host>/<port>` and `/dev/udp/<host>/<port>` (`exec 3<>/dev/tcp/127.0.0.1/8080`, `echo x > /dev/udp/127.0.0.1/514`, also inside `bash -c '...'`) are no longer denied as "overwriting a critical path": they open a socket, no file. Only the literal two-part form counts; real devices (`/dev/sda`, `/dev/mem`) and top-level dotdot forms stay denied
-- `sh -c 'echo x >/tmp/x.log'` (a redirect word right before the closing quote) is no longer denied by delete-guard as "unparseable quoting in a destructive command"
-
-##### v1.49.0
-
-###### Added
-
-- In a credo autonomous run (keep-alive active, not paused) every dogma "ask" becomes a "deny" with the same
-  reason plus a retry hint, so no unanswerable prompt stalls the run; interactive sessions, a paused autonomy and
-  any unclear detection keep the ask, and an ask never becomes an allow. A git add/commit/push that needs
-  confirmation gets its own hint: a showstopper per credo, warn the owner via ntfy and stop. All ask sites go through one emitter
-  (`scripts/lib-decision.sh`). `CLAUDE_MB_DOGMA_UNATTENDED_DENY=false` keeps every ask.
-
-###### Fixed
-
-- A `>` after a loop or group (`for ...; done > file`) into a literal path inside this session's own
-  TMPDIR or scratchpad no longer asks as a truncation; another session's folder, a `$var` target or a link
-  leading out keep the normal rules
-
-#### v1.48
-
-##### v1.48.1
-
-###### Fixed
-
-- `npx <tool>` for a locally installed tool is no longer denied as download-and-run after a `cd` into a sub-package (`cd web && npx vite build`): the local `node_modules/.bin/<tool>` is looked up from every folder the command runs in
-
-###### Security
-
-- `npx -p/--package`, `-y/--yes` and `-c/--call` no longer pass as a local tool run: they can download a package or run a shell string, so they keep the download-and-run check
-
-##### v1.48.0
-
-###### Added
-
-- `scripts/lib-credo.sh`: cheap credo detection (session mode, session decision, or
-  per-directory opt-in while credo is enabled; fail open), toggle
-  `CLAUDE_MB_DOGMA_CREDO_DEFER` (default `true`), tests in `scripts/test-credo-defer.sh`
-
-###### Changed
-
-- With credo active for the session, dogma's per-prompt workflow injects step back:
-  the mandatory orchestration flow (Subagent-First, Hydra and TDD MANDATORY, handoff
-  chain, "Run ALL tests") becomes a short pointer at credo orchestration, the planning
-  line points at credo items instead of `/create-plan`, the versioning line drops
-  "bump version on changes", the skill reminder suggests a credo item (silent in
-  credo's autonomous mode), and checklist tracking accepts `dd` or a passed credo
-  done gate instead of a Y/n question. Safety hooks and reminders stay unchanged;
-  without credo nothing changes.
-
-#### v1.47
-
-##### v1.47.9
-
-###### Added
-
-- README section "Windows limitations"
-
-###### Fixed
-
-- Every hook command quotes `${CLAUDE_PLUGIN_ROOT}`, so the hooks still run when the plugin root
-  contains a space (for example a Windows profile like `C:\Users\First Last`)
-
-##### v1.47.8
-
-###### Fixed
-
-- A harmless `2>/dev/null` or `>/dev/null` is no longer blocked on native Windows as "overwrite of a protected path (C:devnull)". File protection (and git permissions and dependency verification, through the shared findings helper) ran the shell-aware analysis through `python3` by name; with a native Windows Python that analysis resolved `/dev/null` to `C:\dev\null`. The analysis now runs only under a POSIX Python 3 (otherwise the text rules decide), refuses to judge under a native Windows Python, and treats the literal redirect targets `/dev/null`, `/dev/stdout`, `/dev/stderr` and `/dev/fd/N` as no files on every platform.
-- The delete guard's text fallback (no POSIX Python 3) now also blocks redirects and `tee` onto protected paths (`> /etc/passwd`, `>> ~/.bashrc`, the home level, system dirs, devices, Windows system and profile config paths); deletes stay blocked as before.
-- No dogma hook or helper needs a binary named `python3` any more: Python is looked up as `python3`, then `python`, then `py -3` (python.org ships no `python3.exe`), the Microsoft Store stub is still rejected. The notice hook, `notices-pending.sh`, `source-cache.sh`, `permissions-summary.sh` and `worktree-files.sh` only parse JSON or text and also accept a native Windows Python (UTF-8 I/O, CRLF output turned into LF).
-
-##### v1.47.7
-
-###### Fixed
-
-- The delete guard no longer blocks every command on native Windows with "guard error (exit 49)". Under Git Bash `python3` can be the Microsoft Store alias stub, which exits 9009 (seen as 49); the guard took it for a Python and failed closed on its exit code. The guard and token protection now start each candidate (`python3`, then `python`) once and use it only when it reports a POSIX Python 3. The Store stub and a native Windows Python (whose path semantics the guard does not model) count as missing: harmless commands pass, destructive-looking commands are denied by the text fallback, and token protection runs its own text rules instead of skipping them.
-- No dogma hook or band script starts a bare `bash` any more, which on Windows can resolve to `System32\bash.exe` (the WSL launcher). Scripts call the running bash by its path, the session-start hook uses `/bin/bash`, and on Windows the dogma band runs its scripts through Git Bash by its full path (nothing when Git Bash is missing).
-
-##### v1.47.6
-
-###### Changed
-
-- The delete guard documents and tests credo's ledger-verified cleanup helper (`credo-cleanup.py own-rm`) as the sanctioned delete path for an agent's own temp output. Called by its literal path it is no delete finding.
-
-##### v1.47.5
-
-###### Changed
-
-- Auto worktree cleanup option names the lossless case: a merged worktree whose only leftovers are `.credo/` changes already present in the main checkout is removed too; setup symlinks into the main checkout do not count as changes
-
-##### v1.47.4
-
-###### Fixed
-
-- Command substitutions inside arithmetic expansion are checked like top-level ones
-
-##### v1.47.3
-
-###### Added
-
-- Session-start warning when `jq` is missing: dogma's protection hooks (delete guard, git permissions, dependency verification) are off without it, so the user is urged to install jq (`hooks/jq-missing-warn.sh`)
-
-###### Fixed
-
-- Redirect-like text in an unquoted heredoc body of `cat` or `tee` (`see <dogma>/x`, `a>/x`) is no longer denied as a redirect onto a critical path; command substitutions and backticks in the body are still checked
-
 ## credo
 
 ### v0
 
 #### v0.92
+
+##### v0.92.1
+
+###### Fixed
+
+- A typed code (T, Q, V) written by hand into a reply no longer gets issued again: after each reply a Stop hook raises the project's counter to the highest code heading the agent showed
+  (`credo-code-next.sh reconcile`, same heading rule and lock as the counter) and notes the slip to the agent; a code shown again with a different topic is noted once per session
 
 ##### v0.92.0
 
@@ -1046,6 +916,143 @@ Consolidated changelog of all plugins in this marketplace. Newest first. Months 
 - A bound network whose Windows network category is Public (outside `windows_profiles`) gets the same hint, telling the user where to switch the network to Private.
 - `check` prints a hint line for both cases, and the new `network-hint` subcommand prints the pending agent text for the SessionStart hook.
 - A router refused for a subnet cannot be bound again: `bind` refuses it and `init` offers no bind command for it. `bind` also refuses a profile name that another router already uses, instead of overwriting that profile.
+
+## dogma
+
+### v1
+
+#### v1.50
+
+##### v1.50.0
+
+###### Changed
+
+- A prompt that only re-notifies an already finished subagent (only harness
+  `<task-notification>` blocks that all report a subagent, every task id already notified
+  earlier in the session) gets no dogma `UserPromptSubmit` inject at all (subagent
+  suggestion, prompt reminder incl. the output convention, skill reminder, checklist
+  tracking). The first notification of a task id, Monitor events, shell completions, owner
+  prompts and peer messages keep every inject. New detector `scripts/lib-notify.sh` with its
+  own per-session state in `dogma/notify-seen/`, no credo dependency (#215).
+
+#### v1.49
+
+##### v1.49.1
+
+###### Changed
+
+- The "Windows delete or format command blocked" deny names the allowed route for own temp
+  files: keep them in the session TMPDIR with the `wslpath -w` path for Windows tools, or remove a
+  Write-created one with credo's `credo-cleanup.py own-rm /mnt/<drive>/<path>`; the block itself
+  is unchanged
+
+###### Fixed
+
+- Bash network redirections to `/dev/tcp/<host>/<port>` and `/dev/udp/<host>/<port>` (`exec 3<>/dev/tcp/127.0.0.1/8080`, `echo x > /dev/udp/127.0.0.1/514`, also inside `bash -c '...'`) are no longer denied as "overwriting a critical path": they open a socket, no file. Only the literal two-part form counts; real devices (`/dev/sda`, `/dev/mem`) and top-level dotdot forms stay denied
+- `sh -c 'echo x >/tmp/x.log'` (a redirect word right before the closing quote) is no longer denied by delete-guard as "unparseable quoting in a destructive command"
+
+##### v1.49.0
+
+###### Added
+
+- In a credo autonomous run (keep-alive active, not paused) every dogma "ask" becomes a "deny" with the same
+  reason plus a retry hint, so no unanswerable prompt stalls the run; interactive sessions, a paused autonomy and
+  any unclear detection keep the ask, and an ask never becomes an allow. A git add/commit/push that needs
+  confirmation gets its own hint: a showstopper per credo, warn the owner via ntfy and stop. All ask sites go through one emitter
+  (`scripts/lib-decision.sh`). `CLAUDE_MB_DOGMA_UNATTENDED_DENY=false` keeps every ask.
+
+###### Fixed
+
+- A `>` after a loop or group (`for ...; done > file`) into a literal path inside this session's own
+  TMPDIR or scratchpad no longer asks as a truncation; another session's folder, a `$var` target or a link
+  leading out keep the normal rules
+
+#### v1.48
+
+##### v1.48.1
+
+###### Fixed
+
+- `npx <tool>` for a locally installed tool is no longer denied as download-and-run after a `cd` into a sub-package (`cd web && npx vite build`): the local `node_modules/.bin/<tool>` is looked up from every folder the command runs in
+
+###### Security
+
+- `npx -p/--package`, `-y/--yes` and `-c/--call` no longer pass as a local tool run: they can download a package or run a shell string, so they keep the download-and-run check
+
+##### v1.48.0
+
+###### Added
+
+- `scripts/lib-credo.sh`: cheap credo detection (session mode, session decision, or
+  per-directory opt-in while credo is enabled; fail open), toggle
+  `CLAUDE_MB_DOGMA_CREDO_DEFER` (default `true`), tests in `scripts/test-credo-defer.sh`
+
+###### Changed
+
+- With credo active for the session, dogma's per-prompt workflow injects step back:
+  the mandatory orchestration flow (Subagent-First, Hydra and TDD MANDATORY, handoff
+  chain, "Run ALL tests") becomes a short pointer at credo orchestration, the planning
+  line points at credo items instead of `/create-plan`, the versioning line drops
+  "bump version on changes", the skill reminder suggests a credo item (silent in
+  credo's autonomous mode), and checklist tracking accepts `dd` or a passed credo
+  done gate instead of a Y/n question. Safety hooks and reminders stay unchanged;
+  without credo nothing changes.
+
+#### v1.47
+
+##### v1.47.9
+
+###### Added
+
+- README section "Windows limitations"
+
+###### Fixed
+
+- Every hook command quotes `${CLAUDE_PLUGIN_ROOT}`, so the hooks still run when the plugin root
+  contains a space (for example a Windows profile like `C:\Users\First Last`)
+
+##### v1.47.8
+
+###### Fixed
+
+- A harmless `2>/dev/null` or `>/dev/null` is no longer blocked on native Windows as "overwrite of a protected path (C:devnull)". File protection (and git permissions and dependency verification, through the shared findings helper) ran the shell-aware analysis through `python3` by name; with a native Windows Python that analysis resolved `/dev/null` to `C:\dev\null`. The analysis now runs only under a POSIX Python 3 (otherwise the text rules decide), refuses to judge under a native Windows Python, and treats the literal redirect targets `/dev/null`, `/dev/stdout`, `/dev/stderr` and `/dev/fd/N` as no files on every platform.
+- The delete guard's text fallback (no POSIX Python 3) now also blocks redirects and `tee` onto protected paths (`> /etc/passwd`, `>> ~/.bashrc`, the home level, system dirs, devices, Windows system and profile config paths); deletes stay blocked as before.
+- No dogma hook or helper needs a binary named `python3` any more: Python is looked up as `python3`, then `python`, then `py -3` (python.org ships no `python3.exe`), the Microsoft Store stub is still rejected. The notice hook, `notices-pending.sh`, `source-cache.sh`, `permissions-summary.sh` and `worktree-files.sh` only parse JSON or text and also accept a native Windows Python (UTF-8 I/O, CRLF output turned into LF).
+
+##### v1.47.7
+
+###### Fixed
+
+- The delete guard no longer blocks every command on native Windows with "guard error (exit 49)". Under Git Bash `python3` can be the Microsoft Store alias stub, which exits 9009 (seen as 49); the guard took it for a Python and failed closed on its exit code. The guard and token protection now start each candidate (`python3`, then `python`) once and use it only when it reports a POSIX Python 3. The Store stub and a native Windows Python (whose path semantics the guard does not model) count as missing: harmless commands pass, destructive-looking commands are denied by the text fallback, and token protection runs its own text rules instead of skipping them.
+- No dogma hook or band script starts a bare `bash` any more, which on Windows can resolve to `System32\bash.exe` (the WSL launcher). Scripts call the running bash by its path, the session-start hook uses `/bin/bash`, and on Windows the dogma band runs its scripts through Git Bash by its full path (nothing when Git Bash is missing).
+
+##### v1.47.6
+
+###### Changed
+
+- The delete guard documents and tests credo's ledger-verified cleanup helper (`credo-cleanup.py own-rm`) as the sanctioned delete path for an agent's own temp output. Called by its literal path it is no delete finding.
+
+##### v1.47.5
+
+###### Changed
+
+- Auto worktree cleanup option names the lossless case: a merged worktree whose only leftovers are `.credo/` changes already present in the main checkout is removed too; setup symlinks into the main checkout do not count as changes
+
+##### v1.47.4
+
+###### Fixed
+
+- Command substitutions inside arithmetic expansion are checked like top-level ones
+
+##### v1.47.3
+
+###### Added
+
+- Session-start warning when `jq` is missing: dogma's protection hooks (delete guard, git permissions, dependency verification) are off without it, so the user is urged to install jq (`hooks/jq-missing-warn.sh`)
+
+###### Fixed
+
+- Redirect-like text in an unquoted heredoc body of `cat` or `tee` (`see <dogma>/x`, `a>/x`) is no longer denied as a redirect onto a critical path; command substitutions and backticks in the body are still checked
 
 ## signal
 
