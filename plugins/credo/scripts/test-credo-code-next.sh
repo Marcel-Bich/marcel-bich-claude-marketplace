@@ -247,5 +247,94 @@ check "credo-id-next: next id is 12" "12" "$ID_OUT"
 check "credo-id-next: no warning once the counter is ahead" "" "$(cat "$TMP/id2.err")"
 check "credo-id-next: counter file holds the last id" "12" "$(cat "$CREDO_DIR/id-counter")"
 
+# --- 9. reconcile: codes written by hand in a reply raise the counter (item #217) ---
+DOT=$'\xc2\xb7'
+FENCE='```'
+export CREDO_DIR="$(new_credo reconcile)"
+printf 'T 3\nQ 433\nV 0\n' > "$CREDO_DIR/code-counters"
+reply() { # the reply text of the fixture turn
+    printf '%s\n' "Intro text, see Q900 and answer Q901: x" \
+        "### $QMARK Q434 $DOT first question" "**Recommendation:** a" "---" \
+        "### $QMARK Q435 $DOT second question" "#### 🧪 T2) an old test [blocking]" \
+        "> ### $QMARK Q950 $DOT quoted from the owner" "$FENCE" "### $QMARK Q999 $DOT example in a fence" "$FENCE" \
+        "### $QMARK Q998${DOT}glued" "**$QMARK: Q434, Q435**"
+}
+OUT="$(reply | "$SUT" reconcile 2>"$TMP/rec.err")"
+RC=$?
+check "reconcile: exit 0" "0" "$RC"
+has "reconcile: names the target" "target $CREDO_DIR" "$OUT"
+has "reconcile: Q raised from 433 to 435, hand codes 434 435" "raised Q 433 435 434 435" "$OUT"
+has "reconcile: reports each code with its topic" "$(printf 'code Q 435\tsecond question')" "$OUT"
+has "reconcile: older form with its topic" "$(printf 'code T 2\tan old test [blocking]')" "$OUT"
+check "reconcile: T below its counter is not raised" "0" "$(printf '%s\n' "$OUT" | grep -c '^raised T')"
+check "reconcile: quote, fence, glued and mentions never count (no 9xx)" "0" "$(printf '%s\n' "$OUT" | grep -c ' 9[0-9][0-9]')"
+check "reconcile: counter file raised, other types kept" "$(printf 'T 3\nQ 435\nV 0')" "$(cat "$CREDO_DIR/code-counters")"
+run_sut Q
+check "reconcile: the next draw never repeats a shown code (436)" "436" "$OUT"
+OUT="$(reply | "$SUT" reconcile 2>/dev/null)"
+check "reconcile: a second run raises nothing" "0" "$(printf '%s\n' "$OUT" | grep -c '^raised')"
+check "reconcile: never lowers the counter" "yes" "$(grep -qx 'Q 436' "$CREDO_DIR/code-counters" && echo yes || echo no)"
+
+export CREDO_DIR="$(new_credo reconcile-none)"
+OUT="$(printf 'no code here, only Q5 and V2 mentioned\n' | "$SUT" reconcile 2>&1)"
+check "reconcile: no heading -> no output" "" "$OUT"
+check "reconcile: no heading -> no counter or lock file" "no" "$([ -e "$CREDO_DIR/code-counters" ] || [ -e "$CREDO_DIR/code-counters.lock" ] && echo yes || echo no)"
+run_sut reconcile extra
+check "reconcile: an extra argument is a usage error" "2" "$RC"
+
+export CREDO_DIR="$(new_credo reconcile-veto)"
+OUT="$(printf '%s\n' "### $VETO$VETO V7 $DOT Veto possible: x $VETO$VETO" | "$SUT" reconcile 2>/dev/null)"
+has "reconcile: a fresh project (no counter file) counts a veto heading as hand-issued" "raised V 0 7 7" "$OUT"
+
+# --- 10. the Stop / UserPromptSubmit hook credo-code-reconcile.sh (item #217) -----
+HOOK="$SCRIPT_DIR/../hooks/credo-code-reconcile.sh"
+export CREDO_CODE_TOPICS_DIR="$TMP/code-topics"
+export CREDO_DIR="$(new_credo hook)"
+printf 'T 0\nQ 10\nV 0\n' > "$CREDO_DIR/code-counters"
+TRANS="$TMP/transcript.jsonl"
+# A transcript: an older turn with a hand-issued Q20 (already past), the owner prompt that
+# quotes a heading, then the reply: a text block with Q11 before a tool call, a tool result
+# with a heading, and the final text with Q12.
+jq -n -c --arg t "### $QMARK Q20 $DOT older turn" '{type:"assistant",message:{content:[{type:"text",text:$t}]}}' > "$TRANS"
+jq -n -c --arg t "please look at ### $QMARK Q30 $DOT
+### $QMARK Q31 $DOT quoted by the owner" '{type:"user",message:{content:$t}}' >> "$TRANS"
+jq -n -c --arg t "### $QMARK Q11 $DOT first topic" '{type:"assistant",message:{content:[{type:"text",text:$t},{type:"tool_use",id:"x",name:"Bash",input:{}}]}}' >> "$TRANS"
+jq -n -c --arg t "### $QMARK Q40 $DOT inside a tool result" '{type:"user",message:{content:[{type:"tool_result",tool_use_id:"x",content:$t}]}}' >> "$TRANS"
+jq -n -c --arg t "### $QMARK Q12 $DOT second topic" '{type:"assistant",message:{content:[{type:"text",text:$t}]}}' >> "$TRANS"
+hook_input() { # session last_message
+    jq -n -c --arg s "$1" --arg p "$TRANS" --arg m "$2" --arg c "$TMP" \
+        '{session_id:$s, transcript_path:$p, last_assistant_message:$m, cwd:$c, hook_event_name:"Stop"}'
+}
+HOUT="$(hook_input sid-a "### $QMARK Q12 $DOT second topic" | "$HOOK" stop 2>"$TMP/hook.err")"
+check "hook: exit 0, nothing on stderr" "" "$(cat "$TMP/hook.err")"
+has "hook: a visible note for the hand-issued codes" "codes Q11, Q12 were written without credo-code-next.sh - counter reconciled; always call it before writing a code" "$(printf '%s' "$HOUT" | jq -r '.systemMessage')"
+check "hook: counter raised to Q12 only (owner quote, tool result, older turn ignored)" "$(printf 'T 0\nQ 12\nV 0')" "$(cat "$CREDO_DIR/code-counters")"
+has "hook: the note is queued for the agent" "codes Q11, Q12" "$(cat "$CREDO_CODE_TOPICS_DIR/sid-a.note")"
+POUT="$(printf '{"session_id":"sid-a","prompt":"hi"}' | "$HOOK" prompt)"
+has "hook prompt: the queued note reaches the agent as context" "always call it before writing a code" "$(printf '%s' "$POUT" | jq -r '.hookSpecificOutput.additionalContext')"
+check "hook prompt: UserPromptSubmit event name" "UserPromptSubmit" "$(printf '%s' "$POUT" | jq -r '.hookSpecificOutput.hookEventName')"
+check "hook prompt: the note is consumed" "no" "$([ -e "$CREDO_CODE_TOPICS_DIR/sid-a.note" ] && echo yes || echo no)"
+check "hook prompt: nothing queued -> no output" "" "$(printf '{"session_id":"sid-a","prompt":"hi"}' | "$HOOK" prompt)"
+HOUT="$(hook_input sid-a "### $QMARK Q12 $DOT second topic" | "$HOOK" stop 2>&1)"
+check "hook: the same reply again -> silent" "" "$HOUT"
+
+# reused code with a different topic: noted once per code and session
+: > "$TRANS"
+HOUT="$(hook_input sid-a "### $QMARK Q11 $DOT a completely other thing" | "$HOOK" stop 2>&1)"
+has "hook: a code shown again with another topic is noted" "code Q11 was shown earlier in this session with a different topic" "$(printf '%s' "$HOUT" | jq -r '.systemMessage')"
+HOUT="$(hook_input sid-a "### $QMARK Q11 $DOT yet another thing" | "$HOOK" stop 2>&1)"
+check "hook: the reuse note comes only once per code" "" "$HOUT"
+HOUT="$(hook_input sid-a "### $QMARK Q12 $DOT second topic, extended [blocking]" | "$HOOK" stop 2>&1)"
+check "hook: an extended title of the same topic is no reuse" "" "$HOUT"
+HOUT="$(hook_input sid-b "### $QMARK Q11 $DOT a third thing" | "$HOOK" stop 2>&1)"
+check "hook: the topic map is per session" "" "$HOUT"
+
+# fail open
+check "hook: no session id -> no output" "" "$(printf '{"last_assistant_message":"### x Q99 %s t"}' "$DOT" | "$HOOK" stop 2>&1)"
+check "hook: garbage input -> no output, exit 0" "0:" "$(printf 'not json' | "$HOOK" stop >"$TMP/g.out" 2>&1; echo "$?:$(cat "$TMP/g.out")")"
+check "hook: unknown mode -> no output" "" "$(hook_input sid-a "### $QMARK Q50 $DOT x" | "$HOOK" bogus 2>&1)"
+check "hook: a broken code-next fails open" "0:" "$(hook_input sid-c "### $QMARK Q60 $DOT x" | CREDO_CODE_NEXT=/nonexistent "$HOOK" stop >"$TMP/b.out" 2>&1; echo "$?:$(cat "$TMP/b.out")")"
+check "hook: a missing transcript still scans the last message" "yes" "$(jq -n -c --arg m "### $QMARK Q70 $DOT x" '{session_id:"sid-d",transcript_path:"/nonexistent",last_assistant_message:$m}' | "$HOOK" stop >/dev/null 2>&1; grep -qx 'Q 70' "$CREDO_DIR/code-counters" && echo yes || echo no)"
+
 echo "test-credo-code-next: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
