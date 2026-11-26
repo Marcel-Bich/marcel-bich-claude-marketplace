@@ -16,6 +16,23 @@
 # as well; a repo's .credo/RULES.md can switch that default off. A stage without
 # attempts counts as until-done and may only be the last stage.
 # A missing prompt key adds nothing; there is no hidden default text.
+#
+#   max, min           {model, effort}: hard limits for every subagent spawn of the
+#                      preset. Without them the preset-limits defaults below apply.
+#
+# Limits: a spawn above the max pair or below the min pair is denied by the spawn
+# guard; no preset exception or continue rule lifts that. Cost order of a pair:
+# model first (haiku < sonnet < opus < fable), then effort (low < medium < high <
+# xhigh < max), so haiku/xhigh is cheaper than opus/medium. A rung above the max
+# uses the max pair (credo-preset.sh warns). The defaults hold for every preset
+# that sets no own max/min; override them per layer under preset-limits: or per
+# preset with max:/min:.
+preset-limits:
+  max:
+    model: claude-opus-5-5
+    effort: medium
+  # min: unset by default (the main agent decides within the preset)
+
 presets:
   quality:
     universal-prompt: "Read the source (rules, skill, code, tests) before you decide or change anything - never answer a rule question from memory or a handoff."

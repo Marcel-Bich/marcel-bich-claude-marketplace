@@ -17,7 +17,13 @@
 #   credo-preset.sh active          the active preset name
 #
 # stage fields:    preset role attempt stage model alias effort attempts action next
-#                  next-model next-effort note prompt
+#                  next-model next-effort note max min prompt
+#
+# Limits: every preset has a hard max pair (its own max:, else preset-limits.max,
+# built-in claude-opus-5-5/medium) and an optional min pair (its own min:, else
+# preset-limits.min, built-in unset). Cost order of a pair: model first
+# (haiku < sonnet < opus), then effort. A rung above the max (or below the min) warns
+# and that rung uses the max (or min) pair; a min above the max warns and is dropped.
 # mainagent fields: preset model alias effort prompt
 # Without --field: key: value lines, the prompt last (text on the following lines).
 # With --field: only that value (for shell use).
@@ -86,7 +92,9 @@ CREDO_PRESETS_JSON="$("$CFG" get presets 2>/dev/null)" || CREDO_PRESETS_JSON="{}
 CREDO_ACTIVE_RAW="$("$CFG" get preset 2>/dev/null)" || CREDO_ACTIVE_RAW=""
 CREDO_BUILTIN_PRESETS_JSON="$(CREDO_GLOBAL=/nonexistent CREDO_PROFILE=/nonexistent CREDO_PROJECT=/nonexistent \
     "$CFG" get presets 2>/dev/null)" || CREDO_BUILTIN_PRESETS_JSON="{}"
-export CREDO_PRESETS_JSON CREDO_ACTIVE_RAW CREDO_BUILTIN_PRESETS_JSON
+# default max/min pairs for every preset (builtin preset-limits, overridable per layer)
+CREDO_LIMITS_JSON="$("$CFG" get preset-limits 2>/dev/null)" || CREDO_LIMITS_JSON="{}"
+export CREDO_PRESETS_JSON CREDO_ACTIVE_RAW CREDO_BUILTIN_PRESETS_JSON CREDO_LIMITS_JSON
 
 exec "$CREDO_PYTHON" -I - "$FIELD" "${ARGS[@]}" <<'PY'
 import json
@@ -94,14 +102,17 @@ import os
 import sys
 
 ROLES = ("explore", "build", "review", "hard")
-PRESET_KEYS = ("universal-prompt", "mainagent") + ROLES
+PRESET_KEYS = ("universal-prompt", "mainagent", "max", "min") + ROLES
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 MODELS = {"claude-haiku-5-5": "haiku", "claude-opus-5-5": "opus", "claude-sonnet-5-5": "sonnet"}
+RANK = {"haiku": 1, "sonnet": 2, "opus": 3}  # cost order of a pair: model first, then effort
+# fallback when preset-limits.max is missing or invalid (same as templates/presets.default.yaml)
+DEFAULT_MAX = {"model": "claude-opus-5-5", "effort": "medium"}
 STAGE_KEYS = ("model", "effort", "attempts", "subagent-prompt")
 UNTIL = "until-done"
 DEFAULT = "balanced"
 STAGE_FIELDS = ("preset", "role", "attempt", "stage", "model", "alias", "effort", "attempts",
-                "action", "next", "next-model", "next-effort", "note", "prompt")
+                "action", "next", "next-model", "next-effort", "note", "max", "min", "prompt")
 MAIN_FIELDS = ("preset", "model", "alias", "effort", "prompt")
 
 WARNED = set()
@@ -224,6 +235,74 @@ def parse_main(value, pname):
             "prompt": check_prompt(value.get("mainagent-prompt"), "mainagent-prompt")}
 
 
+def pair_key(pair):
+    """Cost order of a pair: model first (haiku < sonnet < opus), then effort."""
+    return (RANK[MODELS[pair["model"]]], EFFORTS.index(pair["effort"]))
+
+
+def pair_text(pair, sep="/"):
+    return "%s%s%s" % (pair["model"], sep, pair["effort"]) if pair else ""
+
+
+def parse_pair(value, where):
+    if not isinstance(value, dict):
+        raise RoleError("%s must be a mapping with model and effort" % where)
+    check_model(value.get("model"), where)
+    check_effort(value.get("effort"), where)
+    return {"model": value["model"], "effort": value["effort"]}
+
+
+def resolve_limits(name, pdef):
+    """{'max': pair, 'min': pair or None}. A preset's own max:/min: wins over the
+    preset-limits default (built-in: max opus/medium, no min). The max can never be
+    removed: a missing or invalid max falls back to the built-in default."""
+    defaults = load_json("CREDO_LIMITS_JSON")
+    out = {}
+    for key in ("max", "min"):
+        if key in pdef:
+            raw, where = pdef[key], "%s of preset '%s'" % (key, name)
+        else:
+            raw, where = defaults.get(key), "preset-limits.%s" % key
+        pair = None
+        if raw is not None and raw != "":
+            try:
+                pair = parse_pair(raw, where)
+            except RoleError as exc:
+                warn("%s - %s" % (exc, "using the built-in max %s" % pair_text(DEFAULT_MAX)
+                                  if key == "max" else "no min used"))
+        if key == "max" and pair is None:
+            pair = dict(DEFAULT_MAX)
+        out[key] = pair
+    if out["min"] and pair_key(out["min"]) > pair_key(out["max"]):
+        warn("min %s of preset '%s' lies above its max %s - no min used"
+             % (pair_text(out["min"]), name, pair_text(out["max"])))
+        out["min"] = None
+    return out
+
+
+def clamp_roles(roles, limits, name):
+    """A rung above the max is served by the max pair, a rung below the min by the min
+    pair (with a warning); the guard never allows a spawn outside max and min."""
+    out = {}
+    for role in ROLES:
+        stages = []
+        for index, stage in enumerate(roles[role]["stages"]):
+            bound, side = None, ""
+            if pair_key(stage) > pair_key(limits["max"]):
+                bound, side = limits["max"], "above the max"
+            elif limits["min"] and pair_key(stage) < pair_key(limits["min"]):
+                bound, side = limits["min"], "below the min"
+            if bound:
+                warn("role %s stage %d of preset '%s' (%s) lies %s %s - that rung uses %s"
+                     % (role, index + 1, name, pair_text(stage), side, pair_text(bound),
+                        pair_text(bound)))
+                stage = dict(stage, model=bound["model"], effort=bound["effort"],
+                             capped="%s, %s %s" % (pair_text(stage), side, pair_text(bound)))
+            stages.append(stage)
+        out[role] = {"stages": stages, "terminal": roles[role]["terminal"]}
+    return out
+
+
 def builtin_base(builtin):
     balanced = builtin.get(DEFAULT)
     if not isinstance(balanced, dict):
@@ -266,7 +345,9 @@ def resolve(name, pdef, base):
         except RoleError as exc:
             warn("%s - using balanced for %s" % (exc, role))
             roles[role] = base["roles"][role]
-    return {"name": name, "universal": universal, "main": main, "roles": roles}
+    limits = resolve_limits(name, pdef)
+    return {"name": name, "universal": universal, "main": main,
+            "roles": clamp_roles(roles, limits, name), "limits": limits}
 
 
 def effective():
@@ -302,7 +383,8 @@ def stage_values(eff, role, n):
     index, k = locate(stages, n)
     values = {"preset": eff["name"], "role": role, "attempt": str(n), "model": "", "alias": "",
               "effort": "", "attempts": "", "next": "back-to-human", "next-model": "",
-              "next-effort": "", "note": "", "prompt": ""}
+              "next-effort": "", "note": "", "max": pair_text(eff["limits"]["max"]),
+              "min": pair_text(eff["limits"]["min"]), "prompt": ""}
     if index is None:
         values.update({"stage": "exhausted", "action": "back-to-human",
                        "note": "the chain has no attempt left - hand the item back to the human"})
@@ -325,6 +407,10 @@ def stage_values(eff, role, n):
         values.update({"next": "next-stage", "next-model": nxt["model"], "next-effort": nxt["effort"]})
     else:
         values["note"] = "last attempt of the chain - a failure hands the item back to the human"
+    if stage.get("capped"):
+        values["note"] = "; ".join(x for x in (
+            "the preset sets %s - this rung uses the limit pair" % stage["capped"],
+            values["note"]) if x)
     return values
 
 
@@ -370,11 +456,17 @@ def show(name_arg):
     out.append("mainagent: %s / %s (recommendation only)" % (main["model"], main["effort"]))
     if main["prompt"]:
         out.append("  mainagent-prompt: %s" % main["prompt"])
+    limits = eff["limits"]
+    out.append("max: %s (hard limit for every spawn)" % pair_text(limits["max"], " / "))
+    out.append("min: %s" % ("%s (hard limit for every spawn)" % pair_text(limits["min"], " / ")
+                            if limits["min"] else "(none)"))
     for role in ROLES:
         out.append("%s:" % role)
         for index, stage in enumerate(eff["roles"][role]["stages"]):
             attempts = "until-done" if stage["attempts"] == UNTIL else "%d" % stage["attempts"]
             out.append("  %d. %s / %s, attempts %s" % (index + 1, stage["model"], stage["effort"], attempts))
+            if stage.get("capped"):
+                out.append("     capped: the preset sets %s" % stage["capped"])
             if stage["subagent"]:
                 out.append("     subagent-prompt: %s" % stage["subagent"])
         if eff["roles"][role]["terminal"]:
