@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # credo-agent-spawn-check.sh - credo plugin (PreToolUse hook on Agent and Task).
 #
-# Purpose: enforce the active model preset as a minimum on every spawn. A tag
+# Purpose: enforce the active model preset on every spawn. A tag
 # [credo-role: <role>#<attempt>] selects exactly the rung of that attempt; a multi-rung
 # role without attempt and a back-to-human attempt without an owner rule (preset continue
 # or preset exception) are denied. Untagged: Explore/Plan -> explore attempt 1; any other
-# type -> any rung of build, review and hard. A spawn below its rung is DENIED with role,
-# attempt, expected rung, chosen pair and the exact fix. Missing model or
-# effort is a mismatch. An equal pair passes; a stronger pair passes with a visible
-# "stronger than preset" line. A fork passes only when the parent's model is >= a fitting
-# rung model. A weaker pair only via a "preset exception:" line in .credo/RULES.md or a
-# valid owner rule with an until date in the handoff "## Rules (temporary)". No preset
-# configured -> no check.
+# type -> any rung of build, review and hard. A pair the rung allows passes; a pair above
+# every pair of the rung passes with a visible "stronger than preset" line; a pair below
+# or between the allowed pairs is DENIED with role, attempt, expected rung, chosen pair
+# and the exact fix. The spawn limits are hard: above max-allowed, below min-allowed or a
+# blocked forbidden model is denied (a forbidden model with action warn passes with a
+# visible line). Missing model or effort is a mismatch. A fork is denied above the
+# max-allowed model; the same model passes with "fork effort not checkable". A cheaper
+# pair only via a "preset exception:" line in .credo/RULES.md or a valid owner rule with
+# an until date in the handoff "## Rules (temporary)". No preset configured -> no check.
 #
 # The decision lives in scripts/credo-preset-guard.py (see its docstring for the format).
 # Internal errors fail open with a logged warning. Owner kill switch:

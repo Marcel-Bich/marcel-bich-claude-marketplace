@@ -545,7 +545,7 @@ require the naming rule. See the credo `verify` skill for the full evidence and 
 
 Subagent model and effort come from the active preset, chosen by config, not by ad-hoc
 judgment. Select it with `preset: <name>` in the credo config (project overrides global;
-unset means `balanced`). Built-in presets: `quality`, `balanced`, `budget`. Custom presets
+unset means `balanced`). Built-in presets: `budget`, `balanced`, `quality`. Custom presets
 live under `presets:` and may use any model. Show the active one in full with
 `"${CLAUDE_PLUGIN_ROOT}/scripts/credo-preset.sh" show`.
 
@@ -577,7 +577,7 @@ Per spawn:
 4. `action: back-to-human` means the chain is used up: do not spawn; hand the item back (below).
 
 The credo `PreToolUse` hook on Agent and Task calls (`hooks/credo-agent-spawn-check.sh`)
-enforces the preset as a minimum. With a `[credo-role: <role>#<attempt>]` tag it checks exactly
+enforces the preset. With a `[credo-role: <role>#<attempt>]` tag it checks exactly
 the rung of that attempt (a pair that only matches an earlier rung is denied); a tag without
 attempt on a role with more than one rung is denied with the attempt -> rung map and an example
 tag; an untagged read-only type (Explore, Plan, web-fetch, claude-code-guide,
@@ -588,15 +588,22 @@ and a deny gives the exact fix (e.g. `pass model: opus, effort: medium, tag
 [credo-role: review#3]`). An attempt past the last rung (back-to-human) is denied: the owner
 decides; only an owner rule lets it continue (`preset continue: <role>` on the last rung, or a
 `preset exception:` pair for that role), with a visible "continuing per owner rule" line to
-report. Model and effort must both reach the rung (a stronger model does not make
-up for a lower effort). An equal or stronger pair passes
-(model haiku < sonnet < opus < fable, effort low < medium < high < xhigh < max); a stronger
-one adds a visible line `stronger than preset: <model>/<effort> vs <rung>` - report it to the
-owner. A `fork` passes only when your own model is at least a fitting rung model; otherwise
-spawn a regular subagent with model and effort. A weaker pair needs a `preset exception:`
-line in `.credo/RULES.md` or a valid owner rule with an until date in the handoff
-`## Rules (temporary)` (format in the credo guide, "Model presets"). On a deny, run the stage
-helper and retry with its alias and effort; never work around the hook.
+report. A rung allows a set of pairs (fixed, `any`, a from-to range or `allowed-pairs`; the
+stage helper prints the cheapest as `model`/`effort` and the whole set as `allowed` - any
+allowed pair is fine, pick by the task). Pairs are ordered model first, then effort (haiku <
+sonnet < opus < fable, then low < medium < high < xhigh < max), so Opus/medium is above a
+Haiku/xhigh rung. A pair above every pair of the rung passes with a visible line
+`stronger than preset: <model>/<effort> vs <rung>` - report it to the owner; a pair between
+`allowed-pairs` entries is denied. The spawn limits are hard and win over every exception:
+never above `max-allowed` (default Opus/medium), never below `min-allowed`, never a
+`forbidden-models` pair with action `block` (with `warn` it passes with a visible line to
+report); the helper's `min-allowed`, `max-allowed` and `forbidden` fields show them. A `fork`
+is denied when your own model is above the max-allowed model; with the same model it passes
+with a visible "fork effort not checkable" note - fork only when your own effort is within
+max-allowed, else spawn a regular subagent with model and effort. A cheaper pair needs a
+`preset exception:` line in `.credo/RULES.md` or a valid owner rule with an until date in the
+handoff `## Rules (temporary)` (format in the credo guide, "Model presets"). On a deny, run
+the stage helper and retry with its alias and effort; never work around the hook.
 
 A failed attempt is a red gate: tests red, the done-gate red, an audit FAIL, or the subagent
 reports itself stuck. The next attempt gets the findings (file:line, failing test, audit

@@ -1,43 +1,86 @@
 # credo built-in model presets. Read by credo-config.sh as a builtin layer
-# (key presets:) and by credo-preset.sh. Select one with preset: <name> in the
-# global or project config; write your own under presets: there. A custom preset
-# with the same name as a built-in one replaces it completely.
+# (keys default-spawn-limits: and presets:) and by credo-preset.sh. Select one with
+# preset: <name> in the global or project config; write your own under presets:
+# there. A custom preset with the same name as a built-in one replaces it completely.
 #
 # Fields per preset:
+#   extends            optional: the name of one base preset (built-in or custom,
+#                      chains allowed). A role set here replaces the base role whole;
+#                      mainagent merges field by field; universal-prompt replaces;
+#                      spawn-limits min-allowed, max-allowed and forbidden-action
+#                      replace, forbidden-models are added to the base's.
 #   universal-prompt   text for every agent (main agent and all subagents)
 #   mainagent          {model, effort, mainagent-prompt}: a recommendation only,
 #                      it does not change your own /model and /effort
+#   spawn-limits       optional, see "Spawn limits" below
 #   explore, build, review, hard
-#                      one stage {model, effort, attempts, subagent-prompt}, or a
-#                      chain (a list) of stages that may end with back-to-human
+#                      one stage (rung) or a chain (a list) of stages that may end
+#                      with back-to-human
 #
-# attempts: a positive integer, or until-done (no attempt cap: budget caps stop
-# it). By default the same failure twice without progress is an early hand-back
-# as well; a repo's .credo/RULES.md can switch that default off. A stage without
-# attempts counts as until-done and may only be the last stage.
+# Fields per stage:
+#   model              a model id, any, or a range { from: <id>, to: <id> }
+#   effort             an effort, any, or a range { from: <effort>, to: <effort> };
+#                      model: any implies effort: any unless effort is given
+#   allowed-pairs      instead of model/effort: a list of model/effort entries (each
+#                      with the same value forms); only these combinations are
+#                      allowed, nothing in between
+#   attempts           a positive integer (failed tries of the role on the item), or
+#                      until-done (no attempt cap: budget caps stop it). A stage
+#                      without attempts counts as until-done and may only be the last.
+#   subagent-prompt    text for the subagents of this stage
+# By default the same failure twice without progress is an early hand-back as well;
+# a repo's .credo/RULES.md can switch that default off.
 # A missing prompt key adds nothing; there is no hidden default text.
+#
+# Spawn limits (hard, for every subagent spawn; no preset exception or continue
+# rule lifts them):
+#   min-allowed        {model, effort}: nothing cheaper (leave it out when unset)
+#   max-allowed        {model, effort}: nothing more expensive
+#   forbidden-models   entries {model, effort (optional, default any), roles
+#                      (optional list, default all roles), action (optional)}
+#   forbidden-action   warn (allow with a visible note) or block (deny); default block
+# Cost order of a pair: model first (haiku < sonnet < opus < fable), then effort
+# (low < medium < high < xhigh < max), so haiku/xhigh is cheaper than opus/medium.
+# default-spawn-limits apply to every preset. A preset's own spawn-limits replace
+# min-allowed, max-allowed and forbidden-action and add their forbidden-models
+# entries. Every config layer can override default-spawn-limits key by key (e.g.
+# forbidden-action: block in your own config).
+default-spawn-limits:
+  max-allowed:
+    model: claude-opus-5-5
+    effort: medium
+  forbidden-models:
+    - model: claude-sonnet-5-5
+  forbidden-action: warn
+
 presets:
-  quality:
-    universal-prompt: "Read the source (rules, skill, code, tests) before you decide or change anything - never answer a rule question from memory or a handoff."
+  budget:
+    universal-prompt: "Read the source (rules, skill, code, tests) before you decide or change anything - never answer a rule question from memory or a handoff. Save tokens without lowering quality: keep reports short, do not re-read files you already have."
     mainagent:
-      model: claude-opus-5-5
-      effort: medium
-      mainagent-prompt: "Build everything as well as at all possible. When you decide an open question yourself (an agent-owned clarify item in an autonomous run, or a build-time detail of a GO item), decide in this order: 1. SOTA - the best solution known today; 2. else best effort; 3. else note it and present it to the user later. Size or effort is never a reason against a solution: feasible = GO."
-    explore:
       model: claude-haiku-5-5
       effort: xhigh
+      mainagent-prompt: "Build everything as well as at all possible. When you decide an open question yourself (an agent-owned clarify item in an autonomous run, or a build-time detail of a GO item), decide in this order: 1. SOTA - the best solution known today; 2. else best effort; 3. else note it and present it to the user later. Size or effort is never a reason against a solution: feasible = GO. Delegate searches to the explore stage."
+    explore:
+      model: claude-haiku-5-5
+      effort: { from: low, to: high }
       subagent-prompt: "Locate only: return file:line findings and short facts. No fixes, no long excerpts."
     build:
-      model: claude-opus-5-5
-      effort: medium
+      model: claude-haiku-5-5
+      effort: xhigh
       subagent-prompt: "If the project has tests, write the failing test first. Report what you changed (file:line) and the test result."
     review:
-      model: claude-opus-5-5
-      effort: medium
-      subagent-prompt: "Review against the verbatim requirement. Report each finding as file:line - severity - concrete failure scenario, then PASS or FAIL. Report nits too: fix them where possible, unless that causes too much work or refactoring."
+      model: claude-haiku-5-5
+      effort: { from: medium, to: xhigh }
+      subagent-prompt: "Review against the verbatim requirement. Report each finding as file:line - severity - concrete failure scenario, then PASS or FAIL. No praise, no nits in general unless they change meaning."
     hard:
-      model: claude-opus-5-5
-      effort: medium
+      - model: claude-haiku-5-5
+        effort: xhigh
+        attempts: 3
+      - model: claude-opus-5-5
+        effort: medium
+        attempts: 1
+        subagent-prompt: "Earlier attempts failed. Read their findings first and do not repeat the same approach."
+      - back-to-human
 
   balanced:
     universal-prompt: "Read the source (rules, skill, code, tests) before you decide or change anything - never answer a rule question from memory or a handoff."
@@ -47,12 +90,24 @@ presets:
       mainagent-prompt: "Build everything as well as at all possible. When you decide an open question yourself (an agent-owned clarify item in an autonomous run, or a build-time detail of a GO item), decide in this order: 1. SOTA - the best solution known today; 2. else best effort; 3. else note it and present it to the user later. Size or effort is never a reason against a solution: feasible = GO."
     explore:
       model: claude-haiku-5-5
-      effort: low
+      effort: { from: low, to: xhigh }
       subagent-prompt: "Locate only: return file:line findings and short facts. No fixes, no long excerpts."
     build:
-      model: claude-haiku-5-5
-      effort: xhigh
-      subagent-prompt: "If the project has tests, write the failing test first. Report what you changed (file:line) and the test result."
+      - model: claude-haiku-5-5
+        effort: xhigh
+        attempts: 4
+        subagent-prompt: "If the project has tests, write the failing test first. Report what you changed (file:line) and the test result."
+      - model: claude-opus-5-5
+        effort: medium
+        attempts: 2
+        subagent-prompt: "If the project has tests, write the failing test first. Report what you changed (file:line) and the test result."
+      - model: claude-haiku-5-5
+        effort: xhigh
+        attempts: 4
+        subagent-prompt: "If the project has tests, write the failing test first. Report what you changed (file:line) and the test result."
+      - model: claude-opus-5-5
+        effort: medium
+        subagent-prompt: "If the project has tests, write the failing test first. Report what you changed (file:line) and the test result."
     review:
       model: claude-haiku-5-5
       effort: xhigh
@@ -67,30 +122,31 @@ presets:
         subagent-prompt: "Earlier attempts failed. Read their findings first and do not repeat the same approach."
       - back-to-human
 
-  budget:
-    universal-prompt: "Read the source (rules, skill, code, tests) before you decide or change anything - never answer a rule question from memory or a handoff. Save tokens without lowering quality: keep reports short, do not re-read files you already have."
+  quality:
+    universal-prompt: "Read the source (rules, skill, code, tests) before you decide or change anything - never answer a rule question from memory or a handoff."
+    spawn-limits:
+      min-allowed:
+        model: claude-haiku-5-5
+        effort: xhigh
     mainagent:
-      model: claude-haiku-5-5
-      effort: xhigh
-      mainagent-prompt: "Build everything as well as at all possible. When you decide an open question yourself (an agent-owned clarify item in an autonomous run, or a build-time detail of a GO item), decide in this order: 1. SOTA - the best solution known today; 2. else best effort; 3. else note it and present it to the user later. Size or effort is never a reason against a solution: feasible = GO. Delegate searches to the explore stage."
+      model: claude-opus-5-5
+      effort: medium
+      mainagent-prompt: "Build everything as well as at all possible. When you decide an open question yourself (an agent-owned clarify item in an autonomous run, or a build-time detail of a GO item), decide in this order: 1. SOTA - the best solution known today; 2. else best effort; 3. else note it and present it to the user later. Size or effort is never a reason against a solution: feasible = GO."
     explore:
-      model: claude-haiku-5-5
-      effort: low
+      allowed-pairs:
+        - model: claude-haiku-5-5
+          effort: xhigh
+        - model: claude-opus-5-5
+          effort: medium
       subagent-prompt: "Locate only: return file:line findings and short facts. No fixes, no long excerpts."
     build:
-      model: claude-haiku-5-5
-      effort: xhigh
+      model: claude-opus-5-5
+      effort: medium
       subagent-prompt: "If the project has tests, write the failing test first. Report what you changed (file:line) and the test result."
     review:
-      model: claude-haiku-5-5
-      effort: xhigh
-      subagent-prompt: "Review against the verbatim requirement. Report each finding as file:line - severity - concrete failure scenario, then PASS or FAIL. No praise, no nits in general unless they change meaning."
+      model: claude-opus-5-5
+      effort: medium
+      subagent-prompt: "Review against the verbatim requirement. Report each finding as file:line - severity - concrete failure scenario, then PASS or FAIL. Report nits too: fix them where possible, unless that causes too much work or refactoring."
     hard:
-      - model: claude-haiku-5-5
-        effort: xhigh
-        attempts: 3
-      - model: claude-opus-5-5
-        effort: medium
-        attempts: 1
-        subagent-prompt: "Earlier attempts failed. Read their findings first and do not repeat the same approach."
-      - back-to-human
+      model: claude-opus-5-5
+      effort: medium
