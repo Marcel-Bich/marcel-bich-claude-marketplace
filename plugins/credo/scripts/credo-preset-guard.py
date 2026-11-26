@@ -6,16 +6,19 @@ input on stdin. Prints a hook decision JSON (or nothing) and always exits 0.
 
 Rules:
 - No preset configured (no `preset:` key in any config layer) -> no check.
-- Deny only BELOW the preset (owner decision Q425). Role and attempt travel in a tag in the
-  description or prompt: [credo-role: <role>#<attempt>] (e.g. [credo-role: review#3]).
+- The preset comes from `credo-preset.sh json`: per role a chain of rungs, each with the
+  set of allowed pairs (model/effort fixed, any, from-to ranges or allowed-pairs), plus the
+  spawn limits min-allowed, max-allowed and forbidden-models (action warn or block).
+- Role and attempt travel in a tag in the description or prompt:
+  [credo-role: <role>#<attempt>] (e.g. [credo-role: review#3]).
     tag with attempt              -> exactly the rung that serves this attempt of the role
                                      (same mapping as credo-preset.sh stage <role> <attempt>);
                                      an attempt past the last rung is back-to-human -> deny, the
                                      owner decides now, UNLESS an owner rule allows continuing:
-                                     a preset exception for the role (pair >= that pair) or a
-                                     preset continue line for the role (pair >= the LAST real
-                                     rung); both pass with a visible "continuing per owner rule"
-                                     line; a non-numeric or 0 attempt -> deny;
+                                     a preset exception for the role or a preset continue line
+                                     for the role (then the LAST real rung counts); both pass
+                                     with a visible "continuing per owner rule" line; a
+                                     non-numeric or 0 attempt -> deny;
     tag without attempt           -> a role with one rung: that rung (the attempt is
                                      optional); more than one rung -> deny with the
                                      attempt -> rung map and an example tag;
@@ -23,32 +26,30 @@ Rules:
     without a tag                 -> explore, attempt 1;
     any other type without a tag  -> ANY rung of the build, review and hard roles (the role
                                      is unknown; the ok line asks for the tag).
-  Cost order of a pair (#216): model first (haiku < sonnet < opus < fable), then effort
-  (low < medium < high < xhigh < max). A pair satisfies a rung when its model is stronger
-  (any effort) or the same model with an equal or higher effort, so opus/medium satisfies
-  a haiku/xhigh rung.
-- Hard limits (#216): every preset has a max pair (`max:` line of credo-preset.sh show,
-  built-in default opus/medium) and an optional min pair. A spawn above the max or below
-  the min is denied; no preset exception or continue rule lifts that, and exception pairs
-  outside the limits are ignored. A rung outside the limits is served by the limit pair
-  (credo-preset.sh warns about it). An exact rung match gets a short "ok" context line
-  naming role, attempt, expected rung and chosen pair; a stronger spawn within the max
-  passes with a visible line "stronger than preset: <model>/<effort> vs <rung>"
-  (context + systemMessage) for the main agent to report. A deny names role, attempt,
-  expected rung, chosen pair, the max/min, the cheapest allowed pair and the exact fix
-  (model, effort, tag).
+- A pair in the rung's allowed set passes with a short "ok" context line. A pair above
+  every pair of the rung (cost order: model first, haiku < sonnet < opus < fable, then
+  effort, low < medium < high < xhigh < max) passes with a visible line "stronger than
+  preset: <model>/<effort> vs <rung>" (context + systemMessage) for the main agent to
+  report (owner decision Q425a). A pair below the rung or between its allowed pairs is
+  denied (allowed-pairs allow nothing in between).
+- Spawn limits (#216) are hard and win over everything, also over preset exception and
+  continue rules: a pair above max-allowed or below min-allowed is denied; a pair matching
+  a forbidden-models entry for the role is denied (action block) or passes with a visible
+  "forbidden model (warn)" line (action warn). Exception pairs outside the limits or
+  blocked grant nothing.
+- A deny names role, attempt, expected rung, chosen pair, the spawn limits, the cheapest
+  allowed pair and the exact fix (model, effort, tag), the lookup command (absolute path of
+  credo-preset.sh) and how to declare the role.
 - Missing model is a mismatch (the agent definition's or the parent's model cannot be
-  checked); missing effort is a mismatch (every rung defines one); an unknown model or
-  effort cannot be ranked and is a mismatch. Model ids are normalised (context suffix like
-  [1m], Bedrock/Vertex prefixes like us.anthropic., version suffixes like -v1:0, full ids
-  claude-<name>-x-y). A mismatch or a weaker pair is denied with the minimum pairs, the
-  lookup command (absolute path of credo-preset.sh) and how to declare the role.
+  checked); missing effort is a mismatch; an unknown model or effort cannot be ranked and is
+  a mismatch. Model ids are normalised (context suffix like [1m], Bedrock/Vertex prefixes
+  like us.anthropic., version suffixes like -v1:0, full ids claude-<name>-x-y).
 - subagent_type "fork" inherits the parent's model and effort (a model on the call is
-  ignored). It passes only when the parent's model (last assistant model in the parent
-  transcript) is >= the model of a fitting rung, not above the max model and not below the
-  min model; the inherited effort cannot be read and is not checked. Otherwise it is denied with the hint to spawn a regular subagent with model
-  and effort.
-- Exceptions add pairs that count like rungs (so they may allow a weaker pair), one per
+  ignored). Owner decision Q429 B: denied when the parent's model (last assistant model in
+  the parent transcript) is above the max-allowed model, or below every rung model, or
+  blocked for every effort by forbidden-models; the same model as max-allowed passes with a
+  visible note "fork effort not checkable" (the inherited effort cannot be read).
+- Exceptions add pairs that count like rungs (so they may allow a cheaper pair), one per
   line, in this format:
       preset exception: <scope> -> <model>/<effort>[, <model>/<effort> ...]
   scope: all, or one or more roles (explore, build, review, hard) separated by commas.
@@ -93,12 +94,11 @@ ROLES = ("explore", "build", "review", "hard")
 EXPLORE_TYPES = ("Explore", "Plan", "web-fetch", "claude-code-guide")
 EXPLORE_SUFFIXES = (":cavecrew-investigator", "cavecrew-investigator")
 BUILD_ROLES = ("build", "review", "hard")
-EFFORTS = ("low", "medium", "high", "xhigh", "max")  # ascending strength
-MODEL_RANK = {"haiku": 1, "sonnet": 2, "opus": 3, "fable": 4}  # ascending strength
-DEFAULT_MAX = ("opus", "medium")  # when the preset dump has no max line (built-in default)
-ORDER = ("Order of a pair: model first (haiku < sonnet < opus < fable), then effort (low < "
-         "medium < high < xhigh < max); a stronger model satisfies a rung at any effort, the "
-         "same model needs an equal or higher effort")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")  # ascending cost
+MODEL_RANK = {"haiku": 1, "sonnet": 2, "opus": 3, "fable": 4}  # ascending cost
+DEFAULT_MAX = ("opus", "medium")  # when the preset dump has no max (built-in default)
+ORDER = ("Cost order of a pair: model first (haiku < sonnet < opus < fable), then effort (low "
+         "< medium < high < xhigh < max)")
 LOOKUP = "bash %s stage <role> <attempt>" % PRESET_SH
 # [credo-role: <role>] or [credo-role: <role>#<attempt>]; group 2 is the raw attempt (validated later)
 ROLE_TAG_RE = re.compile(r"\[credo-role:\s*(explore|build|review|hard)\s*(?:#\s*([^\]\s]*)\s*)?\]", re.I)
@@ -181,44 +181,6 @@ def preset_configured():
     return run(["bash", CONFIG_SH, "get", "preset"]).strip() != ""
 
 
-def read_ladder():
-    """{'name': str, 'roles': {role: [(alias, effort, attempts), ...]}, 'back': {role: bool},
-    'max': (alias, effort), 'min': (alias, effort) or None}. Rungs outside the limits are
-    served by the limit pair (credo-preset.sh show already does this; repeated here)."""
-    if not os.path.isfile(PRESET_SH):
-        raise GuardError("credo-preset.sh missing")
-    out = run(["bash", PRESET_SH, "show"])
-    name, role = "", None
-    roles = {r: [] for r in ROLES}
-    back = {r: False for r in ROLES}
-    limits = {"max": DEFAULT_MAX, "min": None}
-    for line in out.splitlines():
-        if line.startswith("preset: "):
-            name = line.split()[1]
-            continue
-        m = re.match(r"^(max|min): (claude-\S+) / (\w+)", line)
-        if m and role is None:
-            pair = (alias_of(m.group(2)), m.group(3))
-            if valid(pair):
-                limits[m.group(1)] = pair
-            continue
-        if line.rstrip(":") in ROLES and line.endswith(":"):
-            role = line[:-1]
-            continue
-        m = re.match(r"^  \d+\. (claude-\S+) / (\w+), attempts (\S+)$", line)
-        if m and role:
-            roles[role].append((alias_of(m.group(1)), m.group(2), m.group(3)))
-        elif role and re.match(r"^  \d+\. back-to-human$", line):
-            back[role] = True
-    if not name or not any(roles.values()):
-        raise GuardError("cannot parse the preset (credo-preset.sh show)")
-    if limits["min"] and cost(limits["min"]) > cost(limits["max"]):
-        limits["min"] = None
-    for r in ROLES:
-        roles[r] = [clamp((a, e), limits) + (n,) for a, e, n in roles[r]]
-    return {"name": name, "roles": roles, "back": back, "max": limits["max"], "min": limits["min"]}
-
-
 def valid(pair):
     return pair[0] in MODEL_RANK and pair[1] in EFFORTS
 
@@ -228,39 +190,77 @@ def cost(pair):
     return (MODEL_RANK[pair[0]], EFFORTS.index(pair[1]))
 
 
-def clamp(pair, limits):
+def as_pair(raw):
+    if not isinstance(raw, list) or len(raw) != 2:
+        raise GuardError("bad pair %r in the preset dump" % (raw,))
+    pair = (alias_of(str(raw[0])), str(raw[1]))
     if not valid(pair):
-        return pair
-    if cost(pair) > cost(limits["max"]):
-        return limits["max"]
-    if limits["min"] and cost(pair) < cost(limits["min"]):
-        return limits["min"]
+        raise GuardError("unknown pair %s/%s in the preset dump" % pair)
     return pair
+
+
+def read_ladder():
+    """The active preset from credo-preset.sh json:
+    {'name', 'roles': {role: [{'pairs': set, 'label': str, 'attempts': str}, ...]},
+     'back': {role: bool}, 'max': pair, 'min': pair or None,
+     'forbidden': [{'pairs': set, 'roles': tuple, 'action': str, 'label': str}]}"""
+    if not os.path.isfile(PRESET_SH):
+        raise GuardError("credo-preset.sh missing")
+    try:
+        data = json.loads(run(["bash", PRESET_SH, "json"]))
+        roles, back = {}, {}
+        for role in ROLES:
+            spec = data["roles"][role]
+            roles[role] = [{"pairs": {as_pair(p) for p in rung["pairs"]}, "label": str(rung["label"]),
+                            "attempts": str(rung["attempts"])} for rung in spec["rungs"]]
+            back[role] = bool(spec.get("terminal"))
+        forbidden = [{"pairs": {as_pair(p) for p in f["pairs"]}, "roles": tuple(f["roles"]),
+                      "action": "warn" if f.get("action") == "warn" else "block",
+                      "label": str(f.get("label") or "")} for f in data.get("forbidden") or []]
+        ladder = {"name": str(data["name"]), "roles": roles, "back": back, "forbidden": forbidden,
+                  "max": as_pair(data["max"]) if data.get("max") else DEFAULT_MAX,
+                  "min": as_pair(data["min"]) if data.get("min") else None}
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise GuardError("cannot parse the preset (credo-preset.sh json): %s" % exc)
+    if not ladder["name"] or not any(ladder["roles"].values()):
+        raise GuardError("cannot parse the preset (credo-preset.sh json)")
+    return ladder
 
 
 def within(pair, ladder):
     return cost(pair) <= cost(ladder["max"]) and not (ladder["min"] and cost(pair) < cost(ladder["min"]))
 
 
-def limits_text(ladder):
-    return "max %s/%s, min %s" % (ladder["max"] + (
-        "%s/%s" % ladder["min"] if ladder["min"] else "none",))
+def forbidden_hits(pair, ladder, roles):
+    return [f for f in ladder["forbidden"] if pair in f["pairs"] and set(f["roles"]) & set(roles)]
+
+
+def limits_text(ladder, roles):
+    parts = []
+    if ladder["min"]:
+        parts.append("min-allowed %s/%s" % ladder["min"])
+    parts.append("max-allowed %s/%s" % ladder["max"])
+    forb = ["%s (%s)" % (f["label"], f["action"]) for f in ladder["forbidden"]
+            if set(f["roles"]) & set(roles)]
+    if forb:
+        parts.append("forbidden-models %s" % ", ".join(forb))
+    return ", ".join(parts)
 
 
 def ladder_text(ladder, roles):
     parts = []
     for role in roles:
         segs, start, open_chain = [], 1, True
-        for alias, effort, attempts in ladder["roles"][role]:
+        for rung in ladder["roles"][role]:
             if not open_chain:
                 break
-            if attempts == "until-done":
-                segs.append("%d+ %s/%s" % (start, alias, effort))
+            if rung["attempts"] == "until-done":
+                segs.append("%d+ %s" % (start, rung["label"]))
                 open_chain = False
             else:
-                n = int(attempts)
+                n = int(rung["attempts"])
                 rng = str(start) if n == 1 else "%d-%d" % (start, start + n - 1)
-                segs.append("%s %s/%s" % (rng, alias, effort))
+                segs.append("%s %s" % (rng, rung["label"]))
                 start += n
         if ladder["back"][role] and open_chain:
             segs.append("attempt %d back-to-human" % start)
@@ -451,24 +451,21 @@ def emit(decision, text, visible=False):
 
 
 def fmt_pairs(pairs):
-    return ", ".join("%s/%s" % p for p in sorted(pairs))
+    return ", ".join("%s/%s" % p for p in sorted(pairs, key=cost))
 
 
-def at_least(pair, rung):
-    """True when pair (alias, effort) satisfies rung: a stronger model at any effort, or the
-    same model at an equal or higher effort (the cost order)."""
-    if not valid(pair) or not valid(rung):
-        return False
-    return cost(pair) >= cost(rung)
-
-
-def cheapest(pairs):
-    return min(pairs, key=cost) if pairs else None
+def cheapest(pairs, ladder, roles):
+    """The cheapest pair that no forbidden-models entry matches, else the cheapest pair."""
+    ordered = sorted(pairs, key=cost)
+    for pair in ordered:
+        if not forbidden_hits(pair, ladder, roles):
+            return pair
+    return ordered[0] if ordered else None
 
 
 def spawn_kind(sub, ti):
     """What the spawn is checked against:
-    {'roles': roles for exceptions and the untagged minimum, 'role': one role or None,
+    {'roles': roles for exceptions and the untagged case, 'role': one role or None,
      'attempt': int or None, 'raw': raw attempt text or None, 'label': text}.
     An explicit [credo-role: <role>[#<attempt>]] tag in the description or the prompt wins;
     else read-only types count as explore attempt 1, everything else as build/review/hard
@@ -489,18 +486,57 @@ def spawn_kind(sub, ti):
 
 
 def rung_at(ladder, role, n):
-    """(alias, effort) of the rung that serves attempt n of role, or None when attempt n is
-    past the last rung (back-to-human: the chain is used up). Mirrors credo-preset.sh stage."""
+    """The rung that serves attempt n of role, or None when attempt n is past the last rung
+    (back-to-human: the chain is used up). Mirrors credo-preset.sh stage."""
     cum = 0
-    for alias, effort, attempts in ladder["roles"][role]:
-        if attempts == "until-done" or n <= cum + int(attempts):
-            return (alias, effort)
-        cum += int(attempts)
+    for rung in ladder["roles"][role]:
+        if rung["attempts"] == "until-done" or n <= cum + int(rung["attempts"]):
+            return rung
+        cum += int(rung["attempts"])
     return None
 
 
 def tag_of(role, attempt):
     return "[credo-role: %s#%s]" % (role, attempt)
+
+
+def check_fork(data, ladder, ctx):
+    """Owner decision Q429 B: the fork's inherited effort cannot be read."""
+    pname, what, label, tail, btoh = ctx["pname"], ctx["what"], ctx["label"], ctx["tail"], ctx["btoh"]
+    parent = alias_of(parent_model(data))
+    mx = "%s/%s" % ladder["max"]
+    issue, note = "", ""
+    if parent not in MODEL_RANK:
+        issue = "which cannot be read, so it cannot be checked"
+    elif MODEL_RANK[parent] > MODEL_RANK[ladder["max"][0]]:
+        issue = "which is above the max-allowed %s" % mx
+    elif not any(MODEL_RANK[parent] >= MODEL_RANK[a] for c in ctx["candidates"] for a, _e in c["pairs"]):
+        issue = "which is below every rung model of the %s" % label
+    else:
+        efforts = set(EFFORTS)
+        for f in ladder["forbidden"]:
+            if set(f["roles"]) & set(ctx["roles"]) and efforts <= {e for a, e in f["pairs"] if a == parent}:
+                if f["action"] == "block":
+                    issue = "which forbidden-models blocks at every effort (%s)" % f["label"]
+                    break
+                note = ("[credo-preset] forbidden model (warn): the fork inherits %s, which "
+                        "forbidden-models lists (%s, action warn) - report it." % (parent, f["label"]))
+    if issue:
+        emit("deny", "[credo-preset] Spawn denied (preset %s): %s; a fork inherits the parent's "
+             "model (%s), %s. Spawn a regular subagent (e.g. general-purpose) with model and "
+             "effort instead. %s" % (pname, what, parent or "unknown", issue, tail))
+        return
+    visible = bool(btoh or note)
+    if MODEL_RANK[parent] == MODEL_RANK[ladder["max"][0]]:
+        line = ("[credo-preset] fork ok, fork effort not checkable: the parent model %s is the "
+                "max-allowed model (max-allowed %s, preset %s); the inherited effort cannot be "
+                "read - keep the parent's effort within %s." % (parent, mx, pname, mx))
+        visible = True
+    else:
+        line = ("[credo-preset] fork ok: parent model %s is >= a rung model of the %s and below "
+                "the max-allowed %s (preset %s); the inherited effort is not checked."
+                % (parent, label, mx, pname))
+    emit("allow", " ".join(x for x in (btoh, note, line) if x), visible=visible)
 
 
 def decide(data, today):
@@ -515,14 +551,16 @@ def decide(data, today):
     sub = str(ti.get("subagent_type") or "")
     kind = spawn_kind(sub, ti)
     role, attempt, label = kind["role"], kind["attempt"], kind["label"]
+    scope_roles = kind["roles"]
     pname = ladder["name"]
+    mx = "%s/%s" % ladder["max"]
     btoh = ""  # back-to-human warning, prepended to the allow line (visible)
     if role and not ladder["roles"][role]:
         raise GuardError("role %s has no rungs in preset %s" % (role, pname))
 
     if role:
         role_line = ladder_text(ladder, (role,))
-        first = ladder["roles"][role][0]
+        first = cheapest(ladder["roles"][role][0]["pairs"], ladder, (role,))
         example = ("first try of %s: pass model: %s, effort: %s, tag %s"
                    % (role, first[0], first[1], tag_of(role, 1)))
         if kind["raw"] is not None and attempt is None:
@@ -538,15 +576,16 @@ def decide(data, today):
     rules = rules_for(data.get("cwd") or os.getcwd(), today)
     granted = {}
     for rkind, scope, pairs, source in rules:
-        if rkind == "exception" and scope & set(kind["roles"]):
+        if rkind == "exception" and scope & set(scope_roles):
             for p in pairs:
-                # the max and min are hard: an exception pair outside them grants nothing
-                if valid(p) and within(p, ladder):
+                # the spawn limits are hard: an exception pair outside them, or a blocked one,
+                # grants nothing
+                if valid(p) and within(p, ladder) and not any(
+                        f["action"] == "block" for f in forbidden_hits(p, ladder, scope_roles)):
                     granted.setdefault(p, source)
     if role:
-        expected = rung_at(ladder, role, attempt or 1)
-        allowed = {expected} if expected else set()
-        if expected is None:
+        rung = rung_at(ladder, role, attempt or 1)
+        if rung is None:
             # back-to-human: the owner decides; only an owner rule lets the spawn continue
             cont = [src for rkind, scope, _p, src in rules if rkind == "continue" and role in scope]
             if not cont and not granted:
@@ -557,20 +596,22 @@ def decide(data, today):
                      % (pname, role, attempt, RULE_FORMS, role_line))
                 return
             if cont:
-                last = ladder["roles"][role][-1]
-                expected = (last[0], last[1])
-                allowed = {expected}
+                rung = ladder["roles"][role][-1]
             sources = cont or sorted(set(granted.values()))
             btoh = ("[credo-preset] attempt %d is back-to-human in preset %s, continuing per "
                     "owner rule %s - report it to the owner." % (attempt, pname, ", ".join(sources)))
+        rungs = [rung] if rung else []
     else:
-        expected = None
-        allowed = set()
-        for r in kind["roles"]:
-            allowed.update((a, e) for a, e, _n in ladder["roles"][r])
-    every = allowed | set(granted)
+        rungs = [r for rl in scope_roles for r in ladder["roles"][rl]]
+    expected = rung if role else None
+    candidates = rungs + [{"pairs": {p}, "label": "%s/%s" % p, "source": src}
+                          for p, src in granted.items()]
+    every = set()
+    for c in candidates:
+        every |= c["pairs"]
+    low = cheapest(every, ladder, scope_roles)
+    cheap = ("the cheapest allowed pair here is %s/%s" % low) if low else "no pair is allowed here"
     ladder_line = ladder_text(ladder, ROLES)
-    mx = "%s/%s" % ladder["max"]
     if role and not expected:  # back-to-human, only exception pairs allow continuing
         fix = ("Fix: pass one of the exception pairs %s and keep the tag %s."
                % (fmt_pairs(granted), tag_of(role, attempt)))
@@ -578,58 +619,29 @@ def decide(data, today):
             role, attempt)
     elif expected:
         shown_tag = tag_of(role, attempt) if attempt is not None else "[credo-role: %s]" % role
-        fix = ("Fix: pass model: %s, effort: %s, tag %s (any pair from that rung up to the max %s "
-               "passes: a stronger model at any effort, or the same model at an equal or higher "
-               "effort)%s." % (expected[0], expected[1], shown_tag, mx,
-                               "; or an exception pair: %s" % fmt_pairs(granted) if granted else ""))
-        what = "Role %s, attempt %s expects %s/%s%s" % (
-            role, attempt if attempt is not None else "not given (single rung)",
-            expected[0], expected[1],
+        pick = cheapest(expected["pairs"], ladder, (role,))
+        fix = ("Fix: pass model: %s, effort: %s, tag %s (allowed for this rung: %s; a pair above "
+               "every pair of the rung passes too, up to the max-allowed %s, and is reported)%s."
+               % (pick[0], pick[1], shown_tag, expected["label"], mx,
+                  "; or an exception pair: %s" % fmt_pairs(granted) if granted else ""))
+        what = "Role %s, attempt %s expects %s%s" % (
+            role, attempt if attempt is not None else "not given (single rung)", expected["label"],
             " (attempt is back-to-human, continuing on the last rung)" if btoh else "")
     else:
-        fix = ("Fix: tag the spawn with [credo-role: <role>#<attempt>] and pass the model and effort "
-               "of that rung (%s)." % ladder_text(ladder, BUILD_ROLES))
+        fix = ("Fix: tag the spawn with [credo-role: <role>#<attempt>] and pass a pair of that "
+               "rung (%s)." % ladder_text(ladder, BUILD_ROLES))
         what = "Untagged %s spawn, role unknown" % (sub or "default")
-    tail = ("%s Minimum for the %s: one of %s. Limits of preset %s: %s (hard: no preset "
-            "exception or continue rule lifts them). %s. Look up a rung: %s. Active ladder: %s. "
-            "%s A weaker pair (still within the limits) only via a valid owner rule with an until "
-            "date in the handoff \"## Rules (temporary)\" or a line in .credo/RULES.md (format: "
-            "preset exception: <all|role,...> -> <model>/<effort>). %s."
-            % (fix, label, fmt_pairs(every) or "none", pname, limits_text(ladder), ORDER, LOOKUP,
-               ladder_line, GROWS, ROLE_TAG_HINT))
+    tail = ("%s Allowed for the %s: %s. Spawn limits of preset %s: %s (hard: no preset exception "
+            "or continue rule lifts them). %s. Look up a rung: %s. Active ladder: %s. %s A cheaper "
+            "pair (still within the spawn limits) only via a valid owner rule with an until date "
+            "in the handoff \"## Rules (temporary)\" or a line in .credo/RULES.md (format: preset "
+            "exception: <all|role,...> -> <model>/<effort>). %s."
+            % (fix, label, " or ".join(dict.fromkeys(c["label"] for c in candidates)) or "none", pname,
+               limits_text(ladder, scope_roles), ORDER, LOOKUP, ladder_line, GROWS, ROLE_TAG_HINT))
 
     if sub == "fork":
-        parent = alias_of(parent_model(data))
-        mn = ladder["min"]
-        limit_issue = ""
-        if parent in MODEL_RANK:
-            prank, xrank = MODEL_RANK[parent], MODEL_RANK[ladder["max"][0]]
-            if prank > xrank:
-                limit_issue = "which is above the max %s" % mx
-            elif prank == xrank and ladder["max"][1] != EFFORTS[-1]:
-                limit_issue = ("the same model as the max %s; the inherited effort cannot be read, "
-                               "so staying within the max cannot be verified" % mx)
-            elif mn and prank < MODEL_RANK[mn[0]]:
-                limit_issue = "which is below the min %s/%s" % mn
-            elif mn and prank == MODEL_RANK[mn[0]] and mn[1] != EFFORTS[0]:
-                limit_issue = ("the same model as the min %s/%s; the inherited effort cannot be "
-                               "read, so reaching the min cannot be verified" % mn)
-        if limit_issue:
-            emit("deny", "[credo-preset] Spawn denied (preset %s): %s; a fork inherits the parent's "
-                 "model (%s), %s. Spawn a regular subagent (e.g. general-purpose) with model and "
-                 "effort within the limits instead. %s" % (pname, what, parent, limit_issue, tail))
-            return
-        if parent in MODEL_RANK and any(MODEL_RANK[parent] >= MODEL_RANK.get(a, 99)
-                                        for a, _e in every):
-            line = ("[credo-preset] fork ok: parent model %s is >= a rung model of the %s and "
-                    "within the max %s (preset %s); the inherited effort is not checked."
-                    % (parent, label, mx, pname))
-            emit("allow", (btoh + " " + line) if btoh else line, visible=bool(btoh))
-            return
-        emit("deny", "[credo-preset] Spawn denied (preset %s): %s; a fork inherits the parent's "
-             "model (%s), which is below every rung model of the %s. Spawn a regular subagent "
-             "(e.g. general-purpose) with model and effort instead. %s"
-             % (pname, what, parent or "unknown", label, tail))
+        check_fork(data, ladder, {"pname": pname, "what": what, "label": label, "tail": tail,
+                                  "btoh": btoh, "candidates": candidates, "roles": scope_roles})
         return
 
     model = str(ti.get("model") or "").strip()
@@ -645,44 +657,63 @@ def decide(data, today):
     elif effort not in EFFORTS:
         reasons.append("unknown effort %s" % effort)
     pair = (alias_of(model), effort)
-    low = cheapest(every)
-    cheap = ("the cheapest allowed pair here is %s/%s, the most expensive the max %s"
-             % (low + (mx,)) if low else "no pair is allowed here")
-    if not reasons and cost(pair) > cost(ladder["max"]):
-        reasons.append("chosen %s/%s is above the max %s of preset %s - a hard limit, no preset "
-                       "exception or continue rule lifts it; %s" % (pair + (mx, pname, cheap)))
-    elif not reasons and ladder["min"] and cost(pair) < cost(ladder["min"]):
-        reasons.append("chosen %s/%s is below the min %s/%s of preset %s - a hard limit, no preset "
-                       "exception lifts it; %s" % (pair + ladder["min"] + (pname, cheap)))
-    covered = [] if reasons else sorted(p for p in every if at_least(pair, p))
-    if not reasons and not covered:
-        if expected:
-            reasons.append("chosen %s/%s is cheaper than the expected rung %s/%s (%s)"
-                           % (pair[0], pair[1], expected[0], expected[1], cheap))
-        else:
-            reasons.append("%s/%s is below every rung of the %s (%s)"
-                           % (pair[0], pair[1], label, cheap))
+    hits = [] if reasons else forbidden_hits(pair, ladder, scope_roles)
+    exact, stronger = [], []
+    if reasons:
+        pass
+    elif cost(pair) > cost(ladder["max"]):
+        reasons.append("chosen %s/%s is above the max-allowed %s of preset %s - a hard limit, no "
+                       "preset exception or continue rule lifts it; %s" % (pair + (mx, pname, cheap)))
+    elif ladder["min"] and cost(pair) < cost(ladder["min"]):
+        reasons.append("chosen %s/%s is below the min-allowed %s/%s of preset %s - a hard limit, "
+                       "no preset exception lifts it; %s" % (pair + ladder["min"] + (pname, cheap)))
+    elif any(f["action"] == "block" for f in hits):
+        reasons.append("chosen %s/%s is forbidden in preset %s (forbidden-models %s, action block) "
+                       "- a hard limit, no preset exception lifts it; %s"
+                       % (pair + (pname, ", ".join(f["label"] for f in hits if f["action"] == "block"),
+                                  cheap)))
+    else:
+        exact = [c for c in candidates if pair in c["pairs"]]
+        stronger = [c for c in candidates if c["pairs"] and cost(pair) > max(cost(p) for p in c["pairs"])]
+        if not exact and not stronger:
+            if expected and cost(pair) < min(cost(p) for p in expected["pairs"]):
+                reasons.append("chosen %s/%s is cheaper than the expected rung %s (%s)"
+                               % (pair + (expected["label"], cheap)))
+            elif expected:
+                reasons.append("chosen %s/%s is not one of the pairs of the expected rung %s - "
+                               "nothing in between is allowed (%s)" % (pair + (expected["label"], cheap)))
+            else:
+                reasons.append("%s/%s is not allowed by any rung of the %s (%s)"
+                               % (pair + (label, cheap)))
     if reasons:
         emit("deny", "[credo-preset] Spawn denied (preset %s): %s; %s. %s"
              % (pname, what, "; ".join(reasons), tail))
         return
     visible = False
-    if pair in allowed and expected:
-        line = ("[credo-preset] ok: role %s, attempt %s, expected rung %s/%s, chosen %s/%s "
+    rung_hit = [c for c in exact if "source" not in c]
+    exc_hit = [c for c in exact if "source" in c]
+    if rung_hit and expected:
+        line = ("[credo-preset] ok: role %s, attempt %s, expected rung %s, chosen %s/%s "
                 "(preset %s)." % (role, attempt if attempt is not None else "not given (single rung)",
-                                  expected[0], expected[1], pair[0], pair[1], pname))
-    elif pair in allowed:
-        line = ("[credo-preset] ok: %s/%s is a rung of the %s (preset %s); the role is "
+                                  expected["label"], pair[0], pair[1], pname))
+    elif rung_hit:
+        line = ("[credo-preset] ok: %s/%s is allowed by a rung of the %s (preset %s); the role is "
                 "unknown, so tag [credo-role: <role>#<attempt>] to have the exact rung checked."
                 % (pair[0], pair[1], label, pname))
-    elif pair in granted:
+    elif exc_hit:
         line = ("[credo-preset] ok by preset exception (%s): %s/%s for the %s (preset %s)%s."
-                % (granted[pair], pair[0], pair[1], label, pname,
-                   ", expected rung without it: %s/%s" % expected if expected else ""))
+                % (exc_hit[0]["source"], pair[0], pair[1], label, pname,
+                   ", expected rung without it: %s" % expected["label"] if expected else ""))
     else:
-        line = ("[credo-preset] stronger than preset: %s/%s vs %s (%s, preset %s; within the max "
-                "%s) - report it." % (pair[0], pair[1], " or ".join("%s/%s" % p for p in covered),
-                                      label, pname, mx))
+        line = ("[credo-preset] stronger than preset: %s/%s vs %s (%s, preset %s; within the "
+                "max-allowed %s) - report it." % (pair[0], pair[1], " or ".join(dict.fromkeys(
+                    c["label"] for c in stronger)), label, pname, mx))
+        visible = True
+    warn_hits = [f for f in hits if f["action"] == "warn"]
+    if warn_hits:
+        line = ("[credo-preset] forbidden model (warn): %s/%s matches forbidden-models %s of preset "
+                "%s - allowed because the action is warn; report it. %s"
+                % (pair + (", ".join(f["label"] for f in warn_hits), pname, line)))
         visible = True
     if btoh:
         line, visible = btoh + " " + line, True

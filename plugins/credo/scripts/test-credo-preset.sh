@@ -96,7 +96,7 @@ check "balanced build model" "claude-haiku-5-5" "$(sf model build 1)"
 check "balanced build effort" "xhigh" "$(sf effort build 1)"
 check "balanced build prompt" "$U$NL$B" "$(sf prompt build 1)"
 check "balanced build next is retry (until-done default)" "retry" "$(sf next build 1)"
-check "balanced build attempts default" "until-done" "$(sf attempts build 1)"
+check "balanced build stage 1 has 4 attempts" "4" "$(sf attempts build 1)"
 check "balanced explore effort" "low" "$(sf effort explore 1)"
 check "balanced explore prompt" "$U$NL$E" "$(sf prompt explore 1)"
 check "balanced review prompt" "$U$NL$R_BAL" "$(sf prompt review 1)"
@@ -172,10 +172,10 @@ check "custom review next back-to-human (1 attempt)" "back-to-human" "$(sf next 
 check "custom hard 2 next back-to-human" "back-to-human" "$(sf next hard 2)"
 check "custom hard 3 exhausted" "back-to-human" "$(sf action hard 3)"
 check "custom mainagent prompt" "Answer in short sentences.$NL""KISS: simplest working solution, effort counts." "$(mf prompt)"
-check "custom no warnings on valid preset" "" "$(err)"
+check "custom: only the forbidden-models warning (default sonnet entry)" "credo-preset: warning: role build stage 1 of preset 'my-mix' (claude-sonnet-5-5 / low) requests forbidden claude-sonnet-5-5/low (forbidden-models)" "$(err)"
 sed 's/effort: low, subagent-prompt: "Sonnet/effort: max, subagent-prompt: "Sonnet/' "$CREDO_GLOBAL" > "$TMP/g2"
 check "custom max effort accepted" "max" "$(CREDO_GLOBAL="$TMP/g2" "$SUT" stage build 1 --field effort 2>/dev/null)"
-check "custom max effort no warning" "" "$(CREDO_GLOBAL="$TMP/g2" "$SUT" stage build 1 --field effort 2>&1 >/dev/null)"
+check "custom max effort: only the forbidden warning" "credo-preset: warning: role build stage 1 of preset 'my-mix' (claude-sonnet-5-5 / max) requests forbidden claude-sonnet-5-5/max (forbidden-models)" "$(CREDO_GLOBAL="$TMP/g2" "$SUT" stage build 1 --field effort 2>&1 >/dev/null)"
 reset_cfg
 
 # stdlib YAML parser (no PyYAML) must read the same flow syntax
@@ -633,6 +633,220 @@ hub_hook_out="$(cd "$HUB" && printf '{"session_id":"s-pin","source":"startup","c
       bash "$HOOK" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null)"
 contains "session start from a hub: pinned preset injected" "Model preset 'budget'" "$hub_hook_out"
 lacks "session start from a hub: cwd preset not injected" "Model preset 'balanced'" "$hub_hook_out"
+reset_cfg
+
+# --- 15. rung ranges, allowed-pairs and spawn limits (#216) ---------------------
+# built-in defaults
+T="$PLUGIN_DIR/templates/presets.default.yaml"
+order="$(grep -nE '^  (budget|balanced|quality):$' "$T" | cut -d: -f2 | tr -d ' ' | tr '\n' ' ')"
+check "template: presets in ascending order" "budget balanced quality " "$order"
+lacks "template: an unset min-allowed is left out, never none" "min-allowed: none" "$(cat "$T")"
+check "default max-allowed" '{"model": "claude-opus-5-5", "effort": "medium"}' "$("$CFG" get default-spawn-limits.max-allowed 2>/dev/null)"
+check "default forbidden action" "warn" "$("$CFG" get default-spawn-limits.forbidden-action 2>/dev/null)"
+check "balanced: no min-allowed" "" "$(sf min-allowed build 1)"
+check "balanced: max-allowed field" "claude-opus-5-5/medium" "$(sf max-allowed build 1)"
+check "balanced: forbidden field" "claude-sonnet-5-5 / any (warn)" "$(sf forbidden build 1)"
+check "balanced: no load warning" "" "$(err)"
+check "balanced build 5 is opus" "claude-opus-5-5" "$(sf model build 5)"
+check "balanced build 4 escalates" "next-stage" "$(sf next build 4)"
+check "balanced build 7 is haiku again" "claude-haiku-5-5" "$(sf model build 7)"
+check "balanced build 11 is opus until done" "until-done" "$(sf attempts build 11)"
+check "balanced build has no back-to-human" "spawn" "$(sf action build 99)"
+check "balanced explore: cheapest of the range" "low" "$(sf effort explore 1)"
+check "balanced explore: allowed range" "claude-haiku-5-5 / from low to xhigh" "$(sf allowed explore 1)"
+out="$("$SUT" show balanced 2>/dev/null)"
+contains "show: spawn-limits heading" "spawn-limits (hard for every spawn):" "$out"
+contains "show: max-allowed" "  max-allowed: claude-opus-5-5 / medium" "$out"
+contains "show: forbidden entry" "    - claude-sonnet-5-5 / any, all roles, warn" "$out"
+contains "show: forbidden action" "  forbidden-action: warn" "$out"
+lacks "show balanced: no min-allowed line" "min-allowed" "$out"
+contains "show: range rung" "1. claude-haiku-5-5 / from low to xhigh, attempts until-done" "$out"
+out="$("$SUT" show quality 2>/dev/null)"
+contains "show quality: min-allowed" "  min-allowed: claude-haiku-5-5 / xhigh" "$out"
+contains "show quality: allowed-pairs rung" "1. claude-haiku-5-5 / xhigh or claude-opus-5-5 / medium, attempts until-done" "$out"
+out="$("$SUT" show budget 2>/dev/null)"
+contains "show budget: explore range" "1. claude-haiku-5-5 / from low to high, attempts until-done" "$out"
+contains "show budget: review range" "1. claude-haiku-5-5 / from medium to xhigh, attempts until-done" "$out"
+contains "json: max for the guard" '"max": ["opus", "medium"]' "$("$SUT" json 2>/dev/null)"
+
+# every format feature in one custom preset, read by PyYAML and the stdlib parser
+write_global <<'EOF'
+preset: fmt
+presets:
+  fmt:
+    mainagent:
+      model: claude-opus-5-5
+      effort: medium
+    spawn-limits:
+      min-allowed:
+        model: claude-haiku-5-5
+        effort: medium
+      max-allowed:
+        model: claude-opus-5-5
+        effort: high
+      forbidden-models:
+        - model: claude-haiku-5-5
+          effort: { from: medium, to: high }
+          roles: [review]
+          action: block
+      forbidden-action: warn
+    explore:
+      model: any
+    build:
+      allowed-pairs:
+        - model: claude-haiku-5-5
+          effort: xhigh
+        - model: claude-opus-5-5
+          effort: { from: medium, to: high }
+    review:
+      model: claude-haiku-5-5
+      effort: any
+    hard:
+      - model: { from: claude-sonnet-5-5, to: claude-opus-5-5 }
+        effort: low
+        attempts: 1
+      - model: claude-opus-5-5
+        effort: max
+        attempts: 1
+      - model: claude-haiku-5-5
+        effort: low
+EOF
+for P in 0 1; do
+    sfp() { CREDO_CONFIG_STDLIB_YAML=$P "$SUT" stage "$2" "$3" --field "$1" 2>"$TMP/err"; }
+    check "fmt[$P]: model any = cheapest pair within min-allowed" "claude-haiku-5-5/medium" "$(sfp model explore 1)/$(sfp effort explore 1)"
+    check "fmt[$P]: model any implies effort any" "any / any" "$(sfp allowed explore 1)"
+    check "fmt[$P]: allowed-pairs text" "claude-haiku-5-5 / xhigh or claude-opus-5-5 / from medium to high" "$(sfp allowed build 1)"
+    check "fmt[$P]: allowed-pairs cheapest" "claude-haiku-5-5/xhigh" "$(sfp model build 1)/$(sfp effort build 1)"
+    check "fmt[$P]: cheapest skips a forbidden pair" "claude-haiku-5-5/xhigh" "$(sfp model review 1)/$(sfp effort review 1)"
+    check "fmt[$P]: cheapest model range skips forbidden sonnet (warn)" "claude-opus-5-5" "$(sfp model hard 1)"
+    check "fmt[$P]: rung above the max-allowed is served by it" "claude-opus-5-5/high" "$(sfp model hard 2)/$(sfp effort hard 2)"
+    contains "fmt[$P]: capped note" "lies outside the spawn limits - this rung uses claude-opus-5-5/high" "$(sfp note hard 2)"
+    contains "fmt[$P]: load warning above max" "requests claude-opus-5-5/max above the max-allowed claude-opus-5-5/high" "$(err)"
+    contains "fmt[$P]: load warning below min" "requests claude-haiku-5-5/low below the min-allowed claude-haiku-5-5/medium" "$(err)"
+    check "fmt[$P]: rung below the min-allowed is served by it" "claude-haiku-5-5/medium" "$(sfp model hard 3)/$(sfp effort hard 3)"
+    check "fmt[$P]: min-allowed field" "claude-haiku-5-5/medium" "$(sfp min-allowed build 1)"
+    check "fmt[$P]: forbidden field for review (own + default)" "claude-sonnet-5-5 / any (warn); claude-haiku-5-5 / from medium to high (block)" "$(sfp forbidden review 1)"
+    check "fmt[$P]: forbidden field for build (default only)" "claude-sonnet-5-5 / any (warn)" "$(sfp forbidden build 1)"
+done
+out="$("$SUT" show fmt 2>"$TMP/err")"
+contains "fmt show: own forbidden entry with roles" "    - claude-haiku-5-5 / from medium to high, roles review, block" "$out"
+contains "fmt show: capped line" "     capped: outside the spawn limits, this rung uses claude-opus-5-5/high" "$out"
+contains "fmt show: preset forbidden-action" "  forbidden-action: warn" "$out"
+contains "fmt show: forbidden warning at load" "role hard stage 1 of preset 'fmt' (from claude-sonnet-5-5 to claude-opus-5-5 / low) requests forbidden claude-sonnet-5-5/low (forbidden-models)" "$(err)"
+lacks "fmt show: pairs that only come from any are not reported" "role review stage 1" "$(err)"
+reset_cfg
+
+# invalid forms warn and fall back
+write_global <<'EOF'
+preset: bad
+presets:
+  bad:
+    mainagent: {model: claude-opus-5-5, effort: medium}
+    spawn-limits:
+      min-allowed: {model: claude-opus-5-5, effort: high}
+      forbidden-action: maybe
+      forbidden-models:
+        - {model: claude-haiku-5-5, roles: [nobody]}
+    explore: {model: claude-haiku-5-5, effort: {from: high, to: low}}
+    build:
+      model: claude-haiku-5-5
+      effort: xhigh
+      allowed-pairs:
+        - {model: claude-opus-5-5, effort: medium}
+    review: {model: any, effort: medium}
+    hard: {model: claude-opus-5-5, effort: medium}
+EOF
+"$SUT" show bad >/dev/null 2>"$TMP/err"
+contains "bad: reversed range" "the effort range of role explore goes from high to low - from must not lie above to - using balanced for explore" "$(err)"
+contains "bad: model/effort and allowed-pairs together" "use either model/effort or allowed-pairs in a stage, not both" "$(err)"
+contains "bad: min above max dropped" "min-allowed claude-opus-5-5/high of preset 'bad' lies above its max-allowed claude-opus-5-5/medium - no min-allowed used" "$(err)"
+contains "bad: forbidden action" "forbidden-action in spawn-limits of preset 'bad' is 'maybe' - use warn or block; using block" "$(err)"
+contains "bad: forbidden entry roles" "roles in forbidden-models in spawn-limits of preset 'bad' entry 1 must be a list of explore, build, review, hard - entry ignored" "$(err)"
+check "bad: explicit effort wins over model any" "medium" "$(sf effort review 1)"
+check "bad: model any with a fixed effort" "any / medium" "$(sf allowed review 1)"
+reset_cfg
+
+# a config layer overrides default-spawn-limits key by key
+write_global <<'EOF'
+preset: balanced
+default-spawn-limits:
+  forbidden-action: block
+EOF
+out="$("$SUT" show 2>/dev/null)"
+contains "layer override: forbidden-action block" "  forbidden-action: block" "$out"
+contains "layer override: entries inherited with the new action" "    - claude-sonnet-5-5 / any, all roles, block" "$out"
+contains "layer override: max-allowed inherited" "  max-allowed: claude-opus-5-5 / medium" "$out"
+reset_cfg
+
+# --- 16. preset inheritance: extends -------------------------------------------
+write_global <<'EOF'
+preset: child
+presets:
+  mid:
+    extends: quality
+    mainagent:
+      mainagent-prompt: "Mid prompt."
+    spawn-limits:
+      forbidden-models:
+        - model: claude-haiku-5-5
+          effort: low
+    build:
+      model: claude-haiku-5-5
+      effort: xhigh
+  child:
+    extends: mid
+    universal-prompt: "Child universal."
+    spawn-limits:
+      max-allowed:
+        model: claude-opus-5-5
+        effort: high
+      forbidden-models:
+        - model: claude-opus-5-5
+          effort: high
+          roles: [explore]
+    review:
+      model: claude-opus-5-5
+      effort: high
+  loop-a:
+    extends: loop-b
+  loop-b:
+    extends: loop-a
+  self:
+    extends: self
+  orphan:
+    extends: nowhere
+EOF
+out="$("$SUT" show child 2>"$TMP/err")"
+check "extends: no warning for a complete chain" "" "$(err)"
+contains "extends: own universal-prompt wins" "universal-prompt: Child universal." "$out"
+contains "extends: mainagent model/effort from the chain root" "mainagent: claude-opus-5-5 / medium (recommendation only) (from quality)" "$out"
+contains "extends: mainagent prompt merged field-wise" "  mainagent-prompt: Mid prompt. (from mid)" "$out"
+contains "extends: min-allowed inherited" "  min-allowed: claude-haiku-5-5 / xhigh (from quality)" "$out"
+contains "extends: own max-allowed overrides" "  max-allowed: claude-opus-5-5 / high" "$out"
+lacks "extends: own max-allowed not marked" "max-allowed: claude-opus-5-5 / high (from" "$out"
+contains "extends: default forbidden entry first" "    - claude-sonnet-5-5 / any, all roles, warn" "$out"
+contains "extends: base forbidden entry appended" "    - claude-haiku-5-5 / low, all roles, warn (from mid)" "$out"
+contains "extends: own forbidden entry appended" "    - claude-opus-5-5 / high, roles explore, warn" "$out"
+contains "extends: role from the root (chain)" "explore: (from quality)" "$out"
+contains "extends: role from the middle" "build: (from mid)" "$out"
+contains "extends: own role replaces the base role" "review:"$'\n'"  1. claude-opus-5-5 / high, attempts until-done" "$out"
+contains "extends: hard from quality" "hard: (from quality)" "$out"
+check "extends: active child resolves" "claude-opus-5-5" "$(sf model review 1)"
+check "extends: stage of an inherited role" "claude-haiku-5-5" "$(sf model build 1)"
+check "extends: inherited role keeps its stage prompt" "Child universal.$NL$E" "$(sf prompt explore 1)"
+check "extends: mid keeps quality's universal prompt" "universal-prompt: $U (from quality)" "$("$SUT" show mid 2>/dev/null | grep '^universal-prompt')"
+"$SUT" show loop-a >/dev/null 2>"$TMP/err"
+check "extends: cycle exits 1" 1 "$?"
+contains "extends: cycle named" "credo-preset: preset inheritance cycle: loop-a -> loop-b -> loop-a" "$(err)"
+"$SUT" show self >/dev/null 2>"$TMP/err"
+contains "extends: self cycle named" "preset inheritance cycle: self -> self" "$(err)"
+"$SUT" show orphan >/dev/null 2>"$TMP/err"
+check "extends: unknown base exits 1" 1 "$?"
+contains "extends: unknown base named" "preset 'orphan' extends unknown preset 'nowhere'" "$(err)"
+sed -i 's/^preset: child$/preset: loop-a/' "$CREDO_GLOBAL"
+"$SUT" stage build 1 >/dev/null 2>"$TMP/err"
+check "extends: active preset with a cycle fails stage (exit 1)" 1 "$?"
+check "stdlib parser: extends chain" "claude-opus-5-5 / medium" "$(sed -i 's/^preset: loop-a$/preset: child/' "$CREDO_GLOBAL"; CREDO_CONFIG_STDLIB_YAML=1 "$SUT" show child 2>/dev/null | sed -n 's/^mainagent: \(.*\) (recommendation only).*/\1/p')"
 reset_cfg
 
 printf 'test-credo-preset: %d passed, %d failed\n' "$PASS" "$FAIL"

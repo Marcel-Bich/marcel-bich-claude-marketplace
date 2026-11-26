@@ -217,15 +217,19 @@ problems. Below each one you find the author's own experience with it.
 
 1) quality - state-of-the-art results
    mainagent (recommended): claude-opus-5-5 / medium
-   explore: claude-haiku-5-5 / xhigh
+   explore: claude-haiku-5-5 / xhigh or claude-opus-5-5 / medium
    build, review, hard: claude-opus-5-5 / medium
+   min-allowed: claude-haiku-5-5 / xhigh
    For every project where quality has the highest priority.
    Author's experience: "I rarely use it myself because it is expensive."
 
 2) balanced - the default
    mainagent (recommended): claude-opus-5-5 / medium
-   explore: claude-haiku-5-5 / low
-   build, review: claude-haiku-5-5 / xhigh
+   explore: claude-haiku-5-5, effort from low to xhigh
+   build: claude-haiku-5-5 / xhigh (4 attempts), claude-opus-5-5 / medium
+          (2 attempts), claude-haiku-5-5 / xhigh (4 attempts), then
+          claude-opus-5-5 / medium until done
+   review: claude-haiku-5-5 / xhigh
    hard: claude-haiku-5-5 / xhigh (2 attempts), then claude-opus-5-5 / medium
          (up to 5 attempts), then back to you
    Recommended for basically every project.
@@ -234,13 +238,19 @@ problems. Below each one you find the author's own experience with it.
 
 3) budget - save tokens, still good results
    mainagent (recommended): claude-haiku-5-5 / xhigh
-   explore: claude-haiku-5-5 / low
-   build, review: claude-haiku-5-5 / xhigh
+   explore: claude-haiku-5-5, effort from low to high
+   build: claude-haiku-5-5 / xhigh
+   review: claude-haiku-5-5, effort from medium to xhigh
    hard: claude-haiku-5-5 / xhigh (3 attempts), then claude-opus-5-5 / medium
          (1 attempt), then back to you
    Recommended for simple projects.
    Author's experience: "I use it for many parallel sessions (4 or more),
    otherwise the weekly limit burns too fast."
+
+Every preset has hard spawn limits: never above claude-opus-5-5 / medium
+(max-allowed), and claude-sonnet-5-5 is listed in forbidden-models with a
+warning (set "forbidden-action: block" under default-spawn-limits in your
+config to block it instead).
 
 Every preset also carries prompts: a universal-prompt for every agent, a
 mainagent-prompt for the main agent and a subagent-prompt per role or stage.
@@ -254,7 +264,10 @@ Custom: describe how you want it, or write your own preset under "presets:"
 in the credo config and select it with "preset: <name>". Every stage takes a
 model id, an effort (low, medium, high, xhigh, max) and how many attempts it
 gets before the next stage takes over; "until-done" means no limit,
-"back-to-human" hands the item back to you.
+"back-to-human" hands the item back to you. Model and effort also take
+"any" or a range like "{ from: low, to: high }"; "allowed-pairs" lists exact
+combinations; "spawn-limits" sets min-allowed, max-allowed and
+forbidden-models per preset.
 
 What else you can do (examples)
 -------------------------------
