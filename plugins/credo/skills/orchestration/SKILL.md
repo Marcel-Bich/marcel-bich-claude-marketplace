@@ -121,6 +121,28 @@ release of a batch and follow it.
 - In both cases builders and per-item audits run only the relevant/changed tests (dogma
   `relevant` stage, else the changed tests).
 
+### Full check only in the main agent
+
+- A builder or reviewer never runs the project's full suite or full check (dogma stage
+  `all`, a `--full` flag, "all tests"). It runs the tests of the modules it touched plus the
+  project's fast check (dogma `relevant`, read-only via dogma's
+  `scripts/test-commands.sh get relevant`) and reports. Never write a full-check line into a
+  build or review brief, also not when the repo's `.credo/RULES.md` is silent.
+- The main agent merges the finished items in a batch and then runs ONE full check (where
+  "When the full suite runs" above places it), not one per builder.
+- Parallel builders whose checks share a serialising lock (a `flock`, a single test DB or
+  device) run one after another anyway: cap the number of parallel builders at what that
+  lock can serve (usually 1-2 checks at a time), treat a long lock-bound check like a heavy
+  item (`heavy: true`, below), and still gate every start with `credo-resource-check.sh`.
+- The spawn hook warns (context + visible line, never a deny) when a build, review or hard
+  brief contains the project's `all` stage command, a full-check command from a
+  `.credo/RULES.md` line about the full check, or a marker (`--full`, "full suite", "full
+  check", "all tests"); negated or main-agent clauses stay silent. Fix the brief and re-spawn.
+  Off with `CREDO_BRIEF_CHECK=0`.
+- No separate queue watchdog: lock paths are project-specific, so a generic one is not
+  cheap. Long waits stay visible through the subagent rule "bounded wait or report blocked
+  on X" and the background guard (no background work outlives a report).
+
 ### Brief rules for builders and auditors
 
 Add to every builder and audit brief (besides the item path, the main-checkout path and

@@ -32,5 +32,12 @@ if ! credo_python_ready; then
     exit 0
 fi
 
-"$CREDO_PYTHON" -I "$GUARD"
+# scripts/credo_brief_check.py runs the guard in-process and adds the #218 brief check (warn
+# when a build/review brief asks for the full check; CREDO_BRIEF_CHECK=0 switches it off).
+BRIEF="$HOOK_DIR/../scripts/credo_brief_check.py"
+if [[ -f "$BRIEF" ]]; then
+    "$CREDO_PYTHON" -I "$BRIEF"
+else
+    "$CREDO_PYTHON" -I "$GUARD"
+fi
 exit 0
