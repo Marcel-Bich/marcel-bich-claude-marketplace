@@ -263,6 +263,11 @@
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-reminder.sh\" turn",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-code-reconcile.sh\" prompt",
+            "timeout": 5
           }
         ]
       }
@@ -347,6 +352,11 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-remote-mirror.sh\" stop",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/credo-code-reconcile.sh\" stop",
             "timeout": 5
           }
         ]
