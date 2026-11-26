@@ -22,9 +22,12 @@ The brief check:
   "full check", "full test suite", "all tests";
 - ignores a match whose clause (text since the last sentence dot, ; ! ? or line break) negates it
   ("never", "not", "no", "don't", "without", "instead of", "avoid", "skip", "except",
-  "main agent"), or whose whole clause names the main agent, so a brief that forbids the
-  full check or leaves it to the main agent stays silent; "all tests of/in <module>" is a
-  narrowed run and no marker;
+  "main agent"), or whose whole clause names the main agent (or says "main-only"), so a
+  brief that forbids the full check or leaves it to the main agent stays silent; "all tests
+  of/in <module>" is a narrowed run and no marker; a marker inside quotes ("...", '...' or
+  backticks) names a feature or quotes a message and is no marker either (the project's own
+  commands still count inside backticks); a report of a past run ("the full check was
+  green", "full suite passed", "ran the full check") is no order and no marker;
 - on a match prints a warning (additionalContext + systemMessage) naming the rule and the
   fix. It never denies. A guard deny keeps its decision; the warning is appended.
 
@@ -57,7 +60,15 @@ MARKERS = (
 NEGATION_RE = re.compile(
     r"\b(?:never|not|no|nor|don'?t|doesn'?t|without|instead\s+of|avoid|skip|except|"
     r"main\s+agent)\b|n't\b", re.I)
-MAIN_AGENT_RE = re.compile(r"\bmain\s+agent\b", re.I)
+MAIN_AGENT_RE = re.compile(r"\bmain\s+agent\b|\bmain[\s-]only\b", re.I)
+# quoted text names a feature or quotes a message ("...", '...', `...`), it asks for nothing;
+# a single quote counts only when it is no apostrophe inside a word (don't, it's)
+# a report of a past run is no order: "the full check was green", "ran the full suite"
+REPORT_AFTER_RE = re.compile(
+    r"\s*(?:was|were|had|passed|failed|succeeded|went|stayed|came\s+back|"
+    r"(?:has|have)\s+(?:been|passed|failed|run|succeeded)|is\s+(?:green|red|done))\b", re.I)
+REPORT_BEFORE_RE = re.compile(r"\b(?:ran|(?:has|have|had|was|were)\s+run)\b", re.I)
+QUOTED_RE = re.compile(r"\"[^\"\n]*\"|“[^”\n]*”|(?<!\w)'[^'\n]*'(?!\w)|`[^`\n]*`")
 CLAUSE_END_RE = re.compile(r"[;!?\n]|\.(?=\s|$)")  # a dot inside ./path or a.b is no clause end
 TEST_HEAD_ID = re.compile(r"^#{2,}\s+.*\(§ly5v\)")
 TEST_HEAD_TEXT = re.compile(r"^###\s+test\s+commands\s*(?:\(§[0-9a-z]{4}\)\s*)?$", re.I)
@@ -197,6 +208,15 @@ def negated(text, start):
                 or MAIN_AGENT_RE.search(text[clause_start:clause_end]))
 
 
+def reported(text, m):
+    """True when the clause reports a past run of the match instead of ordering one."""
+    clause_start = 0
+    for e in CLAUSE_END_RE.finditer(text, 0, m.start()):
+        clause_start = e.end()
+    return bool(REPORT_AFTER_RE.match(text, m.end())
+                or REPORT_BEFORE_RE.search(text[clause_start:m.start()]))
+
+
 def narrowed(text, end):
     """True when the command at text[:end] is followed by a flag or path argument."""
     m = re.match(r"[ \t]+(\S+)", text[end:])
@@ -232,8 +252,11 @@ def find_full_check(text, all_cmd, relevant, rules):
         m = find_command(text, cmd)
         if m:
             return label, snippet(text, m)
+    quoted = [q.span() for q in QUOTED_RE.finditer(text)]
     for rx, label in MARKERS:
         for m in rx.finditer(text):
+            if any(a < m.start() < b for a, b in quoted) or reported(text, m):
+                continue
             if not negated(text, m.start()):
                 return "the full-check marker \"%s\"" % label, snippet(text, m)
     return None
