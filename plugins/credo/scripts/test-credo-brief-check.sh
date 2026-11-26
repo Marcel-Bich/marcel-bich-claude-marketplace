@@ -85,7 +85,7 @@ call() {
 # brief <prompt> [description] [subagent_type]: a tool_input JSON with model + effort
 brief() {
     jq -n --arg p "$1" --arg d "${2:-[credo-role: build#1] acme-task}" --arg s "${3:-general-purpose}" \
-        '{subagent_type: $s, description: $d, prompt: $p, model: "opus", effort: "xhigh"}'
+        '{subagent_type: $s, description: $d, prompt: $p, model: "opus", effort: "medium"}'
 }
 run_hook() { printf '%s' "$1" | bash "$HOOK" 2>/dev/null; }
 decision() { printf '%s' "$1" | jq -r '.hookSpecificOutput.permissionDecision // "allow"' 2>/dev/null; }
